@@ -1,6 +1,6 @@
 import { index, jsonb, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
 import { businesses } from './platform';
-import { citext } from '../types';
+import { citext, tsvector } from '../types';
 
 export const customers = pgTable(
   'customers',
@@ -15,6 +15,9 @@ export const customers = pgTable(
     lastName: text('last_name'),
     addressesJson: jsonb('addresses_json'),
     notes: text('notes'),
+    // GENERATED ALWAYS AS — see migration. Kept here so SQL queries can
+    // reference the column by Drizzle alias.
+    searchTsv: tsvector('search_tsv'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },

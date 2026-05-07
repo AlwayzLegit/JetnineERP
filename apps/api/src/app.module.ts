@@ -11,6 +11,7 @@ import { AuthGuard } from './auth/auth.guard';
 import { AuthModule } from './auth/auth.module';
 import { BusinessModule } from './business/business.module';
 import { CatalogModule } from './catalog/catalog.module';
+import { CustomersModule } from './customers/customers.module';
 import { DatabaseModule } from './database/database.module';
 import { EmailModule } from './email/email.module';
 import { HealthController } from './health/health.controller';
@@ -59,6 +60,7 @@ import { TenancyModule } from './tenancy/tenancy.module';
     TenancyModule,
     BusinessModule,
     CatalogModule,
+    CustomersModule,
     InventoryModule,
     AdminModule,
   ],

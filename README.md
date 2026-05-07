@@ -405,3 +405,39 @@ Epic 1.8 is complete:
   cashier can list but `inventory.adjust`/`receive` are 403 →
   movements endpoint surfaces the ledger newest-first with the
   joined actor email. CI provisions `jetnine_inventory`.
+
+## Phase 1 — Epic 1.9 status (Customer records)
+
+Epic 1.9 is complete:
+
+- **Schema**: `customers.search_tsv` is a generated `tsvector` column
+  (Postgres `STORED`) over `first_name + last_name + email + phone`
+  with non-alphanumeric runs collapsed to spaces by `regexp_replace`,
+  so partial matches against emails (`bob@example`) and phone numbers
+  (`+1 555 …`) hit the same tokens. Backed by a GIN index
+  (`customers_search_tsv_idx`).
+- **`GET /v1/customers?q=…`** runs `websearch_to_tsquery('simple', …)`
+  against the generated tsvector and orders by `ts_rank`. Without `q`,
+  returns the most recent 50 sorted by last/first name. Gated by
+  `customers.view`. The controller normalizes the query string the
+  same way the column does to keep tokenization symmetric.
+- **`GET /v1/customers/:id`** returns the full customer record plus
+  the 20 most recent sales (`recentSales` placeholder until Epic 1.10
+  populates `sales`).
+- **`POST /v1/customers`** requires at least one of firstName,
+  lastName, email, or phone. Audit-logged.
+- **`PATCH /v1/customers/:id`** computes a per-field diff and only
+  audit-logs the keys that actually changed.
+- **`DELETE /v1/customers/:id`** removes the customer record; sales
+  reference customers via `ON DELETE SET NULL`, so historical sales
+  remain after the customer is removed.
+- **Web pages**: `/customers` (list + search box), `/customers/new`
+  (create form with at-least-one-identity validation), and
+  `/customers/[id]` (edit form + recent purchases section).
+- **Integration tests** (`apps/api/test/customers.int.spec.ts`, 10
+  cases): create + list → 400 when no identity given → search by
+  partial first name → search by partial email (`bob@example`) →
+  search by partial phone (`+15559999999`) → recentSales placeholder
+  is empty → edit emits an audit diff → cashier `customers.delete`
+  denied (403) → bookkeeper `customers.view` denied (403) → owner
+  delete succeeds. CI provisions `jetnine_customers`.
