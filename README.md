@@ -613,3 +613,75 @@ Epic 1.12 is complete:
 - **Acceptance:** a business in trial, when the trial ends without
   payment, becomes read-only across all UIs except billing settings —
   exactly what the integration suite asserts end-to-end.
+
+## Phase 2.1 status (Stripe Connect for merchants)
+
+Phase 2.1 is complete. The platform billing model from Epic 1.12
+flips: instead of Jetnine charging merchants for using the platform,
+each merchant connects their own Stripe account so card payments at
+the POS go straight to their bank. Funds never touch a Jetnine
+account.
+
+- **Schema**: `merchant_stripe_accounts` (one row per business with
+  `stripe_account_id`, scope, livemode, charges/payouts enabled,
+  `disconnected_at` for soft-disconnect) + `stripe_oauth_states`
+  (single-use CSRF tokens for the OAuth handshake). Both tenant-
+  scoped + RLS-forced. Migration `0007_dashing_random.sql`.
+- **`StripeService`** wraps the official `stripe` SDK and exposes
+  `authorizeUrl`, `exchangeOauthCode`, `fetchAccount`, `disconnect`,
+  `chargeCard`, `refundCharge`. When `STRIPE_SECRET_KEY` is missing
+  it switches to STUB mode that returns deterministic fake ids and
+  always-succeed charges so dev / tests don't need real keys.
+- **`GET /v1/business/stripe/connect-url`** mints a state token and
+  returns the Stripe authorize URL. **`GET /v1/stripe/oauth/callback`**
+  is `@Public()`, validates the single-use state, exchanges the auth
+  code for a `stripe_user_id`, persists the merchant row, and
+  redirects back to `/settings/billing?stripe=connected`.
+- **`GET /v1/business/stripe`** returns connection status + the
+  publishable key the web app needs to mount Stripe Elements scoped
+  to that merchant. **`POST /v1/business/stripe/disconnect`**
+  revokes via Stripe + soft-marks the row.
+- **Card payments at the POS** now flow through Stripe when the
+  payment line carries a `stripePaymentMethodId` and the business
+  has a connected account. The backend creates + confirms a
+  PaymentIntent on the merchant's account in one call and rolls the
+  whole sale back if the charge isn't `succeeded`. Cards without a
+  PaymentMethod id (or businesses without Stripe) fall through to
+  the legacy manual-capture path so the existing test fixtures keep
+  passing.
+- **Refunds through Stripe**: when the original payment was
+  `processor='stripe'`, `POST /v1/sales/:id/refund` issues a
+  `refunds.create` against the merchant's account (allocated
+  Stripe-first, falling back to bookkeeping-only for cash tenders)
+  before recording the refund rows.
+- **Web /settings/billing** now leads with "Connect Stripe" + status
+  panel (account email, account id, livemode, charges/payouts
+  enabled, disconnect button). The self-serve plan picker is paused
+  while we settle the platform billing model.
+- **Web /pos payment screen** swaps in **Stripe Elements** when the
+  business has a connected account. The cashier types cash, the
+  card portion is computed automatically, and `<CardElement />` is
+  used to tokenize the card client-side. The resulting
+  PaymentMethod id is sent to `POST /v1/sales`. Stub mode bypasses
+  the live tokenization with `pm_card_stub` so the form is usable
+  without keys.
+- **Required env** (production): `STRIPE_SECRET_KEY`,
+  `STRIPE_PUBLISHABLE_KEY`, `STRIPE_CONNECT_CLIENT_ID`,
+  `STRIPE_OAUTH_REDIRECT_URI`, `STRIPE_WEBHOOK_SECRET`. Without
+  them the API logs a warning + falls back to stub mode (safe for
+  dev; never deploy that way).
+- **Integration tests** (`apps/api/test/stripe.int.spec.ts`, 11
+  cases): initial unconnected state → connect-url issues a state →
+  OAuth callback persists the row + redirects → state is
+  single-use → Stripe-charged sale records `processor='stripe'` +
+  `pi_stub_*` ref → refund flips status and reverses the
+  PaymentIntent → mixed cash + Stripe sale routes the card portion
+  only → bare `method:'card'` without payment method falls back to
+  manual capture → disconnect sets `disconnected_at` → post-
+  disconnect Stripe sale is rejected. Runs entirely against the
+  stub. CI provisions `jetnine_stripe`.
+- **What still needs you** before live charges work in production:
+  the four Stripe env vars above (a free Connect Standard
+  application; no platform Stripe payments are ever processed)
+  plus the OAuth redirect URI configured in your Stripe Connect
+  settings. Webhook handler comes next.

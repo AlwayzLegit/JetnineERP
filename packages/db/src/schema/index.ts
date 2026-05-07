@@ -8,6 +8,7 @@ export * from './customers';
 export * from './sales';
 export * from './cash';
 export * from './billing';
+export * from './stripe';
 
 // List of tables that carry a `business_id` and need RLS. Kept in sync with
 // the migration script in src/migrations/rls.sql — when you add a new
@@ -32,4 +33,6 @@ export const TENANT_SCOPED_TABLES = [
   'refund_lines',
   'cash_shifts',
   'subscriptions',
+  'merchant_stripe_accounts',
+  'stripe_oauth_states',
 ] as const;

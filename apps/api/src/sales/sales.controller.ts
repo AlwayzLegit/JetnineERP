@@ -17,6 +17,7 @@ import { AuditService } from '../audit/audit.service';
 import { CurrentTenant, CurrentUser } from '../auth/current-user.decorator';
 import type { CurrentUserPayload } from '../auth/current-user.decorator';
 import { DRIZZLE } from '../database/database.module';
+import { StripeService } from '../stripe/stripe.service';
 import { RequirePermission, TenantScoped } from '../tenancy/decorators';
 import type { RequestTenantContext } from '../tenancy/request-context';
 import { computeTotals, refundUnitCents } from './totals';
@@ -36,6 +37,14 @@ interface PaymentInput {
   amountCents?: number;
   /** For 'card', the (test) processor reference; optional. */
   processorRef?: string;
+  /**
+   * For 'card', a Stripe PaymentMethod id (`pm_xxx`) collected on the
+   * client via Stripe Elements. When present and the business has a
+   * connected Stripe account, the backend charges this method on the
+   * merchant's account before the sale is recorded. When absent, the
+   * payment is recorded as a manual capture (legacy / dev mode).
+   */
+  stripePaymentMethodId?: string;
 }
 
 interface CartLineInput {
@@ -121,6 +130,7 @@ export class SalesController {
   constructor(
     @Inject(DRIZZLE) private readonly db: PostgresJsDatabase,
     @Inject(AuditService) private readonly audit: AuditService,
+    @Inject(StripeService) private readonly stripe: StripeService,
   ) {}
 
   /**
@@ -425,6 +435,60 @@ export class SalesController {
       }
     }
 
+    // For card payments that supply a Stripe PaymentMethod id, charge
+    // the merchant's connected Stripe account BEFORE writing the sale.
+    // If any charge fails, no sale row is written. If a card line has
+    // no `stripePaymentMethodId`, fall back to the manual capture path
+    // (used in dev/test or by businesses that haven't connected
+    // Stripe).
+    const cardPayments = body.payments.filter((p) => p.method === 'card');
+    const stripeCardPayments = cardPayments.filter((p) => Boolean(p.stripePaymentMethodId));
+    let merchantStripeAccountId: string | null = null;
+    if (stripeCardPayments.length > 0) {
+      const [merchant] = await this.db
+        .select({
+          stripeAccountId: schema.merchantStripeAccounts.stripeAccountId,
+          chargesEnabled: schema.merchantStripeAccounts.chargesEnabled,
+          disconnectedAt: schema.merchantStripeAccounts.disconnectedAt,
+        })
+        .from(schema.merchantStripeAccounts)
+        .where(eq(schema.merchantStripeAccounts.businessId, tenant.businessId!))
+        .limit(1);
+      if (!merchant || merchant.disconnectedAt) {
+        throw new BadRequestException(
+          'Stripe is not connected for this business. Connect via Settings → Billing.',
+        );
+      }
+      if (!merchant.chargesEnabled) {
+        throw new BadRequestException(
+          'Connected Stripe account cannot accept charges yet. Finish onboarding in Stripe.',
+        );
+      }
+      merchantStripeAccountId = merchant.stripeAccountId;
+    }
+
+    const chargeResults: Map<number, { paymentIntentId: string }> = new Map();
+    if (merchantStripeAccountId) {
+      for (let i = 0; i < body.payments.length; i++) {
+        const p = body.payments[i]!;
+        if (p.method !== 'card' || !p.stripePaymentMethodId) continue;
+        const charge = await this.stripe.chargeCard({
+          stripeAccountId: merchantStripeAccountId,
+          amountCents: p.amountCents!,
+          currency: 'usd',
+          paymentMethodId: p.stripePaymentMethodId,
+          description: `Sale at ${tenant.businessId!.slice(0, 8)}`,
+          metadata: { businessId: tenant.businessId!, locationId: body.locationId },
+        });
+        if (charge.status !== 'succeeded') {
+          throw new BadRequestException(
+            `Card payment ${i} failed: status ${charge.status}. The sale was not recorded.`,
+          );
+        }
+        chargeResults.set(i, { paymentIntentId: charge.paymentIntentId });
+      }
+    }
+
     // Generate a sale number with retry on uniqueness conflicts.
     const number = await this.generateSaleNumber(tenant.businessId!);
 
@@ -466,22 +530,24 @@ export class SalesController {
       )
       .returning();
 
-    // Payments.
+    // Payments. Card payments charged via Stripe carry the
+    // PaymentIntent id in `processor_ref`; legacy/manual cards keep
+    // their processor='manual' identity for backwards compatibility.
     const insertedPayments = await this.db
       .insert(schema.payments)
       .values(
-        body.payments.map((p) => ({
-          businessId: tenant.businessId!,
-          saleId: sale.id,
-          method: p.method!,
-          amountCents: p.amountCents!,
-          // Card payments through Stripe Terminal land in Phase 2; for
-          // MVP we record the manual confirmation so refund flows have
-          // a tender to point at.
-          processor: p.method === 'card' ? 'manual' : null,
-          processorRef: p.processorRef ?? null,
-          status: 'succeeded',
-        })),
+        body.payments.map((p, i) => {
+          const charge = chargeResults.get(i);
+          return {
+            businessId: tenant.businessId!,
+            saleId: sale.id,
+            method: p.method!,
+            amountCents: p.amountCents!,
+            processor: p.method === 'card' ? (charge ? 'stripe' : 'manual') : null,
+            processorRef: charge?.paymentIntentId ?? p.processorRef ?? null,
+            status: 'succeeded',
+          };
+        }),
       )
       .returning();
 
@@ -622,6 +688,45 @@ export class SalesController {
       const perUnit = refundUnitCents(line);
       validated.push({ line, quantity: r.quantity, perUnit });
       amountCents += perUnit * r.quantity;
+    }
+
+    // If the sale was paid (in part) on a Stripe-charged card, reverse
+    // the matching PaymentIntent on the merchant's connected account
+    // before we record any refund rows. Allocate the refund amount to
+    // Stripe-backed payments first; if the original tender was cash or
+    // legacy/manual card, the refund is bookkeeping-only (cashier
+    // hands cash back from the drawer).
+    const allPayments = await this.db
+      .select()
+      .from(schema.payments)
+      .where(eq(schema.payments.saleId, id))
+      .orderBy(schema.payments.createdAt);
+
+    const stripePayments = allPayments.filter((p) => p.processor === 'stripe' && p.processorRef);
+    if (stripePayments.length > 0) {
+      const [merchant] = await this.db
+        .select({ stripeAccountId: schema.merchantStripeAccounts.stripeAccountId })
+        .from(schema.merchantStripeAccounts)
+        .where(eq(schema.merchantStripeAccounts.businessId, tenant.businessId!))
+        .limit(1);
+      if (!merchant) {
+        throw new BadRequestException(
+          'Sale was paid via Stripe but merchant account is no longer connected; reconnect Stripe before issuing the refund.',
+        );
+      }
+      let remaining = amountCents;
+      for (const p of stripePayments) {
+        if (remaining <= 0) break;
+        const refundable = Math.min(remaining, p.amountCents);
+        await this.stripe.refundCharge({
+          stripeAccountId: merchant.stripeAccountId,
+          paymentIntentId: p.processorRef!,
+          amountCents: refundable,
+          reason: body.reason ?? undefined,
+          metadata: { saleId: id, businessId: tenant.businessId! },
+        });
+        remaining -= refundable;
+      }
     }
 
     // Insert the refund header.

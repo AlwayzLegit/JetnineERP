@@ -21,6 +21,7 @@ import { InventoryModule } from './inventory/inventory.module';
 import { RedisModule } from './redis/redis.module';
 import { ReportsModule } from './reports/reports.module';
 import { SalesModule } from './sales/sales.module';
+import { StripeModule } from './stripe/stripe.module';
 import { TenancyModule } from './tenancy/tenancy.module';
 
 @Module({
@@ -70,6 +71,7 @@ import { TenancyModule } from './tenancy/tenancy.module';
     CashModule,
     ReportsModule,
     BillingModule,
+    StripeModule,
     AdminModule,
   ],
   controllers: [AppController, HealthController],

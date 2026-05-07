@@ -2,6 +2,8 @@
 
 import Link from 'next/link';
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { loadStripe, type Stripe as StripeJs } from '@stripe/stripe-js';
+import { CardElement, Elements, useElements, useStripe } from '@stripe/react-stripe-js';
 import { api } from '@/lib/api';
 
 interface LookupRow {
@@ -35,6 +37,14 @@ interface LocationRow {
 interface Payment {
   method: 'cash' | 'card';
   amountCents: number;
+  stripePaymentMethodId?: string;
+}
+interface StripeStatus {
+  connected: boolean;
+  publishableKey: string | null;
+  stripeAccountId: string | null;
+  chargesEnabled: boolean;
+  stubMode: boolean;
 }
 interface SaleResp {
   id: string;
@@ -61,20 +71,23 @@ export default function PosPage() {
   const [phase, setPhase] = useState<'cart' | 'pay' | 'done'>('cart');
   const [completedSale, setCompletedSale] = useState<SaleResp | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [stripeStatus, setStripeStatus] = useState<StripeStatus | null>(null);
   const scanRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     void (async () => {
       try {
-        const locs = await api<LocationRow[]>('/v1/pos/locations');
+        const [locs, stripe] = await Promise.all([
+          api<LocationRow[]>('/v1/pos/locations'),
+          api<StripeStatus>('/v1/business/stripe').catch(() => null),
+        ]);
         setLocations(locs);
         if (locs.length > 0) {
           const first = locs[0]!;
           setLocationId(first.id);
-          // The location's tax rate (if set) overrides the business default
-          // server-side at sale time — the cart preview here is informational.
           setTaxRateBps(first.taxRateBps ?? 0);
         }
+        setStripeStatus(stripe);
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
       }
@@ -194,6 +207,7 @@ export default function PosPage() {
         onCancel={() => setPhase('cart')}
         onConfirm={complete}
         error={error}
+        stripe={stripeStatus}
       />
     );
   }
@@ -401,11 +415,67 @@ function PaymentScreen({
   onCancel,
   onConfirm,
   error,
+  stripe,
 }: {
   totalCents: number;
   onCancel: () => void;
   onConfirm: (payments: Payment[]) => Promise<void>;
   error: string | null;
+  stripe: StripeStatus | null;
+}) {
+  const useStripeElements = Boolean(
+    stripe?.connected && stripe.publishableKey && stripe.chargesEnabled,
+  );
+  const [stripePromise, setStripePromise] = useState<Promise<StripeJs | null> | null>(null);
+
+  useEffect(() => {
+    if (useStripeElements && stripe?.publishableKey && stripe.stripeAccountId) {
+      setStripePromise(
+        loadStripe(stripe.publishableKey, { stripeAccount: stripe.stripeAccountId }),
+      );
+    }
+  }, [useStripeElements, stripe?.publishableKey, stripe?.stripeAccountId]);
+
+  if (useStripeElements) {
+    if (!stripePromise) {
+      return <p>Loading card form…</p>;
+    }
+    return (
+      <Elements stripe={stripePromise}>
+        <StripePaymentForm
+          totalCents={totalCents}
+          onCancel={onCancel}
+          onConfirm={onConfirm}
+          error={error}
+          stub={stripe?.stubMode ?? false}
+        />
+      </Elements>
+    );
+  }
+
+  return (
+    <ManualPaymentForm
+      totalCents={totalCents}
+      onCancel={onCancel}
+      onConfirm={onConfirm}
+      error={error}
+      stripeConnected={Boolean(stripe?.connected)}
+    />
+  );
+}
+
+function ManualPaymentForm({
+  totalCents,
+  onCancel,
+  onConfirm,
+  error,
+  stripeConnected,
+}: {
+  totalCents: number;
+  onCancel: () => void;
+  onConfirm: (payments: Payment[]) => Promise<void>;
+  error: string | null;
+  stripeConnected: boolean;
 }) {
   const [cashStr, setCashStr] = useState('');
   const [cardStr, setCardStr] = useState('');
@@ -414,7 +484,7 @@ function PaymentScreen({
   const cardCents = parseDollars(cardStr);
   const tendered = cash + cardCents;
   const change = Math.max(0, tendered - totalCents);
-  const cashApplied = Math.max(0, cash - change); // change always comes from cash
+  const cashApplied = Math.max(0, cash - change);
   const ready = cashApplied + cardCents === totalCents && (cashApplied > 0 || cardCents > 0);
 
   async function submit() {
@@ -455,7 +525,9 @@ function PaymentScreen({
           />
         </Field>
         <p style={{ fontSize: 12, color: '#666' }}>
-          Card payments use a manual stub for MVP — Stripe Terminal lands in Phase 2.
+          {stripeConnected
+            ? 'Stripe is connected but charges are disabled — finish onboarding in Stripe to enable real card capture.'
+            : 'Card payments are recorded as manual captures. Connect Stripe in Settings → Billing for real card processing.'}
         </p>
         <div style={{ fontSize: 14, marginTop: 12 }}>
           Tendered: ${(tendered / 100).toFixed(2)} · Change: ${(change / 100).toFixed(2)}
@@ -469,6 +541,129 @@ function PaymentScreen({
           style={{ ...primaryBtn, padding: '14px', fontSize: 16, flex: 1 }}
         >
           {busy ? 'Processing…' : 'Confirm payment'}
+        </button>
+        <button onClick={onCancel} style={linkBtn}>
+          Back to cart
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function StripePaymentForm({
+  totalCents,
+  onCancel,
+  onConfirm,
+  error,
+  stub,
+}: {
+  totalCents: number;
+  onCancel: () => void;
+  onConfirm: (payments: Payment[]) => Promise<void>;
+  error: string | null;
+  stub: boolean;
+}) {
+  const stripe = useStripe();
+  const elements = useElements();
+  const [cashStr, setCashStr] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [cardError, setCardError] = useState<string | null>(null);
+
+  const cash = parseDollars(cashStr);
+  const cashApplied = Math.min(cash, totalCents);
+  const cardCents = Math.max(0, totalCents - cashApplied);
+  const change = Math.max(0, cash - cashApplied);
+
+  async function submit() {
+    setBusy(true);
+    setCardError(null);
+    try {
+      const payments: Payment[] = [];
+      if (cashApplied > 0) payments.push({ method: 'cash', amountCents: cashApplied });
+
+      if (cardCents > 0) {
+        if (!stripe || !elements) throw new Error('Stripe is still initializing — try again.');
+        const cardEl = elements.getElement(CardElement);
+        if (!cardEl) throw new Error('Card element not mounted.');
+        // In stub mode the API ignores the value but expects something
+        // truthy; createPaymentMethod fails offline so we synthesize.
+        let pmId: string;
+        if (stub) {
+          pmId = 'pm_card_stub';
+        } else {
+          const res = await stripe.createPaymentMethod({ type: 'card', card: cardEl });
+          if (res.error || !res.paymentMethod) {
+            throw new Error(res.error?.message ?? 'Could not collect card details');
+          }
+          pmId = res.paymentMethod.id;
+        }
+        payments.push({
+          method: 'card',
+          amountCents: cardCents,
+          stripePaymentMethodId: pmId,
+        });
+      }
+
+      await onConfirm(payments);
+    } catch (err) {
+      setCardError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div style={{ maxWidth: 480 }}>
+      <h1 style={{ fontSize: 22, marginBottom: 16 }}>Payment</h1>
+      <div style={card}>
+        <div style={{ fontSize: 14, marginBottom: 12 }}>
+          Total due: <strong>${(totalCents / 100).toFixed(2)}</strong>
+        </div>
+        <Field label="Cash tendered ($)">
+          <input
+            autoFocus
+            type="number"
+            step="0.01"
+            min={0}
+            value={cashStr}
+            onChange={(e) => setCashStr(e.target.value)}
+            style={fieldStyle}
+          />
+        </Field>
+        <p style={{ fontSize: 12, color: '#666' }}>
+          Cash applied: ${(cashApplied / 100).toFixed(2)} · Change: ${(change / 100).toFixed(2)} ·
+          Card to charge: <strong>${(cardCents / 100).toFixed(2)}</strong>
+        </p>
+
+        {cardCents > 0 && (
+          <div style={{ marginTop: 12 }}>
+            <span style={{ color: '#555', fontSize: 12 }}>Card details</span>
+            <div
+              style={{
+                padding: '10px 8px',
+                border: '1px solid #ccc',
+                borderRadius: 4,
+                marginTop: 4,
+              }}
+            >
+              <CardElement options={{ hidePostalCode: false }} />
+            </div>
+            {stub && (
+              <p style={{ fontSize: 11, color: '#7a4a00', marginTop: 6 }}>
+                Stub mode — any input accepts. Set STRIPE_SECRET_KEY for real cards.
+              </p>
+            )}
+          </div>
+        )}
+      </div>
+      {(error || cardError) && <p style={{ color: '#b00', fontSize: 13 }}>{cardError ?? error}</p>}
+      <div style={{ marginTop: 16, display: 'flex', gap: 8 }}>
+        <button
+          onClick={submit}
+          disabled={busy}
+          style={{ ...primaryBtn, padding: '14px', fontSize: 16, flex: 1 }}
+        >
+          {busy ? 'Processing…' : `Charge $${(cardCents / 100).toFixed(2)}`}
         </button>
         <button onClick={onCancel} style={linkBtn}>
           Back to cart

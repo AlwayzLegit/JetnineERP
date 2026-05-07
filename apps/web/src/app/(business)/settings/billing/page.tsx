@@ -1,8 +1,20 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { api } from '@/lib/api';
+
+interface StripeStatus {
+  connected: boolean;
+  stripeAccountId: string | null;
+  accountEmail: string | null;
+  livemode: boolean;
+  chargesEnabled: boolean;
+  payoutsEnabled: boolean;
+  publishableKey: string | null;
+  stubMode: boolean;
+}
 
 interface Subscription {
   id: string;
@@ -17,28 +29,44 @@ interface Subscription {
   cancelAtPeriodEnd: string | null;
   readOnly: boolean;
 }
-interface PlanRow {
-  id: 'starter' | 'pro';
-  name: string;
-  description: string;
-  perLocationCents: number;
-}
 
 export default function BillingPage() {
+  return (
+    <Suspense fallback={<p>Loading…</p>}>
+      <BillingPageInner />
+    </Suspense>
+  );
+}
+
+function BillingPageInner() {
+  const params = useSearchParams();
+  const [stripe, setStripe] = useState<StripeStatus | null>(null);
   const [sub, setSub] = useState<Subscription | null>(null);
-  const [plans, setPlans] = useState<PlanRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [banner, setBanner] = useState<{ kind: 'ok' | 'error'; message: string } | null>(null);
+
+  useEffect(() => {
+    const flag = params?.get('stripe');
+    if (flag === 'connected') {
+      setBanner({ kind: 'ok', message: 'Stripe connected successfully.' });
+    } else if (flag === 'error') {
+      setBanner({
+        kind: 'error',
+        message: `Stripe connection failed: ${params?.get('message') ?? 'unknown error'}`,
+      });
+    }
+  }, [params]);
 
   async function load() {
     setError(null);
     try {
-      const [s, p] = await Promise.all([
+      const [s, sb] = await Promise.all([
+        api<StripeStatus>('/v1/business/stripe'),
         api<Subscription>('/v1/billing/subscription'),
-        api<PlanRow[]>('/v1/billing/plans'),
       ]);
-      setSub(s);
-      setPlans(p);
+      setStripe(s);
+      setSub(sb);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -47,48 +75,27 @@ export default function BillingPage() {
     void load();
   }, []);
 
-  async function subscribe(plan: 'starter' | 'pro') {
+  async function connect() {
     setBusy(true);
     try {
-      await api('/v1/billing/subscribe', { method: 'POST', body: JSON.stringify({ plan }) });
-      void load();
+      const res = await api<{ url: string }>('/v1/business/stripe/connect-url');
+      window.location.href = res.url;
     } catch (err) {
       alert(err instanceof Error ? err.message : String(err));
-    } finally {
       setBusy(false);
     }
   }
-  async function changePlan(plan: 'starter' | 'pro') {
+
+  async function disconnect() {
+    if (
+      !confirm(
+        'Disconnect Stripe? Card payments at the POS will fall back to manual capture until you reconnect.',
+      )
+    )
+      return;
     setBusy(true);
     try {
-      await api('/v1/billing/subscription', {
-        method: 'PATCH',
-        body: JSON.stringify({ plan }),
-      });
-      void load();
-    } catch (err) {
-      alert(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(false);
-    }
-  }
-  async function cancel() {
-    if (!confirm('Cancel subscription? Your business will go read-only at period end.')) return;
-    setBusy(true);
-    try {
-      await api('/v1/billing/cancel', { method: 'POST' });
-      void load();
-    } catch (err) {
-      alert(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(false);
-    }
-  }
-  async function expireTrial() {
-    if (!confirm('Force the trial to expire (dev/test only)?')) return;
-    setBusy(true);
-    try {
-      await api('/v1/billing/dev/expire-trial', { method: 'POST' });
+      await api('/v1/business/stripe/disconnect', { method: 'POST' });
       void load();
     } catch (err) {
       alert(err instanceof Error ? err.message : String(err));
@@ -103,6 +110,23 @@ export default function BillingPage() {
         <Link href="/settings">← Settings</Link>
       </p>
       <h1 style={{ fontSize: 22, marginBottom: 16 }}>Billing</h1>
+
+      {banner && (
+        <div
+          style={{
+            background: banner.kind === 'ok' ? '#e6f5e9' : '#fdecea',
+            border: `1px solid ${banner.kind === 'ok' ? '#3a8a4d' : '#b00'}`,
+            color: banner.kind === 'ok' ? '#1f5c2e' : '#7a0c0c',
+            padding: 12,
+            borderRadius: 6,
+            marginBottom: 16,
+            fontSize: 13,
+          }}
+        >
+          {banner.message}
+        </div>
+      )}
+
       {error && <p style={{ color: '#b00' }}>{error}</p>}
 
       {sub?.readOnly && (
@@ -117,87 +141,73 @@ export default function BillingPage() {
             fontSize: 13,
           }}
         >
-          <strong>Read-only mode.</strong> Your subscription is <code>{sub.status}</code>
-          {sub.trialExpired && ' (trial expired)'}. Pick a plan below to reactivate. Until then,
-          sales, refunds, and inventory changes are blocked across the app.
+          <strong>Read-only mode.</strong> Subscription is <code>{sub.status}</code>
+          {sub.trialExpired && ' (trial expired)'}. Sales, refunds, and inventory writes are blocked
+          until reactivated.
         </div>
       )}
+
+      <div style={card}>
+        <h2 style={section}>Stripe</h2>
+        <p style={{ color: '#666', fontSize: 13, marginBottom: 12 }}>
+          Connect your Stripe account so card payments at the POS go straight to your bank. Money
+          never touches Jetnine — we only orchestrate the charge on your behalf.
+        </p>
+
+        {stripe?.stubMode && (
+          <p
+            style={{
+              color: '#7a4a00',
+              fontSize: 12,
+              background: '#fff8e1',
+              padding: 8,
+              borderRadius: 4,
+              marginBottom: 12,
+            }}
+          >
+            <strong>Stub mode:</strong> the API has no <code>STRIPE_SECRET_KEY</code> set, so
+            connecting + charging use deterministic fakes. Useful for local dev. Set the env vars in
+            production to flip to real Stripe.
+          </p>
+        )}
+
+        {stripe?.connected ? (
+          <>
+            <Row label="Connected as" value={stripe.accountEmail ?? '(no email on file)'} />
+            <Row
+              label="Account"
+              value={`${stripe.stripeAccountId} (${stripe.livemode ? 'live' : 'test'})`}
+            />
+            <Row label="Charges enabled" value={stripe.chargesEnabled ? 'yes' : 'no'} />
+            <Row label="Payouts enabled" value={stripe.payoutsEnabled ? 'yes' : 'no'} />
+            <div style={{ marginTop: 12 }}>
+              <button onClick={disconnect} disabled={busy} style={dangerBtn}>
+                Disconnect Stripe
+              </button>
+            </div>
+          </>
+        ) : (
+          <button onClick={connect} disabled={busy} style={primaryBtn}>
+            {busy ? 'Redirecting…' : 'Connect Stripe'}
+          </button>
+        )}
+      </div>
 
       {sub && (
         <div style={card}>
-          <h2 style={section}>Current subscription</h2>
+          <h2 style={section}>Subscription</h2>
+          <p style={{ color: '#666', fontSize: 12, marginBottom: 12 }}>
+            Track your subscription state. Self-serve plan changes are paused while we transition
+            the platform billing model — your super admin will set the plan for now.
+          </p>
           <Row label="Status" value={sub.status} />
           <Row label="Plan" value={sub.plan} />
           <Row label="Locations" value={String(sub.locationCount)} />
-          <Row label="Monthly price" value={`$${(sub.monthlyPriceCents / 100).toFixed(2)}`} />
           {sub.trialEndsAt && (
             <Row label="Trial ends" value={new Date(sub.trialEndsAt).toLocaleString()} />
           )}
-          {sub.currentPeriodEnd && (
-            <Row label="Period ends" value={new Date(sub.currentPeriodEnd).toLocaleString()} />
-          )}
         </div>
       )}
-
-      <div style={card}>
-        <h2 style={section}>Plans</h2>
-        <p style={{ color: '#666', fontSize: 12, marginBottom: 12 }}>
-          Per-location pricing. New businesses start with a 14-day trial. Stripe wiring lands in
-          production deployment via <code>STRIPE_SECRET_KEY</code>; in this MVP, subscribing is a
-          direct state transition (no payment is collected).
-        </p>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-          {plans.map((p) => {
-            const isCurrent = sub?.plan === p.id && sub.status === 'active';
-            return (
-              <div
-                key={p.id}
-                style={{
-                  padding: 16,
-                  border: isCurrent ? '2px solid #111' : '1px solid #ddd',
-                  borderRadius: 6,
-                }}
-              >
-                <h3 style={{ fontSize: 16, marginBottom: 4 }}>{p.name}</h3>
-                <p style={{ fontSize: 13, color: '#666', marginBottom: 8 }}>{p.description}</p>
-                <p style={{ fontSize: 14, marginBottom: 12 }}>
-                  <strong>${(p.perLocationCents / 100).toFixed(2)}</strong>
-                  <span style={{ color: '#666' }}> /month/location</span>
-                </p>
-                {isCurrent ? (
-                  <button disabled style={{ ...primaryBtn, opacity: 0.5 }}>
-                    Current plan
-                  </button>
-                ) : sub?.status === 'active' ? (
-                  <button onClick={() => changePlan(p.id)} disabled={busy} style={primaryBtn}>
-                    Switch to {p.name}
-                  </button>
-                ) : (
-                  <button onClick={() => subscribe(p.id)} disabled={busy} style={primaryBtn}>
-                    Subscribe to {p.name}
-                  </button>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      <div style={card}>
-        <h2 style={section}>Actions</h2>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          {sub?.status === 'active' && (
-            <button onClick={cancel} disabled={busy} style={dangerBtn}>
-              Cancel subscription
-            </button>
-          )}
-          {sub?.status === 'trial' && (
-            <button onClick={expireTrial} disabled={busy} style={dangerBtn}>
-              Force-expire trial (dev)
-            </button>
-          )}
-        </div>
-      </div>
     </div>
   );
 }
