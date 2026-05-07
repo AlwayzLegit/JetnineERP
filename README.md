@@ -370,3 +370,38 @@ Epic 1.7 is complete:
   → search by partial SKU, by barcode, by free-text name → cashier sees
   prices but `costCents` is null → 4-image cap → CSV preview parses 3
   rows + commit creates them. CI provisions `jetnine_catalog`.
+
+## Phase 1 — Epic 1.8 status (Inventory)
+
+Epic 1.8 is complete:
+
+- **`GET /v1/inventory/levels?locationId=…`** joins `inventory_levels`
+  with the variant + product, exposes `onHand`, `reserved`, and a
+  computed `available = max(0, on_hand − reserved)`. Gated by
+  `inventory.view`.
+- **`GET /v1/inventory/movements`** returns the append-only ledger
+  (joined with the actor email) with optional filters: `variantId`,
+  `locationId`, `since`, `until`. Gated by `inventory.view`.
+- **`POST /v1/inventory/adjust`** writes one `inventory_movements`
+  row + upserts the matching `inventory_levels` row with
+  `ON CONFLICT … SET on_hand = GREATEST(0, on_hand + delta)`. Reason
+  must be one of `count_correction | damage | theft | other`. Gated
+  by `inventory.adjust`. Audit-logged with reason + delta.
+- **`POST /v1/inventory/receive`** takes a batch of positive lines
+  for a single location and applies them inside the request's RLS
+  transaction (partial failure rolls back). Returns the new `onHand`
+  per line. Gated by `inventory.receive`. Audit-logged with total
+  units + line count.
+- **Web pages**: `/inventory` — location picker + levels table with
+  inline Adjust dialog. `/inventory/receive` — search-and-add flow
+  that pulls product detail, expands every variant as a line, takes
+  quantities, and commits the batch. Both linked from the back-office
+  nav.
+- **Integration tests** (`apps/api/test/inventory.int.spec.ts`,
+  9 cases): receive 10 units → `on_hand=10` + 1 movement row →
+  receive 5 more stacks to 15 → adjust −3 with reason `damage`
+  audit-logs the delta → invalid reason → 400 → adjust −1000 floors
+  on_hand at 0 → levels endpoint returns joined product info →
+  cashier can list but `inventory.adjust`/`receive` are 403 →
+  movements endpoint surfaces the ledger newest-first with the
+  joined actor email. CI provisions `jetnine_inventory`.

@@ -14,6 +14,7 @@ import { CatalogModule } from './catalog/catalog.module';
 import { DatabaseModule } from './database/database.module';
 import { EmailModule } from './email/email.module';
 import { HealthController } from './health/health.controller';
+import { InventoryModule } from './inventory/inventory.module';
 import { RedisModule } from './redis/redis.module';
 import { TenancyModule } from './tenancy/tenancy.module';
 
@@ -58,6 +59,7 @@ import { TenancyModule } from './tenancy/tenancy.module';
     TenancyModule,
     BusinessModule,
     CatalogModule,
+    InventoryModule,
     AdminModule,
   ],
   controllers: [AppController, HealthController],
