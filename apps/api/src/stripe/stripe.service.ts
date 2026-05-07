@@ -182,6 +182,54 @@ export class StripeService {
     };
   }
 
+  /**
+   * Verify a Stripe webhook signature against the raw request body.
+   * In stub mode (or when STRIPE_WEBHOOK_SECRET is missing), returns
+   * the parsed JSON so tests can drive the handler without a signed
+   * payload. In production, raises if the signature doesn't match.
+   */
+  verifyWebhook(
+    rawBody: string | Buffer,
+    signatureHeader: string | undefined,
+  ): {
+    id: string;
+    type: string;
+    livemode: boolean;
+    data: { object: Record<string, unknown> };
+    account?: string;
+  } {
+    const secret = this.config.get<string>('STRIPE_WEBHOOK_SECRET');
+    if (this.stub || !this.client || !secret) {
+      const text = typeof rawBody === 'string' ? rawBody : rawBody.toString('utf8');
+      const parsed = JSON.parse(text) as {
+        id?: string;
+        type?: string;
+        livemode?: boolean;
+        data?: { object?: Record<string, unknown> };
+        account?: string;
+      };
+      if (!parsed.id || !parsed.type) {
+        throw new Error('Stub webhook payload requires id + type');
+      }
+      return {
+        id: parsed.id,
+        type: parsed.type,
+        livemode: parsed.livemode ?? false,
+        data: { object: parsed.data?.object ?? {} },
+        account: parsed.account,
+      };
+    }
+    if (!signatureHeader) throw new Error('Missing Stripe-Signature header');
+    const event = this.client.webhooks.constructEvent(rawBody, signatureHeader, secret);
+    return {
+      id: event.id,
+      type: event.type,
+      livemode: event.livemode,
+      data: { object: event.data.object as unknown as Record<string, unknown> },
+      account: event.account ?? undefined,
+    };
+  }
+
   async refundCharge(args: {
     stripeAccountId: string;
     paymentIntentId: string;

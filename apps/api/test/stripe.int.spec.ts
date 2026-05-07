@@ -152,7 +152,7 @@ beforeAll(async () => {
   delete process.env.STRIPE_SECRET_KEY;
 
   const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
-  app = moduleRef.createNestApplication({ bufferLogs: true });
+  app = moduleRef.createNestApplication({ bufferLogs: true, rawBody: true });
   await app.init();
 
   ownerCookie = await captureCookie('owner@stripe-test.local');
@@ -338,5 +338,186 @@ describe('Phase 2.1 — Stripe Connect (stub mode)', () => {
     } finally {
       await sql.end({ timeout: 5 });
     }
+  });
+});
+
+describe('Phase 2.1 — Stripe webhooks (stub mode)', () => {
+  // Re-connect the merchant for webhook handler tests; the prior
+  // describe block left it disconnected.
+  let stripeAccountId = '';
+
+  it('Reconnect for webhook tests', async () => {
+    const url = await request(app.getHttpServer())
+      .get('/v1/business/stripe/connect-url')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId);
+    const state = url.body.state as string;
+    const cb = await request(app.getHttpServer())
+      .get(`/v1/stripe/oauth/callback?code=stub_code&state=${state}`)
+      .redirects(0);
+    expect(cb.status).toBe(302);
+
+    const status = await request(app.getHttpServer())
+      .get('/v1/business/stripe')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId);
+    stripeAccountId = status.body.stripeAccountId;
+    expect(status.body.connected).toBe(true);
+  });
+
+  it('account.updated webhook syncs charges/payouts/email', async () => {
+    const event = {
+      id: `evt_test_${Date.now()}`,
+      type: 'account.updated',
+      livemode: false,
+      data: {
+        object: {
+          id: stripeAccountId,
+          email: 'updated@example.com',
+          default_currency: 'usd',
+          charges_enabled: false,
+          payouts_enabled: false,
+        },
+      },
+    };
+    const res = await request(app.getHttpServer())
+      .post('/v1/stripe/webhook')
+      .set('Content-Type', 'application/json')
+      .send(event);
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ received: true });
+
+    const status = await request(app.getHttpServer())
+      .get('/v1/business/stripe')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId);
+    expect(status.body.accountEmail).toBe('updated@example.com');
+    expect(status.body.chargesEnabled).toBe(false);
+    expect(status.body.payoutsEnabled).toBe(false);
+  });
+
+  it('Idempotency: replaying the same event id returns deduped:true', async () => {
+    const event = {
+      id: `evt_test_dup_${Date.now()}`,
+      type: 'account.updated',
+      livemode: false,
+      data: {
+        object: {
+          id: stripeAccountId,
+          charges_enabled: true,
+          payouts_enabled: true,
+        },
+      },
+    };
+    const first = await request(app.getHttpServer())
+      .post('/v1/stripe/webhook')
+      .set('Content-Type', 'application/json')
+      .send(event);
+    expect(first.body.received).toBe(true);
+    expect(first.body.deduped).toBeUndefined();
+
+    const second = await request(app.getHttpServer())
+      .post('/v1/stripe/webhook')
+      .set('Content-Type', 'application/json')
+      .send(event);
+    expect(second.status).toBe(200);
+    expect(second.body.deduped).toBe(true);
+  });
+
+  it('charge.dispute.created writes a sale.dispute audit row', async () => {
+    // Ring a Stripe-charged sale to get a PaymentIntent id we can
+    // dispute against.
+    const sale = await request(app.getHttpServer())
+      .post('/v1/sales')
+      .set('Cookie', cashierCookie)
+      .set('X-Business-Id', businessId)
+      .send({
+        locationId,
+        lines: [{ variantId, quantity: 1 }],
+        payments: [{ method: 'card', amountCents: 1000, stripePaymentMethodId: 'pm_card_visa' }],
+      });
+    expect(sale.status).toBe(201);
+    const cardPayment = sale.body.payments.find((p: { method: string }) => p.method === 'card');
+    const piId = cardPayment.processorRef as string;
+    expect(piId).toMatch(/^pi_stub_/);
+
+    const event = {
+      id: `evt_dispute_${Date.now()}`,
+      type: 'charge.dispute.created',
+      livemode: false,
+      data: {
+        object: {
+          id: 'dp_stub',
+          payment_intent: piId,
+          amount: 1000,
+          reason: 'fraudulent',
+        },
+      },
+    };
+    const res = await request(app.getHttpServer())
+      .post('/v1/stripe/webhook')
+      .set('Content-Type', 'application/json')
+      .send(event);
+    expect(res.status).toBe(200);
+
+    // Audit row should exist for sale.dispute action.
+    const sql = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    const db = drizzle(sql);
+    try {
+      const audits = await db
+        .select()
+        .from(schema.auditLogs)
+        .where(eq(schema.auditLogs.action, 'sale.dispute'));
+      expect(audits.length).toBe(1);
+      expect(audits[0]!.targetId).toBe(sale.body.id);
+      expect(audits[0]!.actorType).toBe('system');
+    } finally {
+      await sql.end({ timeout: 5 });
+    }
+  });
+
+  it('account.application.deauthorized soft-disconnects the merchant', async () => {
+    const event = {
+      id: `evt_deauth_${Date.now()}`,
+      type: 'account.application.deauthorized',
+      livemode: false,
+      account: stripeAccountId,
+      data: { object: { id: 'ca_stub' } },
+    };
+    const res = await request(app.getHttpServer())
+      .post('/v1/stripe/webhook')
+      .set('Content-Type', 'application/json')
+      .send(event);
+    expect(res.status).toBe(200);
+
+    const status = await request(app.getHttpServer())
+      .get('/v1/business/stripe')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId);
+    expect(status.body.connected).toBe(false);
+    expect(status.body.chargesEnabled).toBe(false);
+  });
+
+  it('Unknown event types are accepted and logged but no-op', async () => {
+    const event = {
+      id: `evt_unknown_${Date.now()}`,
+      type: 'invoice.created', // not handled
+      livemode: false,
+      data: { object: { id: 'in_stub' } },
+    };
+    const res = await request(app.getHttpServer())
+      .post('/v1/stripe/webhook')
+      .set('Content-Type', 'application/json')
+      .send(event);
+    expect(res.status).toBe(200);
+    expect(res.body.received).toBe(true);
+  });
+
+  it('Malformed payload (missing id/type) returns 400', async () => {
+    const res = await request(app.getHttpServer())
+      .post('/v1/stripe/webhook')
+      .set('Content-Type', 'application/json')
+      .send({ data: { object: {} } });
+    expect(res.status).toBe(400);
   });
 });

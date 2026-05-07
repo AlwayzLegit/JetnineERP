@@ -59,3 +59,28 @@ export const stripeOauthStates = pgTable(
     businessIdx: index('stripe_oauth_states_business_id_idx').on(t.businessId),
   }),
 );
+
+/**
+ * Stripe webhook event log. Used for idempotency — Stripe retries
+ * delivery, and the webhook handler must accept the same event id
+ * exactly once. Persisted across restarts so we don't double-handle
+ * after a deploy. No `business_id` column: webhooks may target the
+ * platform itself (account.application.deauthorized) before we know
+ * which tenant they relate to. RLS isn't applied to this table; only
+ * the platform writes/reads it.
+ */
+export const stripeWebhookEvents = pgTable(
+  'stripe_webhook_events',
+  {
+    eventId: text('event_id').primaryKey(),
+    type: text('type').notNull(),
+    livemode: boolean('livemode').notNull().default(false),
+    receivedAt: timestamp('received_at', { withTimezone: true }).notNull().defaultNow(),
+    payload: text('payload'),
+    error: text('error'),
+  },
+  (t) => ({
+    typeIdx: index('stripe_webhook_events_type_idx').on(t.type),
+    receivedIdx: index('stripe_webhook_events_received_at_idx').on(t.receivedAt),
+  }),
+);

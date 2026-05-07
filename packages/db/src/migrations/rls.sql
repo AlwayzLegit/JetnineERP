@@ -226,3 +226,14 @@ DROP POLICY IF EXISTS verifications_super_admin_only ON verifications;
 CREATE POLICY verifications_super_admin_only ON verifications
   USING (is_super_admin())
   WITH CHECK (is_super_admin());
+
+-- stripe_webhook_events: platform-internal log; the webhook handler runs
+-- as the postgres role (RLS bypassed there) and tenant code never needs
+-- to read this table.
+ALTER TABLE stripe_webhook_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE stripe_webhook_events FORCE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS stripe_webhook_events_super_admin_only ON stripe_webhook_events;
+CREATE POLICY stripe_webhook_events_super_admin_only ON stripe_webhook_events
+  USING (is_super_admin())
+  WITH CHECK (is_super_admin());

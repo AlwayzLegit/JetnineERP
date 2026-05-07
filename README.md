@@ -684,4 +684,50 @@ account.
   the four Stripe env vars above (a free Connect Standard
   application; no platform Stripe payments are ever processed)
   plus the OAuth redirect URI configured in your Stripe Connect
-  settings. Webhook handler comes next.
+  settings. The webhook handler is in place; just point a Stripe
+  webhook endpoint at `https://<api-host>/v1/stripe/webhook` and
+  set `STRIPE_WEBHOOK_SECRET`.
+
+## Phase 2.2 status (Stripe webhooks)
+
+Phase 2.2 is complete. The webhook handler is the bridge that keeps
+our merchant state in sync with whatever happens on Stripe's side
+(merchants editing their account, disputes, payouts disabled, etc.).
+
+- **`stripe_webhook_events`** table (RLS-forced, super-admin only)
+  records every event we accept by `event_id` so retries are
+  idempotent. Failure messages are stashed alongside the row for
+  debugging without re-firing the handler. Migration
+  `0008_clever_wallop.sql`.
+- **`POST /v1/stripe/webhook`** is `@Public()`, signature-verified
+  via `StripeService.verifyWebhook(rawBody, signature)`. The Nest
+  app boots with `rawBody: true` so Express keeps the unparsed
+  bytes for signature checking. In stub mode (no
+  `STRIPE_WEBHOOK_SECRET` set) the handler accepts a parsed JSON
+  payload directly so dev / tests work without signed events.
+- **Idempotency**: the handler `INSERT … ON CONFLICT DO NOTHING`s
+  the event id; replays return `200 { received: true, deduped: true }`
+  without re-running side effects.
+- **Always responds 200 once the event is durably recorded**, even
+  if a downstream handler throws — Stripe would otherwise retry
+  forever for a code bug. Errors are written to the event row.
+- **Handlers wired:**
+  - `account.updated` → syncs `charges_enabled` / `payouts_enabled`
+    / email / default currency on the merchant row.
+  - `account.application.deauthorized` → soft-disconnects the
+    merchant (set `disconnected_at`, force charges/payouts off).
+  - `charge.dispute.created` → writes a `sale.dispute` audit row
+    with the dispute id, amount, and reason against the originating
+    sale.
+  - Unknown event types are accepted and logged but no-op (so
+    Stripe stops retrying — we'll wire more handlers as needs
+    come up).
+- **Setup:** in your Stripe dashboard → Developers → Webhooks →
+  add endpoint `https://<api-host>/v1/stripe/webhook`. Subscribe
+  to at least `account.updated`, `account.application.deauthorized`,
+  `charge.dispute.created`. Copy the signing secret into
+  `STRIPE_WEBHOOK_SECRET`.
+- **Integration tests** added 7 cases on top of the existing
+  Stripe spec: account.updated syncs merchant fields, replay is
+  deduped, dispute writes the audit row, deauthorized
+  soft-disconnects, unknown types pass, malformed payload returns 400. Total Stripe spec: 18/18; repo: 122 tests, all green.
