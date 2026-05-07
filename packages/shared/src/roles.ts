@@ -23,6 +23,7 @@ const cashierPermissions: Permission[] = [
   'pos.access',
   'pos.transaction.create',
   'pos.transaction.discount',
+  'sales.view',
   'customers.view',
   'customers.create',
   'products.view',
@@ -42,6 +43,7 @@ const bookkeeperPermissions: Permission[] = [
   'reports.inventory.view',
   'reports.financial.view',
   'reports.export',
+  'sales.view',
   'audit.view',
 ];
 

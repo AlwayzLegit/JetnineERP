@@ -441,3 +441,59 @@ Epic 1.9 is complete:
   is empty → edit emits an audit diff → cashier `customers.delete`
   denied (403) → bookkeeper `customers.view` denied (403) → owner
   delete succeeds. CI provisions `jetnine_customers`.
+
+## Phase 1 — Epic 1.10 status (POS register)
+
+Epic 1.10 is complete:
+
+- **Schema**: added `refund_lines` (refund header + per-line breakdown so
+  each refunded unit can be tied back to its sale line and propagate to
+  inventory). Added to `TENANT_SCOPED_TABLES` + `rls.sql` so RLS forces
+  on the new table. Generated as migration `0004_white_mystique.sql`.
+- **Pure totals helper** (`apps/api/src/sales/totals.ts`): subtotal,
+  line + order discounts (clamped), tax at sale level via
+  `taxRateBps`. Unit-tested with 9 cases. Used both by the API and
+  the web cart preview keeps the math identical.
+- **`GET /v1/pos/lookup?q=…`**: barcode-exact match first (so a scan
+  resolves to a single row) with ILIKE fallback on product name/SKU.
+  Returns active variants only. Gated by `pos.access`.
+- **`GET /v1/pos/locations`**: cashier-friendly location list (no
+  `locations.view` required) so the register can fetch tax rates.
+- **`POST /v1/sales`**: completes a sale in one shot inside the
+  request's RLS transaction — sale header, lines, payments, one
+  `inventory_movements` per line with `reason='sale'`, decrements
+  `inventory_levels.on_hand`, generates an `INV-YYYY-NNNNNN` number
+  with retry-on-conflict, and audit-logs `sale.complete`. Validates
+  payments-sum-equals-total and accepts split tender (cash + card).
+  Card payments record `processor='manual'` for MVP — Stripe Terminal
+  lands in Phase 2.
+- **`GET /v1/sales` / `GET /v1/sales/:id`**: list + detail with
+  joined lines, payments, refunds, and per-line `refundedQuantity`.
+- **`POST /v1/sales/:id/refund`**: per-line refund with quantity, restores
+  inventory via positive `inventory_movements` rows + level upsert,
+  enforces "cannot refund more than remaining", flips sale status to
+  `partially_refunded` or `refunded`, audit-logged. Gated by
+  `pos.refund.create`.
+- **Permissions**: added `sales.view` to the catalog (Cashier and
+  Bookkeeper get it; Owner/Manager already have it via the `*`
+  catalog).
+- **Web**: `/pos` is the register — barcode/search input that
+  auto-adds on exact match, cart with quantity / line discount,
+  customer attach modal that can also create a customer mid-sale,
+  totals panel, payment screen with split tender + change calc, and
+  receipt with `window.print()`. `/sales` lists completed sales;
+  `/sales/[id]` shows lines + payments + refunds with an inline
+  refund form. Customer detail's "Recent purchases" now populates
+  from real sale rows.
+- **Integration tests** (`apps/api/test/sales.int.spec.ts`, 11
+  cases): barcode + name lookup, role-gated lookup, full 50/50
+  cash+card sale with tax + audit + inventory decrement, list +
+  detail render, payment-sum mismatch (400), cashier denied refund,
+  owner refund of one line restores inventory and flips status to
+  `partially_refunded`, over-refund (400), final refund flips status
+  to `refunded`, sequential sale numbers within a year. Plus the
+  pure totals helper's 9 unit tests. CI provisions `jetnine_sales`.
+- **Acceptance:** A cashier can complete a sale paid 50% cash / 50%
+  card, see inventory decrement, view it in the sales list, refund
+  a single line, and the inventory is restored — exactly what the
+  integration suite walks through end-to-end.

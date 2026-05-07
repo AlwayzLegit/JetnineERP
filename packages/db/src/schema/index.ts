@@ -27,4 +27,5 @@ export const TENANT_SCOPED_TABLES = [
   'sale_lines',
   'payments',
   'refunds',
+  'refund_lines',
 ] as const;

@@ -114,3 +114,27 @@ export const refunds = pgTable(
     approvedIdx: index('refunds_approved_by_user_id_idx').on(t.approvedByUserId),
   }),
 );
+
+export const refundLines = pgTable(
+  'refund_lines',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    businessId: uuid('business_id')
+      .notNull()
+      .references(() => businesses.id, { onDelete: 'cascade' }),
+    refundId: uuid('refund_id')
+      .notNull()
+      .references(() => refunds.id, { onDelete: 'cascade' }),
+    saleLineId: uuid('sale_line_id')
+      .notNull()
+      .references(() => saleLines.id, { onDelete: 'cascade' }),
+    variantId: uuid('variant_id').references(() => productVariants.id, { onDelete: 'set null' }),
+    quantity: integer('quantity').notNull(),
+    amountCents: integer('amount_cents').notNull(),
+  },
+  (t) => ({
+    refundIdx: index('refund_lines_refund_id_idx').on(t.refundId),
+    businessIdx: index('refund_lines_business_id_idx').on(t.businessId),
+    saleLineIdx: index('refund_lines_sale_line_id_idx').on(t.saleLineId),
+  }),
+);

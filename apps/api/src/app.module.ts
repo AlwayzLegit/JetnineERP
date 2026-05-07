@@ -17,6 +17,7 @@ import { EmailModule } from './email/email.module';
 import { HealthController } from './health/health.controller';
 import { InventoryModule } from './inventory/inventory.module';
 import { RedisModule } from './redis/redis.module';
+import { SalesModule } from './sales/sales.module';
 import { TenancyModule } from './tenancy/tenancy.module';
 
 @Module({
@@ -62,6 +63,7 @@ import { TenancyModule } from './tenancy/tenancy.module';
     CatalogModule,
     CustomersModule,
     InventoryModule,
+    SalesModule,
     AdminModule,
   ],
   controllers: [AppController, HealthController],

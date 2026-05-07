@@ -43,6 +43,7 @@ export const PERMISSIONS = {
   'pos.refund.approve': 'Approve refunds above limit',
   'pos.cash.open': 'Open cash drawer',
   'pos.cash.reconcile': 'Reconcile cash drawer',
+  'sales.view': 'View completed sales and refund history',
 
   'reports.sales.view': 'View sales reports',
   'reports.inventory.view': 'View inventory reports',
