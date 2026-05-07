@@ -12,11 +12,17 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
-import { and, asc, desc, eq, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, or, sql } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { schema } from '@jetnine/db';
 import { AuditService } from '../audit/audit.service';
 import { CurrentTenant } from '../auth/current-user.decorator';
+import {
+  buildPage,
+  clampLimit as clampPageLimit,
+  decodeCursor,
+  type PageResponse,
+} from '../common/pagination';
 import { DRIZZLE } from '../database/database.module';
 import { RequirePermission, TenantScoped } from '../tenancy/decorators';
 import type { RequestTenantContext } from '../tenancy/request-context';
@@ -94,17 +100,17 @@ export class CatalogProductsController {
     @Query('q') q?: string,
     @Query('categoryId') categoryId?: string,
     @Query('limit') limitStr?: string,
-  ): Promise<{ id: string; sku: string | null; name: string; isActive: boolean }[]> {
-    const limit = clampLimit(limitStr);
-    const where: ReturnType<typeof and>[] = [];
-    if (categoryId) where.push(eq(schema.products.categoryId, categoryId));
+    @Query('cursor') cursorStr?: string,
+  ): Promise<PageResponse<{ id: string; sku: string | null; name: string; isActive: boolean }>> {
+    void tenant;
+    const limit = clampPageLimit(limitStr);
+    const filters: ReturnType<typeof and>[] = [];
+    if (categoryId) filters.push(eq(schema.products.categoryId, categoryId));
 
     if (q && q.trim().length > 0) {
-      // Combine the products' own search_tsv with any variants matching the
-      // query — that way searching for a variant SKU or barcode lights up
-      // the parent product. RLS scopes both halves to this business.
+      // Search returns ts_rank-ordered results — single page, no cursor.
       const tsq = sql`websearch_to_tsquery('simple', ${q})`;
-      const products = await this.db
+      const data = await this.db
         .select({
           id: schema.products.id,
           sku: schema.products.sku,
@@ -114,7 +120,7 @@ export class CatalogProductsController {
         .from(schema.products)
         .where(
           and(
-            ...where,
+            ...filters,
             sql`${schema.products.searchTsv} @@ ${tsq}
                 OR EXISTS (
                   SELECT 1 FROM ${schema.productVariants} v
@@ -125,9 +131,19 @@ export class CatalogProductsController {
         )
         .orderBy(desc(sql`ts_rank(${schema.products.searchTsv}, ${tsq})`))
         .limit(limit);
-      return products;
+      return { data, nextCursor: null };
     }
 
+    // Default browse: alphabetical by name, with id as the tiebreaker.
+    const cursor = decodeCursor(cursorStr);
+    if (cursor) {
+      filters.push(
+        or(
+          gt(schema.products.name, cursor.v as string),
+          and(eq(schema.products.name, cursor.v as string), gt(schema.products.id, cursor.id)),
+        )!,
+      );
+    }
     const rows = await this.db
       .select({
         id: schema.products.id,
@@ -136,11 +152,10 @@ export class CatalogProductsController {
         isActive: schema.products.isActive,
       })
       .from(schema.products)
-      .where(where.length ? and(...where) : undefined)
-      .orderBy(asc(schema.products.name))
-      .limit(limit);
-    void tenant;
-    return rows;
+      .where(filters.length ? and(...filters) : undefined)
+      .orderBy(asc(schema.products.name), asc(schema.products.id))
+      .limit(limit + 1);
+    return buildPage(rows, limit, (r) => r.name);
   }
 
   @Get(':id')
@@ -345,12 +360,6 @@ export class CatalogProductsController {
     });
     return { deactivated: true };
   }
-}
-
-export function clampLimit(raw: string | undefined): number {
-  const n = Number(raw ?? '50');
-  if (!Number.isFinite(n) || n <= 0) return 50;
-  return Math.min(Math.max(Math.floor(n), 1), 200);
 }
 
 export function validateVariants(variants: VariantInput[]): void {

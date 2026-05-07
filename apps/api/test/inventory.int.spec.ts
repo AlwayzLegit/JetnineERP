@@ -342,13 +342,13 @@ describe('Epic 1.8 — Inventory', () => {
       .set('Cookie', ownerCookie)
       .set('X-Business-Id', businessId);
     expect(res.status).toBe(200);
-    expect(Array.isArray(res.body)).toBe(true);
-    expect(res.body.length).toBeGreaterThanOrEqual(4); // 2 receives + 2 adjusts
-    const reasons = (res.body as Array<{ reason: string }>).map((m) => m.reason);
+    expect(Array.isArray(res.body.data)).toBe(true);
+    expect(res.body.data.length).toBeGreaterThanOrEqual(4); // 2 receives + 2 adjusts
+    const reasons = (res.body.data as Array<{ reason: string }>).map((m) => m.reason);
     expect(reasons).toContain('receive');
     expect(reasons).toContain('damage');
     expect(reasons).toContain('count_correction');
-    const first = res.body[0];
+    const first = res.body.data[0];
     expect(first.actorEmail).toBe('clerk@inv-test.local');
   });
 });

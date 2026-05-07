@@ -8,12 +8,18 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
-import { and, asc, desc, eq, gte, lt, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, lt, or, sql } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { schema } from '@jetnine/db';
 import { AuditService } from '../audit/audit.service';
 import { CurrentTenant, CurrentUser } from '../auth/current-user.decorator';
 import type { CurrentUserPayload } from '../auth/current-user.decorator';
+import {
+  buildPage,
+  clampLimit as clampPageLimit,
+  decodeCursor,
+  type PageResponse,
+} from '../common/pagination';
 import { DRIZZLE } from '../database/database.module';
 import { RequirePermission, TenantScoped } from '../tenancy/decorators';
 import type { RequestTenantContext } from '../tenancy/request-context';
@@ -120,8 +126,9 @@ export class InventoryController {
     @Query('since') since?: string,
     @Query('until') until?: string,
     @Query('limit') limitStr?: string,
-  ): Promise<MovementRow[]> {
-    const limit = clampLimit(limitStr);
+    @Query('cursor') cursorStr?: string,
+  ): Promise<PageResponse<MovementRow>> {
+    const limit = clampPageLimit(limitStr);
     const conditions = [] as ReturnType<typeof eq>[];
     if (variantId) conditions.push(eq(schema.inventoryMovements.variantId, variantId));
     if (locationId) conditions.push(eq(schema.inventoryMovements.locationId, locationId));
@@ -132,6 +139,18 @@ export class InventoryController {
     if (until) {
       const d = new Date(until);
       if (!Number.isNaN(d.getTime())) conditions.push(lt(schema.inventoryMovements.createdAt, d));
+    }
+    const cursor = decodeCursor(cursorStr);
+    if (cursor) {
+      conditions.push(
+        or(
+          lt(schema.inventoryMovements.createdAt, new Date(cursor.v as string)),
+          and(
+            eq(schema.inventoryMovements.createdAt, new Date(cursor.v as string)),
+            lt(schema.inventoryMovements.id, cursor.id),
+          ),
+        )!,
+      );
     }
     const rows = await this.db
       .select({
@@ -150,12 +169,10 @@ export class InventoryController {
       .from(schema.inventoryMovements)
       .leftJoin(schema.users, eq(schema.users.id, schema.inventoryMovements.actorUserId))
       .where(conditions.length ? and(...conditions) : undefined)
-      .orderBy(desc(schema.inventoryMovements.createdAt))
-      .limit(limit);
-    return rows.map((r) => ({
-      ...r,
-      actorEmail: r.actorEmail ?? null,
-    }));
+      .orderBy(desc(schema.inventoryMovements.createdAt), desc(schema.inventoryMovements.id))
+      .limit(limit + 1);
+    const enriched = rows.map((r) => ({ ...r, actorEmail: r.actorEmail ?? null }));
+    return buildPage(enriched, limit, (r) => r.createdAt);
   }
 
   /**
@@ -332,10 +349,4 @@ export class InventoryController {
 
     return { onHand: level.onHand, movementId: movement.id };
   }
-}
-
-function clampLimit(raw: string | undefined): number {
-  const n = Number(raw ?? '50');
-  if (!Number.isFinite(n) || n <= 0) return 50;
-  return Math.min(Math.max(Math.floor(n), 1), 200);
 }

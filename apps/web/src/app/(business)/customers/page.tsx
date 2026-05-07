@@ -23,7 +23,10 @@ export default function CustomersPage() {
     setError(null);
     try {
       const params = query ? `?q=${encodeURIComponent(query)}` : '';
-      setRows(await api<CustomerRow[]>(`/v1/customers${params}`));
+      const res = await api<{ data: CustomerRow[]; nextCursor: string | null }>(
+        `/v1/customers${params}`,
+      );
+      setRows(res.data);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }

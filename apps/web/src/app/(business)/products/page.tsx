@@ -23,7 +23,10 @@ export default function ProductsPage() {
     setError(null);
     try {
       const params = query ? `?q=${encodeURIComponent(query)}` : '';
-      setRows(await api<ProductRow[]>(`/v1/products${params}`));
+      const res = await api<{ data: ProductRow[]; nextCursor: string | null }>(
+        `/v1/products${params}`,
+      );
+      setRows(res.data);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }

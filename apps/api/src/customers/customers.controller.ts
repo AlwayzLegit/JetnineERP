@@ -11,11 +11,17 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
-import { and, asc, desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, lt, or, sql } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { schema } from '@jetnine/db';
 import { AuditService } from '../audit/audit.service';
 import { CurrentTenant } from '../auth/current-user.decorator';
+import {
+  buildPage,
+  clampLimit as clampPageLimit,
+  decodeCursor,
+  type PageResponse,
+} from '../common/pagination';
 import { DRIZZLE } from '../database/database.module';
 import { RequirePermission, TenantScoped } from '../tenancy/decorators';
 import type { RequestTenantContext } from '../tenancy/request-context';
@@ -63,27 +69,40 @@ export class CustomersController {
     @CurrentTenant() _tenant: RequestTenantContext,
     @Query('q') q?: string,
     @Query('limit') limitStr?: string,
-  ): Promise<CustomerRow[]> {
-    const limit = clampLimit(limitStr);
+    @Query('cursor') cursorStr?: string,
+  ): Promise<PageResponse<CustomerRow>> {
+    const limit = clampPageLimit(limitStr);
     if (q && q.trim().length > 0) {
-      // Normalize the search input the same way the generated tsvector
-      // does (replace punctuation with spaces) so a user typing
-      // "bob@example" or "+1 (555) 999-9999" hits the same tokens that
-      // were stored.
+      // Search returns ts_rank-ordered results; cursor pagination over a
+      // dynamic ranking is not meaningful, so a single page is returned
+      // with `nextCursor: null`. Clients refine with the next query.
       const normalized = q.replace(/[^a-zA-Z0-9]+/g, ' ').trim();
       const tsq = sql`websearch_to_tsquery('simple', ${normalized})`;
-      return this.db
+      const data = await this.db
         .select(SELECT_COLS)
         .from(schema.customers)
         .where(sql`${schema.customers.searchTsv} @@ ${tsq}`)
         .orderBy(desc(sql`ts_rank(${schema.customers.searchTsv}, ${tsq})`))
         .limit(limit);
+      return { data, nextCursor: null };
     }
-    return this.db
+    const cursor = decodeCursor(cursorStr);
+    const where = cursor
+      ? or(
+          lt(schema.customers.createdAt, new Date(cursor.v as string)),
+          and(
+            eq(schema.customers.createdAt, new Date(cursor.v as string)),
+            lt(schema.customers.id, cursor.id),
+          ),
+        )
+      : undefined;
+    const rows = await this.db
       .select(SELECT_COLS)
       .from(schema.customers)
-      .orderBy(asc(schema.customers.lastName), asc(schema.customers.firstName))
-      .limit(limit);
+      .where(where)
+      .orderBy(desc(schema.customers.createdAt), desc(schema.customers.id))
+      .limit(limit + 1);
+    return buildPage(rows, limit, (r) => r.createdAt);
   }
 
   @Get(':id')
@@ -296,12 +315,4 @@ function hasAnyIdentity(body: CreateBody): boolean {
   );
 }
 
-function clampLimit(raw: string | undefined): number {
-  const n = Number(raw ?? '50');
-  if (!Number.isFinite(n) || n <= 0) return 50;
-  return Math.min(Math.max(Math.floor(n), 1), 200);
-}
-
-// `and` is imported but not currently used; keeping the import registered
-// in case future filters (status, date) need composite WHERE clauses.
 void and;

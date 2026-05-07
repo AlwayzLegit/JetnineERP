@@ -223,7 +223,7 @@ describe('Epic 1.7 — Product catalog', () => {
       .set('Cookie', ownerCookie)
       .set('X-Business-Id', businessId);
     expect(res.status).toBe(200);
-    const ids = (res.body as { id: string; name: string }[]).map((p) => p.id);
+    const ids = (res.body.data as { id: string; name: string }[]).map((p) => p.id);
     expect(ids).toContain(productId);
   });
 
@@ -233,7 +233,7 @@ describe('Epic 1.7 — Product catalog', () => {
       .set('Cookie', ownerCookie)
       .set('X-Business-Id', businessId);
     expect(res.status).toBe(200);
-    const ids = (res.body as { id: string }[]).map((p) => p.id);
+    const ids = (res.body.data as { id: string }[]).map((p) => p.id);
     expect(ids).toContain(productId);
   });
 
@@ -243,7 +243,7 @@ describe('Epic 1.7 — Product catalog', () => {
       .set('Cookie', ownerCookie)
       .set('X-Business-Id', businessId);
     expect(res.status).toBe(200);
-    const ids = (res.body as { id: string }[]).map((p) => p.id);
+    const ids = (res.body.data as { id: string }[]).map((p) => p.id);
     expect(ids).toContain(productId);
   });
 

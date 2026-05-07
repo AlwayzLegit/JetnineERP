@@ -1097,3 +1097,39 @@ double-charging.
   (stable stringify) → completed row carries response status +
   body. Repo: 211 tests, all green. CI provisions
   `jetnine_idempotency`.
+
+## Phase 2.10 status (cursor pagination)
+
+Phase 2.10 is complete. Every list endpoint now returns the same
+`{ data, nextCursor }` envelope and is safely paginatable. Pairs
+with the public API (2.8) so integrators can stream the full
+table out without hitting the 200-row hard cap.
+
+- **Helper**: `apps/api/src/common/pagination.ts` exposes
+  `clampLimit(raw)`, `decodeCursor(raw)`, `encodeCursor(value, id)`,
+  and `buildPage(rows, limit, valueFn)`. Cursors are base64url JSON
+  of `{ v, id }` — opaque to clients, stable in shape. The id is
+  always carried as a tiebreaker so duplicate sort-key values can't
+  cause cross-page duplicates or skips.
+- **Applied to**: `/v1/sales`, `/v1/customers`, `/v1/products`,
+  `/v1/inventory/movements`, `/v1/audit-logs`. Search paths
+  (`?q=`) bypass cursoring and return a single page with
+  `nextCursor: null`, since `ts_rank` ordering isn't stable
+  across queries.
+- **Default sort**: newest-first by `(created_at, id)` for time-
+  series tables, alphabetical by `(name, id)` for products. Limit
+  defaults to 50, max 200.
+- **Breaking change**: list endpoints used to return `T[]`. They
+  now return `{ data: T[], nextCursor: string | null }`. All
+  in-repo web pages and tests have been updated. Public-API
+  consumers don't yet exist (Phase 2.8 just shipped), so the
+  break is internal.
+- **Malformed cursors**: 400 with "Invalid cursor". Empty / absent
+  cursor → page 1.
+- **Integration tests** (`apps/api/test/pagination.int.spec.ts`,
+  7 cases): list returns the envelope → walking the cursor visits
+  every row exactly once → last page sets `nextCursor: null` →
+  malformed cursor 400s → `?limit=` is clamped to 200 → search
+  path returns a single page → products and audit-logs share the
+  envelope. Repo: 218 tests, all green. CI provisions
+  `jetnine_pagination`.

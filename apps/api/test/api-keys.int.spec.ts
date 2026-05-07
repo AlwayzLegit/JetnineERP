@@ -229,7 +229,7 @@ describe('Phase 2.8 — API keys', () => {
       .get('/v1/sales')
       .set('Authorization', `Bearer ${readOnlyKey}`);
     expect(res.status).toBe(200);
-    expect(Array.isArray(res.body)).toBe(true);
+    expect(Array.isArray(res.body.data)).toBe(true);
   });
 
   it('Read-only key is denied on a write endpoint (scope enforcement)', async () => {

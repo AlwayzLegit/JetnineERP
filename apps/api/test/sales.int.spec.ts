@@ -301,7 +301,7 @@ describe('Epic 1.10 — POS register & sales', () => {
       .set('Cookie', cashierCookie)
       .set('X-Business-Id', businessId);
     expect(list.status).toBe(200);
-    expect(list.body[0].id).toBe(saleId);
+    expect(list.body.data[0].id).toBe(saleId);
 
     const detail = await request(app.getHttpServer())
       .get(`/v1/sales/${saleId}`)

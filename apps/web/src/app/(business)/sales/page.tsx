@@ -23,7 +23,8 @@ export default function SalesPage() {
   useEffect(() => {
     void (async () => {
       try {
-        setRows(await api<SaleRow[]>('/v1/sales'));
+        const res = await api<{ data: SaleRow[]; nextCursor: string | null }>('/v1/sales');
+        setRows(res.data);
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
       }

@@ -188,7 +188,7 @@ describe('Epic 1.9 — Customer records', () => {
       .set('Cookie', cashierCookie)
       .set('X-Business-Id', businessId);
     expect(res.status).toBe(200);
-    const ids = (res.body as { id: string }[]).map((c) => c.id);
+    const ids = (res.body.data as { id: string }[]).map((c) => c.id);
     expect(ids).toContain(aliceId);
     expect(ids.length).toBe(1);
   });
@@ -199,7 +199,7 @@ describe('Epic 1.9 — Customer records', () => {
       .set('Cookie', cashierCookie)
       .set('X-Business-Id', businessId);
     expect(res.status).toBe(200);
-    const emails = (res.body as { email: string | null }[]).map((c) => c.email);
+    const emails = (res.body.data as { email: string | null }[]).map((c) => c.email);
     expect(emails).toContain('bob@example.com');
   });
 
@@ -209,7 +209,7 @@ describe('Epic 1.9 — Customer records', () => {
       .set('Cookie', cashierCookie)
       .set('X-Business-Id', businessId);
     expect(res.status).toBe(200);
-    const names = (res.body as { firstName: string | null }[]).map((c) => c.firstName);
+    const names = (res.body.data as { firstName: string | null }[]).map((c) => c.firstName);
     expect(names).toContain('Charlie');
   });
 

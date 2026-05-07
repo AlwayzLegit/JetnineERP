@@ -220,8 +220,8 @@ describe('Epic 1.4 — Audit log', () => {
       .set('Cookie', bookkeeper.cookie)
       .set('X-Business-Id', businessId);
     expect(res.status).toBe(200);
-    expect(Array.isArray(res.body)).toBe(true);
-    const update = (res.body as Array<{ action: string; actorEmail: string | null }>).find(
+    expect(Array.isArray(res.body.data)).toBe(true);
+    const update = (res.body.data as Array<{ action: string; actorEmail: string | null }>).find(
       (r) => r.action === 'product.variant.price.update',
     );
     expect(update).toBeDefined();
@@ -243,6 +243,6 @@ describe('Epic 1.4 — Audit log', () => {
       .set('Cookie', bookkeeper.cookie)
       .set('X-Business-Id', businessId);
     expect(res.status).toBe(200);
-    expect(res.body).toHaveLength(1);
+    expect(res.body.data).toHaveLength(1);
   });
 });

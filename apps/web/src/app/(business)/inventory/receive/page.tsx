@@ -54,8 +54,10 @@ export default function ReceivePage() {
       return;
     }
     try {
-      const rows = await api<ProductRow[]>(`/v1/products?q=${encodeURIComponent(search)}&limit=10`);
-      setSearchResults(rows);
+      const res = await api<{ data: ProductRow[]; nextCursor: string | null }>(
+        `/v1/products?q=${encodeURIComponent(search)}&limit=10`,
+      );
+      setSearchResults(res.data);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }

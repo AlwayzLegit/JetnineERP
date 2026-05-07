@@ -43,8 +43,8 @@ export default function AuditLogPage() {
         setRows([]);
         return;
       }
-      const data = (await res.json()) as AuditLogRow[];
-      setRows(data);
+      const body = (await res.json()) as { data: AuditLogRow[]; nextCursor: string | null };
+      setRows(body.data);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setRows([]);

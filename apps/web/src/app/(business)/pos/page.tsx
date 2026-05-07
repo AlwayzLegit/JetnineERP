@@ -792,7 +792,10 @@ function CustomerPicker({
 
   async function search() {
     try {
-      setRows(await api<CustomerRow[]>(`/v1/customers?q=${encodeURIComponent(q)}`));
+      const res = await api<{ data: CustomerRow[]; nextCursor: string | null }>(
+        `/v1/customers?q=${encodeURIComponent(q)}`,
+      );
+      setRows(res.data);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }

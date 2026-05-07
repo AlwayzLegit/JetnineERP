@@ -164,7 +164,7 @@ describe('Epic 1.3 — @RequirePermission gating', () => {
       .set('Cookie', owner.cookie)
       .set('X-Business-Id', businessId);
     expect(res.status).toBe(200);
-    expect(Array.isArray(res.body)).toBe(true);
+    expect(Array.isArray(res.body.data)).toBe(true);
   });
 
   it('Bookkeeper lacks products.view → 403', async () => {
