@@ -9,6 +9,7 @@ import { AppController } from './app.controller';
 import { AuditModule } from './audit/audit.module';
 import { AuthGuard } from './auth/auth.guard';
 import { AuthModule } from './auth/auth.module';
+import { BillingModule } from './billing/billing.module';
 import { BusinessModule } from './business/business.module';
 import { CashModule } from './cash/cash.module';
 import { CatalogModule } from './catalog/catalog.module';
@@ -68,6 +69,7 @@ import { TenancyModule } from './tenancy/tenancy.module';
     SalesModule,
     CashModule,
     ReportsModule,
+    BillingModule,
     AdminModule,
   ],
   controllers: [AppController, HealthController],

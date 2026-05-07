@@ -67,7 +67,8 @@ DECLARE
     'payments',
     'refunds',
     'refund_lines',
-    'cash_shifts'
+    'cash_shifts',
+    'subscriptions'
   ];
 BEGIN
   FOREACH t IN ARRAY tenant_tables LOOP

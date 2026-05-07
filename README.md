@@ -558,3 +558,58 @@ location during the shift window)` and persists
   (open shift → ring sales → close with counted), an owner views
   the day's totals, and exports to CSV. The integration test walks
   through every step.
+
+## Phase 1 — Epic 1.12 status (Billing & read-only mode)
+
+Epic 1.12 is complete:
+
+- **Schema**: `subscriptions` table (one row per business) holds plan
+  (`starter` | `pro`), status (`trial` | `active` | `past_due` |
+  `canceled`), trial end, period start/end, and the Stripe
+  customer/subscription IDs that the production webhook integration
+  will populate. Tenant-scoped + RLS-forced. Migration
+  `0006_sleepy_ultimo.sql`.
+- **Pure pricing helper** (`apps/api/src/billing/pricing.ts`):
+  Starter $50/location/month, Pro $100/location/month. 4 unit tests.
+- **`GET /v1/billing/plans`** lists the catalog;
+  **`GET /v1/billing/subscription`** returns the current state with
+  computed `monthlyPriceCents` (plan price × current location count)
+  and a `readOnly` boolean the UI uses to render the lapse banner.
+- **`POST /v1/billing/subscribe`** transitions trial/cancelled →
+  active and resets the period. In production this is where we'd
+  redirect to Stripe Checkout; the body of the change-of-state
+  fires here so the rest of the system can exercise the
+  post-payment flow without real charges. Add `STRIPE_SECRET_KEY`
+  to swap in the real integration.
+- **`PATCH /v1/billing/subscription`** changes plan in-place;
+  **`POST /v1/billing/cancel`** flips status to `canceled` and
+  re-engages read-only mode.
+- **`POST /v1/billing/dev/expire-trial`** is a non-prod helper that
+  fast-forwards `trialEndsAt` and flips status to `past_due` —
+  used by the integration test to drive the lapse path. Refuses to
+  fire when `NODE_ENV=production` (Stripe webhooks are the
+  production equivalent).
+- **`SubscriptionGuard`**: runs alongside `TenancyGuard` via
+  `@TenantScoped()`. Lets through GET/HEAD, `/v1/billing/*`,
+  `/v1/business/settings`, and `/api/auth/*` so a lapsed business
+  can still log in, see their data, and pay. Everything else
+  returns **HTTP 402 Payment Required** when the subscription is in
+  `past_due` / `canceled` or in `trial` past `trialEndsAt`.
+- **Trial seeding**: `POST /v1/admin/businesses` now sets a
+  14-day trial and inserts a matching subscription row, so a brand
+  new business can use the app immediately without payment.
+- **Web**: `/settings/billing` renders the current plan, locations,
+  monthly price, and a banner when read-only is active. Plan picker
+  shows both tiers (highlighting the current one); cancel + dev
+  expire-trial are exposed where appropriate. Settings page links to
+  it.
+- **Integration tests** (`apps/api/test/billing.int.spec.ts`, 10
+  cases): trial state visible → in-trial sale succeeds → plan
+  catalog → expire-trial flips to `past_due` and `readOnly:true` →
+  next sale returns 402 → list (GET) still 200 → billing endpoints
+  still 200 → subscribe to Pro flips back to active and writes
+  resume → PATCH plan switch → cancel re-engages 402. Plus the 4
+  pricing unit tests. CI provisions `jetnine_billing`.
+- **Acceptance:** a business in trial, when the trial ends without
+  payment, becomes read-only across all UIs except billing settings —
+  exactly what the integration suite asserts end-to-end.

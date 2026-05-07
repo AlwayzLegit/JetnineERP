@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useEffect, useState, type FormEvent } from 'react';
 import { api } from '@/lib/api';
 
@@ -64,7 +65,23 @@ export default function SettingsPage() {
 
   return (
     <div>
-      <h1 style={{ fontSize: 22, marginBottom: 16 }}>Business settings</h1>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+        <h1 style={{ fontSize: 22, margin: 0 }}>Business settings</h1>
+        <Link
+          href="/settings/billing"
+          style={{
+            marginLeft: 'auto',
+            padding: '8px 14px',
+            background: '#111',
+            color: '#fff',
+            borderRadius: 4,
+            textDecoration: 'none',
+            fontSize: 13,
+          }}
+        >
+          Billing
+        </Link>
+      </div>
       <form onSubmit={submit} style={card}>
         <Field label="Business name">
           <input name="name" defaultValue={settings.name} required style={fieldStyle} />

@@ -1,6 +1,7 @@
 import { SetMetadata, applyDecorators, UseGuards, UseInterceptors } from '@nestjs/common';
 import type { Permission } from '@jetnine/shared';
 import { AuditInterceptor } from '../audit/audit.interceptor';
+import { SubscriptionGuard } from '../billing/subscription.guard';
 import { TenancyGuard } from './tenancy.guard';
 import { PermissionGuard } from './permission.guard';
 import { RlsContextInterceptor } from './rls-context.interceptor';
@@ -35,7 +36,7 @@ export const RequirePermission = (...permissions: Permission[]) =>
  */
 export function TenantScoped() {
   return applyDecorators(
-    UseGuards(TenancyGuard, PermissionGuard),
+    UseGuards(TenancyGuard, SubscriptionGuard, PermissionGuard),
     UseInterceptors(RlsContextInterceptor, AuditInterceptor),
   );
 }

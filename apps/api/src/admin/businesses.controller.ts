@@ -128,10 +128,18 @@ export class AdminBusinessesController {
       throw new BadRequestException('ownerEmail must be a valid email');
     }
 
-    // 1. Create the business.
+    // 1. Create the business. New businesses start a 14-day trial unless
+    // a paid plan was supplied at create time.
+    const trialEndsAt = body.plan ? null : new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
     const [biz] = await this.db
       .insert(schema.businesses)
-      .values({ slug, name, status: body.plan ? 'active' : 'trial', plan: body.plan ?? null })
+      .values({
+        slug,
+        name,
+        status: body.plan ? 'active' : 'trial',
+        plan: body.plan ?? null,
+        trialEndsAt,
+      })
       .returning()
       .catch((err) => {
         const message = err instanceof Error ? err.message : String(err);
@@ -141,6 +149,15 @@ export class AdminBusinessesController {
         throw err;
       });
     if (!biz) throw new UnprocessableEntityException('failed to create business');
+
+    // Seed the subscription row so SubscriptionGuard has something to
+    // read on the very first request.
+    await this.db.insert(schema.subscriptions).values({
+      businessId: biz.id,
+      plan: body.plan ?? 'starter',
+      status: body.plan ? 'active' : 'trial',
+      trialEndsAt,
+    });
 
     // 2. Seed system roles + their permissions for this business.
     const roleIdByName = new Map<string, string>();
