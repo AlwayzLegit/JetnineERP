@@ -6,6 +6,7 @@ export * from './catalog';
 export * from './inventory';
 export * from './customers';
 export * from './sales';
+export * from './cash';
 
 // List of tables that carry a `business_id` and need RLS. Kept in sync with
 // the migration script in src/migrations/rls.sql — when you add a new
@@ -28,4 +29,5 @@ export const TENANT_SCOPED_TABLES = [
   'payments',
   'refunds',
   'refund_lines',
+  'cash_shifts',
 ] as const;

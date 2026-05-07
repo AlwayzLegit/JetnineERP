@@ -497,3 +497,64 @@ Epic 1.10 is complete:
   card, see inventory decrement, view it in the sales list, refund
   a single line, and the inventory is restored — exactly what the
   integration suite walks through end-to-end.
+
+## Phase 1 — Epic 1.11 status (Reports & cash drawer)
+
+Epic 1.11 is complete:
+
+- **Schema**: added `cash_shifts` (one row per shift, with opening
+  float, opened/closed timestamps + actor user, expected/counted
+  cash and computed variance). Tenant-scoped + RLS-forced.
+  Migration `0005_glossy_vision.sql`.
+- **Permissions**: added `sales.view` already in 1.10; here Cashier
+  picks up `pos.cash.open` + `pos.cash.reconcile` so the role can
+  open and close drawers (acceptance criterion calls for "a cashier
+  reconciles cash").
+- **`GET /v1/reports/sales/daily?start=&end=&format=`**: three
+  slices in one response — by-day totals (subtotal/discount/tax/
+  total), by-associate (count + revenue), by-payment-method (cash
+  vs card). Defaults to the last 7 days. `format=csv` streams a
+  text/csv attachment of the by-day table; download requires
+  `reports.export`.
+- **`GET /v1/reports/sales/by-product?start=&end=&format=`**:
+  per-variant totals ordered by revenue. `costCents` and
+  `marginCents` are only returned when the caller has
+  `reports.financial.view` (Owner, Manager, Bookkeeper); otherwise
+  they're null.
+- **`GET /v1/reports/inventory/on-hand?locationId=&lowStock=&format=`**:
+  on-hand snapshot with optional location filter and low-stock
+  threshold (returns rows where `available <= N`). CSV export
+  available.
+- **`POST /v1/cash-shifts`**: opens a shift at a location with an
+  opening float; refuses (409) if a shift is still open at that
+  location.
+- **`POST /v1/cash-shifts/:id/close`**: computes
+  `expected = opening_float + sum(succeeded cash payments at this
+location during the shift window)` and persists
+  `variance = counted − expected` (signed, so $-2 means short).
+  Audit-logged.
+- **`GET /v1/cash-shifts` / `:id`**: list + detail with joined
+  location and opener/closer emails.
+- **Pure CSV writer** (`apps/api/src/reports/csv.ts`) with 4 unit
+  tests covering quoting and Date/null handling.
+- **Web**: `/reports` is a single page with three sections —
+  daily sales (with date pickers + per-section CSV download), sales
+  by product, inventory on hand (with low-stock threshold).
+  `/shifts` lists shifts with an inline open form;
+  `/shifts/[id]` shows totals and a close form for open shifts or a
+  signed variance for closed ones. Both linked from the back-office
+  nav.
+- **Integration tests** (`apps/api/test/reports.int.spec.ts`, 9
+  cases): cashier opens a shift → second open at same location 409s
+  → cashier rings $20 cash + $5 card → close with $118 counted
+  produces $-2 variance over $120 expected → daily report shows the
+  sales bucketed by day, by associate, by payment method →
+  by-product is ordered by revenue, hides margin from cashier (also
+  403'd for `reports.sales.view`), shows margin to bookkeeper →
+  low-stock filter returns only the gadget → CSV export sets
+  `Content-Type: text/csv` + the right header row. Plus the 4 CSV
+  unit tests. CI provisions `jetnine_reports`.
+- **Acceptance:** end-of-day close — a cashier reconciles cash
+  (open shift → ring sales → close with counted), an owner views
+  the day's totals, and exports to CSV. The integration test walks
+  through every step.

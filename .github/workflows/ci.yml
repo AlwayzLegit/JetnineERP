@@ -52,6 +52,7 @@ jobs:
       INVENTORY_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/jetnine_inventory
       CUSTOMERS_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/jetnine_customers
       SALES_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/jetnine_sales
+      REPORTS_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/jetnine_reports
       REDIS_URL: redis://localhost:6379
 
     steps:
@@ -81,6 +82,7 @@ jobs:
           createdb -h localhost -U postgres jetnine_inventory
           createdb -h localhost -U postgres jetnine_customers
           createdb -h localhost -U postgres jetnine_sales
+          createdb -h localhost -U postgres jetnine_reports
 
       - name: Format check
         run: pnpm format:check

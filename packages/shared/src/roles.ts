@@ -23,6 +23,8 @@ const cashierPermissions: Permission[] = [
   'pos.access',
   'pos.transaction.create',
   'pos.transaction.discount',
+  'pos.cash.open',
+  'pos.cash.reconcile',
   'sales.view',
   'customers.view',
   'customers.create',
