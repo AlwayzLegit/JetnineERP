@@ -43,13 +43,14 @@ interface MembershipSummary {
 export class ActiveBusinessController {
   constructor(
     @Inject(DRIZZLE) private readonly db: PostgresJsDatabase,
-    private readonly config: ConfigService,
+    @Inject(ConfigService) private readonly config: ConfigService,
   ) {}
 
   @Get('me')
   async me(@CurrentUser() user: CurrentUserPayload): Promise<{
     user: CurrentUserPayload;
     memberships: MembershipSummary[];
+    impersonating: { impersonatorUserId: string; impersonatorEmail: string | null } | null;
   }> {
     const memberships = await this.db
       .select({
@@ -66,7 +67,23 @@ export class ActiveBusinessController {
       .innerJoin(schema.roles, eq(schema.roles.id, schema.memberships.roleId))
       .where(eq(schema.memberships.userId, user.id));
 
-    return { user, memberships };
+    let impersonating: {
+      impersonatorUserId: string;
+      impersonatorEmail: string | null;
+    } | null = null;
+    if (user.impersonatorUserId) {
+      const [impersonator] = await this.db
+        .select({ email: schema.users.email })
+        .from(schema.users)
+        .where(eq(schema.users.id, user.impersonatorUserId))
+        .limit(1);
+      impersonating = {
+        impersonatorUserId: user.impersonatorUserId,
+        impersonatorEmail: impersonator?.email ?? null,
+      };
+    }
+
+    return { user, memberships, impersonating };
   }
 
   @Post('active-business')

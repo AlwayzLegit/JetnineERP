@@ -4,6 +4,7 @@ import { APP_GUARD } from '@nestjs/core';
 import { LoggerModule } from 'nestjs-pino';
 import { randomUUID } from 'node:crypto';
 import { TerminusModule } from '@nestjs/terminus';
+import { AdminModule } from './admin/admin.module';
 import { AppController } from './app.controller';
 import { AuditModule } from './audit/audit.module';
 import { AuthGuard } from './auth/auth.guard';
@@ -55,6 +56,7 @@ import { TenancyModule } from './tenancy/tenancy.module';
     AuthModule,
     TenancyModule,
     ProductsModule,
+    AdminModule,
   ],
   controllers: [AppController, HealthController],
   providers: [

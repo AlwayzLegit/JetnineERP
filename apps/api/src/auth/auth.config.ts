@@ -112,10 +112,13 @@ export function createAuth(deps: AuthDeps) {
     ],
 
     rateLimit: {
-      enabled: true,
+      // Disabled in tests because vitest shares process state across the
+      // integration suites and the cumulative sign-in count quickly trips
+      // a 429 in the second-or-third spec file. Production + dev keep the
+      // PLAN.md §10.6 limits.
+      enabled: process.env.NODE_ENV !== 'test',
       window: 60,
       max: 100,
-      // Tighter limits on the auth-specific endpoints (PLAN §10.6: 5/min).
       customRules: {
         '/sign-in/email': { window: 60, max: 5 },
         '/sign-up/email': { window: 60, max: 5 },

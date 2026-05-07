@@ -72,12 +72,14 @@ export class AuditInterceptor implements NestInterceptor {
     if (ctx.auditLogged) return;
 
     const db = getRequestDb();
+    const actorType = ctx.impersonatorUserId ? 'user' : ctx.isSuperAdmin ? 'super_admin' : 'user';
     await db
       .insert(schema.auditLogs)
       .values({
         businessId: ctx.businessId,
         actorUserId: ctx.userId,
-        actorType: ctx.isSuperAdmin ? 'super_admin' : 'user',
+        actorType,
+        impersonatorUserId: ctx.impersonatorUserId,
         action: deriveAction(req),
         targetType: null,
         targetId: null,

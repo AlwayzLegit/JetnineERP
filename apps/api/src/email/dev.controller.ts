@@ -1,4 +1,4 @@
-import { Controller, Get, NotFoundException, Query } from '@nestjs/common';
+import { Controller, Get, Inject, NotFoundException, Query } from '@nestjs/common';
 import { Public } from '../tenancy/decorators';
 import { EmailService, type CapturedEmail } from './email.service';
 
@@ -8,7 +8,7 @@ import { EmailService, type CapturedEmail } from './email.service';
 @Public()
 @Controller('v1/dev/email')
 export class DevEmailController {
-  constructor(private readonly email: EmailService) {}
+  constructor(@Inject(EmailService) private readonly email: EmailService) {}
 
   @Get('last')
   last(@Query('to') to?: string): CapturedEmail {

@@ -46,7 +46,8 @@ export class AuditService {
     await db.insert(schema.auditLogs).values({
       businessId: ctx.businessId,
       actorUserId: ctx.userId,
-      actorType: actorTypeFor(ctx.isSuperAdmin),
+      actorType: actorTypeFor(ctx.isSuperAdmin, ctx.impersonatorUserId),
+      impersonatorUserId: ctx.impersonatorUserId,
       action: input.action,
       targetType: input.targetType ?? null,
       targetId: input.targetId ?? null,
@@ -59,6 +60,10 @@ export class AuditService {
   }
 }
 
-function actorTypeFor(isSuperAdmin: boolean): ActorType {
+function actorTypeFor(isSuperAdmin: boolean, impersonatorUserId: string | null): ActorType {
+  // When a super admin is impersonating, the effective user is a normal
+  // business user; the audit row's actor_type reflects the *effective*
+  // identity. The impersonator_user_id column makes the original visible.
+  if (impersonatorUserId) return 'user';
   return isSuperAdmin ? 'super_admin' : 'user';
 }

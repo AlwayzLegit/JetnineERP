@@ -11,6 +11,10 @@ export interface CurrentUserPayload {
   twoFactorEnabled: boolean;
   sessionId: string;
   sessionToken: string;
+  // When a super admin is impersonating a business user, this is the
+  // super admin's id; the rest of the fields describe the *effective*
+  // user (the one being impersonated). Null in normal operation.
+  impersonatorUserId: string | null;
 }
 
 export const CurrentUser = createParamDecorator(

@@ -239,3 +239,47 @@ Epic 1.4 is complete:
   (audit.view) lists audits; Cashier (no audit.view) → 403; action
   filter narrows results. CI provisions a dedicated `jetnine_audit`
   database for the suite.
+
+## Phase 1 — Epic 1.5 status (Super admin console)
+
+Epic 1.5 is complete:
+
+- **Businesses CRUD**: `GET /v1/admin/businesses` (joined with user +
+  location counts and `last_activity_at` from audit_logs), `POST` to
+  create + invite, `PATCH /:id/status` for suspend/unsuspend. All
+  gated by `@SuperAdminOnly()`.
+- **Owner invitations**: creating a business inserts a `verifications`
+  row (`identifier="invite:<email>"`, 72h TTL) and sends an email via
+  the EmailService. The invited user's account starts unverified +
+  password-less; their membership is `status='invited'`.
+- **`POST /v1/auth/accept-invite` (public)** validates the token,
+  hashes the chosen password via `better-auth/crypto`, upserts the
+  credential row, marks the user verified and membership active, and
+  burns the verification.
+- **Impersonation** via the `jetnine.impersonate_target` cookie. The
+  AuthGuard honors it only when the underlying session belongs to a
+  super admin and swaps the effective user.
+  `CurrentUserPayload.impersonatorUserId` and
+  `audit_logs.impersonator_user_id` carry the original super admin's
+  id; the AuditService stamps it onto every row.
+- **Impersonate endpoints**: `POST /v1/admin/impersonate
+{ userId, businessId }` sets the cookie pair (impersonate target +
+  active business) and writes an `auth.impersonate.start` audit row;
+  `DELETE /v1/admin/impersonate` clears them and writes
+  `auth.impersonate.stop`. Refuses to impersonate other super admins.
+- **`GET /v1/admin/metrics`**: total businesses, active businesses,
+  total users, sales count + gross cents in the last 30 days.
+- **Web pages** under `(super-admin)` route group: `/admin` (metrics
+  dashboard), `/admin/businesses` (list + create form + suspend
+  toggle), `/admin/businesses/[id]` (details + impersonate).
+  `(auth)/accept-invite` for invitees. Sticky red
+  `<ImpersonationBanner />` displays the active impersonation and a
+  one-click stop button on every super-admin page.
+- **Integration tests** (`apps/api/test/admin.int.spec.ts`, 8 cases):
+  super admin creates a business → invitation email captured →
+  owner accepts (membership flips active) → super admin impersonates
+  → impersonated PATCH writes audit row with `actor_user_id=owner`
+  and `impersonator_user_id=superAdmin` and exact before/after diff
+  → non-super-admin can't impersonate → suspend audit-logs the
+  status change → metrics return counts. CI provisions a dedicated
+  `jetnine_admin` database.

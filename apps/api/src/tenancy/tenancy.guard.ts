@@ -67,10 +67,11 @@ export class TenancyGuard implements CanActivate {
     ]);
     const ip = readIp(req);
     const userAgent = readUserAgent(req);
+    const impersonatorUserId = user.impersonatorUserId;
 
     if (superAdminOnly) {
       if (!user.isSuperAdmin) throw new ForbiddenException('Super-admin only');
-      req.tenant = emptyTenantContext(user, ip, userAgent);
+      req.tenant = emptyTenantContext(user, ip, userAgent, impersonatorUserId);
       return true;
     }
 
@@ -80,7 +81,7 @@ export class TenancyGuard implements CanActivate {
       // context — they may be calling super-admin-only endpoints from a UI
       // that hasn't selected a business yet.
       if (user.isSuperAdmin) {
-        req.tenant = emptyTenantContext(user, ip, userAgent);
+        req.tenant = emptyTenantContext(user, ip, userAgent, impersonatorUserId);
         return true;
       }
       throw new PreconditionFailedException(
@@ -105,6 +106,7 @@ export class TenancyGuard implements CanActivate {
           permissions: new Set<Permission>(),
           ip,
           userAgent,
+          impersonatorUserId,
           auditLogged: false,
         };
         return true;
@@ -123,6 +125,7 @@ export class TenancyGuard implements CanActivate {
       permissions,
       ip,
       userAgent,
+      impersonatorUserId,
       auditLogged: false,
     };
     return true;
@@ -189,6 +192,7 @@ function emptyTenantContext(
   user: CurrentUserPayload,
   ip: string | null,
   userAgent: string | null,
+  impersonatorUserId: string | null,
 ): RequestTenantContext {
   return {
     userId: user.id,
@@ -200,6 +204,7 @@ function emptyTenantContext(
     permissions: new Set<Permission>(),
     ip,
     userAgent,
+    impersonatorUserId,
     auditLogged: false,
   };
 }

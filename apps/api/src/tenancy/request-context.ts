@@ -17,6 +17,9 @@ export interface RequestTenantContext {
   // for audit logging.
   ip: string | null;
   userAgent: string | null;
+  // When a super admin is impersonating, this is the super admin's user id.
+  // Carried into every audit_logs row written for this request.
+  impersonatorUserId: string | null;
   // Set true when an audit handler explicitly logged this request, so the
   // generic AuditInterceptor knows not to also write a fallback row.
   auditLogged: boolean;
