@@ -83,6 +83,20 @@ export default function SettingsPage() {
             Tax classes
           </Link>
           <Link
+            href="/settings/discounts"
+            style={{
+              padding: '8px 14px',
+              background: 'transparent',
+              color: '#444',
+              border: '1px solid #ccc',
+              borderRadius: 4,
+              textDecoration: 'none',
+              fontSize: 13,
+            }}
+          >
+            Discounts
+          </Link>
+          <Link
             href="/settings/billing"
             style={{
               padding: '8px 14px',

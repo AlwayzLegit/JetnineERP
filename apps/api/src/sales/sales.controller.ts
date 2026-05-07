@@ -61,6 +61,13 @@ interface CreateSaleBody {
   notes?: string | null;
   lines?: CartLineInput[];
   orderDiscountCents?: number;
+  /**
+   * Optional discount code. If supplied, the backend looks up the
+   * code, validates active/window/usage/min-subtotal/per-customer
+   * limits, computes the cents amount, and applies it as the order
+   * discount. Cannot be combined with `orderDiscountCents`.
+   */
+  discountCode?: string;
   payments?: PaymentInput[];
 }
 
@@ -396,12 +403,91 @@ export class SalesController {
       if (!byId.has(id)) throw new NotFoundException(`Variant not found: ${id}`);
     }
 
+    // Resolve a discount code if one was supplied. We compute the
+    // cents amount up-front and pass it to computeTotals as the
+    // order discount; the redemption row + usage increment land
+    // after the sale is durable so a failed insert never burns a
+    // code's remaining usage.
+    let resolvedOrderDiscount = body.orderDiscountCents;
+    let appliedDiscount: { id: string; amountCents: number } | null = null;
+    if (body.discountCode) {
+      if (body.orderDiscountCents) {
+        throw new BadRequestException('cannot supply both discountCode and orderDiscountCents');
+      }
+      const codeText = body.discountCode.trim();
+      if (!codeText) throw new BadRequestException('discountCode cannot be empty');
+
+      const [code] = await this.db
+        .select()
+        .from(schema.discountCodes)
+        .where(eq(schema.discountCodes.code, codeText))
+        .limit(1);
+      if (!code) throw new NotFoundException(`Discount code "${codeText}" not found`);
+      if (!code.isActive) throw new BadRequestException('Discount code is inactive');
+      const now = new Date();
+      if (code.startsAt && code.startsAt.getTime() > now.getTime()) {
+        throw new BadRequestException('Discount code is not yet valid');
+      }
+      if (code.endsAt && code.endsAt.getTime() < now.getTime()) {
+        throw new BadRequestException('Discount code has expired');
+      }
+      if (code.usageLimit != null && code.usageCount >= code.usageLimit) {
+        throw new BadRequestException('Discount code has reached its usage limit');
+      }
+
+      // Compute post-line-discount subtotal locally — it's what the
+      // discount applies against. Mirrors the math in computeTotals.
+      let postLineNet = 0;
+      for (const l of body.lines) {
+        const v = byId.get(l.variantId!)!;
+        const unit = l.unitPriceCents ?? v.priceCents;
+        const gross = l.quantity! * unit;
+        const lineDisc = Math.min(l.lineDiscountCents ?? 0, gross);
+        postLineNet += gross - lineDisc;
+      }
+
+      if (code.minSubtotalCents != null && postLineNet < code.minSubtotalCents) {
+        throw new BadRequestException(
+          `Discount code requires a subtotal of at least $${(code.minSubtotalCents / 100).toFixed(
+            2,
+          )}`,
+        );
+      }
+      if (code.perCustomerLimit != null) {
+        if (!body.customerId) {
+          throw new BadRequestException(
+            'Discount code requires an attached customer to enforce its per-customer limit',
+          );
+        }
+        const prior = await this.db
+          .select({ count: sql<number>`COUNT(*)::int` })
+          .from(schema.discountRedemptions)
+          .where(
+            and(
+              eq(schema.discountRedemptions.discountCodeId, code.id),
+              eq(schema.discountRedemptions.customerId, body.customerId),
+            ),
+          );
+        const used = prior[0]?.count ?? 0;
+        if (used >= code.perCustomerLimit) {
+          throw new BadRequestException(
+            'Customer has reached the per-customer limit for this discount code',
+          );
+        }
+      }
+
+      const computedCents =
+        code.kind === 'percent' ? Math.floor((postLineNet * code.value) / 10000) : code.value;
+      resolvedOrderDiscount = Math.min(computedCents, postLineNet);
+      appliedDiscount = { id: code.id, amountCents: resolvedOrderDiscount };
+    }
+
     // Compute totals via the pure helper. Throws BadRequest on bad shape.
     const totals = (() => {
       try {
         return computeTotals({
           taxRateBps: taxRateBps!,
-          orderDiscountCents: body.orderDiscountCents,
+          orderDiscountCents: resolvedOrderDiscount,
           lines: body.lines.map((l) => {
             const v = byId.get(l.variantId!)!;
             const desc = [v.productName, v.variantName].filter(Boolean).join(' — ');
@@ -588,6 +674,26 @@ export class SalesController {
         });
     }
 
+    // If a discount code was applied, log the redemption + bump
+    // usage_count. Done after the sale is durable so a failed sale
+    // never burns a redemption.
+    if (appliedDiscount) {
+      await this.db.insert(schema.discountRedemptions).values({
+        businessId: tenant.businessId!,
+        discountCodeId: appliedDiscount.id,
+        saleId: sale.id,
+        customerId: sale.customerId,
+        amountCents: appliedDiscount.amountCents,
+      });
+      await this.db
+        .update(schema.discountCodes)
+        .set({
+          usageCount: sql`${schema.discountCodes.usageCount} + 1`,
+          updatedAt: new Date(),
+        })
+        .where(eq(schema.discountCodes.id, appliedDiscount.id));
+    }
+
     await this.audit.log({
       action: 'sale.complete',
       targetType: 'sale',
@@ -597,6 +703,8 @@ export class SalesController {
         totalCents: sale.totalCents,
         lineCount: totals.lines.length,
         customerId: sale.customerId,
+        discountCodeId: appliedDiscount?.id ?? null,
+        discountAmountCents: appliedDiscount?.amountCents ?? 0,
       },
     });
 

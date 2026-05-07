@@ -64,6 +64,7 @@ export default function PosPage() {
   const [taxRateBps, setTaxRateBps] = useState<number>(0);
   const [cart, setCart] = useState<CartLine[]>([]);
   const [orderDiscount, setOrderDiscount] = useState<string>('');
+  const [discountCode, setDiscountCode] = useState<string>('');
   const [customer, setCustomer] = useState<CustomerRow | null>(null);
   const [scan, setScan] = useState('');
   const [results, setResults] = useState<LookupRow[]>([]);
@@ -174,7 +175,12 @@ export default function PosPage() {
             unitPriceCents: l.unitPriceCents,
             lineDiscountCents: l.lineDiscountCents || undefined,
           })),
-          orderDiscountCents: parseDollars(orderDiscount) || undefined,
+          // Either a manual discount or a code — never both. The
+          // code path lets the API validate window/usage/min;
+          // manual is owner-overrides.
+          ...(discountCode.trim()
+            ? { discountCode: discountCode.trim() }
+            : { orderDiscountCents: parseDollars(orderDiscount) || undefined }),
           payments,
         }),
       });
@@ -188,6 +194,7 @@ export default function PosPage() {
   function reset() {
     setCart([]);
     setOrderDiscount('');
+    setDiscountCode('');
     setCustomer(null);
     setScan('');
     setResults([]);
@@ -366,17 +373,40 @@ export default function PosPage() {
             <h3 style={section}>Totals</h3>
             <Row label="Subtotal" value={totals.subtotalCents} />
             <Row label="Discount" value={-totals.discountCents} negate />
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+                fontSize: 12,
+                marginBottom: 4,
+              }}
+            >
+              <span style={{ color: '#666', minWidth: 92 }}>Discount code</span>
+              <input
+                value={discountCode}
+                onChange={(e) => setDiscountCode(e.target.value.toUpperCase())}
+                placeholder="(optional)"
+                style={{ ...qtyInput, width: 130, textTransform: 'uppercase' }}
+              />
+            </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
-              <span style={{ color: '#666' }}>Order discount $</span>
+              <span style={{ color: '#666', minWidth: 92 }}>Order disc $</span>
               <input
                 type="number"
                 step="0.01"
                 min={0}
                 value={orderDiscount}
                 onChange={(e) => setOrderDiscount(e.target.value)}
+                disabled={Boolean(discountCode.trim())}
                 style={{ ...qtyInput, width: 80 }}
               />
             </div>
+            {discountCode.trim() && (
+              <p style={{ fontSize: 11, color: '#888', margin: '4px 0 0' }}>
+                Code overrides the order-discount field. Final amount is computed by the server.
+              </p>
+            )}
             <Row label="Tax" value={totals.taxCents} />
             <Row label="Total" value={totals.totalCents} bold />
           </div>

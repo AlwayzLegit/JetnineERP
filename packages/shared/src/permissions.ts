@@ -43,6 +43,9 @@ export const PERMISSIONS = {
   'customers.update': 'Update customers',
   'customers.delete': 'Delete customers',
 
+  'discounts.view': 'View discount codes',
+  'discounts.manage': 'Create / update / delete discount codes',
+
   'pos.access': 'Access the POS register',
   'pos.transaction.create': 'Create sales',
   'pos.transaction.discount': 'Apply line/order discounts',

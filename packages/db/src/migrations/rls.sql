@@ -76,7 +76,9 @@ DECLARE
     'purchase_order_lines',
     'stock_transfers',
     'stock_transfer_lines',
-    'tax_classes'
+    'tax_classes',
+    'discount_codes',
+    'discount_redemptions'
   ];
 BEGIN
   FOREACH t IN ARRAY tenant_tables LOOP

@@ -883,3 +883,52 @@ states with a reduced rate.
   pro-rated order discount allocation, mixed-rate math, and
   rejection of negative line rates. Repo: 159 tests, all green.
   CI provisions `jetnine_taxes`.
+
+## Phase 2.6 status (Discount codes)
+
+Phase 2.6 is complete. Merchants can mint coupon codes (percent or
+fixed dollar amount) with optional scheduled windows, total usage
+caps, per-customer caps, and a minimum-subtotal floor; cashiers
+type the code at checkout and the backend validates everything
+before the sale completes.
+
+- **Schema**: `discount_codes` (citext code → case-insensitive,
+  kind ∈ {`percent`, `fixed`}, value in basis points or cents,
+  starts/ends, usage_limit, usage_count, per_customer_limit,
+  min_subtotal_cents, is_active) and `discount_redemptions`
+  (per-sale + per-customer audit). Tenant-scoped + RLS-forced.
+  Migration `0012_fancy_mercury.sql`.
+- **Permissions**: `discounts.view` (Cashier + Owner/Manager) and
+  `discounts.manage` (Owner/Manager).
+- **`/v1/business/discount-codes`** full CRUD with audit. Code
+  format `^[A-Z0-9][A-Z0-9_-]{1,31}$` (case-insensitive). Delete
+  cascades the redemption history; the audit row records how many
+  redemptions were swept along (suggesting the merchant toggle
+  `isActive=false` instead if they want to keep history).
+- **`POST /v1/sales`** now accepts a `discountCode` field
+  (mutually exclusive with `orderDiscountCents`). The controller
+  validates: code exists, active, in-window, usage_limit not
+  exhausted, post-line-discount subtotal meets minSubtotalCents,
+  and (when set) per_customer_limit not exhausted for the
+  attached customer (which the code makes mandatory). The
+  computed cents amount is passed to `computeTotals` as the order
+  discount; after the sale is durable, `usage_count` is bumped
+  and a `discount_redemptions` row is written so history survives
+  even if the code is later updated.
+- **Web**: new `/settings/discounts` page (list with usage / cap
+  display, inline create with kind toggle and all the optional
+  fields, enable/disable toggle, delete with usage warning); the
+  settings page header now links to "Discounts" alongside "Tax
+  classes". The POS payment screen gained a "Discount code"
+  input that disables the manual order-discount field when set
+  and explains that the server computes the final amount.
+- **Integration tests** (`apps/api/test/discounts.int.spec.ts`,
+  16 cases): create percent + fixed codes → case-insensitive
+  duplicate 400 → cashier denied manage → percent applied at
+  checkout → case-insensitive lookup → both code+manual = 400
+  → min subtotal enforced → fixed code applied + usage tracked
+  → exhausted code blocked → inactive blocked → future-windowed
+  blocked → per-customer limit blocked + scoped per customer →
+  redemptions table records every use → unknown code 404 →
+  delete sweeps redemptions and audits the count. Repo: 175
+  tests, all green. CI provisions `jetnine_discounts`.

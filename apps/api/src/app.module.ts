@@ -15,6 +15,7 @@ import { CashModule } from './cash/cash.module';
 import { CatalogModule } from './catalog/catalog.module';
 import { CustomersModule } from './customers/customers.module';
 import { DatabaseModule } from './database/database.module';
+import { DiscountsModule } from './discounts/discounts.module';
 import { EmailModule } from './email/email.module';
 import { HealthController } from './health/health.controller';
 import { InventoryModule } from './inventory/inventory.module';
@@ -68,6 +69,7 @@ import { TransfersModule } from './transfers/transfers.module';
     BusinessModule,
     CatalogModule,
     CustomersModule,
+    DiscountsModule,
     InventoryModule,
     PurchasingModule,
     TransfersModule,
