@@ -1133,3 +1133,43 @@ table out without hitting the 200-row hard cap.
   path returns a single page → products and audit-logs share the
   envelope. Repo: 218 tests, all green. CI provisions
   `jetnine_pagination`.
+
+## Phase 2.11 status (OpenAPI spec)
+
+Phase 2.11 is complete. A hand-curated OpenAPI 3.1 spec covers
+the public-API surface (sales, customers, products, inventory)
+and is served from the same origin as the dashboard, alongside a
+Swagger UI page for browsing.
+
+- **`/v1/openapi.json`** — machine-readable OpenAPI 3.1, public,
+  cached 5 minutes. Pulls in:
+  - bearer-auth security scheme (matches Phase 2.8)
+  - `Idempotency-Key` header documented on every mutation
+    (matches Phase 2.9)
+  - `{ data, nextCursor }` page envelope schema referenced by
+    every list endpoint (matches Phase 2.10)
+  - all error shapes, including 401/403/404/409 references
+- **`/v1/docs`** — self-contained HTML page that loads
+  Swagger UI v5 from a pinned CDN and renders the live spec.
+  Public; integrators can browse without an account.
+- **Surface documented**: `/v1/sales` (list, create), `/v1/sales/{id}`
+  (get), `/v1/sales/{id}/refund` (post), `/v1/customers` (list,
+  create), `/v1/customers/{id}` (get, patch, delete),
+  `/v1/products` (list), `/v1/products/{id}` (get),
+  `/v1/inventory/levels` (list), `/v1/inventory/movements`
+  (list). Admin / web-only routes are intentionally excluded so
+  the public docs reflect only what an integrator can use.
+- **Hand-curated rather than generated**: the public surface is
+  a focused subset of the controller layer; an auto-generated
+  spec would leak the rest. Maintenance burden is ~10 minutes
+  per added endpoint and the spec lives next to the code.
+- **Web link**: `/settings/api-keys` now ends with an "API
+  reference →" link to `/v1/docs`, so a merchant minting their
+  first key has a one-click handoff to the docs.
+- **Integration tests** (`apps/api/test/openapi.int.spec.ts`,
+  6 cases): public spec endpoint → bearer security scheme is
+  declared → exact set of paths matches the public surface →
+  list endpoints reference the page envelope schema → mutating
+  endpoints document the Idempotency-Key header → docs page
+  serves Swagger UI HTML. Repo: 224 tests, all green. CI
+  provisions `jetnine_openapi`.

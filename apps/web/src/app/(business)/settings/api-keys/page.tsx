@@ -104,7 +104,14 @@ export default function ApiKeysPage() {
       <p style={{ color: '#666', fontSize: 13, marginBottom: 16 }}>
         Send the key as <code>Authorization: Bearer &lt;key&gt;</code>. The key implies the business
         — no <code>X-Business-Id</code> header required. Scopes are checked against the platform
-        permission catalog: a key with <code>sales.view</code> can read the sales API but not write.
+        permission catalog: a key with <code>sales.view</code> can read the sales API but not write.{' '}
+        <a
+          href={`${process.env.NEXT_PUBLIC_API_URL ?? ''}/v1/docs`}
+          target="_blank"
+          rel="noreferrer"
+        >
+          API reference →
+        </a>
       </p>
 
       {error && <p style={{ color: '#b00' }}>{error}</p>}
