@@ -64,6 +64,7 @@ jobs:
       IDEMPOTENCY_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/jetnine_idempotency
       PAGINATION_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/jetnine_pagination
       OPENAPI_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/jetnine_openapi
+      GIFT_CARDS_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/jetnine_gift_cards
       REDIS_URL: redis://localhost:6379
 
     steps:
@@ -105,6 +106,7 @@ jobs:
           createdb -h localhost -U postgres jetnine_idempotency
           createdb -h localhost -U postgres jetnine_pagination
           createdb -h localhost -U postgres jetnine_openapi
+          createdb -h localhost -U postgres jetnine_gift_cards
 
       - name: Format check
         run: pnpm format:check

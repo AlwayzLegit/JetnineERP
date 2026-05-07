@@ -52,6 +52,10 @@ export const PERMISSIONS = {
   'api_keys.view': 'View API keys',
   'api_keys.manage': 'Create / revoke API keys',
 
+  'gift_cards.view': 'View gift cards',
+  'gift_cards.issue': 'Issue gift cards',
+  'gift_cards.adjust': 'Adjust gift card balance / cancel a gift card',
+
   'pos.access': 'Access the POS register',
   'pos.transaction.create': 'Create sales',
   'pos.transaction.discount': 'Apply line/order discounts',

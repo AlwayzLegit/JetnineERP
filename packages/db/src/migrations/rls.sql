@@ -82,7 +82,9 @@ DECLARE
     'webhook_endpoints',
     'webhook_deliveries',
     'api_keys',
-    'idempotency_keys'
+    'idempotency_keys',
+    'gift_cards',
+    'gift_card_transactions'
   ];
 BEGIN
   FOREACH t IN ARRAY tenant_tables LOOP

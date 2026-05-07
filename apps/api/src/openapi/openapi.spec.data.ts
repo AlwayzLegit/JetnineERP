@@ -186,7 +186,7 @@ export const openapiSpec = {
               type: 'object',
               required: ['method', 'amountCents'],
               properties: {
-                method: { type: 'string', enum: ['cash', 'card'] },
+                method: { type: 'string', enum: ['cash', 'card', 'gift_card'] },
                 amountCents: { type: 'integer', minimum: 0 },
                 processorRef: { type: 'string' },
                 stripePaymentMethodId: { type: 'string' },

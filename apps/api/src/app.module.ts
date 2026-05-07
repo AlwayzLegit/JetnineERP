@@ -18,6 +18,7 @@ import { CustomersModule } from './customers/customers.module';
 import { DatabaseModule } from './database/database.module';
 import { DiscountsModule } from './discounts/discounts.module';
 import { EmailModule } from './email/email.module';
+import { GiftCardsModule } from './gift-cards/gift-cards.module';
 import { HealthController } from './health/health.controller';
 import { IdempotencyModule } from './idempotency/idempotency.module';
 import { InventoryModule } from './inventory/inventory.module';
@@ -75,6 +76,7 @@ import { WebhooksModule } from './webhooks/webhooks.module';
     CatalogModule,
     CustomersModule,
     DiscountsModule,
+    GiftCardsModule,
     InventoryModule,
     PurchasingModule,
     TransfersModule,

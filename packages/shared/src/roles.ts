@@ -31,6 +31,7 @@ const cashierPermissions: Permission[] = [
   'products.view',
   'inventory.view',
   'discounts.view',
+  'gift_cards.view',
 ];
 
 const inventoryClerkPermissions: Permission[] = [

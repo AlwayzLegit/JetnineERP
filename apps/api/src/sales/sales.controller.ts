@@ -23,6 +23,7 @@ import {
   clampLimit as clampPageLimit,
 } from '../common/pagination';
 import { DRIZZLE } from '../database/database.module';
+import { GiftCardsService } from '../gift-cards/gift-cards.service';
 import { StripeService } from '../stripe/stripe.service';
 import { RequirePermission, TenantScoped } from '../tenancy/decorators';
 import type { RequestTenantContext } from '../tenancy/request-context';
@@ -40,7 +41,7 @@ interface LookupRow {
 }
 
 interface PaymentInput {
-  method?: 'cash' | 'card';
+  method?: 'cash' | 'card' | 'gift_card';
   amountCents?: number;
   /** For 'card', the (test) processor reference; optional. */
   processorRef?: string;
@@ -52,6 +53,13 @@ interface PaymentInput {
    * payment is recorded as a manual capture (legacy / dev mode).
    */
   stripePaymentMethodId?: string;
+  /**
+   * For 'gift_card', the human-typed code (case-insensitive). Server
+   * validates state + balance, decrements, writes a gift_card_transactions
+   * row that points back to this sale. The `processorRef` is set to the
+   * gift card id so refunds can credit the same card.
+   */
+  giftCardCode?: string;
 }
 
 interface CartLineInput {
@@ -145,6 +153,7 @@ export class SalesController {
     @Inject(DRIZZLE) private readonly db: PostgresJsDatabase,
     @Inject(AuditService) private readonly audit: AuditService,
     @Inject(StripeService) private readonly stripe: StripeService,
+    @Inject(GiftCardsService) private readonly giftCards: GiftCardsService,
     @Inject(WebhookDispatcher) private readonly webhooks: WebhookDispatcher,
   ) {}
 
@@ -537,8 +546,8 @@ export class SalesController {
       );
     }
     for (const p of body.payments) {
-      if (p.method !== 'cash' && p.method !== 'card') {
-        throw new BadRequestException("payments[].method must be 'cash' or 'card'");
+      if (p.method !== 'cash' && p.method !== 'card' && p.method !== 'gift_card') {
+        throw new BadRequestException("payments[].method must be 'cash', 'card', or 'gift_card'");
       }
       if (
         typeof p.amountCents !== 'number' ||
@@ -547,6 +556,33 @@ export class SalesController {
       ) {
         throw new BadRequestException('payments[].amountCents must be a positive integer');
       }
+      if (p.method === 'gift_card' && (!p.giftCardCode || p.giftCardCode.trim().length === 0)) {
+        throw new BadRequestException('gift_card payments must include giftCardCode');
+      }
+    }
+
+    // Pre-validate every gift card up front: the cashier should hear
+    // "card has $3.00, you tried to spend $5.00" *before* we touch
+    // Stripe or write any rows. We resolve the cards once here and
+    // reuse the resolved ids when actually charging post-sale-insert.
+    const giftCardResolved = new Map<number, { id: string; balanceBefore: number }>();
+    for (let i = 0; i < body.payments.length; i++) {
+      const p = body.payments[i]!;
+      if (p.method !== 'gift_card') continue;
+      const card = await this.giftCards.findByCode(this.db, tenant.businessId!, p.giftCardCode!);
+      if (!card) throw new BadRequestException(`Gift card ${p.giftCardCode} not found.`);
+      if (card.status !== 'active') {
+        throw new BadRequestException(`Gift card is ${card.status}.`);
+      }
+      if (card.expiresAt && card.expiresAt < new Date()) {
+        throw new BadRequestException('Gift card has expired.');
+      }
+      if (card.currentBalanceCents < p.amountCents!) {
+        throw new BadRequestException(
+          `Gift card balance is ${card.currentBalanceCents} cents; cannot charge ${p.amountCents}.`,
+        );
+      }
+      giftCardResolved.set(i, { id: card.id, balanceBefore: card.currentBalanceCents });
     }
 
     // For card payments that supply a Stripe PaymentMethod id, charge
@@ -646,21 +682,49 @@ export class SalesController {
       )
       .returning();
 
+    // Charge each gift_card payment now that the sale exists. Pre-
+    // validation already confirmed balance + status; if anything has
+    // shifted since (race with another redemption) the service throws
+    // and the surrounding tx behavior is the same as a Stripe failure
+    // mid-flight — partial state, surfaced to the caller.
+    const giftCardChargeResults = new Map<number, string>();
+    for (let i = 0; i < body.payments.length; i++) {
+      const p = body.payments[i]!;
+      if (p.method !== 'gift_card') continue;
+      const result = await this.giftCards.charge(this.db, tenant.businessId!, {
+        code: p.giftCardCode!,
+        amountCents: p.amountCents!,
+        saleId: sale.id,
+        actorUserId: actor?.id ?? null,
+      });
+      giftCardChargeResults.set(i, result.giftCardId);
+    }
+
     // Payments. Card payments charged via Stripe carry the
     // PaymentIntent id in `processor_ref`; legacy/manual cards keep
-    // their processor='manual' identity for backwards compatibility.
+    // their processor='manual' identity. Gift-card payments carry the
+    // gift card's id in `processor_ref` so refund flow can credit
+    // back to the same card.
     const insertedPayments = await this.db
       .insert(schema.payments)
       .values(
         body.payments.map((p, i) => {
           const charge = chargeResults.get(i);
+          const gcId = giftCardChargeResults.get(i);
           return {
             businessId: tenant.businessId!,
             saleId: sale.id,
             method: p.method!,
             amountCents: p.amountCents!,
-            processor: p.method === 'card' ? (charge ? 'stripe' : 'manual') : null,
-            processorRef: charge?.paymentIntentId ?? p.processorRef ?? null,
+            processor:
+              p.method === 'card'
+                ? charge
+                  ? 'stripe'
+                  : 'manual'
+                : p.method === 'gift_card'
+                  ? 'gift_card'
+                  : null,
+            processorRef: gcId ?? charge?.paymentIntentId ?? p.processorRef ?? null,
             status: 'succeeded',
           };
         }),
@@ -898,6 +962,34 @@ export class SalesController {
       })
       .returning();
     if (!refund) throw new BadRequestException('failed to create refund');
+
+    // Credit any gift_card-paid portion back onto the same card. The
+    // payment row carries the gift card's id in `processor_ref`. We
+    // allocate against gift_card payments AFTER the Stripe allocation,
+    // so a mixed-tender sale (card + gift card) refunds card first
+    // (matches what the customer expects) and only touches the gift
+    // card if the refund exceeds the card-paid portion.
+    const giftCardPayments = allPayments.filter(
+      (p) => p.processor === 'gift_card' && p.processorRef,
+    );
+    if (giftCardPayments.length > 0) {
+      const stripeTotalRefunded = stripePayments.reduce(
+        (s, p) => s + Math.min(amountCents, p.amountCents),
+        0,
+      );
+      let remaining = Math.max(0, amountCents - stripeTotalRefunded);
+      for (const p of giftCardPayments) {
+        if (remaining <= 0) break;
+        const refundable = Math.min(remaining, p.amountCents);
+        await this.giftCards.credit(this.db, tenant.businessId!, {
+          giftCardId: p.processorRef!,
+          amountCents: refundable,
+          refundId: refund.id,
+          actorUserId: actor.id,
+        });
+        remaining -= refundable;
+      }
+    }
 
     // Insert refund lines + restore inventory.
     for (const v of validated) {

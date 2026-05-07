@@ -1207,3 +1207,75 @@ to fix any rounding drift.
   positive / negative formatting, symbolless mode, common parse
   shapes, half-cent rounding, garbage input, format/parse round
   trip, input-string round trip. Repo: 234 tests, all green.
+
+## Phase 2.13 status (gift cards / store credit)
+
+Phase 2.13 is complete. Gift cards are first-class POS tender:
+issue at the back office, redeem at the register, credit back on
+refund. The cents math reuses Phase 2.12's helpers; the new
+`gift_card` payment method slots into the existing tender plumbing
+without disturbing cash or card flows.
+
+- **Schema**: two new RLS-forced tables (43 total). `gift_cards`
+  carries the cached `current_balance_cents`, a citext `code`
+  unique per business, status (`active` | `redeemed` |
+  `cancelled` | `expired`), optional `expires_at`, and the
+  recipient/issuer ids. `gift_card_transactions` is the append-
+  only ledger — every balance change writes one row with
+  `kind` ∈ {issue, redeem, refund, adjust, cancel}, signed
+  amount, and the balance after. The cached balance must equal
+  `SUM(transactions.amount_cents)`; an integration test asserts
+  the invariant after every flow. Migration
+  `0016_sad_mac_gargan.sql`.
+- **Codes**: 16 chars from a 30-symbol unambiguous alphabet
+  (no 0/1/O/I/L). 30^16 ≈ 1.4e23 keyspace; collisions are
+  ceremonial. The unique constraint `(business_id, code)` is
+  the real guard, and the issue endpoint retries 4 times on the
+  off-chance of a hit. The code IS the secret in this MVP
+  (anyone holding it can spend it); a future pass can add a PIN.
+- **Permissions**: `gift_cards.view` (Cashier + Owner +
+  Manager — needed for POS lookup), `gift_cards.issue` (Owner
+  - Manager), `gift_cards.adjust` (Owner + Manager — also gates
+    cancel).
+- **`/v1/gift-cards`**: list (cursor-paginated, newest first),
+  POST (issue — full code returned exactly once), GET `/:id`
+  (detail with full transaction history), POST `/:id/adjust`
+  (signed delta, blocks below-zero), DELETE `/:id` (cancel —
+  voids remaining balance and writes the wipeout to the ledger).
+- **`/v1/gift-cards/lookup?code=…`**: cashier-facing fast path
+  for the POS register. Case-insensitive (citext); returns just
+  the spendable shape.
+- **POS tender**: `payments[].method` accepts `'gift_card'`.
+  When present, the body must include `giftCardCode`. The sales
+  controller pre-validates state + balance up front (before any
+  Stripe charge), inserts the sale, then charges each gift card
+  via `GiftCardsService.charge` — which decrements the cached
+  balance, writes a `redeem` ledger row tagged with the sale id,
+  and stamps `payments.processor_ref` with the gift card id so
+  refund flow can find it again.
+- **Refund-back path**: when a sale paid (in part) on a gift
+  card is refunded, the controller credits the same card after
+  the Stripe refund allocation. A mixed-tender sale (card +
+  gift card) refunds the card first (matches what the customer
+  expects) and only touches the gift card if the refund exceeds
+  the card-paid portion. The credit resurrects a 'redeemed' card
+  back to 'active' if a positive amount lands on a zero-balance
+  card; cancelled cards reject the credit.
+- **Web**: `/gift-cards` (list with status badge + balance over
+  initial), `/gift-cards/new` (issue form with one-time code
+  reveal — formatted in 4-char chunks for legibility),
+  `/gift-cards/[id]` (balance, adjust form, cancel button, full
+  transaction ledger). Linked from the back-office nav header.
+- **OpenAPI**: `payments[].method` now enumerates
+  `cash | card | gift_card`, so integrators see the new tender
+  in `/v1/docs`.
+- **Integration tests** (`apps/api/test/gift-cards.int.spec.ts`,
+  14 cases): cashier denied issue → owner mints $50 card → list
+  view returns envelope → cashier code lookup → 404 on bad code
+  → cashier redeems $10 (balance + ledger updated) →
+  insufficient balance 400 (no debit) → mixed cash + gift_card
+  tender works → refund credits the card back → owner adjusts
+  positive delta → below-zero adjust 400 → detail returns full
+  history with all 4 kinds → cancelled card rejects redemption
+  → audit row written → citext lookup is case-insensitive. CI
+  provisions `jetnine_gift_cards`.
