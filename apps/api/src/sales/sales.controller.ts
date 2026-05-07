@@ -20,6 +20,7 @@ import { DRIZZLE } from '../database/database.module';
 import { StripeService } from '../stripe/stripe.service';
 import { RequirePermission, TenantScoped } from '../tenancy/decorators';
 import type { RequestTenantContext } from '../tenancy/request-context';
+import { WebhookDispatcher } from '../webhooks/webhook-dispatcher.service';
 import { computeTotals, refundUnitCents } from './totals';
 
 interface LookupRow {
@@ -138,6 +139,7 @@ export class SalesController {
     @Inject(DRIZZLE) private readonly db: PostgresJsDatabase,
     @Inject(AuditService) private readonly audit: AuditService,
     @Inject(StripeService) private readonly stripe: StripeService,
+    @Inject(WebhookDispatcher) private readonly webhooks: WebhookDispatcher,
   ) {}
 
   /**
@@ -708,6 +710,25 @@ export class SalesController {
       },
     });
 
+    // Fire-and-forget outbound webhook. We capture the businessId
+    // up-front because the request-scoped tenant context will be
+    // gone by the time the dispatcher runs.
+    void this.webhooks.fire({
+      businessId: tenant.businessId!,
+      eventType: 'sale.created',
+      payload: {
+        saleId: sale.id,
+        number: sale.number,
+        totalCents: sale.totalCents,
+        subtotalCents: sale.subtotalCents,
+        discountCents: sale.discountCents,
+        taxCents: sale.taxCents,
+        customerId: sale.customerId,
+        locationId: sale.locationId,
+        completedAt: sale.completedAt,
+      },
+    });
+
     return {
       id: sale.id,
       number: sale.number,
@@ -915,6 +936,18 @@ export class SalesController {
         refundId: refund.id,
         amountCents,
         lineCount: validated.length,
+        reason: body.reason ?? null,
+      },
+    });
+
+    void this.webhooks.fire({
+      businessId: tenant.businessId!,
+      eventType: 'sale.refunded',
+      payload: {
+        saleId: id,
+        refundId: refund.id,
+        amountCents,
+        saleStatus: nextStatus,
         reason: body.reason ?? null,
       },
     });

@@ -78,7 +78,9 @@ DECLARE
     'stock_transfer_lines',
     'tax_classes',
     'discount_codes',
-    'discount_redemptions'
+    'discount_redemptions',
+    'webhook_endpoints',
+    'webhook_deliveries'
   ];
 BEGIN
   FOREACH t IN ARRAY tenant_tables LOOP

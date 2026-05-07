@@ -46,6 +46,9 @@ export const PERMISSIONS = {
   'discounts.view': 'View discount codes',
   'discounts.manage': 'Create / update / delete discount codes',
 
+  'webhooks.view': 'View webhook endpoints + delivery history',
+  'webhooks.manage': 'Create / update / delete webhook endpoints',
+
   'pos.access': 'Access the POS register',
   'pos.transaction.create': 'Create sales',
   'pos.transaction.discount': 'Apply line/order discounts',

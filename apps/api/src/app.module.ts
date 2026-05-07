@@ -26,6 +26,7 @@ import { SalesModule } from './sales/sales.module';
 import { StripeModule } from './stripe/stripe.module';
 import { TenancyModule } from './tenancy/tenancy.module';
 import { TransfersModule } from './transfers/transfers.module';
+import { WebhooksModule } from './webhooks/webhooks.module';
 
 @Module({
   imports: [
@@ -78,6 +79,7 @@ import { TransfersModule } from './transfers/transfers.module';
     ReportsModule,
     BillingModule,
     StripeModule,
+    WebhooksModule,
     AdminModule,
   ],
   controllers: [AppController, HealthController],

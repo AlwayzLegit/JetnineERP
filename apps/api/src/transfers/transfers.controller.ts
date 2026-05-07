@@ -23,6 +23,7 @@ import type { CurrentUserPayload } from '../auth/current-user.decorator';
 import { DRIZZLE } from '../database/database.module';
 import { RequirePermission, TenantScoped } from '../tenancy/decorators';
 import type { RequestTenantContext } from '../tenancy/request-context';
+import { WebhookDispatcher } from '../webhooks/webhook-dispatcher.service';
 
 interface TransferLineInput {
   variantId?: string;
@@ -83,6 +84,7 @@ export class TransfersController {
   constructor(
     @Inject(DRIZZLE) private readonly db: PostgresJsDatabase,
     @Inject(AuditService) private readonly audit: AuditService,
+    @Inject(WebhookDispatcher) private readonly webhooks: WebhookDispatcher,
   ) {}
 
   @Get()
@@ -403,6 +405,19 @@ export class TransfersController {
         fullyReceived,
       },
     });
+
+    if (fullyReceived) {
+      void this.webhooks.fire({
+        businessId: tenant.businessId!,
+        eventType: 'stock_transfer.received',
+        payload: {
+          transferId: id,
+          number: transfer.number,
+          fromLocationId: transfer.fromLocationId,
+          toLocationId: transfer.toLocationId,
+        },
+      });
+    }
     return this.hydrate(id);
   }
 

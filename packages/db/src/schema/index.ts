@@ -13,6 +13,7 @@ export * from './purchasing';
 export * from './transfers';
 export * from './taxes';
 export * from './discounts';
+export * from './webhooks';
 
 // List of tables that carry a `business_id` and need RLS. Kept in sync with
 // the migration script in src/migrations/rls.sql — when you add a new
@@ -47,4 +48,6 @@ export const TENANT_SCOPED_TABLES = [
   'tax_classes',
   'discount_codes',
   'discount_redemptions',
+  'webhook_endpoints',
+  'webhook_deliveries',
 ] as const;

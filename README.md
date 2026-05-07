@@ -932,3 +932,59 @@ before the sale completes.
   redemptions table records every use → unknown code 404 →
   delete sweeps redemptions and audits the count. Repo: 175
   tests, all green. CI provisions `jetnine_discounts`.
+
+## Phase 2.7 status (Outbound webhooks)
+
+Phase 2.7 is complete. Merchants can register HTTPS endpoints to
+receive signed JSON pushes whenever their business produces an
+event Jetnine knows about — the same pattern Stripe + Shopify
+use, so integrators can use familiar verification code.
+
+- **Schema**: `webhook_endpoints` (per-business URL + secret +
+  events array + active flag + health counters) and
+  `webhook_deliveries` (one row per attempted POST with status,
+  HTTP response, error, and the shared `event_id` used to dedupe
+  across endpoints). Tenant-scoped + RLS-forced. Migration
+  `0013_fine_tiger_shark.sql`.
+- **`WebhookDispatcher`** is a `@Global()`-injectable service.
+  `fire({ businessId, eventType, payload })` is fire-and-forget
+  from the controller (`void this.webhooks.fire(...)`); inside,
+  it persists a delivery row, signs the body with HMAC-SHA256,
+  POSTs with a 5-second timeout, captures the response or
+  network error, and bumps the endpoint's success or failure
+  counters. Production should swap the inline POST for a Redis
+  worker queue with retries; the synchronous path here keeps
+  request latency unaffected and gets us shipping fast.
+- **Signature**: `X-Jetnine-Signature: t=<unix>,v1=<hmacsha256(t.body)>`
+  using the per-endpoint secret. Identical recipe to Stripe's
+  `Stripe-Signature`, so customers integrating with both pay the
+  cost of writing the verifier exactly once.
+- **`/v1/business/webhooks`** full CRUD + `/event-types` (the
+  catalog) + `POST /:id/test` (synthetic `webhook.test` event,
+  result returned synchronously) + `GET /:id/deliveries` (recent
+  history). The secret is returned exactly once at create time;
+  list/get never echo it.
+- **Events wired to fire today**: `sale.created`, `sale.refunded`,
+  `customer.created`, `inventory.adjusted`,
+  `purchase_order.received`, `stock_transfer.received`. The
+  literal `*` matches every event type in the endpoint's
+  subscription array.
+- **Permissions**: `webhooks.view` (Owner/Manager) and
+  `webhooks.manage` (Owner/Manager). Cashiers don't see this UI.
+- **Web**: `/settings/webhooks` lists endpoints with health badges
+  (consecutive failures, total deliveries, last success), inline
+  create form with checkbox-grid event picker + wildcard, the
+  one-time secret reveal, Test / History / Pause / Delete row
+  actions, and an inline delivery history modal. Linked from the
+  settings header.
+- **Integration tests** (`apps/api/test/webhooks.int.spec.ts`,
+  13 cases): owner creates an endpoint → cashier denied list →
+  list view doesn't echo the secret → test-fire delivers and
+  records success → sale fires `sale.created` and the receiver
+  sees it → customer fires `customer.created` → unsubscribed
+  events are not delivered → 5xx from receiver records `failed`
+  - bumps consecutive failures → wildcard subscription delivers
+    any type → deactivating suppresses → /deliveries surfaces
+    history → unknown event type 400 → duplicate URL on the same
+    business 400. Repo: 188 tests, all green. CI provisions
+    `jetnine_webhooks`.

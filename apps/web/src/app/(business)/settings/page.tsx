@@ -97,6 +97,20 @@ export default function SettingsPage() {
             Discounts
           </Link>
           <Link
+            href="/settings/webhooks"
+            style={{
+              padding: '8px 14px',
+              background: 'transparent',
+              color: '#444',
+              border: '1px solid #ccc',
+              borderRadius: 4,
+              textDecoration: 'none',
+              fontSize: 13,
+            }}
+          >
+            Webhooks
+          </Link>
+          <Link
             href="/settings/billing"
             style={{
               padding: '8px 14px',

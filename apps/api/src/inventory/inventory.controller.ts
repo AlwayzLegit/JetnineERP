@@ -17,6 +17,7 @@ import type { CurrentUserPayload } from '../auth/current-user.decorator';
 import { DRIZZLE } from '../database/database.module';
 import { RequirePermission, TenantScoped } from '../tenancy/decorators';
 import type { RequestTenantContext } from '../tenancy/request-context';
+import { WebhookDispatcher } from '../webhooks/webhook-dispatcher.service';
 
 const ADJUST_REASONS = new Set(['count_correction', 'damage', 'theft', 'other']);
 
@@ -68,6 +69,7 @@ export class InventoryController {
   constructor(
     @Inject(DRIZZLE) private readonly db: PostgresJsDatabase,
     @Inject(AuditService) private readonly audit: AuditService,
+    @Inject(WebhookDispatcher) private readonly webhooks: WebhookDispatcher,
   ) {}
 
   /**
@@ -191,6 +193,19 @@ export class InventoryController {
       targetType: 'product_variant',
       targetId: variantId,
       metadata: { delta, reason, locationId, notes: body.notes ?? null },
+    });
+
+    void this.webhooks.fire({
+      businessId: tenant.businessId!,
+      eventType: 'inventory.adjusted',
+      payload: {
+        variantId,
+        locationId,
+        delta,
+        reason,
+        onHand: result.onHand,
+        movementId: result.movementId,
+      },
     });
 
     return result;

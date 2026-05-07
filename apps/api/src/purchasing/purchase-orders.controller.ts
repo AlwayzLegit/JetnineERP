@@ -17,6 +17,7 @@ import { AuditService } from '../audit/audit.service';
 import { CurrentTenant, CurrentUser } from '../auth/current-user.decorator';
 import type { CurrentUserPayload } from '../auth/current-user.decorator';
 import { DRIZZLE } from '../database/database.module';
+import { WebhookDispatcher } from '../webhooks/webhook-dispatcher.service';
 import { RequirePermission, TenantScoped } from '../tenancy/decorators';
 import type { RequestTenantContext } from '../tenancy/request-context';
 
@@ -83,6 +84,7 @@ export class PurchaseOrdersController {
   constructor(
     @Inject(DRIZZLE) private readonly db: PostgresJsDatabase,
     @Inject(AuditService) private readonly audit: AuditService,
+    @Inject(WebhookDispatcher) private readonly webhooks: WebhookDispatcher,
   ) {}
 
   @Get()
@@ -349,6 +351,20 @@ export class PurchaseOrdersController {
         lineCount: validated.length,
       },
     });
+
+    if (fullyReceived) {
+      void this.webhooks.fire({
+        businessId: tenant.businessId!,
+        eventType: 'purchase_order.received',
+        payload: {
+          purchaseOrderId: id,
+          number: po.number,
+          vendorId: po.vendorId,
+          locationId: po.locationId,
+          subtotalCents: po.subtotalCents,
+        },
+      });
+    }
     return this.hydrate(id);
   }
 

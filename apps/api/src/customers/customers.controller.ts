@@ -19,6 +19,7 @@ import { CurrentTenant } from '../auth/current-user.decorator';
 import { DRIZZLE } from '../database/database.module';
 import { RequirePermission, TenantScoped } from '../tenancy/decorators';
 import type { RequestTenantContext } from '../tenancy/request-context';
+import { WebhookDispatcher } from '../webhooks/webhook-dispatcher.service';
 
 interface CustomerRow {
   id: string;
@@ -49,6 +50,7 @@ export class CustomersController {
   constructor(
     @Inject(DRIZZLE) private readonly db: PostgresJsDatabase,
     @Inject(AuditService) private readonly audit: AuditService,
+    @Inject(WebhookDispatcher) private readonly webhooks: WebhookDispatcher,
   ) {}
 
   /**
@@ -146,6 +148,17 @@ export class CustomersController {
       targetType: 'customer',
       targetId: row.id,
       after: {
+        email: row.email,
+        phone: row.phone,
+        firstName: row.firstName,
+        lastName: row.lastName,
+      },
+    });
+    void this.webhooks.fire({
+      businessId: tenant.businessId!,
+      eventType: 'customer.created',
+      payload: {
+        customerId: row.id,
         email: row.email,
         phone: row.phone,
         firstName: row.firstName,
