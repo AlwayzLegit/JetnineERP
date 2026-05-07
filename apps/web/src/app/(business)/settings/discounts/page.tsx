@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useEffect, useState, type FormEvent } from 'react';
 import { api } from '@/lib/api';
+import { Money } from '@/components/money';
 
 interface DiscountCode {
   id: string;
@@ -198,12 +199,14 @@ export default function DiscountsPage() {
                     )}
                   </Td>
                   <Td>
-                    {r.kind === 'percent'
-                      ? `${(r.value / 100).toFixed(2)}%`
-                      : `$${(r.value / 100).toFixed(2)}`}
+                    {r.kind === 'percent' ? (
+                      `${(r.value / 100).toFixed(2)}%`
+                    ) : (
+                      <Money cents={r.value} />
+                    )}
                     {r.minSubtotalCents != null && (
                       <div style={{ color: '#666', fontSize: 12 }}>
-                        min ${(r.minSubtotalCents / 100).toFixed(2)}
+                        min <Money cents={r.minSubtotalCents} />
                       </div>
                     )}
                   </Td>

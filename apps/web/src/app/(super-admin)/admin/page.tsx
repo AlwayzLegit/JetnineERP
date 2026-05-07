@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { formatMoney } from '@jetnine/shared';
 import { api } from '@/lib/api';
 
 interface Metrics {
@@ -39,7 +40,7 @@ export default function AdminMetricsPage() {
         <Card label="Total users" value={String(metrics.totalUsers)} />
         <Card
           label="Sales (last 30d)"
-          value={`${metrics.salesLast30Days.count} · $${(metrics.salesLast30Days.grossCents / 100).toFixed(2)}`}
+          value={`${metrics.salesLast30Days.count} · ${formatMoney(metrics.salesLast30Days.grossCents)}`}
         />
       </div>
     </div>

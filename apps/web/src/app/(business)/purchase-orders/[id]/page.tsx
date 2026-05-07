@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { api } from '@/lib/api';
+import { Money } from '@/components/money';
 
 interface PoLine {
   id: string;
@@ -140,8 +141,12 @@ export default function PurchaseOrderDetailPage() {
                   </Td>
                   <Td>{l.quantityOrdered}</Td>
                   <Td>{l.quantityReceived}</Td>
-                  <Td>${(l.unitCostCents / 100).toFixed(2)}</Td>
-                  <Td>${(l.lineTotalCents / 100).toFixed(2)}</Td>
+                  <Td>
+                    <Money cents={l.unitCostCents} />
+                  </Td>
+                  <Td>
+                    <Money cents={l.lineTotalCents} />
+                  </Td>
                   {receivable && (
                     <Td>
                       {remaining > 0 ? (
@@ -279,7 +284,7 @@ function Row({
       }}
     >
       <span>{label}</span>
-      <span>{cents != null ? `$${(cents / 100).toFixed(2)}` : (text ?? '—')}</span>
+      <span>{cents != null ? <Money cents={cents} /> : (text ?? '—')}</span>
     </div>
   );
 }

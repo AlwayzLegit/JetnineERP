@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
+import { Money } from '@/components/money';
 
 interface PoRow {
   id: string;
@@ -77,7 +78,9 @@ export default function PurchaseOrdersPage() {
                 <Td>
                   <Badge status={p.status} />
                 </Td>
-                <Td>${(p.subtotalCents / 100).toFixed(2)}</Td>
+                <Td>
+                  <Money cents={p.subtotalCents} />
+                </Td>
                 <Td>{new Date(p.createdAt).toLocaleDateString()}</Td>
                 <Td>
                   <Link href={`/purchase-orders/${p.id}`}>Open</Link>

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { api, apiUrl } from '@/lib/api';
+import { Money } from '@/components/money';
 
 interface DailyTotalRow {
   day: string;
@@ -156,11 +157,19 @@ export default function ReportsPage() {
                   <tr key={d.day}>
                     <Td>{d.day}</Td>
                     <Td>{d.saleCount}</Td>
-                    <Td>${(d.subtotalCents / 100).toFixed(2)}</Td>
-                    <Td>${(d.discountCents / 100).toFixed(2)}</Td>
-                    <Td>${(d.taxCents / 100).toFixed(2)}</Td>
                     <Td>
-                      <strong>${(d.totalCents / 100).toFixed(2)}</strong>
+                      <Money cents={d.subtotalCents} />
+                    </Td>
+                    <Td>
+                      <Money cents={d.discountCents} />
+                    </Td>
+                    <Td>
+                      <Money cents={d.taxCents} />
+                    </Td>
+                    <Td>
+                      <strong>
+                        <Money cents={d.totalCents} />
+                      </strong>
                     </Td>
                   </tr>
                 ))}
@@ -182,7 +191,9 @@ export default function ReportsPage() {
                   <tr key={a.associateUserId ?? 'none'}>
                     <Td>{a.associateEmail ?? '(deleted)'}</Td>
                     <Td>{a.saleCount}</Td>
-                    <Td>${(a.totalCents / 100).toFixed(2)}</Td>
+                    <Td>
+                      <Money cents={a.totalCents} />
+                    </Td>
                   </tr>
                 ))}
               </tbody>
@@ -203,7 +214,9 @@ export default function ReportsPage() {
                   <tr key={p.method}>
                     <Td>{p.method}</Td>
                     <Td>{p.count}</Td>
-                    <Td>${(p.amountCents / 100).toFixed(2)}</Td>
+                    <Td>
+                      <Money cents={p.amountCents} />
+                    </Td>
                   </tr>
                 ))}
               </tbody>
@@ -244,8 +257,14 @@ export default function ReportsPage() {
                     <code>{p.sku ?? '—'}</code>
                   </Td>
                   <Td>{p.quantity}</Td>
-                  <Td>${(p.revenueCents / 100).toFixed(2)}</Td>
-                  {p.marginCents != null && <Td>${((p.marginCents ?? 0) / 100).toFixed(2)}</Td>}
+                  <Td>
+                    <Money cents={p.revenueCents} />
+                  </Td>
+                  {p.marginCents != null && (
+                    <Td>
+                      <Money cents={p.marginCents ?? 0} />
+                    </Td>
+                  )}
                 </tr>
               ))}
             </tbody>

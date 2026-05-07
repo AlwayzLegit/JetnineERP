@@ -3,7 +3,9 @@
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
+import { centsToInputString } from '@jetnine/shared';
 import { api } from '@/lib/api';
+import { Money } from '@/components/money';
 
 interface Variant {
   id: string;
@@ -195,11 +197,11 @@ export default function ProductDetailPage() {
                 </Td>
                 <Td>
                   <input
-                    defaultValue={(v.priceCents / 100).toFixed(2)}
+                    defaultValue={centsToInputString(v.priceCents)}
                     type="number"
                     step="0.01"
                     onBlur={(e) => {
-                      if (e.target.value !== (v.priceCents / 100).toFixed(2)) {
+                      if (e.target.value !== centsToInputString(v.priceCents)) {
                         void setVariantPrice(v.id, e.target.value);
                       }
                     }}
@@ -214,7 +216,7 @@ export default function ProductDetailPage() {
                 </Td>
                 <Td>
                   {v.costCents != null ? (
-                    `$${(v.costCents / 100).toFixed(2)}`
+                    <Money cents={v.costCents} />
                   ) : (
                     <em style={{ color: '#888' }}>hidden</em>
                   )}

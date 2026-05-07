@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useEffect, useState, type FormEvent } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { api } from '@/lib/api';
+import { Money } from '@/components/money';
 
 interface SaleSummary {
   id: string;
@@ -155,7 +156,9 @@ export default function CustomerDetailPage() {
                     <code>{s.number}</code>
                   </Td>
                   <Td>{s.status}</Td>
-                  <Td>${(s.totalCents / 100).toFixed(2)}</Td>
+                  <Td>
+                    <Money cents={s.totalCents} />
+                  </Td>
                   <Td>{new Date(s.completedAt ?? s.createdAt).toLocaleDateString()}</Td>
                 </tr>
               ))}

@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { api } from '@/lib/api';
+import { Money } from '@/components/money';
 
 interface Shift {
   id: string;
@@ -188,7 +189,7 @@ function Row({
     >
       <span>{label}</span>
       <span>
-        {cents < 0 ? '-' : ''}${Math.abs(cents / 100).toFixed(2)}
+        <Money cents={cents} />
       </span>
     </div>
   );

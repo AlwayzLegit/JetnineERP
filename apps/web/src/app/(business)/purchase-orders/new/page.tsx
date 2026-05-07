@@ -3,6 +3,7 @@
 import { useRouter } from 'next/navigation';
 import { useEffect, useState, type FormEvent } from 'react';
 import { api } from '@/lib/api';
+import { Money } from '@/components/money';
 
 interface Vendor {
   id: string;
@@ -278,7 +279,9 @@ export default function NewPurchaseOrderPage() {
                           style={{ ...inputStyle, width: 100 }}
                         />
                       </Td>
-                      <Td align="right">${(lineTotal / 100).toFixed(2)}</Td>
+                      <Td align="right">
+                        <Money cents={lineTotal} />
+                      </Td>
                       <Td>
                         <button type="button" onClick={() => removeLine(i)} style={linkBtnDanger}>
                           Remove
@@ -294,7 +297,7 @@ export default function NewPurchaseOrderPage() {
                     Subtotal
                   </td>
                   <td style={{ padding: 8, fontWeight: 600, textAlign: 'right' }}>
-                    ${(subtotalCents / 100).toFixed(2)}
+                    <Money cents={subtotalCents} />
                   </td>
                   <td />
                 </tr>

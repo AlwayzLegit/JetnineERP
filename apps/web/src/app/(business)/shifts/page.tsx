@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
+import { Money } from '@/components/money';
 
 interface ShiftRow {
   id: string;
@@ -141,7 +142,9 @@ export default function ShiftsPage() {
                 <tr key={r.id}>
                   <Td>{new Date(r.openedAt).toLocaleString()}</Td>
                   <Td>{r.locationName ?? '—'}</Td>
-                  <Td>${(r.openingFloatCents / 100).toFixed(2)}</Td>
+                  <Td>
+                    <Money cents={r.openingFloatCents} />
+                  </Td>
                   <Td>
                     {r.closedAt ? (
                       <span style={{ color: '#666' }}>
@@ -151,11 +154,7 @@ export default function ShiftsPage() {
                       <strong style={{ color: '#070' }}>Open</strong>
                     )}
                   </Td>
-                  <Td>
-                    {r.varianceCents == null
-                      ? '—'
-                      : `${r.varianceCents < 0 ? '-' : ''}$${(Math.abs(r.varianceCents) / 100).toFixed(2)}`}
-                  </Td>
+                  <Td>{r.varianceCents == null ? '—' : <Money cents={r.varianceCents} />}</Td>
                   <Td>
                     <Link href={`/shifts/${r.id}`}>Open</Link>
                   </Td>

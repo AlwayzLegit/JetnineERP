@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { api } from '@/lib/api';
+import { Money } from '@/components/money';
 
 interface SaleLine {
   id: string;
@@ -128,8 +129,12 @@ export default function SaleDetailPage() {
                   <Td>{l.description}</Td>
                   <Td>{l.quantity}</Td>
                   <Td>{l.refundedQuantity}</Td>
-                  <Td>${(l.unitPriceCents / 100).toFixed(2)}</Td>
-                  <Td>${(l.totalCents / 100).toFixed(2)}</Td>
+                  <Td>
+                    <Money cents={l.unitPriceCents} />
+                  </Td>
+                  <Td>
+                    <Money cents={l.totalCents} />
+                  </Td>
                   {refundable && (
                     <Td>
                       {remaining > 0 ? (
@@ -193,7 +198,9 @@ export default function SaleDetailPage() {
               }}
             >
               {new Date(r.createdAt).toLocaleString()} —{' '}
-              <strong>${(r.amountCents / 100).toFixed(2)}</strong>
+              <strong>
+                <Money cents={r.amountCents} />
+              </strong>
               {r.reason && <span style={{ color: '#666' }}> · {r.reason}</span>}
             </div>
           ))}
@@ -251,7 +258,7 @@ function Row({ label, cents, bold }: { label: string; cents: number; bold?: bool
     >
       <span>{label}</span>
       <span>
-        {cents < 0 ? '-' : ''}${Math.abs(cents / 100).toFixed(2)}
+        <Money cents={cents} />
       </span>
     </div>
   );

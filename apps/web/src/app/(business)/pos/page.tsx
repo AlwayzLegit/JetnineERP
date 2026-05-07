@@ -4,7 +4,9 @@ import Link from 'next/link';
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { loadStripe, type Stripe as StripeJs } from '@stripe/stripe-js';
 import { CardElement, Elements, useElements, useStripe } from '@stripe/react-stripe-js';
+import { centsToInputString, formatMoney } from '@jetnine/shared';
 import { api } from '@/lib/api';
+import { Money } from '@/components/money';
 
 interface LookupRow {
   variantId: string;
@@ -282,7 +284,7 @@ export default function PosPage() {
                 >
                   <strong>{r.productName}</strong> {r.variantName && <>— {r.variantName}</>}{' '}
                   <span style={{ color: '#666' }}>
-                    ${(r.priceCents / 100).toFixed(2)} · {r.sku ?? '—'}
+                    <Money cents={r.priceCents} /> · {r.sku ?? '—'}
                   </span>
                 </button>
               ))}
@@ -320,7 +322,9 @@ export default function PosPage() {
                             style={qtyInput}
                           />
                         </Td>
-                        <Td>${(l.unitPriceCents / 100).toFixed(2)}</Td>
+                        <Td>
+                          <Money cents={l.unitPriceCents} />
+                        </Td>
                         <Td>
                           <input
                             type="number"
@@ -328,13 +332,15 @@ export default function PosPage() {
                             min={0}
                             placeholder="0.00"
                             defaultValue={
-                              l.lineDiscountCents ? (l.lineDiscountCents / 100).toFixed(2) : ''
+                              l.lineDiscountCents ? centsToInputString(l.lineDiscountCents) : ''
                             }
                             onBlur={(e) => setLineDiscount(l.variantId, e.target.value)}
                             style={{ ...qtyInput, width: 60 }}
                           />
                         </Td>
-                        <Td align="right">${(lineTotal / 100).toFixed(2)}</Td>
+                        <Td align="right">
+                          <Money cents={lineTotal} />
+                        </Td>
                       </tr>
                     );
                   })}
@@ -418,7 +424,7 @@ export default function PosPage() {
               disabled={cart.length === 0}
               style={{ ...primaryBtn, padding: '14px', fontSize: 16 }}
             >
-              Pay ${(totals.totalCents / 100).toFixed(2)}
+              Pay {formatMoney(totals.totalCents)}
             </button>
             <button onClick={reset} style={linkBtn}>
               Clear cart
@@ -531,7 +537,10 @@ function ManualPaymentForm({
       <h1 style={{ fontSize: 22, marginBottom: 16 }}>Payment</h1>
       <div style={card}>
         <div style={{ fontSize: 14, marginBottom: 12 }}>
-          Total due: <strong>${(totalCents / 100).toFixed(2)}</strong>
+          Total due:{' '}
+          <strong>
+            <Money cents={totalCents} />
+          </strong>
         </div>
         <Field label="Cash tendered ($)">
           <input
@@ -560,7 +569,7 @@ function ManualPaymentForm({
             : 'Card payments are recorded as manual captures. Connect Stripe in Settings → Billing for real card processing.'}
         </p>
         <div style={{ fontSize: 14, marginTop: 12 }}>
-          Tendered: ${(tendered / 100).toFixed(2)} · Change: ${(change / 100).toFixed(2)}
+          Tendered: {formatMoney(tendered)} · Change: {formatMoney(change)}
         </div>
       </div>
       {error && <p style={{ color: '#b00', fontSize: 13 }}>{error}</p>}
@@ -647,7 +656,10 @@ function StripePaymentForm({
       <h1 style={{ fontSize: 22, marginBottom: 16 }}>Payment</h1>
       <div style={card}>
         <div style={{ fontSize: 14, marginBottom: 12 }}>
-          Total due: <strong>${(totalCents / 100).toFixed(2)}</strong>
+          Total due:{' '}
+          <strong>
+            <Money cents={totalCents} />
+          </strong>
         </div>
         <Field label="Cash tendered ($)">
           <input
@@ -661,8 +673,10 @@ function StripePaymentForm({
           />
         </Field>
         <p style={{ fontSize: 12, color: '#666' }}>
-          Cash applied: ${(cashApplied / 100).toFixed(2)} · Change: ${(change / 100).toFixed(2)} ·
-          Card to charge: <strong>${(cardCents / 100).toFixed(2)}</strong>
+          Cash applied: {formatMoney(cashApplied)} · Change: {formatMoney(change)} · Card to charge:{' '}
+          <strong>
+            <Money cents={cardCents} />
+          </strong>
         </p>
 
         {cardCents > 0 && (
@@ -693,7 +707,7 @@ function StripePaymentForm({
           disabled={busy}
           style={{ ...primaryBtn, padding: '14px', fontSize: 16, flex: 1 }}
         >
-          {busy ? 'Processing…' : `Charge $${(cardCents / 100).toFixed(2)}`}
+          {busy ? 'Processing…' : `Charge ${formatMoney(cardCents)}`}
         </button>
         <button onClick={onCancel} style={linkBtn}>
           Back to cart
@@ -731,33 +745,45 @@ function Receipt({
                 <Td>
                   {l.description} <span style={{ color: '#888' }}>×{l.quantity}</span>
                 </Td>
-                <Td align="right">${(l.totalCents / 100).toFixed(2)}</Td>
+                <Td align="right">
+                  <Money cents={l.totalCents} />
+                </Td>
               </tr>
             ))}
           </tbody>
           <tfoot>
             <tr>
               <Td>Subtotal</Td>
-              <Td align="right">${(sale.subtotalCents / 100).toFixed(2)}</Td>
+              <Td align="right">
+                <Money cents={sale.subtotalCents} />
+              </Td>
             </tr>
             {sale.discountCents > 0 && (
               <tr>
                 <Td>Discount</Td>
-                <Td align="right">-${(sale.discountCents / 100).toFixed(2)}</Td>
+                <Td align="right">
+                  <Money cents={-sale.discountCents} />
+                </Td>
               </tr>
             )}
             <tr>
               <Td>Tax</Td>
-              <Td align="right">${(sale.taxCents / 100).toFixed(2)}</Td>
+              <Td align="right">
+                <Money cents={sale.taxCents} />
+              </Td>
             </tr>
             <tr style={{ fontWeight: 700 }}>
               <Td>Total</Td>
-              <Td align="right">${(sale.totalCents / 100).toFixed(2)}</Td>
+              <Td align="right">
+                <Money cents={sale.totalCents} />
+              </Td>
             </tr>
             {sale.payments.map((p, i) => (
               <tr key={i} style={{ color: '#666' }}>
                 <Td>{p.method === 'cash' ? 'Cash' : 'Card'}</Td>
-                <Td align="right">${(p.amountCents / 100).toFixed(2)}</Td>
+                <Td align="right">
+                  <Money cents={p.amountCents} />
+                </Td>
               </tr>
             ))}
           </tfoot>
@@ -1022,7 +1048,7 @@ function Row({
     >
       <span>{label}</span>
       <span>
-        {negate && value < 0 ? '-' : ''}${Math.abs(value / 100).toFixed(2)}
+        <Money cents={negate ? -Math.abs(value) : Math.abs(value)} />
       </span>
     </div>
   );

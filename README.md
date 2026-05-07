@@ -1173,3 +1173,37 @@ Swagger UI page for browsing.
   endpoints document the Idempotency-Key header → docs page
   serves Swagger UI HTML. Repo: 224 tests, all green. CI
   provisions `jetnine_openapi`.
+
+## Phase 2.12 status (`<Money>` component)
+
+Phase 2.12 is complete. All cents-to-display arithmetic is now
+funneled through a single helper module so the codebase has one
+place to localize, one place to swap currencies, and one place
+to fix any rounding drift.
+
+- **`@jetnine/shared/money`**: `formatMoney(cents, opts)`,
+  `parseMoneyToCents(raw, opts)`, `centsToInputString(cents)`,
+  and a `CurrencyCode` type. USD-only at MVP; the `currency`
+  parameter exists so the day we add a second currency doesn't
+  require a sweep through every page.
+  - `formatMoney(123456) === '$1,234.56'`,
+    `formatMoney(-50) === '-$0.50'`
+  - `parseMoneyToCents('$1,234.56') === 123456`,
+    `parseMoneyToCents('abc') === null`
+  - `centsToInputString(50) === '0.50'` for input `defaultValue`
+  - Round-trips losslessly: `parse(format(c)) === c` for every
+    integer.
+- **`<Money>` component** (`apps/web/src/components/money.tsx`):
+  thin React wrapper over `formatMoney`. Handles negative values,
+  optional `symbolless` mode for tables that already declare USD
+  in the column header, an optional `title` for accessibility.
+- **Refactored 13 pages**: sales (list + detail), purchase orders
+  (new, list, detail), customers/[id], shifts (list + detail),
+  settings/discounts, products/[id], reports, pos, super-admin
+  metrics. Every `(cents / 100).toFixed(2)` site is now either
+  `<Money cents={…}>` (in JSX) or `formatMoney(…)` (inside string
+  templates) or `centsToInputString(…)` (in `defaultValue`).
+- **Unit tests** (`packages/shared/src/money.test.ts`, 10 cases):
+  positive / negative formatting, symbolless mode, common parse
+  shapes, half-cent rounding, garbage input, format/parse round
+  trip, input-string round trip. Repo: 234 tests, all green.

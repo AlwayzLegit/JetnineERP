@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
+import { Money } from '@/components/money';
 
 interface SaleRow {
   id: string;
@@ -78,7 +79,9 @@ export default function SalesPage() {
                 <Td>
                   <Badge status={s.status} />
                 </Td>
-                <Td>${(s.totalCents / 100).toFixed(2)}</Td>
+                <Td>
+                  <Money cents={s.totalCents} />
+                </Td>
                 <Td>{new Date(s.completedAt ?? s.createdAt).toLocaleString()}</Td>
                 <Td>
                   <Link href={`/sales/${s.id}`}>Open</Link>
