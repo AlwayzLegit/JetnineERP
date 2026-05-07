@@ -18,6 +18,7 @@ export const TENANT_SCOPED_TABLES = [
   'audit_logs',
   'products',
   'product_variants',
+  'product_images',
   'categories',
   'inventory_levels',
   'inventory_movements',

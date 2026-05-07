@@ -327,3 +327,46 @@ true` returns 403 on edit/delete); admins clone via `basedOnRoleId`
   roles refuse edit/delete → disabling a member flips status to
   `disabled` with an audit row → public permission catalog returns
   the full list. CI provisions `jetnine_business`.
+
+## Phase 1 — Epic 1.7 status (Product catalog)
+
+Epic 1.7 is complete:
+
+- **Schema (migration 0002)**: new `product_images` table, plus generated
+  `search_tsv` tsvector columns on `products` (name + sku + description)
+  and `product_variants` (name + sku + barcode) with GIN indexes. The
+  generated columns rebuild automatically on UPDATE so search stays
+  consistent without trigger maintenance.
+- **Categories** at `/v1/categories`: tree CRUD with depth ≤ 3 enforced
+  in the controller. List returns both flat + tree views; deletes refuse
+  if the category has children.
+- **Products** at `/v1/products`:
+  • `GET ?q=...` runs `websearch_to_tsquery('simple', q) @@ search_tsv`
+  against products and any matching variants — finds the parent product
+  when a variant SKU or barcode hits. Ranked by `ts_rank`.
+  • `POST` creates a product + variants in one shot.
+  • `GET /:id`, `PATCH /:id`, `DELETE /:id` (soft via `is_active`).
+- **Variants** at `/v1/products/:productId/variants` and
+  `/v1/products/variants/:id`: full CRUD; the legacy
+  `PATCH /variants/:id/price` route used by Epic 1.3/1.4 tests stays.
+  `costCents` is redacted in `GET /:id` responses unless the user has
+  `products.cost.view` (or is super-admin).
+- **Images** at `/v1/products/:productId/images`:
+  • `POST .../upload-url` issues a unique storage key and a signed-URL
+  placeholder (real R2 presigning kicks in once `R2_ACCOUNT_ID` +
+  `R2_BUCKET` are configured).
+  • `POST .../images` registers the uploaded key; max 4 per product.
+  • `DELETE /v1/products/images/:id` removes the row.
+- **CSV import** at `/v1/products/import/{preview,commit}`: parses
+  `name,sku,price,barcode` headers; preview returns rows + per-row
+  errors + SKU conflicts; commit inserts products + a default variant
+  per row, skipping any SKU that already exists.
+- **Web pages** under `(business)`: `/products` list with search box and
+  inline CSV import; `/products/new` create form with variant rows;
+  `/products/[id]` detail with inline price edit + image registration;
+  `/categories` tree CRUD.
+- **Integration tests** (`apps/api/test/catalog.int.spec.ts`, 10 cases):
+  category create + 3-level depth enforcement → product with 3 variants
+  → search by partial SKU, by barcode, by free-text name → cashier sees
+  prices but `costCents` is null → 4-image cap → CSV preview parses 3
+  rows + commit creates them. CI provisions `jetnine_catalog`.

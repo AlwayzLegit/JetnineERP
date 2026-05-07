@@ -14,3 +14,13 @@ export const inet = customType<{ data: string; driverData: string }>({
     return 'inet';
   },
 });
+
+// Postgres `tsvector`. We never read or write this column from Drizzle —
+// it's a `GENERATED ALWAYS AS` expression set up in the migration — but
+// declaring the column lets the search controllers reference it from raw
+// SQL with a known name and lets diff tools see its existence.
+export const tsvector = customType<{ data: string; driverData: string }>({
+  dataType() {
+    return 'tsvector';
+  },
+});

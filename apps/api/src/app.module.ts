@@ -10,10 +10,10 @@ import { AuditModule } from './audit/audit.module';
 import { AuthGuard } from './auth/auth.guard';
 import { AuthModule } from './auth/auth.module';
 import { BusinessModule } from './business/business.module';
+import { CatalogModule } from './catalog/catalog.module';
 import { DatabaseModule } from './database/database.module';
 import { EmailModule } from './email/email.module';
 import { HealthController } from './health/health.controller';
-import { ProductsModule } from './products/products.module';
 import { RedisModule } from './redis/redis.module';
 import { TenancyModule } from './tenancy/tenancy.module';
 
@@ -57,7 +57,7 @@ import { TenancyModule } from './tenancy/tenancy.module';
     AuthModule,
     TenancyModule,
     BusinessModule,
-    ProductsModule,
+    CatalogModule,
     AdminModule,
   ],
   controllers: [AppController, HealthController],

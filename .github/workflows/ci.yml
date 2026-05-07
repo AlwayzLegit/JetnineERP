@@ -48,6 +48,7 @@ jobs:
       AUDIT_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/jetnine_audit
       ADMIN_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/jetnine_admin
       BUSINESS_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/jetnine_business
+      CATALOG_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/jetnine_catalog
       REDIS_URL: redis://localhost:6379
 
     steps:
@@ -73,6 +74,7 @@ jobs:
           createdb -h localhost -U postgres jetnine_audit
           createdb -h localhost -U postgres jetnine_admin
           createdb -h localhost -U postgres jetnine_business
+          createdb -h localhost -U postgres jetnine_catalog
 
       - name: Format check
         run: pnpm format:check

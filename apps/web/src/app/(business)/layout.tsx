@@ -21,6 +21,12 @@ export default function BusinessLayout({ children }: { children: ReactNode }) {
           <Link href="/dashboard" style={{ color: '#ccc' }}>
             Dashboard
           </Link>
+          <Link href="/products" style={{ color: '#ccc' }}>
+            Products
+          </Link>
+          <Link href="/categories" style={{ color: '#ccc' }}>
+            Categories
+          </Link>
           <Link href="/settings" style={{ color: '#ccc' }}>
             Settings
           </Link>

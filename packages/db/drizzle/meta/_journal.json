@@ -15,6 +15,13 @@
       "when": 1778157326603,
       "tag": "0001_friendly_starfox",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1778158356719,
+      "tag": "0002_perpetual_penance",
+      "breakpoints": true
     }
   ]
 }
