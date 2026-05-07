@@ -2,6 +2,7 @@ import { SetMetadata, applyDecorators, UseGuards, UseInterceptors } from '@nestj
 import type { Permission } from '@jetnine/shared';
 import { AuditInterceptor } from '../audit/audit.interceptor';
 import { SubscriptionGuard } from '../billing/subscription.guard';
+import { IdempotencyInterceptor } from '../idempotency/idempotency.interceptor';
 import { TenancyGuard } from './tenancy.guard';
 import { PermissionGuard } from './permission.guard';
 import { RlsContextInterceptor } from './rls-context.interceptor';
@@ -31,12 +32,14 @@ export const RequirePermission = (...permissions: Permission[]) =>
  * AuthGuard already runs globally so we don't re-stack it here. Pair with
  * @RequirePermission(...) on individual handlers to gate by permission.
  *
- * The interceptors run in registration order: RLS opens the transaction
- * first, Audit runs inside it so its INSERT inherits the tenant context.
+ * The interceptors run in registration order: Idempotency runs first
+ * (so its lock + cache live in their own auto-commit tx, surviving
+ * handler rollback). RLS opens the per-request tx next, then Audit
+ * runs inside it so its INSERT inherits the tenant context.
  */
 export function TenantScoped() {
   return applyDecorators(
     UseGuards(TenancyGuard, SubscriptionGuard, PermissionGuard),
-    UseInterceptors(RlsContextInterceptor, AuditInterceptor),
+    UseInterceptors(IdempotencyInterceptor, RlsContextInterceptor, AuditInterceptor),
   );
 }

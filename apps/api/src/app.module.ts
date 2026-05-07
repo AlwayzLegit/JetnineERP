@@ -19,6 +19,7 @@ import { DatabaseModule } from './database/database.module';
 import { DiscountsModule } from './discounts/discounts.module';
 import { EmailModule } from './email/email.module';
 import { HealthController } from './health/health.controller';
+import { IdempotencyModule } from './idempotency/idempotency.module';
 import { InventoryModule } from './inventory/inventory.module';
 import { PurchasingModule } from './purchasing/purchasing.module';
 import { RedisModule } from './redis/redis.module';
@@ -68,6 +69,7 @@ import { WebhooksModule } from './webhooks/webhooks.module';
     AuditModule,
     AuthModule,
     TenancyModule,
+    IdempotencyModule,
     BusinessModule,
     CatalogModule,
     CustomersModule,

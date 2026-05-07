@@ -1039,3 +1039,61 @@ complete integration story: customers can both react to events
   400 → `last_used_at` ticks on every authenticated request →
   `/scopes` exposes the full permission catalog. Repo: 201
   tests, all green. CI provisions `jetnine_api_keys`.
+
+## Phase 2.9 status (Idempotency-Key headers)
+
+Phase 2.9 is complete. Stripe-style idempotency: any mutating
+endpoint becomes safely retryable when the client supplies an
+`Idempotency-Key` header. Pairs with the public API (2.8) so
+integrators can retry a failed network round-trip without
+double-charging.
+
+- **Schema**: `idempotency_keys` table with `(business_id, key)`
+  unique, a SHA-256 `request_fingerprint` (method + path + stable
+  body), `status` ('pending' | 'completed'), the cached
+  `response_status` + `response_body` (JSONB), `locked_at` for
+  stale-lock detection, `created_at` for the 24h sweep window.
+  Tenant-scoped + RLS-forced. Migration
+  `0015_silent_shinobi_shaw.sql`.
+- **`IdempotencyInterceptor`**: wired into `TenantScoped()` so
+  every mutating endpoint already gets it for free; no per-
+  controller work. Reads the `Idempotency-Key` header (validates
+  charset + length), computes a stable fingerprint, and:
+  - on a fresh key → reserves a `pending` row, runs the handler,
+    persists the response on success, releases the lock on
+    failure (errors are not cached so transient failures can be
+    retried)
+  - on a completed row with matching fingerprint → replays the
+    cached status + body and sets an `Idempotent-Replayed: true`
+    response header
+  - on a completed row with a different fingerprint → 409
+    Conflict (key reuse across operations is forbidden)
+  - on a `pending` row younger than 60s → 409 (a request is
+    already in flight); older than 60s → reclaimed as stale.
+- **Lock outside the RLS tx**: the interceptor runs ahead of
+  `RlsContextInterceptor`, against the root db connection. So
+  the lock survives a handler rollback — a partial failure
+  releases the lock cleanly via the catch path, never leaving a
+  stuck row that would deny future legitimate retries.
+- **Stable body fingerprint**: bodies are canonicalized via an
+  order-stable JSON stringify, so `{a:1,b:2}` and `{b:2,a:1}`
+  hash identically. Saves clients from accidental
+  property-reordering causing spurious 409s.
+- **Per-tenant scope**: the unique constraint is
+  `(business_id, key)`, so two businesses can independently use
+  the same key string with no collision.
+- **GET requests ignore the header**: lookups aren't side-
+  effecting, so the interceptor short-circuits without writing a
+  row. Malformed keys (whitespace, > 255 chars, invalid charset)
+  are rejected 400 before any handler work.
+- **Integration tests** (`apps/api/test/idempotency.int.spec.ts`,
+  10 cases): mutation without the header doesn't write a row →
+  two POSTs with the same key insert one customer and replay the
+  cached body → reusing a key with a different body → 409 →
+  cross-tenant key collision is allowed → idempotent sale
+  creation only decrements inventory once → GET ignores the
+  header → malformed key 400s → handler error releases the lock
+  so a fresh retry succeeds → key body order doesn't matter
+  (stable stringify) → completed row carries response status +
+  body. Repo: 211 tests, all green. CI provisions
+  `jetnine_idempotency`.

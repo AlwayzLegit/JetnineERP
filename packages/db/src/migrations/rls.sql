@@ -81,7 +81,8 @@ DECLARE
     'discount_redemptions',
     'webhook_endpoints',
     'webhook_deliveries',
-    'api_keys'
+    'api_keys',
+    'idempotency_keys'
   ];
 BEGIN
   FOREACH t IN ARRAY tenant_tables LOOP

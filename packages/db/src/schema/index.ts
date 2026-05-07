@@ -15,6 +15,7 @@ export * from './taxes';
 export * from './discounts';
 export * from './webhooks';
 export * from './api-keys';
+export * from './idempotency';
 
 // List of tables that carry a `business_id` and need RLS. Kept in sync with
 // the migration script in src/migrations/rls.sql — when you add a new
@@ -52,4 +53,5 @@ export const TENANT_SCOPED_TABLES = [
   'webhook_endpoints',
   'webhook_deliveries',
   'api_keys',
+  'idempotency_keys',
 ] as const;

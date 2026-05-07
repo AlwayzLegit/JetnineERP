@@ -61,6 +61,7 @@ jobs:
       DISCOUNTS_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/jetnine_discounts
       WEBHOOKS_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/jetnine_webhooks
       API_KEYS_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/jetnine_api_keys
+      IDEMPOTENCY_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/jetnine_idempotency
       REDIS_URL: redis://localhost:6379
 
     steps:
@@ -99,6 +100,7 @@ jobs:
           createdb -h localhost -U postgres jetnine_discounts
           createdb -h localhost -U postgres jetnine_webhooks
           createdb -h localhost -U postgres jetnine_api_keys
+          createdb -h localhost -U postgres jetnine_idempotency
 
       - name: Format check
         run: pnpm format:check
