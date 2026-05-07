@@ -55,6 +55,7 @@ jobs:
       REPORTS_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/jetnine_reports
       BILLING_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/jetnine_billing
       STRIPE_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/jetnine_stripe
+      PURCHASING_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/jetnine_purchasing
       REDIS_URL: redis://localhost:6379
 
     steps:
@@ -87,6 +88,7 @@ jobs:
           createdb -h localhost -U postgres jetnine_reports
           createdb -h localhost -U postgres jetnine_billing
           createdb -h localhost -U postgres jetnine_stripe
+          createdb -h localhost -U postgres jetnine_purchasing
 
       - name: Format check
         run: pnpm format:check

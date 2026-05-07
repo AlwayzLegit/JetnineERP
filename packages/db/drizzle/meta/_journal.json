@@ -64,6 +64,13 @@
       "when": 1778166693797,
       "tag": "0008_clever_wallop",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1778167161313,
+      "tag": "0009_cold_multiple_man",
+      "breakpoints": true
     }
   ]
 }

@@ -18,6 +18,7 @@ import { DatabaseModule } from './database/database.module';
 import { EmailModule } from './email/email.module';
 import { HealthController } from './health/health.controller';
 import { InventoryModule } from './inventory/inventory.module';
+import { PurchasingModule } from './purchasing/purchasing.module';
 import { RedisModule } from './redis/redis.module';
 import { ReportsModule } from './reports/reports.module';
 import { SalesModule } from './sales/sales.module';
@@ -67,6 +68,7 @@ import { TenancyModule } from './tenancy/tenancy.module';
     CatalogModule,
     CustomersModule,
     InventoryModule,
+    PurchasingModule,
     SalesModule,
     CashModule,
     ReportsModule,

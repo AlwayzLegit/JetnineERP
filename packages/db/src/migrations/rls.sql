@@ -70,7 +70,10 @@ DECLARE
     'cash_shifts',
     'subscriptions',
     'merchant_stripe_accounts',
-    'stripe_oauth_states'
+    'stripe_oauth_states',
+    'vendors',
+    'purchase_orders',
+    'purchase_order_lines'
   ];
 BEGIN
   FOREACH t IN ARRAY tenant_tables LOOP

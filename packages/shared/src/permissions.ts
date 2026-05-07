@@ -30,6 +30,14 @@ export const PERMISSIONS = {
   'inventory.receive': 'Receive inventory',
   'inventory.transfer': 'Transfer between locations',
 
+  'vendors.view': 'View vendors',
+  'vendors.manage': 'Create / update / delete vendors',
+
+  'purchase_orders.view': 'View purchase orders',
+  'purchase_orders.create': 'Create purchase orders',
+  'purchase_orders.receive': 'Receive against purchase orders',
+  'purchase_orders.cancel': 'Cancel a purchase order',
+
   'customers.view': 'View customers',
   'customers.create': 'Create customers',
   'customers.update': 'Update customers',

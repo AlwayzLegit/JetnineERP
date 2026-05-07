@@ -38,6 +38,11 @@ const inventoryClerkPermissions: Permission[] = [
   'inventory.adjust',
   'inventory.receive',
   'inventory.transfer',
+  'vendors.view',
+  'vendors.manage',
+  'purchase_orders.view',
+  'purchase_orders.create',
+  'purchase_orders.receive',
 ];
 
 const bookkeeperPermissions: Permission[] = [

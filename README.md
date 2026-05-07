@@ -731,3 +731,57 @@ our merchant state in sync with whatever happens on Stripe's side
   Stripe spec: account.updated syncs merchant fields, replay is
   deduped, dispute writes the audit row, deauthorized
   soft-disconnects, unknown types pass, malformed payload returns 400. Total Stripe spec: 18/18; repo: 122 tests, all green.
+
+## Phase 2.3 status (Vendors & Purchase Orders)
+
+Phase 2.3 is complete. Merchants can now manage suppliers, write
+purchase orders against them, receive stock against the PO, and have
+the inventory ledger automatically reflect every receipt.
+
+- **Schema**: `vendors`, `purchase_orders`, `purchase_order_lines`.
+  POs reference vendors with `ON DELETE RESTRICT` so a vendor can't
+  be hard-deleted while a PO points at them. Tenant-scoped + RLS
+  forced on all three. Migration `0009_cold_multiple_man.sql`.
+- **Permissions**: `vendors.view` / `.manage`,
+  `purchase_orders.view` / `.create` / `.receive` / `.cancel`. The
+  Inventory Clerk role gets all six (since this is their job);
+  Owner / Manager already have the platform-wide `*` set.
+- **`/v1/vendors`** full CRUD with audit trail. Duplicate-name
+  inserts return 400 (unique on `business_id + name`); deletes are
+  refused while POs still reference the vendor (suggest deactivate
+  via `isActive=false` instead).
+- **`/v1/purchase-orders`** list (with status filter), get,
+  create. PO numbers are `PO-YYYY-NNNNNN`, generated per-business
+  per-year with retry-on-conflict. Create validates every variant
+  - vendor + location, computes the subtotal, supports
+    `place: false` to leave the PO in `draft` for later edits;
+    default is to mark `ordered` immediately.
+- **`POST /v1/purchase-orders/:id/receive`** is the meaningful
+  operation: validates each line up-front so the whole receipt is
+  all-or-nothing, then for every line writes one
+  `inventory_movements` row (`reason='receive_po'`,
+  `reference_type='purchase_order'`) and increments
+  `inventory_levels.on_hand`. After all lines are processed, the
+  PO transitions automatically: `ordered` →
+  `partially_received` →
+  `received` once every line's `quantity_received` catches up to
+  `quantity_ordered`. Audit-logged with the unit count and new
+  status.
+- **`POST /v1/purchase-orders/:id/cancel`** flips the PO to
+  `canceled` (allowed from `draft`, `ordered`,
+  `partially_received` only).
+- **Web**: `/vendors` is the supplier list with an inline create
+  form and delete; `/purchase-orders` is the list (status badge,
+  vendor, subtotal, date); `/purchase-orders/new` is a search-and-
+  add form that auto-computes the line subtotal as you type;
+  `/purchase-orders/[id]` shows the lines with received-vs-ordered
+  counters and an inline "Record receipt" form for partial or full
+  receipts. All linked from the back-office nav under "Purchasing".
+- **Integration tests** (`apps/api/test/purchasing.int.spec.ts`,
+  11 cases): vendor create + duplicate refusal → cashier denied
+  PO create → clerk creates a 2-line PO → 6/10 widgets received
+  → over-receive 400 → finish receipt flips to `received` →
+  ledger has 3 movements with `reason=receive_po` →
+  re-receive against `received` PO 403s → cancel a draft PO →
+  vendor delete is refused while POs reference it. CI provisions
+  `jetnine_purchasing`. Repo: 133 tests, all green.
