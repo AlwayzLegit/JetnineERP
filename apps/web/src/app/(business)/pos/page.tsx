@@ -37,9 +37,10 @@ interface LocationRow {
   taxRateBps: number | null;
 }
 interface Payment {
-  method: 'cash' | 'card';
+  method: 'cash' | 'card' | 'gift_card';
   amountCents: number;
   stripePaymentMethodId?: string;
+  giftCardCode?: string;
 }
 interface StripeStatus {
   connected: boolean;
@@ -446,6 +447,131 @@ export default function PosPage() {
   );
 }
 
+interface GiftCardTenderState {
+  code: string;
+  appliedCents: number;
+  cardBalance: number;
+}
+
+/**
+ * Reusable gift-card tender row. Cashier types/scans the code, hits
+ * Apply, the widget looks the card up and stages a redemption equal to
+ * `min(cardBalance, remainingDue)`. The parent owns the staged state
+ * so it can subtract from its cash/card budget.
+ */
+function GiftCardTender({
+  remainingDue,
+  applied,
+  onApply,
+  onClear,
+}: {
+  remainingDue: number;
+  applied: GiftCardTenderState | null;
+  onApply: (state: GiftCardTenderState) => void;
+  onClear: () => void;
+}) {
+  const [code, setCode] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function lookupAndApply() {
+    setErr(null);
+    setBusy(true);
+    try {
+      const found = await api<{
+        id: string;
+        code: string;
+        currentBalanceCents: number;
+        status: string;
+        expiresAt: string | null;
+      }>(`/v1/gift-cards/lookup?code=${encodeURIComponent(code.trim())}`);
+      if (found.status !== 'active') {
+        throw new Error(`Card is ${found.status}.`);
+      }
+      if (found.expiresAt && new Date(found.expiresAt) < new Date()) {
+        throw new Error('Card has expired.');
+      }
+      if (found.currentBalanceCents <= 0) {
+        throw new Error('Card balance is zero.');
+      }
+      const useCents = Math.min(found.currentBalanceCents, remainingDue);
+      if (useCents <= 0) {
+        throw new Error('Cart is fully paid; remove other tenders first.');
+      }
+      onApply({
+        code: found.code,
+        appliedCents: useCents,
+        cardBalance: found.currentBalanceCents,
+      });
+      setCode('');
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (applied) {
+    return (
+      <div
+        style={{
+          background: '#f4faf4',
+          border: '1px solid #cfe2cf',
+          padding: 8,
+          borderRadius: 4,
+          fontSize: 13,
+          marginBottom: 12,
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ flex: 1 }}>
+            Gift card <code>{applied.code}</code>: applying{' '}
+            <strong>
+              <Money cents={applied.appliedCents} />
+            </strong>{' '}
+            <span style={{ color: '#666' }}>
+              (of <Money cents={applied.cardBalance} />)
+            </span>
+          </span>
+          <button onClick={onClear} style={linkBtn}>
+            Remove
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ marginBottom: 12 }}>
+      <span style={{ color: '#555', fontSize: 12 }}>Gift card</span>
+      <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
+        <input
+          type="text"
+          placeholder="Card code"
+          value={code}
+          onChange={(e) => setCode(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && code.trim()) {
+              e.preventDefault();
+              void lookupAndApply();
+            }
+          }}
+          style={{ ...fieldStyle, fontFamily: 'ui-monospace, monospace', flex: 1 }}
+        />
+        <button
+          type="button"
+          onClick={() => void lookupAndApply()}
+          disabled={busy || !code.trim() || remainingDue <= 0}
+          style={{ ...primaryBtn, padding: '6px 12px', fontSize: 13 }}
+        >
+          {busy ? '…' : 'Apply'}
+        </button>
+      </div>
+      {err && <p style={{ color: '#b00', fontSize: 12, marginTop: 4 }}>{err}</p>}
+    </div>
+  );
+}
+
 function PaymentScreen({
   totalCents,
   onCancel,
@@ -515,17 +641,24 @@ function ManualPaymentForm({
 }) {
   const [cashStr, setCashStr] = useState('');
   const [cardStr, setCardStr] = useState('');
+  const [gift, setGift] = useState<GiftCardTenderState | null>(null);
   const [busy, setBusy] = useState(false);
+  const giftApplied = gift?.appliedCents ?? 0;
+  const remainingAfterGift = Math.max(0, totalCents - giftApplied);
   const cash = parseDollars(cashStr);
   const cardCents = parseDollars(cardStr);
   const tendered = cash + cardCents;
-  const change = Math.max(0, tendered - totalCents);
+  const change = Math.max(0, tendered - remainingAfterGift);
   const cashApplied = Math.max(0, cash - change);
-  const ready = cashApplied + cardCents === totalCents && (cashApplied > 0 || cardCents > 0);
+  const ready =
+    cashApplied + cardCents === remainingAfterGift &&
+    cashApplied + cardCents + giftApplied === totalCents;
 
   async function submit() {
     setBusy(true);
     const payments: Payment[] = [];
+    if (giftApplied > 0 && gift)
+      payments.push({ method: 'gift_card', amountCents: giftApplied, giftCardCode: gift.code });
     if (cashApplied > 0) payments.push({ method: 'cash', amountCents: cashApplied });
     if (cardCents > 0) payments.push({ method: 'card', amountCents: cardCents });
     await onConfirm(payments);
@@ -541,7 +674,18 @@ function ManualPaymentForm({
           <strong>
             <Money cents={totalCents} />
           </strong>
+          {giftApplied > 0 && (
+            <span style={{ color: '#666', marginLeft: 8 }}>
+              · After gift card: <Money cents={remainingAfterGift} />
+            </span>
+          )}
         </div>
+        <GiftCardTender
+          remainingDue={remainingAfterGift + (gift?.appliedCents ?? 0)}
+          applied={gift}
+          onApply={setGift}
+          onClear={() => setGift(null)}
+        />
         <Field label="Cash tendered ($)">
           <input
             autoFocus
@@ -605,12 +749,15 @@ function StripePaymentForm({
   const stripe = useStripe();
   const elements = useElements();
   const [cashStr, setCashStr] = useState('');
+  const [gift, setGift] = useState<GiftCardTenderState | null>(null);
   const [busy, setBusy] = useState(false);
   const [cardError, setCardError] = useState<string | null>(null);
 
+  const giftApplied = gift?.appliedCents ?? 0;
+  const remainingAfterGift = Math.max(0, totalCents - giftApplied);
   const cash = parseDollars(cashStr);
-  const cashApplied = Math.min(cash, totalCents);
-  const cardCents = Math.max(0, totalCents - cashApplied);
+  const cashApplied = Math.min(cash, remainingAfterGift);
+  const cardCents = Math.max(0, remainingAfterGift - cashApplied);
   const change = Math.max(0, cash - cashApplied);
 
   async function submit() {
@@ -618,6 +765,8 @@ function StripePaymentForm({
     setCardError(null);
     try {
       const payments: Payment[] = [];
+      if (giftApplied > 0 && gift)
+        payments.push({ method: 'gift_card', amountCents: giftApplied, giftCardCode: gift.code });
       if (cashApplied > 0) payments.push({ method: 'cash', amountCents: cashApplied });
 
       if (cardCents > 0) {
@@ -660,7 +809,18 @@ function StripePaymentForm({
           <strong>
             <Money cents={totalCents} />
           </strong>
+          {giftApplied > 0 && (
+            <span style={{ color: '#666', marginLeft: 8 }}>
+              · After gift card: <Money cents={remainingAfterGift} />
+            </span>
+          )}
         </div>
+        <GiftCardTender
+          remainingDue={remainingAfterGift + (gift?.appliedCents ?? 0)}
+          applied={gift}
+          onApply={setGift}
+          onClear={() => setGift(null)}
+        />
         <Field label="Cash tendered ($)">
           <input
             autoFocus
@@ -780,7 +940,9 @@ function Receipt({
             </tr>
             {sale.payments.map((p, i) => (
               <tr key={i} style={{ color: '#666' }}>
-                <Td>{p.method === 'cash' ? 'Cash' : 'Card'}</Td>
+                <Td>
+                  {p.method === 'cash' ? 'Cash' : p.method === 'gift_card' ? 'Gift card' : 'Card'}
+                </Td>
                 <Td align="right">
                   <Money cents={p.amountCents} />
                 </Td>
