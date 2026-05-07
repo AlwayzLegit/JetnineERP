@@ -1,4 +1,11 @@
+import { sql as raw } from 'drizzle-orm';
+import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import type { Sql, TransactionSql } from 'postgres';
+
+// The exact transaction handle type Drizzle hands to the .transaction()
+// callback. Derived from PostgresJsDatabase so it stays in sync if Drizzle's
+// internal type parameters change.
+export type DrizzleTransaction = Parameters<Parameters<PostgresJsDatabase['transaction']>[0]>[0];
 
 export interface TenantContext {
   businessId?: string | null;
@@ -7,7 +14,7 @@ export interface TenantContext {
 }
 
 /**
- * Run `fn` inside a transaction with RLS context set via SET LOCAL.
+ * Run `fn` inside a postgres-js transaction with RLS context set via SET LOCAL.
  *
  * - SET LOCAL ROLE app_user drops superuser privileges so RLS applies.
  * - SET LOCAL app.current_business_id is read by the tenant_isolation policy.
@@ -31,6 +38,31 @@ export async function withTenantContext<T>(
     );
     return fn(tx);
   }) as Promise<T>;
+}
+
+/**
+ * Same as withTenantContext but yields a Drizzle transaction handle. Use
+ * this from app code that runs ORM queries; the postgres-js TransactionSql
+ * isn't directly assignable to drizzle()'s expected client shape, so we
+ * route through Drizzle's own .transaction() to keep both the SET LOCAL
+ * and the ORM API on the same connection.
+ */
+export async function withDrizzleTenantContext<T>(
+  db: PostgresJsDatabase,
+  ctx: TenantContext,
+  fn: (tx: DrizzleTransaction) => Promise<T>,
+): Promise<T> {
+  return db.transaction(async (tx) => {
+    await tx.execute(raw`SET LOCAL ROLE app_user`);
+    await tx.execute(
+      raw.raw(`SET LOCAL app.current_business_id = ${literal(ctx.businessId ?? '')}`),
+    );
+    await tx.execute(raw.raw(`SET LOCAL app.current_user_id = ${literal(ctx.userId ?? '')}`));
+    await tx.execute(
+      raw.raw(`SET LOCAL app.is_super_admin = ${literal(ctx.isSuperAdmin ? 'true' : 'false')}`),
+    );
+    return fn(tx);
+  });
 }
 
 // SET LOCAL doesn't accept bind parameters; quote literals defensively.

@@ -1,5 +1,7 @@
 import { Controller, Get } from '@nestjs/common';
+import { Public } from './tenancy/decorators';
 
+@Public()
 @Controller()
 export class AppController {
   @Get()

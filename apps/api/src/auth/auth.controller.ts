@@ -1,11 +1,18 @@
 import { All, Controller, Inject, Req, Res } from '@nestjs/common';
 import type { Request, Response } from 'express';
+import { Public } from '../tenancy/decorators';
 import { AUTH_INSTANCE } from './auth.tokens';
 import type { AuthInstance } from './auth.config';
 
 // Mount better-auth's Web Fetch handler under /api/auth/*. NestJS's Express
 // adapter delivers the raw req/res; we adapt to/from a Fetch Request/Response
 // so better-auth (which is framework-agnostic) handles the rest.
+//
+// The whole controller is @Public() because better-auth itself is the auth
+// boundary — these routes either accept anonymous traffic (sign-in, sign-up,
+// password reset) or carry their own session cookie that better-auth
+// validates internally.
+@Public()
 @Controller('api/auth')
 export class AuthController {
   constructor(@Inject(AUTH_INSTANCE) private readonly auth: AuthInstance) {}

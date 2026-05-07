@@ -172,3 +172,42 @@ on `localhost:5432` with a `jetnine_e2e` database — `createdb jetnine_e2e`).
 
 Seeded credentials: `admin@jetnine.local` / `ChangeMe!2024` (super admin),
 `owner@acme.local` / `ChangeMe!2024` (demo business owner).
+
+## Phase 1 — Epic 1.3 status (Tenancy middleware & request context)
+
+Epic 1.3 is complete:
+
+- **Active-business resolution**: per-session cookie
+  `jetnine.active_business_id` (set/cleared by `POST/DELETE
+/v1/auth/active-business`); the `X-Business-Id` header overrides for
+  tests and machine clients.
+- **TenancyGuard** loads the user's membership, role, and permission set
+  for the active business once per request. `412 Precondition Failed`
+  when no business is selected; `403 Forbidden` when the user has no
+  membership in the requested business; super admins bypass with an
+  empty permission set (the per-permission check downstream lets them
+  through).
+- **PermissionGuard** + `@RequirePermission('products.view', ...)` —
+  multiple values are AND-ed; super admins always pass.
+- **`@TenantScoped()`** controller decorator stacks `TenancyGuard +
+PermissionGuard + RlsContextInterceptor` so tenant-scoped resources
+  opt in with one line. `AuthGuard` is global (with `@Public()`
+  opt-out) so every non-public endpoint has a session.
+- **RlsContextInterceptor** opens a Drizzle transaction per request,
+  runs `SET LOCAL ROLE app_user` + the tenant GUCs, stashes the
+  transaction handle in `AsyncLocalStorage`, and runs the handler
+  inside that scope. Handlers call `getRequestDb()` (from
+  `tenancy/request-context`) to issue ORM queries that automatically
+  inherit the RLS context.
+- **`@CurrentTenant()`** param decorator exposes
+  `{ businessId, membershipId, roleId, roleName, permissions, ... }`
+  alongside `@CurrentUser()`.
+- **`/v1/auth/me`** returns the current user plus their memberships so
+  the web app can render a business picker.
+- **Sample products endpoint** (`GET /v1/products`) gated by
+  `@RequirePermission('products.view')` — placeholder until Epic 1.7
+  fills in real CRUD; lets us prove the guard end-to-end.
+- **Integration test** at `apps/api/test/tenancy.int.spec.ts` boots the
+  full Nest app, signs in two users with different roles, and asserts
+  200/403/412/401 across the matrix. CI provisions a dedicated
+  `jetnine_tenancy` database for it.

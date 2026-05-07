@@ -1,14 +1,18 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { APP_GUARD } from '@nestjs/core';
 import { LoggerModule } from 'nestjs-pino';
 import { randomUUID } from 'node:crypto';
 import { TerminusModule } from '@nestjs/terminus';
 import { AppController } from './app.controller';
+import { AuthGuard } from './auth/auth.guard';
 import { AuthModule } from './auth/auth.module';
 import { DatabaseModule } from './database/database.module';
 import { EmailModule } from './email/email.module';
 import { HealthController } from './health/health.controller';
+import { ProductsModule } from './products/products.module';
 import { RedisModule } from './redis/redis.module';
+import { TenancyModule } from './tenancy/tenancy.module';
 
 @Module({
   imports: [
@@ -47,7 +51,18 @@ import { RedisModule } from './redis/redis.module';
     RedisModule,
     EmailModule,
     AuthModule,
+    TenancyModule,
+    ProductsModule,
   ],
   controllers: [AppController, HealthController],
+  providers: [
+    // AuthGuard is global so every endpoint is authenticated by default;
+    // anonymous routes opt out via @Public(). TenancyGuard, PermissionGuard,
+    // and RlsContextInterceptor are NOT global — they're applied per-route
+    // via @TenantScoped() so user-scoped routes (sessions list, active-
+    // business picker) don't 412 when the user hasn't selected a business
+    // yet.
+    { provide: APP_GUARD, useClass: AuthGuard },
+  ],
 })
 export class AppModule {}

@@ -5,18 +5,30 @@ import {
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
 import type { Request } from 'express';
+import { IS_PUBLIC_KEY } from '../tenancy/decorators';
 import { AUTH_INSTANCE } from './auth.tokens';
 import type { AuthInstance } from './auth.config';
 import type { CurrentUserPayload } from './current-user.decorator';
 
 // Validates the session cookie via better-auth and attaches the user to the
-// request. Apply with `@UseGuards(AuthGuard)` or globally via APP_GUARD.
+// request. Registered globally via APP_GUARD; individual handlers/controllers
+// opt out with @Public().
 @Injectable()
 export class AuthGuard implements CanActivate {
-  constructor(@Inject(AUTH_INSTANCE) private readonly auth: AuthInstance) {}
+  constructor(
+    @Inject(AUTH_INSTANCE) private readonly auth: AuthInstance,
+    @Inject(Reflector) private readonly reflector: Reflector,
+  ) {}
 
   async canActivate(ctx: ExecutionContext): Promise<boolean> {
+    const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
+      ctx.getHandler(),
+      ctx.getClass(),
+    ]);
+    if (isPublic) return true;
+
     const req = ctx.switchToHttp().getRequest<Request & { user?: CurrentUserPayload }>();
 
     const headers = new Headers();

@@ -6,13 +6,11 @@ import {
   Inject,
   NotFoundException,
   Param,
-  UseGuards,
 } from '@nestjs/common';
 import { and, eq } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { schema } from '@jetnine/db';
 import { DRIZZLE } from '../database/database.module';
-import { AuthGuard } from './auth.guard';
 import { CurrentUser, type CurrentUserPayload } from './current-user.decorator';
 
 interface SessionRow {
@@ -29,7 +27,6 @@ interface SessionRow {
 // runs through Drizzle directly because it's a simple read; revoke uses
 // better-auth's cookie path so the session cache and the DB stay in sync.
 @Controller('v1/auth/sessions')
-@UseGuards(AuthGuard)
 export class SessionsController {
   constructor(@Inject(DRIZZLE) private readonly db: PostgresJsDatabase) {}
 
