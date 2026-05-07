@@ -43,6 +43,7 @@ jobs:
 
     env:
       DATABASE_URL: postgres://postgres:postgres@localhost:5432/jetnine_test
+      TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/jetnine_test
       REDIS_URL: redis://localhost:6379
 
     steps:

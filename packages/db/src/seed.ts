@@ -1,4 +1,201 @@
-// Seed script body lands in Epic 1.1 once the schema exists. The CLI command
-// is wired here so the project layout matches PLAN.md from day one.
+import { SYSTEM_ROLES } from '@jetnine/shared';
+import { eq } from 'drizzle-orm';
+import { createClient } from './client';
+import {
+  businesses,
+  categories,
+  inventoryLevels,
+  inventoryMovements,
+  locations,
+  memberships,
+  productVariants,
+  products,
+  rolePermissions,
+  roles,
+  users,
+} from './schema';
 
-console.error('Seed: nothing to do yet (Epic 1.1 will populate this).');
+async function main() {
+  const url = process.env.DATABASE_URL;
+  if (!url) {
+    console.error('DATABASE_URL is required to run the seed.');
+    process.exit(1);
+  }
+
+  const { db, sql } = createClient({ url, max: 1 });
+
+  try {
+    // 1. Super-admin user. password_hash is intentionally null until Epic 1.2
+    //    wires up better-auth; the super admin will set their password via
+    //    the email-verification flow that ships in that epic.
+    const [superAdmin] = await db
+      .insert(users)
+      .values({
+        email: 'admin@jetnine.local',
+        emailVerified: true,
+        name: 'Platform Super Admin',
+        isSuperAdmin: true,
+      })
+      .returning();
+    if (!superAdmin) throw new Error('failed to insert super admin user');
+
+    // 2. Demo business
+    const [demo] = await db
+      .insert(businesses)
+      .values({
+        slug: 'acme-furniture',
+        name: 'Acme Furniture',
+        status: 'active',
+        plan: 'starter',
+      })
+      .returning();
+    if (!demo) throw new Error('failed to insert demo business');
+
+    // 3. System roles (cloned from packages/shared catalog) + role permissions
+    const seededRoles: { id: string; name: string }[] = [];
+    for (const role of SYSTEM_ROLES) {
+      const [inserted] = await db
+        .insert(roles)
+        .values({
+          businessId: demo.id,
+          name: role.name,
+          description: role.description,
+          isSystem: true,
+        })
+        .returning();
+      if (!inserted) throw new Error(`failed to insert role ${role.name}`);
+      seededRoles.push({ id: inserted.id, name: inserted.name });
+
+      if (role.permissions.length > 0) {
+        await db.insert(rolePermissions).values(
+          role.permissions.map((permission) => ({
+            roleId: inserted.id,
+            permission,
+          })),
+        );
+      }
+    }
+
+    const ownerRole = seededRoles.find((r) => r.name === 'Owner');
+    if (!ownerRole) throw new Error('Owner role missing after seed');
+
+    // 4. Demo owner user + membership
+    const [demoOwner] = await db
+      .insert(users)
+      .values({
+        email: 'owner@acme.local',
+        emailVerified: true,
+        name: 'Acme Owner',
+      })
+      .returning();
+    if (!demoOwner) throw new Error('failed to insert demo owner');
+
+    await db.insert(memberships).values({
+      businessId: demo.id,
+      userId: demoOwner.id,
+      roleId: ownerRole.id,
+      status: 'active',
+      acceptedAt: new Date(),
+    });
+
+    // 5. One location
+    const [mainStore] = await db
+      .insert(locations)
+      .values({
+        businessId: demo.id,
+        name: 'Main Store',
+        timezone: 'America/New_York',
+        addressJson: { line1: '100 Main St', city: 'Springfield', state: 'IL', postal: '62701' },
+      })
+      .returning();
+    if (!mainStore) throw new Error('failed to insert location');
+
+    // 6. Sample category + products
+    const [furniture] = await db
+      .insert(categories)
+      .values({ businessId: demo.id, name: 'Furniture', position: 0 })
+      .returning();
+    if (!furniture) throw new Error('failed to insert category');
+
+    const sampleProducts = [
+      {
+        sku: 'SOFA-001',
+        name: 'Linen Sofa',
+        variants: [
+          { sku: 'SOFA-001-BG', name: 'Beige', priceCents: 129900, costCents: 65000 },
+          { sku: 'SOFA-001-GY', name: 'Grey', priceCents: 129900, costCents: 65000 },
+        ],
+      },
+      {
+        sku: 'CHAIR-001',
+        name: 'Oak Dining Chair',
+        variants: [{ sku: 'CHAIR-001', name: 'Default', priceCents: 24900, costCents: 12000 }],
+      },
+      {
+        sku: 'LAMP-001',
+        name: 'Brass Floor Lamp',
+        variants: [{ sku: 'LAMP-001', name: 'Default', priceCents: 18900, costCents: 8500 }],
+      },
+    ];
+
+    for (const p of sampleProducts) {
+      const [product] = await db
+        .insert(products)
+        .values({
+          businessId: demo.id,
+          sku: p.sku,
+          name: p.name,
+          categoryId: furniture.id,
+        })
+        .returning();
+      if (!product) throw new Error(`failed to insert product ${p.sku}`);
+
+      for (const v of p.variants) {
+        const [variant] = await db
+          .insert(productVariants)
+          .values({
+            businessId: demo.id,
+            productId: product.id,
+            sku: v.sku,
+            name: v.name,
+            priceCents: v.priceCents,
+            costCents: v.costCents,
+          })
+          .returning();
+        if (!variant) throw new Error(`failed to insert variant ${v.sku}`);
+
+        await db.insert(inventoryLevels).values({
+          businessId: demo.id,
+          variantId: variant.id,
+          locationId: mainStore.id,
+          onHand: 10,
+        });
+        await db.insert(inventoryMovements).values({
+          businessId: demo.id,
+          variantId: variant.id,
+          locationId: mainStore.id,
+          delta: 10,
+          reason: 'receive',
+          actorUserId: demoOwner.id,
+          notes: 'Initial seed stock',
+        });
+      }
+    }
+
+    const totalProducts = await db
+      .select({ id: products.id })
+      .from(products)
+      .where(eq(products.businessId, demo.id));
+
+    console.error(
+      `Seed complete: super-admin=${superAdmin.email}, business=${demo.slug}, owner=${demoOwner.email}, products=${totalProducts.length}.`,
+    );
+  } finally {
+    await sql.end({ timeout: 5 });
+  }
+}
+
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});

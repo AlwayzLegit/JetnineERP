@@ -96,4 +96,32 @@ Phase 0 (Epics 0.1, 0.2, 0.3) is complete:
 - ✅ Sentry SDK in both apps
 - ✅ `/health` and `/ready` endpoints
 
-Phase 1 starts with Epic 1.1 — database schema and RLS spine.
+## Phase 1 — Epic 1.1 status (Database & RLS spine)
+
+Epic 1.1 is complete:
+
+- 19 tables modelled in Drizzle (`packages/db/src/schema/`) covering platform,
+  tenancy, audit, catalog, inventory, customers, and sales.
+- Row-Level Security enabled and **forced** on every table; tenant tables use
+  `business_id = current_business_id() OR is_super_admin()` for both `USING`
+  and `WITH CHECK` so reads and writes are isolated.
+- A non-login `app_user` role is provisioned by migration; the application
+  swaps to it via `SET LOCAL ROLE app_user` inside every request transaction
+  (see `packages/db/src/with-context.ts`).
+- `pnpm db:reset && pnpm db:migrate && pnpm db:seed` produces a working dev
+  database with a super admin, demo business, all five system roles, one
+  location, and three sample products with inventory.
+- 12 cross-tenant isolation tests in `packages/db/test/rls.test.ts`. They
+  prove that A cannot see B, INSERTs into another tenant are rejected,
+  super-admin context bypasses, and an empty context sees nothing.
+  Run with `TEST_DATABASE_URL=... pnpm --filter @jetnine/db test`.
+
+### How tenant context works at runtime
+
+```ts
+import { withTenantContext } from '@jetnine/db';
+
+await withTenantContext(sql, { businessId, userId, isSuperAdmin: false }, async (tx) => {
+  // every query through `tx` runs as app_user with RLS applied
+});
+```
