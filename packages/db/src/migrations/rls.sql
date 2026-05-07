@@ -73,7 +73,9 @@ DECLARE
     'stripe_oauth_states',
     'vendors',
     'purchase_orders',
-    'purchase_order_lines'
+    'purchase_order_lines',
+    'stock_transfers',
+    'stock_transfer_lines'
   ];
 BEGIN
   FOREACH t IN ARRAY tenant_tables LOOP

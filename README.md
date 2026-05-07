@@ -785,3 +785,52 @@ the inventory ledger automatically reflect every receipt.
   re-receive against `received` PO 403s → cancel a draft PO →
   vendor delete is refused while POs reference it. CI provisions
   `jetnine_purchasing`. Repo: 133 tests, all green.
+
+## Phase 2.4 status (Stock transfers between locations)
+
+Phase 2.4 is complete. Multi-location merchants can now move stock
+between their own locations through a draft → in-transit → received
+flow with the inventory ledger reflecting both sides.
+
+- **Schema**: `stock_transfers` (status: `draft` / `in_transit` /
+  `received` / `canceled`, with `from_location_id` and
+  `to_location_id` plus a CHECK constraint that forbids the same
+  location on both sides) and `stock_transfer_lines`
+  (`quantity_shipped`, `quantity_received`). Both tenant-scoped +
+  RLS-forced. Migration `0010_orange_chronomancer.sql`.
+- **Permissions**: reuses the existing `inventory.transfer`
+  permission (already on Owner / Manager / Inventory Clerk via the
+  catalog).
+- **`/v1/stock-transfers`** list (status filter, joined location
+  names via aliased table joins) and get.
+- **`POST /v1/stock-transfers`** validates locations differ, every
+  variant exists, every line quantity is positive, then mints a
+  `ST-YYYY-NNNNNN` number. `ship: true` skips the draft step and
+  ships the deduction immediately.
+- **`POST /v1/stock-transfers/:id/ship`** snapshots origin
+  inventory, refuses if any line would go negative (the cashier
+  hasn't physically moved it yet — a stale count means we should
+  fail loud), then writes one `inventory_movements` row per line
+  with `reason='transfer_out'` /
+  `reference_type='stock_transfer'` and decrements
+  `inventory_levels.on_hand` at the origin. Status → `in_transit`.
+- **`POST /v1/stock-transfers/:id/receive`** mirrors the ship side:
+  validates each receipt line (cap at remaining), writes
+  `transfer_in` movements, increments destination on-hand. Auto-
+  flips to `received` once every line's `quantityReceived` matches
+  `quantityShipped`. Partial receipts supported.
+- **`POST /v1/stock-transfers/:id/cancel`** is restricted to draft
+  status only — once stock is in transit, the only way out is to
+  receive what arrived (partial receipts cover the discrepancy).
+- **Web**: `/transfers` list with status badges,
+  `/transfers/new` (search-and-add form, optional ship-on-create),
+  `/transfers/[id]` detail with ship / receive / cancel buttons
+  contextual to status. Linked from the back-office nav.
+- **Integration tests** (`apps/api/test/transfers.int.spec.ts`,
+  12 cases): cashier role denied → same-location rejected → 8+4
+  draft created → over-shipping caught at ship-time → ship deducts
+  origin (destination unchanged) → cancel-after-ship 403 → 5/8
+  widgets received → over-receive 400 → finish receive flips to
+  `received` → ledger has matching transfer_out / transfer_in
+  pairs summing to zero → ship-on-create succeeds. Repo: 145
+  tests, all green. CI provisions `jetnine_transfers`.

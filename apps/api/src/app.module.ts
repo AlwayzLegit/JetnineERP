@@ -24,6 +24,7 @@ import { ReportsModule } from './reports/reports.module';
 import { SalesModule } from './sales/sales.module';
 import { StripeModule } from './stripe/stripe.module';
 import { TenancyModule } from './tenancy/tenancy.module';
+import { TransfersModule } from './transfers/transfers.module';
 
 @Module({
   imports: [
@@ -69,6 +70,7 @@ import { TenancyModule } from './tenancy/tenancy.module';
     CustomersModule,
     InventoryModule,
     PurchasingModule,
+    TransfersModule,
     SalesModule,
     CashModule,
     ReportsModule,

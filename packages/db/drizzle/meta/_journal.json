@@ -71,6 +71,13 @@
       "when": 1778167161313,
       "tag": "0009_cold_multiple_man",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1778168368029,
+      "tag": "0010_orange_chronomancer",
+      "breakpoints": true
     }
   ]
 }
