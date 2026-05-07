@@ -49,6 +49,9 @@ export const PERMISSIONS = {
   'webhooks.view': 'View webhook endpoints + delivery history',
   'webhooks.manage': 'Create / update / delete webhook endpoints',
 
+  'api_keys.view': 'View API keys',
+  'api_keys.manage': 'Create / revoke API keys',
+
   'pos.access': 'Access the POS register',
   'pos.transaction.create': 'Create sales',
   'pos.transaction.discount': 'Apply line/order discounts',

@@ -5,6 +5,7 @@ import { LoggerModule } from 'nestjs-pino';
 import { randomUUID } from 'node:crypto';
 import { TerminusModule } from '@nestjs/terminus';
 import { AdminModule } from './admin/admin.module';
+import { ApiKeysModule } from './api-keys/api-keys.module';
 import { AppController } from './app.controller';
 import { AuditModule } from './audit/audit.module';
 import { AuthGuard } from './auth/auth.guard';
@@ -80,6 +81,7 @@ import { WebhooksModule } from './webhooks/webhooks.module';
     BillingModule,
     StripeModule,
     WebhooksModule,
+    ApiKeysModule,
     AdminModule,
   ],
   controllers: [AppController, HealthController],

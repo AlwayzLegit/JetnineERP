@@ -53,8 +53,34 @@ export class TenancyGuard implements CanActivate {
       Request & {
         user?: CurrentUserPayload;
         tenant?: RequestTenantContext;
+        apiKey?: { id: string; businessId: string; scopes: string[]; name: string };
       }
     >();
+
+    const ip = readIp(req);
+    const userAgent = readUserAgent(req);
+
+    // API-key requests have no human user; the key already names a single
+    // business and carries its own scopes. Skip the membership lookup
+    // and synthesize a tenant context directly from the key.
+    if (req.apiKey) {
+      req.tenant = {
+        userId: null,
+        isSuperAdmin: false,
+        businessId: req.apiKey.businessId,
+        membershipId: null,
+        roleId: null,
+        roleName: `api_key:${req.apiKey.name}`,
+        permissions: new Set<Permission>(req.apiKey.scopes as Permission[]),
+        ip,
+        userAgent,
+        impersonatorUserId: null,
+        apiKeyId: req.apiKey.id,
+        auditLogged: false,
+      };
+      return true;
+    }
+
     const user = req.user;
     if (!user) {
       // AuthGuard should have run first; if it didn't, fail closed.
@@ -65,8 +91,6 @@ export class TenancyGuard implements CanActivate {
       ctx.getHandler(),
       ctx.getClass(),
     ]);
-    const ip = readIp(req);
-    const userAgent = readUserAgent(req);
     const impersonatorUserId = user.impersonatorUserId;
 
     if (superAdminOnly) {
@@ -107,6 +131,7 @@ export class TenancyGuard implements CanActivate {
           ip,
           userAgent,
           impersonatorUserId,
+          apiKeyId: null,
           auditLogged: false,
         };
         return true;
@@ -126,6 +151,7 @@ export class TenancyGuard implements CanActivate {
       ip,
       userAgent,
       impersonatorUserId,
+      apiKeyId: null,
       auditLogged: false,
     };
     return true;
@@ -205,6 +231,7 @@ function emptyTenantContext(
     ip,
     userAgent,
     impersonatorUserId,
+    apiKeyId: null,
     auditLogged: false,
   };
 }

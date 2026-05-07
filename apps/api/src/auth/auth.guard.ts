@@ -6,7 +6,8 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { eq } from 'drizzle-orm';
+import { createHash } from 'node:crypto';
+import { and, eq, isNull } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { schema } from '@jetnine/db';
 import type { Request } from 'express';
@@ -41,7 +42,36 @@ export class AuthGuard implements CanActivate {
     ]);
     if (isPublic) return true;
 
-    const req = ctx.switchToHttp().getRequest<Request & { user?: CurrentUserPayload }>();
+    const req = ctx.switchToHttp().getRequest<
+      Request & {
+        user?: CurrentUserPayload;
+        apiKey?: { id: string; businessId: string; scopes: string[]; name: string };
+      }
+    >();
+
+    // Bearer-token auth path. If the caller sent an `Authorization:
+    // Bearer jet_*` header, prefer that over the session cookie. The
+    // tenant guard later picks up `req.apiKey` and synthesizes the
+    // tenant context from it.
+    const bearer = readBearer(req);
+    if (bearer && bearer.startsWith('jet_')) {
+      const matched = await this.matchApiKey(bearer);
+      if (!matched) throw new UnauthorizedException('Invalid or revoked API key');
+      req.apiKey = {
+        id: matched.id,
+        businessId: matched.businessId,
+        scopes: matched.scopes,
+        name: matched.name,
+      };
+      // Touch last_used_at so admins can see "never used" vs.
+      // "actively in use" in the UI. Awaited to ensure execution
+      // (Drizzle builders are lazy thenables).
+      await this.db
+        .update(schema.apiKeys)
+        .set({ lastUsedAt: new Date() })
+        .where(eq(schema.apiKeys.id, matched.id));
+      return true;
+    }
 
     const headers = new Headers();
     for (const [key, value] of Object.entries(req.headers)) {
@@ -96,6 +126,29 @@ export class AuthGuard implements CanActivate {
     return true;
   }
 
+  private async matchApiKey(
+    fullKey: string,
+  ): Promise<{ id: string; businessId: string; scopes: string[]; name: string } | null> {
+    const hash = createHash('sha256').update(fullKey).digest('hex');
+    const [row] = await this.db
+      .select({
+        id: schema.apiKeys.id,
+        businessId: schema.apiKeys.businessId,
+        scopes: schema.apiKeys.scopes,
+        name: schema.apiKeys.name,
+      })
+      .from(schema.apiKeys)
+      .where(and(eq(schema.apiKeys.keyHash, hash), isNull(schema.apiKeys.revokedAt)))
+      .limit(1);
+    if (!row) return null;
+    return {
+      id: row.id,
+      businessId: row.businessId,
+      scopes: row.scopes ?? [],
+      name: row.name,
+    };
+  }
+
   private async loadUser(id: string): Promise<{
     id: string;
     email: string;
@@ -118,6 +171,13 @@ export class AuthGuard implements CanActivate {
       .limit(1);
     return rows[0] ?? null;
   }
+}
+
+function readBearer(req: Request): string | null {
+  const auth = req.headers.authorization;
+  if (typeof auth !== 'string') return null;
+  const match = /^Bearer\s+(.+)$/i.exec(auth);
+  return match ? match[1]!.trim() : null;
 }
 
 function readImpersonateTargetCookie(req: Request): string | null {

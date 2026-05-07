@@ -596,7 +596,9 @@ export class SalesController {
         number,
         status: 'completed',
         customerId: body.customerId ?? null,
-        associateUserId: actor.id,
+        // Null when the request was authenticated by an API key — no
+        // human cashier is on the receipt.
+        associateUserId: actor?.id ?? null,
         subtotalCents: totals.subtotalCents,
         discountCents: totals.discountCents,
         taxCents: totals.taxCents,
@@ -656,7 +658,7 @@ export class SalesController {
         reason: 'sale',
         referenceType: 'sale',
         referenceId: sale.id,
-        actorUserId: actor.id,
+        actorUserId: actor?.id ?? null,
         notes: null,
       });
       await this.db

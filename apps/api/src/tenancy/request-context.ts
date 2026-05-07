@@ -4,7 +4,12 @@ import { type DrizzleTransaction } from '@jetnine/db';
 import type { Permission } from '@jetnine/shared';
 
 export interface RequestTenantContext {
-  userId: string;
+  /**
+   * The acting user's id when the request was authenticated by a session
+   * cookie. Null for API-key requests — there is no specific human; the
+   * key id lives in `apiKeyId` instead.
+   */
+  userId: string | null;
   isSuperAdmin: boolean;
   // Null when the request is super-admin scope (or otherwise unbound to a
   // specific tenant).
@@ -20,6 +25,12 @@ export interface RequestTenantContext {
   // When a super admin is impersonating, this is the super admin's user id.
   // Carried into every audit_logs row written for this request.
   impersonatorUserId: string | null;
+  /**
+   * When the request was authenticated by an API key, this is the key's
+   * id. Used to mark audit rows with `actorType='api_key'` and so the
+   * audit log can be filtered to "what did this integration do".
+   */
+  apiKeyId: string | null;
   // Set true when an audit handler explicitly logged this request, so the
   // generic AuditInterceptor knows not to also write a fallback row.
   auditLogged: boolean;

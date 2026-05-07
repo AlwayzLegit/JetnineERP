@@ -111,6 +111,20 @@ export default function SettingsPage() {
             Webhooks
           </Link>
           <Link
+            href="/settings/api-keys"
+            style={{
+              padding: '8px 14px',
+              background: 'transparent',
+              color: '#444',
+              border: '1px solid #ccc',
+              borderRadius: 4,
+              textDecoration: 'none',
+              fontSize: 13,
+            }}
+          >
+            API keys
+          </Link>
+          <Link
             href="/settings/billing"
             style={{
               padding: '8px 14px',

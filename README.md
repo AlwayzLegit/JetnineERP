@@ -988,3 +988,54 @@ use, so integrators can use familiar verification code.
     history → unknown event type 400 → duplicate URL on the same
     business 400. Repo: 188 tests, all green. CI provisions
     `jetnine_webhooks`.
+
+## Phase 2.8 status (Public API + API keys)
+
+Phase 2.8 is complete. Pairs with the outbound webhooks for a
+complete integration story: customers can both react to events
+(2.7) AND drive Jetnine programmatically with a scoped API key.
+
+- **Schema**: `api_keys` table with `key_hash` (SHA-256 of the
+  full key), `key_prefix` (display-only), `scopes` (JSONB array),
+  `livemode` ('live' | 'test'), `last_used_at`, `revoked_at`
+  (soft revoke so historical audits resolve). Tenant-scoped +
+  RLS-forced. Migration `0014_complete_la_nuit.sql`.
+- **Key format**: `jet_<env>_<48-hex>` — same shape as Stripe's
+  `sk_test_…` so devs recognize them on sight. Full key is
+  shown exactly once at create time and never persisted.
+- **`AuthGuard` extended**: an incoming
+  `Authorization: Bearer jet_*` header is preferred over the
+  session cookie. The guard SHA-256s the bearer, looks it up
+  by the unique-indexed `key_hash`, sets `req.apiKey` (id,
+  businessId, scopes, name), bumps `last_used_at`, and returns.
+  If the lookup misses or the key is revoked, the request 401s.
+- **`TenancyGuard` extended**: when `req.apiKey` is set, the
+  guard skips the membership lookup and synthesizes a tenant
+  context with `userId: null`, `apiKeyId: <key.id>`, and
+  permissions = `key.scopes`. The X-Business-Id header is
+  unnecessary — the key implies the business.
+- **`AuditService` extended**: when `apiKeyId` is set on the
+  request context, audit rows go in with `actor_type='api_key'`
+  - `actor_user_id=null` + the key id in `changes_json.metadata`,
+    so the audit log filter can answer "what did this integration
+    do" without a schema change.
+- **`/v1/business/api-keys`**: list, get scopes (the platform
+  permission catalog), create (returns `key` exactly once),
+  revoke (soft). Gated by `api_keys.view` / `api_keys.manage`
+  (Owner/Manager).
+- **Web**: `/settings/api-keys` lists keys with prefix + scopes
+  - last-used + status, an inline create form with a filterable
+    scope checkbox grid + test/live toggle, the one-time key
+    reveal, and a Revoke action. Linked from the settings header.
+- **Integration tests** (`apps/api/test/api-keys.int.spec.ts`,
+  13 cases): cashier denied create → owner mints a sales.view
+  test key → list never echoes the secret → mint a write key
+  → unknown scope 400 → bearer auth on `/v1/sales` succeeds
+  without `X-Business-Id` → read-only key 403s on a write
+  endpoint (scope enforcement) → write key creates a sale and
+  the audit row records `api_key` actor + key id in metadata
+  → invalid bearer 401 → non-jet bearer falls through to
+  session auth → revoke immediately invalidates → re-revoke
+  400 → `last_used_at` ticks on every authenticated request →
+  `/scopes` exposes the full permission catalog. Repo: 201
+  tests, all green. CI provisions `jetnine_api_keys`.

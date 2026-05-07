@@ -3,7 +3,7 @@ import { schema } from '@jetnine/db';
 import { getRequestContext, getRequestDb } from '../tenancy/request-context';
 import { type JsonDiff, diffJson } from './diff';
 
-type ActorType = 'user' | 'super_admin' | 'system';
+type ActorType = 'user' | 'super_admin' | 'system' | 'api_key';
 
 export interface AuditLogInput {
   /**
@@ -39,14 +39,26 @@ export class AuditService {
       const diff: JsonDiff | null = diffJson(input.before ?? null, input.after ?? null);
       if (diff) changesJson = { before: diff.before, after: diff.after };
     }
-    if (input.metadata) {
+    // For API-key requests we add the key id to the metadata so the audit
+    // log filter can answer "what did this integration do" without
+    // touching schema.
+    if (ctx.apiKeyId) {
+      changesJson = {
+        ...(changesJson ?? {}),
+        metadata: {
+          ...((changesJson as { metadata?: Record<string, unknown> } | null)?.metadata ?? {}),
+          ...(input.metadata ?? {}),
+          apiKeyId: ctx.apiKeyId,
+        },
+      };
+    } else if (input.metadata) {
       changesJson = { ...(changesJson ?? {}), metadata: input.metadata };
     }
 
     await db.insert(schema.auditLogs).values({
       businessId: ctx.businessId,
       actorUserId: ctx.userId,
-      actorType: actorTypeFor(ctx.isSuperAdmin, ctx.impersonatorUserId),
+      actorType: actorTypeFor(ctx.isSuperAdmin, ctx.impersonatorUserId, ctx.apiKeyId),
       impersonatorUserId: ctx.impersonatorUserId,
       action: input.action,
       targetType: input.targetType ?? null,
@@ -60,7 +72,12 @@ export class AuditService {
   }
 }
 
-function actorTypeFor(isSuperAdmin: boolean, impersonatorUserId: string | null): ActorType {
+function actorTypeFor(
+  isSuperAdmin: boolean,
+  impersonatorUserId: string | null,
+  apiKeyId: string | null,
+): ActorType {
+  if (apiKeyId) return 'api_key';
   // When a super admin is impersonating, the effective user is a normal
   // business user; the audit row's actor_type reflects the *effective*
   // identity. The impersonator_user_id column makes the original visible.
