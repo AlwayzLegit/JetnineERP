@@ -1,0 +1,32 @@
+{
+  "name": "@jetnine/web",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Jetnine ERP web app (Next.js): super-admin, business admin, and POS UIs.",
+  "scripts": {
+    "dev": "next dev --port 3000",
+    "build": "next build",
+    "start": "next start --port 3000",
+    "lint": "next lint",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@jetnine/shared": "workspace:*",
+    "@jetnine/ui": "workspace:*",
+    "@sentry/nextjs": "^8.47.0",
+    "next": "^15.1.3",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@jetnine/config": "workspace:*",
+    "@types/node": "^22.10.2",
+    "@types/react": "^19.0.2",
+    "@types/react-dom": "^19.0.2",
+    "eslint": "^9.17.0",
+    "eslint-config-next": "^15.1.3",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

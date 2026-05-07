@@ -1,0 +1,8 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "nextjs",
+  "buildCommand": "cd ../.. && pnpm install --frozen-lockfile && pnpm --filter @jetnine/web... build",
+  "installCommand": "echo 'install handled by buildCommand'",
+  "outputDirectory": ".next",
+  "ignoreCommand": "npx turbo-ignore @jetnine/web"
+}
