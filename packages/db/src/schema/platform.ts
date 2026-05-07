@@ -1,4 +1,13 @@
-import { boolean, index, pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
+import {
+  boolean,
+  index,
+  integer,
+  pgTable,
+  text,
+  timestamp,
+  uniqueIndex,
+  uuid,
+} from 'drizzle-orm/pg-core';
 import { citext, inet } from '../types';
 
 // Platform user — a single account spans multiple businesses via `memberships`.
@@ -59,6 +68,13 @@ export const businesses = pgTable(
     status: text('status').notNull(),
     plan: text('plan'),
     trialEndsAt: timestamp('trial_ends_at', { withTimezone: true }),
+    // Settings (Epic 1.6). Tax rate is stored in basis points so 250 = 2.5%
+    // — keeps math integer and avoids float drift. Locations may override
+    // via locations.tax_rate_bps.
+    currencyCode: text('currency_code').notNull().default('USD'),
+    defaultTaxRateBps: integer('default_tax_rate_bps').notNull().default(0),
+    receiptHeader: text('receipt_header'),
+    receiptFooter: text('receipt_footer'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
     deletedAt: timestamp('deleted_at', { withTimezone: true }),

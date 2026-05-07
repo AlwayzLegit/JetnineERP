@@ -1,6 +1,7 @@
 import {
   boolean,
   index,
+  integer,
   jsonb,
   pgTable,
   primaryKey,
@@ -21,6 +22,8 @@ export const locations = pgTable(
     name: text('name').notNull(),
     timezone: text('timezone').notNull(),
     addressJson: jsonb('address_json'),
+    // Optional override of businesses.default_tax_rate_bps. Null inherits.
+    taxRateBps: integer('tax_rate_bps'),
     isActive: boolean('is_active').notNull().default(true),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },

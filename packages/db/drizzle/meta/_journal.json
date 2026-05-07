@@ -8,6 +8,13 @@
       "when": 1778152053439,
       "tag": "0000_fluffy_nemesis",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1778157326603,
+      "tag": "0001_friendly_starfox",
+      "breakpoints": true
     }
   ]
 }

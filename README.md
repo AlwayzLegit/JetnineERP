@@ -283,3 +283,47 @@ Epic 1.5 is complete:
   → non-super-admin can't impersonate → suspend audit-logs the
   status change → metrics return counts. CI provisions a dedicated
   `jetnine_admin` database.
+
+## Phase 1 — Epic 1.6 status (Business admin console)
+
+Epic 1.6 is complete:
+
+- **Settings**: `GET /v1/business/settings` and `PATCH` for name,
+  default tax rate (basis points), receipt header/footer. Currency
+  is fixed to USD per PLAN §5.3 — single column, not editable yet.
+  All updates audit-log a before/after diff.
+- **Locations CRUD**: `GET / POST / PATCH /v1/business/locations`
+  with name, timezone, optional `taxRateBps` override (null inherits
+  the business default), and `isActive` toggle.
+- **Members**: `GET` lists members joined with users + roles.
+  `POST .../invite` invokes the new shared `InvitationService` to
+  create-or-find the user, open an `invited` membership, mint a
+  72-hour token, and send an invitation email — same code path the
+  super admin uses to invite a new business owner. `POST
+/:id/resend-invite`, `PATCH /:id` (role + status), and `POST
+/:id/disable` cover the rest of the lifecycle.
+- **Roles**: `GET / POST / PATCH / DELETE /v1/business/roles`. The
+  five system roles seeded per business are immutable (`isSystem:
+true` returns 403 on edit/delete); admins clone via `basedOnRoleId`
+  and then tweak permissions on the clone. `PATCH` replaces the role
+  permission set wholesale, with a before/after diff in audit_logs.
+  Roles in use by any membership can't be deleted.
+- **`GET /v1/permissions` (public)**: returns the full permission
+  catalog so the web role editor can render a grid grouped by module.
+- **Schema additions** (migration `0001_friendly_starfox.sql`):
+  `businesses.currency_code`, `default_tax_rate_bps`,
+  `receipt_header`, `receipt_footer`; `locations.tax_rate_bps`.
+- **Web pages** under the `(business)` route group with a shared
+  layout: `/settings`, `/locations`, `/members`, `/roles`,
+  `/audit` (Epic 1.4). The roles page renders a checkbox grid
+  grouped by permission prefix and writes back via PATCH.
+- **Integration tests** (`apps/api/test/business.int.spec.ts`,
+  10 cases): owner reads + updates settings (audit captures diff)
+  → owner creates a location with a tax override → owner invites a
+  cashier → cashier accepts via `/v1/auth/accept-invite` and signs
+  in → cashier has `products.view` (200) but lacks `products.update`
+  (403) and `audit.view` (403), plus super-admin endpoints reject
+  → owner clones the Cashier role and edits permissions → system
+  roles refuse edit/delete → disabling a member flips status to
+  `disabled` with an audit row → public permission catalog returns
+  the full list. CI provisions `jetnine_business`.
