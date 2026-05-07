@@ -11,6 +11,7 @@ export * from './billing';
 export * from './stripe';
 export * from './purchasing';
 export * from './transfers';
+export * from './taxes';
 
 // List of tables that carry a `business_id` and need RLS. Kept in sync with
 // the migration script in src/migrations/rls.sql — when you add a new
@@ -42,4 +43,5 @@ export const TENANT_SCOPED_TABLES = [
   'purchase_order_lines',
   'stock_transfers',
   'stock_transfer_lines',
+  'tax_classes',
 ] as const;

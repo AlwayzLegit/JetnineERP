@@ -57,6 +57,7 @@ jobs:
       STRIPE_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/jetnine_stripe
       PURCHASING_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/jetnine_purchasing
       TRANSFERS_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/jetnine_transfers
+      TAXES_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/jetnine_taxes
       REDIS_URL: redis://localhost:6379
 
     steps:
@@ -91,6 +92,7 @@ jobs:
           createdb -h localhost -U postgres jetnine_stripe
           createdb -h localhost -U postgres jetnine_purchasing
           createdb -h localhost -U postgres jetnine_transfers
+          createdb -h localhost -U postgres jetnine_taxes
 
       - name: Format check
         run: pnpm format:check

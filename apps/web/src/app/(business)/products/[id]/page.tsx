@@ -25,20 +25,35 @@ interface Product {
   sku: string | null;
   name: string;
   description: string | null;
+  taxClassId: string | null;
   isActive: boolean;
   variants: Variant[];
   images: ProductImage[];
+}
+interface TaxClass {
+  id: string;
+  name: string;
+  rateBps: number;
 }
 
 export default function ProductDetailPage() {
   const params = useParams<{ id: string }>();
   const id = params.id as string;
   const [p, setP] = useState<Product | null>(null);
+  const [taxClasses, setTaxClasses] = useState<TaxClass[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   async function load() {
     try {
       setP(await api<Product>(`/v1/products/${id}`));
+      // Tax classes are gated by business.settings.view; if the
+      // current user doesn't have it, just silently render the
+      // picker as read-only.
+      try {
+        setTaxClasses(await api<TaxClass[]>('/v1/business/tax-classes'));
+      } catch {
+        setTaxClasses([]);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -47,6 +62,18 @@ export default function ProductDetailPage() {
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
+
+  async function setTaxClass(taxClassId: string | null) {
+    try {
+      await api(`/v1/products/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ taxClassId }),
+      });
+      void load();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : String(err));
+    }
+  }
 
   async function setVariantPrice(variantId: string, dollars: string) {
     try {
@@ -117,6 +144,32 @@ export default function ProductDetailPage() {
       <p style={{ color: '#666', fontSize: 13, marginBottom: 24 }}>
         SKU <code>{p.sku ?? '—'}</code> · {p.isActive ? 'active' : 'inactive'}
       </p>
+
+      {taxClasses.length > 0 && (
+        <Section title="Tax class">
+          <p style={{ color: '#666', fontSize: 12, marginBottom: 8 }}>
+            Override the location/business default tax rate for this product. Manage classes in{' '}
+            <Link href="/settings/tax-classes">Settings → Tax classes</Link>.
+          </p>
+          <select
+            value={p.taxClassId ?? ''}
+            onChange={(e) => setTaxClass(e.target.value || null)}
+            style={{
+              padding: '6px 8px',
+              border: '1px solid #ccc',
+              borderRadius: 4,
+              fontSize: 13,
+            }}
+          >
+            <option value="">(use location/business default)</option>
+            {taxClasses.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name} — {(c.rateBps / 100).toFixed(2)}%
+              </option>
+            ))}
+          </select>
+        </Section>
+      )}
 
       <Section title="Variants">
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>

@@ -383,9 +383,13 @@ export class SalesController {
         priceCents: schema.productVariants.priceCents,
         productName: schema.products.name,
         variantName: schema.productVariants.name,
+        // Per-product tax class override; null means "use the
+        // location/business default rate".
+        taxClassRateBps: schema.taxClasses.rateBps,
       })
       .from(schema.productVariants)
       .innerJoin(schema.products, eq(schema.products.id, schema.productVariants.productId))
+      .leftJoin(schema.taxClasses, eq(schema.taxClasses.id, schema.products.taxClassId))
       .where(inArray(schema.productVariants.id, variantIds));
     const byId = new Map(variants.map((v) => [v.id, v]));
     for (const id of variantIds) {
@@ -407,6 +411,9 @@ export class SalesController {
               quantity: l.quantity!,
               unitPriceCents: l.unitPriceCents ?? v.priceCents,
               lineDiscountCents: l.lineDiscountCents,
+              // Tax-class override; falls through to the sale-level
+              // taxRateBps inside computeTotals when this is null.
+              taxRateBps: v.taxClassRateBps ?? undefined,
             };
           }),
         });
@@ -524,7 +531,7 @@ export class SalesController {
           quantity: l.quantity,
           unitPriceCents: l.unitPriceCents,
           discountCents: l.discountCents,
-          taxCents: 0,
+          taxCents: l.taxCents,
           totalCents: l.totalCents,
         })),
       )

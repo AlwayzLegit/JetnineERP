@@ -11,6 +11,7 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core';
 import { businesses } from './platform';
+import { taxClasses } from './taxes';
 import { tsvector } from '../types';
 
 export const categories = pgTable(
@@ -44,6 +45,12 @@ export const products = pgTable(
     name: text('name').notNull(),
     description: text('description'),
     categoryId: uuid('category_id').references(() => categories.id, { onDelete: 'set null' }),
+    /**
+     * Optional tax class override. When null, the sale uses the
+     * location/business default tax rate; when set, the line tax
+     * uses this class's `rate_bps` regardless of location.
+     */
+    taxClassId: uuid('tax_class_id').references(() => taxClasses.id, { onDelete: 'set null' }),
     isActive: boolean('is_active').notNull().default(true),
     // Generated tsvector (set by the migration via GENERATED ALWAYS AS).
     // Drizzle's pg-core doesn't model generated columns directly, so the

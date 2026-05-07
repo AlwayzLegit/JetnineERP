@@ -8,6 +8,7 @@ import { LocationsController } from './locations.controller';
 import { MembersController } from './members.controller';
 import { PermissionsCatalogController, RolesController } from './roles.controller';
 import { SettingsController } from './settings.controller';
+import { TaxClassesController } from './tax-classes.controller';
 
 // @Global so the AdminModule (and any other module that needs to issue
 // invitations) can inject InvitationService without re-importing.
@@ -21,6 +22,7 @@ import { SettingsController } from './settings.controller';
     MembersController,
     RolesController,
     PermissionsCatalogController,
+    TaxClassesController,
   ],
   exports: [InvitationService],
 })

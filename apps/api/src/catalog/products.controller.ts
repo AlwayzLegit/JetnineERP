@@ -35,6 +35,7 @@ interface CreateProductBody {
   name?: string;
   description?: string | null;
   categoryId?: string | null;
+  taxClassId?: string | null;
   variants?: VariantInput[];
 }
 
@@ -43,6 +44,7 @@ interface UpdateProductBody {
   name?: string;
   description?: string | null;
   categoryId?: string | null;
+  taxClassId?: string | null;
   isActive?: boolean;
 }
 
@@ -63,6 +65,7 @@ interface ProductOut {
   name: string;
   description: string | null;
   categoryId: string | null;
+  taxClassId: string | null;
   isActive: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -172,6 +175,7 @@ export class CatalogProductsController {
       name: p.name,
       description: p.description ?? null,
       categoryId: p.categoryId ?? null,
+      taxClassId: p.taxClassId ?? null,
       isActive: p.isActive,
       createdAt: p.createdAt,
       updatedAt: p.updatedAt,
@@ -211,6 +215,7 @@ export class CatalogProductsController {
         sku: body.sku ?? null,
         description: body.description ?? null,
         categoryId: body.categoryId ?? null,
+        taxClassId: body.taxClassId ?? null,
       })
       .returning()
       .catch((err) => {
@@ -288,6 +293,11 @@ export class CatalogProductsController {
       update.categoryId = body.categoryId;
       before.categoryId = existing.categoryId;
       after.categoryId = body.categoryId;
+    }
+    if (body.taxClassId !== undefined && body.taxClassId !== existing.taxClassId) {
+      update.taxClassId = body.taxClassId;
+      before.taxClassId = existing.taxClassId;
+      after.taxClassId = body.taxClassId;
     }
     if (body.isActive !== undefined && body.isActive !== existing.isActive) {
       update.isActive = body.isActive;

@@ -834,3 +834,52 @@ flow with the inventory ledger reflecting both sides.
   `received` → ledger has matching transfer_out / transfer_in
   pairs summing to zero → ship-on-create succeeds. Repo: 145
   tests, all green. CI provisions `jetnine_transfers`.
+
+## Phase 2.5 status (Tax classes per product)
+
+Phase 2.5 is complete. Merchants can override the location/business
+default tax rate at the product level — common cases are
+groceries (exempt), prepared food (higher rate), and clothing in
+states with a reduced rate.
+
+- **Schema**: `tax_classes` table (per business name + rate in
+  basis points + optional default flag) plus a
+  `products.tax_class_id` column (`ON DELETE SET NULL`, so deleting
+  a class lets products fall back to the location/business default
+  cleanly). RLS-forced. Migration `0011_tense_virginia_dare.sql`.
+- **Refactored `computeTotals`**: each line now carries an optional
+  `taxRateBps` that overrides the sale-level default. Order-level
+  discount is allocated to lines pro-rata by post-line-discount net
+  with the residue absorbed by the last line, and the line's
+  `taxableBase` is `net - allocated_share` so per-line tax math
+  stays accurate even with mixed rates and an order discount. The
+  pure helper now also returns `taxRateBps` and `taxCents` per
+  line, which we persist to `sale_lines`.
+- **`/v1/business/tax-classes`** full CRUD with audit. Duplicate
+  class names hit a 400; `isDefault` is single-flip (promoting one
+  demotes the previous default in a single atomic update);
+  product-count is reported per class so the UI can warn before
+  destruction.
+- **Catalog**: `POST /v1/products` and `PATCH /v1/products/:id`
+  accept `taxClassId`; `GET /v1/products/:id` returns it.
+- **Sales**: when computing totals, the sales controller joins
+  `product_variants → products → tax_classes` and passes each
+  line's class rate (or `null` for fallback) to `computeTotals`.
+  Lines without a class continue to use the location/business
+  default — fully backwards-compatible with all existing tests.
+- **Web**: new `/settings/tax-classes` page (list + inline create
+  - per-row edit + delete with product-impact warning); the
+    settings page header now has a "Tax classes" button next to
+    Billing. The product detail page picks up a "Tax class" section
+    with a select that includes "(use default)" plus every class.
+- **Integration tests** (`apps/api/test/taxes.int.spec.ts`,
+  10 cases): create exempt + prepared classes → duplicate name 400
+  → cashier denied → assign classes via product PATCH → mixed
+  sale (coffee 15% + milk 0%) computes per-line tax correctly →
+  detached product falls back to default 10% → PATCH a class rate
+  audit-logs the diff → delete class → referencing products
+  fall back to default → isDefault is single-flip. Plus 4 new
+  unit tests in `totals.spec.ts` covering per-line rates,
+  pro-rated order discount allocation, mixed-rate math, and
+  rejection of negative line rates. Repo: 159 tests, all green.
+  CI provisions `jetnine_taxes`.

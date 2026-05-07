@@ -67,20 +67,35 @@ export default function SettingsPage() {
     <div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
         <h1 style={{ fontSize: 22, margin: 0 }}>Business settings</h1>
-        <Link
-          href="/settings/billing"
-          style={{
-            marginLeft: 'auto',
-            padding: '8px 14px',
-            background: '#111',
-            color: '#fff',
-            borderRadius: 4,
-            textDecoration: 'none',
-            fontSize: 13,
-          }}
-        >
-          Billing
-        </Link>
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+          <Link
+            href="/settings/tax-classes"
+            style={{
+              padding: '8px 14px',
+              background: 'transparent',
+              color: '#444',
+              border: '1px solid #ccc',
+              borderRadius: 4,
+              textDecoration: 'none',
+              fontSize: 13,
+            }}
+          >
+            Tax classes
+          </Link>
+          <Link
+            href="/settings/billing"
+            style={{
+              padding: '8px 14px',
+              background: '#111',
+              color: '#fff',
+              borderRadius: 4,
+              textDecoration: 'none',
+              fontSize: 13,
+            }}
+          >
+            Billing
+          </Link>
+        </div>
       </div>
       <form onSubmit={submit} style={card}>
         <Field label="Business name">
