@@ -65,9 +65,12 @@ export class TenancyGuard implements CanActivate {
       ctx.getHandler(),
       ctx.getClass(),
     ]);
+    const ip = readIp(req);
+    const userAgent = readUserAgent(req);
+
     if (superAdminOnly) {
       if (!user.isSuperAdmin) throw new ForbiddenException('Super-admin only');
-      req.tenant = emptyTenantContext(user);
+      req.tenant = emptyTenantContext(user, ip, userAgent);
       return true;
     }
 
@@ -77,7 +80,7 @@ export class TenancyGuard implements CanActivate {
       // context — they may be calling super-admin-only endpoints from a UI
       // that hasn't selected a business yet.
       if (user.isSuperAdmin) {
-        req.tenant = emptyTenantContext(user);
+        req.tenant = emptyTenantContext(user, ip, userAgent);
         return true;
       }
       throw new PreconditionFailedException(
@@ -100,6 +103,9 @@ export class TenancyGuard implements CanActivate {
           roleId: null,
           roleName: null,
           permissions: new Set<Permission>(),
+          ip,
+          userAgent,
+          auditLogged: false,
         };
         return true;
       }
@@ -115,6 +121,9 @@ export class TenancyGuard implements CanActivate {
       roleId: membership.roleId,
       roleName: membership.roleName,
       permissions,
+      ip,
+      userAgent,
+      auditLogged: false,
     };
     return true;
   }
@@ -176,7 +185,11 @@ function pickActiveBusinessId(req: Request): string | null {
   return null;
 }
 
-function emptyTenantContext(user: CurrentUserPayload): RequestTenantContext {
+function emptyTenantContext(
+  user: CurrentUserPayload,
+  ip: string | null,
+  userAgent: string | null,
+): RequestTenantContext {
   return {
     userId: user.id,
     isSuperAdmin: user.isSuperAdmin,
@@ -185,5 +198,22 @@ function emptyTenantContext(user: CurrentUserPayload): RequestTenantContext {
     roleId: null,
     roleName: null,
     permissions: new Set<Permission>(),
+    ip,
+    userAgent,
+    auditLogged: false,
   };
+}
+
+function readIp(req: Request): string | null {
+  const fwd = req.headers['x-forwarded-for'];
+  if (typeof fwd === 'string' && fwd.length > 0) {
+    const first = fwd.split(',')[0]?.trim();
+    if (first) return first;
+  }
+  return req.ip ?? req.socket?.remoteAddress ?? null;
+}
+
+function readUserAgent(req: Request): string | null {
+  const ua = req.headers['user-agent'];
+  return typeof ua === 'string' ? ua : null;
 }

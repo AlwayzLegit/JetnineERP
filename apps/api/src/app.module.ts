@@ -5,6 +5,7 @@ import { LoggerModule } from 'nestjs-pino';
 import { randomUUID } from 'node:crypto';
 import { TerminusModule } from '@nestjs/terminus';
 import { AppController } from './app.controller';
+import { AuditModule } from './audit/audit.module';
 import { AuthGuard } from './auth/auth.guard';
 import { AuthModule } from './auth/auth.module';
 import { DatabaseModule } from './database/database.module';
@@ -50,6 +51,7 @@ import { TenancyModule } from './tenancy/tenancy.module';
     DatabaseModule,
     RedisModule,
     EmailModule,
+    AuditModule,
     AuthModule,
     TenancyModule,
     ProductsModule,

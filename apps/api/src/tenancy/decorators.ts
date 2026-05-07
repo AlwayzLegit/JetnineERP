@@ -1,5 +1,6 @@
 import { SetMetadata, applyDecorators, UseGuards, UseInterceptors } from '@nestjs/common';
 import type { Permission } from '@jetnine/shared';
+import { AuditInterceptor } from '../audit/audit.interceptor';
 import { TenancyGuard } from './tenancy.guard';
 import { PermissionGuard } from './permission.guard';
 import { RlsContextInterceptor } from './rls-context.interceptor';
@@ -23,13 +24,18 @@ export const RequirePermission = (...permissions: Permission[]) =>
 
 /**
  * Convenience: opts the controller into the tenant pipeline — tenant
- * resolution, permission gating, and the per-request RLS transaction.
+ * resolution, permission gating, the per-request RLS transaction, and
+ * the audit-log fallback for state-changing requests.
+ *
  * AuthGuard already runs globally so we don't re-stack it here. Pair with
  * @RequirePermission(...) on individual handlers to gate by permission.
+ *
+ * The interceptors run in registration order: RLS opens the transaction
+ * first, Audit runs inside it so its INSERT inherits the tenant context.
  */
 export function TenantScoped() {
   return applyDecorators(
     UseGuards(TenancyGuard, PermissionGuard),
-    UseInterceptors(RlsContextInterceptor),
+    UseInterceptors(RlsContextInterceptor, AuditInterceptor),
   );
 }

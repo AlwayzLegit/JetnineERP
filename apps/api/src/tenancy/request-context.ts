@@ -13,6 +13,13 @@ export interface RequestTenantContext {
   roleId: string | null;
   roleName: string | null;
   permissions: Set<Permission>;
+  // Populated from the request when the interceptor opens the tx; useful
+  // for audit logging.
+  ip: string | null;
+  userAgent: string | null;
+  // Set true when an audit handler explicitly logged this request, so the
+  // generic AuditInterceptor knows not to also write a fallback row.
+  auditLogged: boolean;
 }
 
 export interface RequestContext extends RequestTenantContext {

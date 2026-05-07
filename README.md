@@ -211,3 +211,31 @@ PermissionGuard + RlsContextInterceptor` so tenant-scoped resources
   full Nest app, signs in two users with different roles, and asserts
   200/403/412/401 across the matrix. CI provisions a dedicated
   `jetnine_tenancy` database for it.
+
+## Phase 1 — Epic 1.4 status (Audit log)
+
+Epic 1.4 is complete:
+
+- **`AuditService.log({ action, target, before, after, metadata })`** in
+  `apps/api/src/audit/audit.service.ts`. Reads actor + business + ip +
+  user-agent from `AsyncLocalStorage`; runs through the request-scoped
+  Drizzle transaction so the INSERT inherits the RLS context and rolls
+  back together with the handler on failure.
+- **`diffJson(before, after)`** computes a minimal field-level diff
+  (only changed columns) and returns null when nothing changed.
+- **`AuditInterceptor`** auto-logs every successful POST/PUT/PATCH/
+  DELETE that doesn't already have an explicit audit row. Stacked into
+  `@TenantScoped()` alongside the RLS interceptor so it always runs
+  inside the same transaction. Sensitive request-body fields are
+  redacted (same paths as the pino logger).
+- **Viewer endpoint** `GET /v1/audit-logs` (gated by
+  `@RequirePermission('audit.view')`) supports `action`, `actorUserId`,
+  `since`, `until` filters; capped at 200 newest-first.
+- **Web page** at `apps/web/src/app/(business)/audit/page.tsx` —
+  filterable table with timestamp / actor email / action / target /
+  pretty-printed JSON diff.
+- **Integration tests** (`apps/api/test/audit.int.spec.ts`, 4 cases):
+  PATCH variant price → audit row with exact before/after; Bookkeeper
+  (audit.view) lists audits; Cashier (no audit.view) → 403; action
+  filter narrows results. CI provisions a dedicated `jetnine_audit`
+  database for the suite.
