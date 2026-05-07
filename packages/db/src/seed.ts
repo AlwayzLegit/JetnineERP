@@ -1,7 +1,9 @@
 import { SYSTEM_ROLES } from '@jetnine/shared';
+import { hashPassword } from 'better-auth/crypto';
 import { eq } from 'drizzle-orm';
 import { createClient } from './client';
 import {
+  accounts,
   businesses,
   categories,
   inventoryLevels,
@@ -15,6 +17,8 @@ import {
   users,
 } from './schema';
 
+const SEED_PASSWORD = 'ChangeMe!2024';
+
 async function main() {
   const url = process.env.DATABASE_URL;
   if (!url) {
@@ -25,9 +29,10 @@ async function main() {
   const { db, sql } = createClient({ url, max: 1 });
 
   try {
-    // 1. Super-admin user. password_hash is intentionally null until Epic 1.2
-    //    wires up better-auth; the super admin will set their password via
-    //    the email-verification flow that ships in that epic.
+    const passwordHash = await hashPassword(SEED_PASSWORD);
+
+    // 1. Super-admin user + matching credential. The hash uses better-auth's
+    //    scrypt parameters so the seeded user can sign in immediately.
     const [superAdmin] = await db
       .insert(users)
       .values({
@@ -38,6 +43,12 @@ async function main() {
       })
       .returning();
     if (!superAdmin) throw new Error('failed to insert super admin user');
+    await db.insert(accounts).values({
+      accountId: superAdmin.id,
+      providerId: 'credential',
+      userId: superAdmin.id,
+      password: passwordHash,
+    });
 
     // 2. Demo business
     const [demo] = await db
@@ -79,7 +90,7 @@ async function main() {
     const ownerRole = seededRoles.find((r) => r.name === 'Owner');
     if (!ownerRole) throw new Error('Owner role missing after seed');
 
-    // 4. Demo owner user + membership
+    // 4. Demo owner user + credential + membership
     const [demoOwner] = await db
       .insert(users)
       .values({
@@ -89,6 +100,12 @@ async function main() {
       })
       .returning();
     if (!demoOwner) throw new Error('failed to insert demo owner');
+    await db.insert(accounts).values({
+      accountId: demoOwner.id,
+      providerId: 'credential',
+      userId: demoOwner.id,
+      password: passwordHash,
+    });
 
     await db.insert(memberships).values({
       businessId: demo.id,
@@ -188,7 +205,7 @@ async function main() {
       .where(eq(products.businessId, demo.id));
 
     console.error(
-      `Seed complete: super-admin=${superAdmin.email}, business=${demo.slug}, owner=${demoOwner.email}, products=${totalProducts.length}.`,
+      `Seed complete: super-admin=${superAdmin.email}, business=${demo.slug}, owner=${demoOwner.email}, products=${totalProducts.length}, password=${SEED_PASSWORD}.`,
     );
   } finally {
     await sql.end({ timeout: 5 });

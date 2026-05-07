@@ -125,3 +125,50 @@ await withTenantContext(sql, { businessId, userId, isSuperAdmin: false }, async 
   // every query through `tx` runs as app_user with RLS applied
 });
 ```
+
+## Phase 1 — Epic 1.2 status (Auth)
+
+Epic 1.2 is complete:
+
+- **better-auth** integrated via the Drizzle adapter against our schema. The
+  adapter generates UUID PKs (configured via `advanced.database.generateId:
+'uuid'`) so it stays compatible with the rest of the database.
+- New tables: `accounts` (credentials per provider), `verifications`
+  (email-verify + reset tokens), `two_factors` (TOTP secret + backup codes).
+  `sessions` gained `token`, `updated_at`. RLS is force-enabled on every new
+  table; per-user policies on `accounts`/`two_factors`, super-admin-only on
+  `verifications`.
+- **Email/password** sign-up, sign-in, sign-out, with email verification
+  required before sign-in. Passwords hashed with better-auth's scrypt
+  defaults (PLAN.md §10.6 says argon2id; swap is a one-liner in
+  `apps/api/src/auth/auth.config.ts`).
+- **Email** sending abstracted behind `EmailService`. Resend backend when
+  `RESEND_API_KEY` is set; falls back to a memory transport (logs + captures
+  for tests) otherwise. Dev controller `/v1/dev/email/last?to=…` exposes
+  the last captured email so Playwright can pull verification/reset URLs.
+- **Password reset** end-to-end: request → email → token-bound reset form.
+- **TOTP 2FA** via better-auth's two-factor plugin. Enable on
+  `/2fa`, verify with an authenticator app, sign-in then prompts for the
+  6-digit code on every subsequent log-in.
+- **Session management**: `GET /v1/auth/sessions` lists the current user's
+  sessions (with a `current: true` flag for the active one); `DELETE
+/v1/auth/sessions/:id` revokes by id, scoped to self.
+- **Rate limiting** on the auth endpoints (5/min on sign-in/sign-up/reset,
+  10/min on TOTP verify, 100/min global). Memory by default; Redis-backed
+  when `REDIS_URL` is set.
+- **NestJS guard** (`AuthGuard`) validates the session cookie and exposes a
+  typed `CurrentUserPayload` via `@CurrentUser()`. The request-id and
+  redaction middleware from Phase 0 still apply.
+- **Web auth pages** under `(auth)` route group: `/login`, `/signup`,
+  `/verify`, `/reset`, `/2fa`, plus a placeholder `/dashboard` for the
+  post-login destination.
+- **Playwright E2E**: `apps/web/e2e/auth.spec.ts` exercises the full flow
+  (signup → email verify → login → enable 2FA → sign-out → sign-in with
+  TOTP → password reset → sign-in with new password + TOTP). CI installs
+  Chromium and runs the suite against a dedicated `jetnine_e2e` database.
+
+Run locally: `pnpm --filter @jetnine/web test:e2e` (requires Postgres up
+on `localhost:5432` with a `jetnine_e2e` database — `createdb jetnine_e2e`).
+
+Seeded credentials: `admin@jetnine.local` / `ChangeMe!2024` (super admin),
+`owner@acme.local` / `ChangeMe!2024` (demo business owner).

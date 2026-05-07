@@ -2,12 +2,23 @@
   "name": "@jetnine/db",
   "version": "0.0.0",
   "private": true,
-  "main": "./src/index.ts",
-  "types": "./src/index.ts",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
-    ".": "./src/index.ts",
-    "./schema": "./src/schema/index.ts"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./schema": {
+      "types": "./dist/schema/index.d.ts",
+      "default": "./dist/schema/index.js"
+    }
   },
+  "files": [
+    "dist",
+    "drizzle",
+    "src/migrations"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "lint": "eslint .",
@@ -21,13 +32,14 @@
   },
   "dependencies": {
     "@jetnine/shared": "workspace:*",
-    "drizzle-orm": "^0.38.3",
+    "better-auth": "^1.6.9",
+    "drizzle-orm": "^0.45.2",
     "postgres": "^3.4.5"
   },
   "devDependencies": {
     "@jetnine/config": "workspace:*",
     "@types/node": "^22.10.2",
-    "drizzle-kit": "^0.30.1",
+    "drizzle-kit": "^0.31.10",
     "eslint": "^9.17.0",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",

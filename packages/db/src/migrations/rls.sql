@@ -172,3 +172,51 @@ CREATE POLICY businesses_member_only ON businesses
     is_super_admin()
     OR id = current_business_id()
   );
+
+-- ============================================================================
+-- Auth tables (better-auth managed)
+-- ============================================================================
+
+-- accounts: a user can only see their own credentials. better-auth's queries
+-- run as the postgres superuser (bypassing RLS) when handling sign-up and
+-- login; this policy protects against any code that drops to app_user and
+-- tries to read someone else's password hash.
+ALTER TABLE accounts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE accounts FORCE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS accounts_owner_only ON accounts;
+CREATE POLICY accounts_owner_only ON accounts
+  USING (
+    is_super_admin()
+    OR user_id = NULLIF(current_setting('app.current_user_id', true), '')::uuid
+  )
+  WITH CHECK (
+    is_super_admin()
+    OR user_id = NULLIF(current_setting('app.current_user_id', true), '')::uuid
+  );
+
+-- two_factors: same shape as accounts.
+ALTER TABLE two_factors ENABLE ROW LEVEL SECURITY;
+ALTER TABLE two_factors FORCE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS two_factors_owner_only ON two_factors;
+CREATE POLICY two_factors_owner_only ON two_factors
+  USING (
+    is_super_admin()
+    OR user_id = NULLIF(current_setting('app.current_user_id', true), '')::uuid
+  )
+  WITH CHECK (
+    is_super_admin()
+    OR user_id = NULLIF(current_setting('app.current_user_id', true), '')::uuid
+  );
+
+-- verifications: short-lived random tokens never exposed to clients. Only
+-- ever read/written server-side by better-auth (which runs as superuser).
+-- Block all access from app_user; the table stays reachable to postgres.
+ALTER TABLE verifications ENABLE ROW LEVEL SECURITY;
+ALTER TABLE verifications FORCE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS verifications_super_admin_only ON verifications;
+CREATE POLICY verifications_super_admin_only ON verifications
+  USING (is_super_admin())
+  WITH CHECK (is_super_admin());

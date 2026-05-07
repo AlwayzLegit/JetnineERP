@@ -202,7 +202,7 @@ describe('cross-tenant isolation (RLS)', () => {
 });
 
 describe('schema sanity', () => {
-  it('all 19 tables have RLS enabled and forced', async () => {
+  it('all 22 tables have RLS enabled and forced', async () => {
     const rows = await root<
       { relname: string; relrowsecurity: boolean; relforcerowsecurity: boolean }[]
     >`
@@ -212,7 +212,7 @@ describe('schema sanity', () => {
       WHERE n.nspname = 'public' AND c.relkind = 'r'
       ORDER BY c.relname
     `;
-    expect(rows).toHaveLength(19);
+    expect(rows).toHaveLength(22);
     const missing = rows.filter((r) => !r.relrowsecurity || !r.relforcerowsecurity);
     expect(missing).toEqual([]);
   });

@@ -3,8 +3,12 @@ import { ConfigModule } from '@nestjs/config';
 import { LoggerModule } from 'nestjs-pino';
 import { randomUUID } from 'node:crypto';
 import { TerminusModule } from '@nestjs/terminus';
-import { HealthController } from './health/health.controller';
 import { AppController } from './app.controller';
+import { AuthModule } from './auth/auth.module';
+import { DatabaseModule } from './database/database.module';
+import { EmailModule } from './email/email.module';
+import { HealthController } from './health/health.controller';
+import { RedisModule } from './redis/redis.module';
 
 @Module({
   imports: [
@@ -39,6 +43,10 @@ import { AppController } from './app.controller';
       },
     }),
     TerminusModule,
+    DatabaseModule,
+    RedisModule,
+    EmailModule,
+    AuthModule,
   ],
   controllers: [AppController, HealthController],
 })

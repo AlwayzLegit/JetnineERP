@@ -2,17 +2,21 @@ import { boolean, index, pgTable, text, timestamp, uniqueIndex, uuid } from 'dri
 import { citext, inet } from '../types';
 
 // Platform user — a single account spans multiple businesses via `memberships`.
+//
+// Authentication concerns (password, OAuth credentials, 2FA secret + backup
+// codes, email-verification + reset tokens, session tokens) live in dedicated
+// tables (`accounts`, `verifications`, `two_factors`, extended `sessions`)
+// owned by better-auth. This table holds identity + platform flags only.
 export const users = pgTable(
   'users',
   {
     id: uuid('id').primaryKey().defaultRandom(),
     email: citext('email').notNull(),
     emailVerified: boolean('email_verified').notNull().default(false),
-    passwordHash: text('password_hash'),
     name: text('name'),
+    image: text('image'),
     isSuperAdmin: boolean('is_super_admin').notNull().default(false),
     twoFactorEnabled: boolean('two_factor_enabled').notNull().default(false),
-    twoFactorSecretEncrypted: text('two_factor_secret_encrypted'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
     deletedAt: timestamp('deleted_at', { withTimezone: true }),
@@ -29,14 +33,19 @@ export const sessions = pgTable(
     userId: uuid('user_id')
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
+    // The opaque token sent in the session cookie. better-auth treats this as
+    // the session lookup key, separate from `id`.
+    token: text('token').notNull(),
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
-    ip: inet('ip'),
+    ipAddress: inet('ip_address'),
     userAgent: text('user_agent'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => ({
     userIdx: index('sessions_user_id_idx').on(t.userId),
     expiresIdx: index('sessions_expires_at_idx').on(t.expiresAt),
+    tokenUnique: uniqueIndex('sessions_token_uniq').on(t.token),
   }),
 );
 
