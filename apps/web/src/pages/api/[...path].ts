@@ -18,6 +18,7 @@
  * existing OpenAPI consumers + the integration tests that hit
  * the standalone server keep working with no path change.
  */
+// build-marker: deploy-19
 import 'reflect-metadata';
 
 import type { Express } from 'express';
