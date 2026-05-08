@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { useEffect, useState, type FormEvent } from 'react';
+import { CURRENCY_LABELS, SUPPORTED_CURRENCIES } from '@jetnine/shared';
 import { api } from '@/lib/api';
 
 interface Settings {
@@ -43,6 +44,7 @@ export default function SettingsPage() {
       const data = new FormData(e.currentTarget);
       const body = {
         name: String(data.get('name') ?? ''),
+        currencyCode: String(data.get('currencyCode') ?? settings.currencyCode),
         defaultTaxRateBps: Number(data.get('defaultTaxRateBps') ?? '0'),
         receiptHeader: String(data.get('receiptHeader') ?? '') || null,
         receiptFooter: String(data.get('receiptFooter') ?? '') || null,
@@ -143,8 +145,19 @@ export default function SettingsPage() {
         <Field label="Business name">
           <input name="name" defaultValue={settings.name} required style={fieldStyle} />
         </Field>
-        <Field label="Currency (USD only for MVP)">
-          <input value={settings.currencyCode} disabled style={fieldStyle} />
+        <Field label="Currency">
+          <select name="currencyCode" defaultValue={settings.currencyCode} style={fieldStyle}>
+            {SUPPORTED_CURRENCIES.map((code) => (
+              <option key={code} value={code}>
+                {code} — {CURRENCY_LABELS[code]}
+              </option>
+            ))}
+          </select>
+          <span style={{ color: '#888', fontSize: 11, marginTop: 2 }}>
+            Switching currency changes how amounts are displayed across the app. Existing balances
+            keep their stored minor-unit value; you may want to coordinate the change with your
+            bookkeeper.
+          </span>
         </Field>
         <Field label="Default tax rate (basis points; 250 = 2.5%)">
           <input

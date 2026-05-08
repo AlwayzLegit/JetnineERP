@@ -2,6 +2,7 @@ import { BadRequestException, Body, Controller, Get, Inject, Patch } from '@nest
 import { eq } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { schema } from '@jetnine/db';
+import { isSupportedCurrency, SUPPORTED_CURRENCIES } from '@jetnine/shared';
 import { AuditService } from '../audit/audit.service';
 import { CurrentTenant } from '../auth/current-user.decorator';
 import { DRIZZLE } from '../database/database.module';
@@ -25,7 +26,13 @@ interface UpdateBody {
   defaultTaxRateBps?: number;
   receiptHeader?: string | null;
   receiptFooter?: string | null;
-  // currencyCode is fixed to USD for MVP per PLAN §5.3; not editable.
+  /**
+   * ISO 4217 code from the curated set (`SUPPORTED_CURRENCIES`).
+   * Validated against that list; unknown codes are rejected 400 so a
+   * stale client can't drop the business into a state where balances
+   * render with an unsupported symbol.
+   */
+  currencyCode?: string;
 }
 
 @TenantScoped()
@@ -93,6 +100,19 @@ export class SettingsController {
       update.receiptFooter = body.receiptFooter;
       before.receiptFooter = existing.receiptFooter;
       after.receiptFooter = body.receiptFooter;
+    }
+    if (body.currencyCode !== undefined) {
+      const next = body.currencyCode.toUpperCase();
+      if (!isSupportedCurrency(next)) {
+        throw new BadRequestException(
+          `currencyCode must be one of: ${SUPPORTED_CURRENCIES.join(', ')}`,
+        );
+      }
+      if (next !== existing.currencyCode) {
+        update.currencyCode = next;
+        before.currencyCode = existing.currencyCode;
+        after.currencyCode = next;
+      }
     }
 
     if (Object.keys(after).length === 0) return toSettings(existing);

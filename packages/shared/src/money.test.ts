@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { centsToInputString, formatMoney, parseMoneyToCents } from './money.js';
+import {
+  centsToInputString,
+  formatMoney,
+  fractionDigitsFor,
+  isSupportedCurrency,
+  parseMoneyToCents,
+  SUPPORTED_CURRENCIES,
+} from './money.js';
 
 describe('formatMoney', () => {
   it('formats positive cents as USD', () => {
@@ -71,5 +78,47 @@ describe('centsToInputString', () => {
       const s = centsToInputString(cents);
       expect(parseMoneyToCents(s)).toBe(cents);
     }
+  });
+});
+
+describe('multi-currency', () => {
+  it('SUPPORTED_CURRENCIES contains the curated set', () => {
+    expect(SUPPORTED_CURRENCIES).toContain('USD');
+    expect(SUPPORTED_CURRENCIES).toContain('EUR');
+    expect(SUPPORTED_CURRENCIES).toContain('JPY');
+  });
+
+  it('isSupportedCurrency narrows correctly', () => {
+    expect(isSupportedCurrency('USD')).toBe(true);
+    expect(isSupportedCurrency('XXX')).toBe(false);
+    expect(isSupportedCurrency('')).toBe(false);
+  });
+
+  it('fractionDigitsFor returns 0 for JPY and 2 for the rest', () => {
+    expect(fractionDigitsFor('USD')).toBe(2);
+    expect(fractionDigitsFor('EUR')).toBe(2);
+    expect(fractionDigitsFor('GBP')).toBe(2);
+    expect(fractionDigitsFor('JPY')).toBe(0);
+  });
+
+  it('formatMoney renders EUR and GBP with their symbols', () => {
+    expect(formatMoney(123456, { currency: 'EUR' })).toMatch(/€\s?1,234\.56/);
+    expect(formatMoney(123456, { currency: 'GBP' })).toMatch(/£1,234\.56/);
+  });
+
+  it('formatMoney renders JPY without decimals', () => {
+    expect(formatMoney(1234, { currency: 'JPY' })).toMatch(/¥1,234/);
+    expect(formatMoney(0, { currency: 'JPY' })).toMatch(/¥0/);
+  });
+
+  it('JPY: minor units = whole yen, parses + formats round-trip', () => {
+    expect(parseMoneyToCents('1234', { currency: 'JPY' })).toBe(1234);
+    expect(parseMoneyToCents('¥1,234', { currency: 'JPY' })).toBe(1234);
+    expect(centsToInputString(1234, 'JPY')).toBe('1234');
+  });
+
+  it('symbolless format strips the currency symbol but keeps locale grouping', () => {
+    expect(formatMoney(123456, { currency: 'EUR', symbolless: true })).toBe('1,234.56');
+    expect(formatMoney(1234, { currency: 'JPY', symbolless: true })).toBe('1,234');
   });
 });

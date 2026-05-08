@@ -385,4 +385,50 @@ describe('Epic 1.6 — Business admin console', () => {
     expect(sample).toBeDefined();
     void ownerUserId; // referenced for completeness.
   });
+
+  it('Phase 2.19: owner can switch currency to a supported code', async () => {
+    const res = await request(app.getHttpServer())
+      .patch('/v1/business/settings')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ currencyCode: 'EUR' });
+    expect(res.status).toBe(200);
+    expect(res.body.currencyCode).toBe('EUR');
+  });
+
+  it('Phase 2.19: lowercase + JPY both accepted; round-trip persists', async () => {
+    const res = await request(app.getHttpServer())
+      .patch('/v1/business/settings')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ currencyCode: 'jpy' });
+    expect(res.status).toBe(200);
+    expect(res.body.currencyCode).toBe('JPY');
+
+    const reread = await request(app.getHttpServer())
+      .get('/v1/business/settings')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId);
+    expect(reread.body.currencyCode).toBe('JPY');
+  });
+
+  it('Phase 2.19: unsupported currency is rejected 400', async () => {
+    const res = await request(app.getHttpServer())
+      .patch('/v1/business/settings')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ currencyCode: 'XYZ' });
+    expect(res.status).toBe(400);
+    expect(res.body.message).toMatch(/currencyCode must be one of/);
+  });
+
+  it('Phase 2.19: restore USD so other tests in the file see the default', async () => {
+    const res = await request(app.getHttpServer())
+      .patch('/v1/business/settings')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ currencyCode: 'USD' });
+    expect(res.status).toBe(200);
+    expect(res.body.currencyCode).toBe('USD');
+  });
 });

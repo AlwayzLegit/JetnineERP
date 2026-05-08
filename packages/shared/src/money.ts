@@ -1,16 +1,62 @@
 /**
- * Money utilities. Cents are the canonical wire + storage unit; this
- * module is the only place that converts to/from human-readable
- * strings. Keep all cents-to-display arithmetic out of UI code.
+ * Money utilities. Cents (or "minor units" — JPY has no decimals, but
+ * we still call them "cents" in code for consistency) are the
+ * canonical wire + storage unit. This module is the only place that
+ * converts to/from human-readable strings.
  *
- * USD-only at MVP. The `currency` parameter is reserved for the day
- * we add multi-currency support; until then it defaults to 'USD' and
- * the helpers ignore non-USD inputs except to track the unit name.
+ * Each business operates in a single currency at a time (set on
+ * `business_settings.currency_code`). Cross-currency transactions
+ * aren't supported; the helpers below treat the currency as a
+ * formatting decision, not a value-conversion one.
  */
 
-export type CurrencyCode = 'USD';
+/**
+ * Curated set of supported ISO 4217 codes. Covers the common
+ * 2-decimal currencies plus JPY (which has 0 decimals and exercises
+ * the fractional-digits branch). Adding a new code is one line in
+ * `FRACTION_DIGITS_BY_CURRENCY` plus a label in `CURRENCY_LABELS`.
+ */
+export type CurrencyCode = 'USD' | 'EUR' | 'GBP' | 'CAD' | 'AUD' | 'JPY';
 
-const FRACTION_DIGITS_BY_CURRENCY: Record<CurrencyCode, number> = { USD: 2 };
+export const SUPPORTED_CURRENCIES: readonly CurrencyCode[] = [
+  'USD',
+  'EUR',
+  'GBP',
+  'CAD',
+  'AUD',
+  'JPY',
+] as const;
+
+export const CURRENCY_LABELS: Record<CurrencyCode, string> = {
+  USD: 'US dollar',
+  EUR: 'Euro',
+  GBP: 'British pound',
+  CAD: 'Canadian dollar',
+  AUD: 'Australian dollar',
+  JPY: 'Japanese yen',
+};
+
+/**
+ * Per-currency minor-unit decimal count. JPY = 0 (no decimals);
+ * everything else here = 2. The cents → display arithmetic uses this
+ * to compute `cents / 10^digits` rather than the hardcoded `/100`.
+ */
+const FRACTION_DIGITS_BY_CURRENCY: Record<CurrencyCode, number> = {
+  USD: 2,
+  EUR: 2,
+  GBP: 2,
+  CAD: 2,
+  AUD: 2,
+  JPY: 0,
+};
+
+export function fractionDigitsFor(currency: CurrencyCode = 'USD'): number {
+  return FRACTION_DIGITS_BY_CURRENCY[currency] ?? 2;
+}
+
+export function isSupportedCurrency(value: string): value is CurrencyCode {
+  return (SUPPORTED_CURRENCIES as readonly string[]).includes(value);
+}
 
 export interface FormatMoneyOptions {
   /** ISO 4217 currency code. Defaults to USD. */
@@ -42,7 +88,7 @@ export interface FormatMoneyOptions {
 export function formatMoney(cents: number, options: FormatMoneyOptions = {}): string {
   const currency = options.currency ?? 'USD';
   const locale = options.locale ?? 'en-US';
-  const fractionDigits = FRACTION_DIGITS_BY_CURRENCY[currency] ?? 2;
+  const fractionDigits = fractionDigitsFor(currency);
   const value = cents / Math.pow(10, fractionDigits);
   if (options.symbolless) {
     return value.toLocaleString(locale, {
@@ -88,10 +134,10 @@ export function parseMoneyToCents(
   }
   const n = Number(cleaned);
   if (!Number.isFinite(n)) return null;
-  const fractionDigits = FRACTION_DIGITS_BY_CURRENCY[options.currency ?? 'USD'] ?? 2;
-  // Round to the nearest cent. Math.round is intentional — Number's
-  // floating-point rounding error on '0.1 + 0.2' style inputs can
-  // bias by 1 cent if we floor.
+  const fractionDigits = fractionDigitsFor(options.currency);
+  // Round to the nearest minor unit. Math.round is intentional —
+  // Number's floating-point rounding error on '0.1 + 0.2' style
+  // inputs can bias by 1 cent if we floor.
   return Math.round(n * Math.pow(10, fractionDigits));
 }
 
@@ -102,6 +148,6 @@ export function parseMoneyToCents(
  * trips losslessly.
  */
 export function centsToInputString(cents: number, currency: CurrencyCode = 'USD'): string {
-  const fractionDigits = FRACTION_DIGITS_BY_CURRENCY[currency] ?? 2;
+  const fractionDigits = fractionDigitsFor(currency);
   return (cents / Math.pow(10, fractionDigits)).toFixed(fractionDigits);
 }

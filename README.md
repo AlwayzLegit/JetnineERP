@@ -1499,3 +1499,51 @@ state.
   locations → list + delete reverts to fallback → invalid
   rateBps is 400 + missing class is 404.
 - **All format/lint/typecheck/build gates green**.
+
+## Phase 2.19 status (multi-currency)
+
+Phase 2.19 lifts the USD-only constraint from the merchant UI.
+Each business still operates in a single currency at a time
+(no cross-currency conversion in scope), but that currency is
+now selectable from a curated set and threaded through every
+`<Money>` render automatically.
+
+- **`@jetnine/shared/money` extended**:
+  - `CurrencyCode` widened to `USD | EUR | GBP | CAD | AUD | JPY`
+  - `SUPPORTED_CURRENCIES`, `CURRENCY_LABELS`,
+    `fractionDigitsFor`, `isSupportedCurrency` exported for
+    reuse on both the API and the web
+  - `formatMoney` / `parseMoneyToCents` / `centsToInputString`
+    use the per-currency fraction-digits map. JPY is the only
+    0-decimal entry today and exercises the
+    minor-units-without-decimals branch (formatted as `¥1,234`,
+    parsed from `'1234'` to `1234`)
+  - 7 new unit tests bring the helper suite to 17 cases and
+    cover the EUR/GBP/JPY paths end-to-end
+- **`BusinessSettingsProvider`** (web): a tiny context that
+  fetches `/v1/business/settings` once on layout mount and
+  exposes the active currency to descendants. Wraps the entire
+  `(business)` subtree.
+- **`<Money>`** now reads from that context when no `currency`
+  prop is passed — every existing render site picks up the
+  business currency without a code change. Explicit override
+  still wins when a caller passes `currency={...}`.
+- **API**: `PATCH /v1/business/settings` accepts a
+  `currencyCode` field. Validates against
+  `SUPPORTED_CURRENCIES`, normalizes to upper-case, audits the
+  before/after as a regular settings change.
+- **Web**: `/settings` swaps the disabled "USD only for MVP"
+  field for a real dropdown listing every supported currency
+  with its human label. Includes a small note about
+  bookkeeper coordination — switching currency only changes
+  display, not the stored minor-unit values.
+- **What's deferred**: cross-currency transactions, FX rates,
+  and reporting consolidation across currencies. Multi-
+  currency invoicing within a single business is a separate
+  effort.
+- **4 new API integration tests** in
+  `apps/api/test/business.int.spec.ts`: switch to EUR succeeds
+  → lowercase + JPY normalize and persist → unsupported code
+  is 400 → restore USD for downstream tests in the file. Plus
+  the 7 unit tests in `packages/shared`.
+- **All format/lint/typecheck/build gates green**.
