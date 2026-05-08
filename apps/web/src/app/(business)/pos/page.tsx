@@ -5,7 +5,17 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { loadStripe, type Stripe as StripeJs } from '@stripe/stripe-js';
 import { CardElement, Elements, useElements, useStripe } from '@stripe/react-stripe-js';
 import { centsToInputString, formatMoney } from '@jetnine/shared';
-import { api } from '@/lib/api';
+import { api, apiUrl } from '@/lib/api';
+import {
+  cacheVariants,
+  enqueueSale,
+  generateIdempotencyKey,
+  lookupVariantsLocally,
+  pendingCount,
+  readActiveBusinessId,
+  syncAll,
+} from '@/lib/offline';
+import { useOnlineStatus } from '@/lib/use-online-status';
 import { Money } from '@/components/money';
 
 interface LookupRow {
@@ -76,7 +86,10 @@ export default function PosPage() {
   const [completedSale, setCompletedSale] = useState<SaleResp | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [stripeStatus, setStripeStatus] = useState<StripeStatus | null>(null);
+  const [pendingSync, setPendingSync] = useState(0);
   const scanRef = useRef<HTMLInputElement>(null);
+  const online = useOnlineStatus();
+  const businessId = useMemo(() => readActiveBusinessId(), []);
 
   useEffect(() => {
     void (async () => {
@@ -98,6 +111,28 @@ export default function PosPage() {
     })();
   }, []);
 
+  // Pending count + auto-sync. Drains the queue whenever the browser
+  // reports we're back online; the server's idempotency layer (Phase
+  // 2.9) makes replays of an already-accepted sale safe.
+  useEffect(() => {
+    if (!businessId) return;
+    void pendingCount(businessId).then(setPendingSync);
+  }, [businessId]);
+
+  useEffect(() => {
+    if (!online || !businessId) return;
+    void (async () => {
+      const result = await syncAll(businessId);
+      const remaining = await pendingCount(businessId);
+      setPendingSync(remaining);
+      if (result.succeeded > 0) {
+        setError(null);
+      } else if (result.failed > 0 && result.errors[0]) {
+        setError(`Sync error: ${result.errors[0].message}`);
+      }
+    })();
+  }, [online, businessId]);
+
   useEffect(() => {
     if (phase === 'cart') scanRef.current?.focus();
   }, [phase]);
@@ -110,10 +145,38 @@ export default function PosPage() {
   async function handleScanSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     if (!scan.trim()) return;
+    const query = scan.trim();
     try {
-      const rows = await api<LookupRow[]>(`/v1/pos/lookup?q=${encodeURIComponent(scan.trim())}`);
+      let rows: LookupRow[];
+      if (online) {
+        rows = await api<LookupRow[]>(`/v1/pos/lookup?q=${encodeURIComponent(query)}`);
+        // Lazy-cache hits so we can find them again offline.
+        if (businessId && rows.length > 0) {
+          void cacheVariants(businessId, rows);
+        }
+      } else if (businessId) {
+        const cached = await lookupVariantsLocally(businessId, query);
+        rows = cached.map((v) => ({
+          variantId: v.variantId,
+          productId: v.productId,
+          productName: v.productName,
+          sku: v.sku,
+          barcode: v.barcode,
+          variantName: v.variantName,
+          priceCents: v.priceCents,
+        }));
+        if (rows.length === 0) {
+          setError(
+            "Offline: no cached match. Connect once to load this item, then it'll work offline.",
+          );
+          return;
+        }
+      } else {
+        setError('Offline and no business selected; reconnect to continue.');
+        return;
+      }
       // Exact barcode match → auto-add and clear.
-      if (rows.length === 1 && rows[0]!.barcode === scan.trim()) {
+      if (rows.length === 1 && rows[0]!.barcode === query) {
         addToCart(rows[0]!);
         setScan('');
         setResults([]);
@@ -166,32 +229,107 @@ export default function PosPage() {
 
   async function complete(payments: Payment[]) {
     setError(null);
-    try {
-      const sale = await api<SaleResp>('/v1/sales', {
-        method: 'POST',
-        body: JSON.stringify({
-          locationId,
-          customerId: customer?.id ?? null,
-          lines: cart.map((l) => ({
-            variantId: l.variantId,
-            quantity: l.quantity,
-            unitPriceCents: l.unitPriceCents,
-            lineDiscountCents: l.lineDiscountCents || undefined,
-          })),
-          // Either a manual discount or a code — never both. The
-          // code path lets the API validate window/usage/min;
-          // manual is owner-overrides.
-          ...(discountCode.trim()
-            ? { discountCode: discountCode.trim() }
-            : { orderDiscountCents: parseDollars(orderDiscount) || undefined }),
-          payments,
-        }),
-      });
-      setCompletedSale(sale);
-      setPhase('done');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+    const body = {
+      locationId,
+      customerId: customer?.id ?? null,
+      lines: cart.map((l) => ({
+        variantId: l.variantId,
+        quantity: l.quantity,
+        unitPriceCents: l.unitPriceCents,
+        lineDiscountCents: l.lineDiscountCents || undefined,
+      })),
+      // Either a manual discount or a code — never both. The code
+      // path lets the API validate window/usage/min; manual is
+      // owner-overrides.
+      ...(discountCode.trim()
+        ? { discountCode: discountCode.trim() }
+        : { orderDiscountCents: parseDollars(orderDiscount) || undefined }),
+      payments,
+    };
+    const idempotencyKey = generateIdempotencyKey();
+
+    if (online) {
+      try {
+        const res = await fetch(`${apiUrl}/v1/sales`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: {
+            'Content-Type': 'application/json',
+            'Idempotency-Key': idempotencyKey,
+          },
+          body: JSON.stringify(body),
+        });
+        if (!res.ok) {
+          const text = await res.text();
+          let message = `${res.status} ${res.statusText}`;
+          try {
+            const parsed = JSON.parse(text) as { message?: string };
+            if (parsed.message) message = parsed.message;
+          } catch {
+            if (text) message = text;
+          }
+          throw new Error(message);
+        }
+        const sale = (await res.json()) as SaleResp;
+        setCompletedSale(sale);
+        setPhase('done');
+      } catch (err) {
+        // Network error mid-charge — enqueue with the *same* key so a
+        // server that already accepted the original request will replay
+        // its cached response, never double-charging.
+        const looksLikeNetwork =
+          err instanceof TypeError || (err instanceof Error && /fetch|network/i.test(err.message));
+        if (looksLikeNetwork && businessId) {
+          await enqueueSale({ businessId, body, idempotencyKey });
+          setPendingSync(await pendingCount(businessId));
+          showQueuedReceipt(body, payments, idempotencyKey);
+        } else {
+          setError(err instanceof Error ? err.message : String(err));
+        }
+      }
+    } else {
+      if (!businessId) {
+        setError("Offline and no active business selected — can't queue the sale.");
+        return;
+      }
+      await enqueueSale({ businessId, body, idempotencyKey });
+      setPendingSync(await pendingCount(businessId));
+      showQueuedReceipt(body, payments, idempotencyKey);
     }
+  }
+
+  /**
+   * Render a placeholder receipt for an offline-queued sale. The fields
+   * the cashier can see come straight from the cart; the totals are
+   * recomputed locally so the customer-facing display matches what
+   * they'll see when the sale eventually syncs. The `id` is the
+   * idempotency key — it's not the server-assigned UUID, but it's
+   * stable across retries and lets a cashier reconcile later.
+   */
+  function showQueuedReceipt(
+    saleBody: { lines: { variantId: string; quantity: number; unitPriceCents: number }[] },
+    payments: Payment[],
+    idempotencyKey: string,
+  ): void {
+    const lines = cart.map((l) => ({
+      id: `queued_line_${l.variantId}`,
+      description: l.description,
+      quantity: l.quantity,
+      totalCents: l.quantity * l.unitPriceCents - (l.lineDiscountCents ?? 0),
+    }));
+    void saleBody;
+    setCompletedSale({
+      id: idempotencyKey,
+      number: 'QUEUED — will sync',
+      totalCents: totals.totalCents,
+      subtotalCents: totals.subtotalCents,
+      discountCents: totals.discountCents,
+      taxCents: totals.taxCents,
+      lines,
+      payments,
+      completedAt: null,
+    });
+    setPhase('done');
   }
 
   function reset() {
@@ -224,6 +362,45 @@ export default function PosPage() {
 
   return (
     <div>
+      {!online && (
+        <div
+          style={{
+            background: '#fff8e1',
+            border: '1px solid #f0a000',
+            color: '#5a3500',
+            padding: '8px 12px',
+            borderRadius: 6,
+            marginBottom: 12,
+            fontSize: 13,
+          }}
+        >
+          <strong>Offline.</strong> Sales will queue locally and sync when the connection returns.
+          Lookups fall back to recently-cached items.
+        </div>
+      )}
+      {online && pendingSync > 0 && (
+        <div
+          style={{
+            background: '#e8f4fd',
+            border: '1px solid #4a90d9',
+            color: '#1a4870',
+            padding: '8px 12px',
+            borderRadius: 6,
+            marginBottom: 12,
+            fontSize: 13,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+          }}
+        >
+          <span>
+            Syncing {pendingSync} queued sale{pendingSync === 1 ? '' : 's'}…
+          </span>
+          <Link href="/pos/pending" style={{ marginLeft: 'auto', color: '#1a4870' }}>
+            View queue →
+          </Link>
+        </div>
+      )}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
         <h1 style={{ fontSize: 22, margin: 0 }}>Register</h1>
         <div style={{ marginLeft: 'auto', fontSize: 13 }}>

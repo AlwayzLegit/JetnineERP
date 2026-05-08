@@ -1279,3 +1279,64 @@ without disturbing cash or card flows.
   history with all 4 kinds → cancelled card rejects redemption
   → audit row written → citext lookup is case-insensitive. CI
   provisions `jetnine_gift_cards`.
+
+## Phase 2.14 status (offline POS — sales queue)
+
+Phase 2.14 ships the first-pass offline POS: when the connection
+drops mid-shift, sales queue locally and replay safely on
+reconnect. Pairs with Phase 2.9's idempotency layer so a queued
+sale can be retried any number of times without double-charging.
+
+- **`apps/web/src/lib/offline.ts`**: `idb`-backed IndexedDB
+  store (`jetnine-offline`, v1) with two object stores:
+  - `pendingSales` — outbound queue keyed by Idempotency-Key,
+    indexed by business id
+  - `variants` — lazy variant cache populated on every
+    successful `/v1/pos/lookup` while online, indexed by both
+    business id and `[business, barcode]` for the scan path
+- **`useOnlineStatus` hook**: thin wrapper over
+  `navigator.onLine` + the `online`/`offline` events. SSR-safe;
+  defaults to `true` until hydration so the first paint
+  doesn't flash an offline badge.
+- **POS page integration**:
+  - Offline banner at the top of `/pos` when the browser
+    reports we're disconnected. A second info banner shows
+    "Syncing N queued sales…" after reconnect, with a link to
+    the queue page.
+  - Lookup falls back to the local cache when offline — exact
+    barcode hit first, then case-insensitive substring on
+    name + SKU. Online lookups write hits into the cache so
+    a few minutes of online use covers the common items.
+  - `complete()` checks `online` before submitting. On
+    success → normal flow. On a network failure mid-charge →
+    enqueues with the same Idempotency-Key (so a server that
+    already accepted the original will replay the cached
+    response, not double-charge). On offline → enqueues
+    immediately and shows a "QUEUED — will sync" placeholder
+    receipt with the cart's lines + payments + locally-
+    computed totals.
+  - Auto-sync: a `useEffect` watches `online` and drains the
+    queue when it flips to `true`. Also triggered on initial
+    mount so a refresh after reconnect picks up where we left
+    off.
+- **`/pos/pending` tray**: lists every queued sale with
+  enqueued-at, line count, total (from the queued payments),
+  attempt count, last error message, and a Discard action.
+  "Sync now" button drains the queue manually.
+- **Idempotency-Key generation**: `pos_<crypto.randomUUID()>`
+  per sale at enqueue time. The same key is reused on every
+  retry so the server's Phase 2.9 cache replays the original
+  201 response, never re-running the side effects.
+- **Concurrent-safe**: `syncAll` serializes via an in-flight
+  promise lock so a manual "Sync now" click + the auto-sync
+  trigger don't step on each other.
+- **Per-tenant partitioning**: `(business_id, code)` for
+  variants and `business_id` for the queue. A user who
+  switches active business in another tab can't redeem a
+  queued sale against the wrong tenant.
+- **Known limit (deferred)**: no service worker yet, so a hard
+  refresh while offline still loses the page. The queued sales
+  themselves survive (they're in IndexedDB), but the UI shell
+  needs to be online once before the cashier can interact with
+  it. App-shell caching is queued for a follow-up phase.
+- **All format/lint/typecheck/build gates green**.
