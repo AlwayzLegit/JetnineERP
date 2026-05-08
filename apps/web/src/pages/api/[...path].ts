@@ -20,11 +20,8 @@
  */
 import 'reflect-metadata';
 
-import { NestFactory } from '@nestjs/core';
-import { ExpressAdapter } from '@nestjs/platform-express';
-import express, { type Express } from 'express';
+import type { Express } from 'express';
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { AppModule } from '@jetnine/api/app.module';
 
 let cached: Express | null = null;
 let booting: Promise<Express> | null = null;
@@ -33,6 +30,15 @@ async function getApp(): Promise<Express> {
   if (cached) return cached;
   if (booting) return booting;
   booting = (async () => {
+    // Imports are dynamic so a "Cannot find module" failure surfaces
+    // through the handler's try/catch instead of crashing the function
+    // before it can run. Vercel's runtime log truncates the message
+    // when the failure happens at module-load time.
+    const { NestFactory } = await import('@nestjs/core');
+    const { ExpressAdapter } = await import('@nestjs/platform-express');
+    const { default: express } = await import('express');
+    const { AppModule } = await import('@jetnine/api/app.module');
+
     const expressApp = express();
     const nest = await NestFactory.create(AppModule, new ExpressAdapter(expressApp), {
       // Keep logs out of cold-start; Pino reconfigures itself
