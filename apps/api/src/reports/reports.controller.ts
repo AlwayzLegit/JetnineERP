@@ -1,0 +1,341 @@
+import { Controller, ForbiddenException, Get, Inject, Query, Res } from '@nestjs/common';
+import type { Response } from 'express';
+import { and, desc, eq, gte, lt, sql } from 'drizzle-orm';
+import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
+import { schema } from '@jetnine/db';
+import { CurrentTenant } from '../auth/current-user.decorator';
+import { DRIZZLE } from '../database/database.module';
+import { RequirePermission, TenantScoped } from '../tenancy/decorators';
+import type { RequestTenantContext } from '../tenancy/request-context';
+import { toCsv } from './csv';
+
+interface DailyTotalRow {
+  day: string; // ISO YYYY-MM-DD
+  saleCount: number;
+  subtotalCents: number;
+  discountCents: number;
+  taxCents: number;
+  totalCents: number;
+}
+interface AssociateTotalRow {
+  associateUserId: string | null;
+  associateEmail: string | null;
+  saleCount: number;
+  totalCents: number;
+}
+interface PaymentMethodRow {
+  method: string;
+  amountCents: number;
+  count: number;
+}
+interface DailyReport {
+  start: string;
+  end: string;
+  byDay: DailyTotalRow[];
+  byAssociate: AssociateTotalRow[];
+  byPaymentMethod: PaymentMethodRow[];
+}
+
+interface ProductRow {
+  variantId: string;
+  productName: string;
+  variantName: string | null;
+  sku: string | null;
+  quantity: number;
+  revenueCents: number;
+  costCents: number | null;
+  marginCents: number | null;
+}
+interface InventoryRow {
+  variantId: string;
+  locationId: string;
+  productName: string;
+  sku: string | null;
+  variantName: string | null;
+  onHand: number;
+  reserved: number;
+  available: number;
+}
+
+@TenantScoped()
+@Controller('v1/reports')
+export class ReportsController {
+  constructor(@Inject(DRIZZLE) private readonly db: PostgresJsDatabase) {}
+
+  /**
+   * Daily sales totals across the requested window. Returns three slices
+   * of the same data: per-day, per-associate, and per-payment-method.
+   * The window defaults to the last 7 days inclusive of today (UTC).
+   */
+  @Get('sales/daily')
+  @RequirePermission('reports.sales.view')
+  async daily(
+    @CurrentTenant() tenant: RequestTenantContext,
+    @Query('start') startStr?: string,
+    @Query('end') endStr?: string,
+    @Query('format') format?: string,
+    @Res({ passthrough: true }) res?: Response,
+  ): Promise<DailyReport | void> {
+    const { startDate, endDate } = parseRange(startStr, endStr);
+    const startTs = new Date(`${startDate}T00:00:00.000Z`);
+    const endTsExclusive = new Date(`${endDate}T00:00:00.000Z`);
+    endTsExclusive.setUTCDate(endTsExclusive.getUTCDate() + 1);
+
+    // We only count completed sales (and partial refunds keep their sale
+    // row in 'partially_refunded' but the originating revenue still
+    // counts). Voided sales are excluded.
+    const includedStatuses = sql`${schema.sales.status} IN ('completed', 'partially_refunded', 'refunded')`;
+    const dateRange = and(
+      gte(schema.sales.completedAt, startTs),
+      lt(schema.sales.completedAt, endTsExclusive),
+    );
+
+    const dayExpr = sql<string>`to_char(${schema.sales.completedAt} AT TIME ZONE 'UTC', 'YYYY-MM-DD')`;
+    const byDay = await this.db
+      .select({
+        day: dayExpr,
+        saleCount: sql<number>`COUNT(*)::int`,
+        subtotalCents: sql<number>`COALESCE(SUM(${schema.sales.subtotalCents}), 0)::int`,
+        discountCents: sql<number>`COALESCE(SUM(${schema.sales.discountCents}), 0)::int`,
+        taxCents: sql<number>`COALESCE(SUM(${schema.sales.taxCents}), 0)::int`,
+        totalCents: sql<number>`COALESCE(SUM(${schema.sales.totalCents}), 0)::int`,
+      })
+      .from(schema.sales)
+      .where(and(dateRange, includedStatuses))
+      .groupBy(dayExpr)
+      .orderBy(dayExpr);
+
+    const byAssociate = await this.db
+      .select({
+        associateUserId: schema.sales.associateUserId,
+        associateEmail: schema.users.email,
+        saleCount: sql<number>`COUNT(*)::int`,
+        totalCents: sql<number>`COALESCE(SUM(${schema.sales.totalCents}), 0)::int`,
+      })
+      .from(schema.sales)
+      .leftJoin(schema.users, eq(schema.users.id, schema.sales.associateUserId))
+      .where(and(dateRange, includedStatuses))
+      .groupBy(schema.sales.associateUserId, schema.users.email)
+      .orderBy(desc(sql`COALESCE(SUM(${schema.sales.totalCents}), 0)`));
+
+    const byPaymentMethod = await this.db
+      .select({
+        method: schema.payments.method,
+        amountCents: sql<number>`COALESCE(SUM(${schema.payments.amountCents}), 0)::int`,
+        count: sql<number>`COUNT(*)::int`,
+      })
+      .from(schema.payments)
+      .innerJoin(schema.sales, eq(schema.sales.id, schema.payments.saleId))
+      .where(and(dateRange, includedStatuses, eq(schema.payments.status, 'succeeded')))
+      .groupBy(schema.payments.method)
+      .orderBy(desc(sql`COALESCE(SUM(${schema.payments.amountCents}), 0)`));
+
+    const report: DailyReport = {
+      start: startDate,
+      end: endDate,
+      byDay,
+      byAssociate,
+      byPaymentMethod,
+    };
+    if (format === 'csv') {
+      requireExport(tenant);
+      const csv = toCsv(
+        ['day', 'sale_count', 'subtotal_cents', 'discount_cents', 'tax_cents', 'total_cents'],
+        report.byDay.map((r) => [
+          r.day,
+          r.saleCount,
+          r.subtotalCents,
+          r.discountCents,
+          r.taxCents,
+          r.totalCents,
+        ]),
+      );
+      sendCsv(res!, `sales-daily-${startDate}-to-${endDate}.csv`, csv);
+      return;
+    }
+    return report;
+  }
+
+  /**
+   * Sales aggregated per variant across a date window. Margin (and any
+   * cost-derived field) is omitted unless the caller has
+   * `reports.financial.view`.
+   */
+  @Get('sales/by-product')
+  @RequirePermission('reports.sales.view')
+  async byProduct(
+    @CurrentTenant() tenant: RequestTenantContext,
+    @Query('start') startStr?: string,
+    @Query('end') endStr?: string,
+    @Query('format') format?: string,
+    @Res({ passthrough: true }) res?: Response,
+  ): Promise<ProductRow[] | void> {
+    const { startDate, endDate } = parseRange(startStr, endStr);
+    const startTs = new Date(`${startDate}T00:00:00.000Z`);
+    const endTsExclusive = new Date(`${endDate}T00:00:00.000Z`);
+    endTsExclusive.setUTCDate(endTsExclusive.getUTCDate() + 1);
+
+    const canSeeFinancial = hasPermission(tenant, 'reports.financial.view');
+
+    const rows = await this.db
+      .select({
+        variantId: schema.saleLines.variantId,
+        productName: schema.products.name,
+        variantName: schema.productVariants.name,
+        sku: schema.productVariants.sku,
+        costCents: schema.productVariants.costCents,
+        quantity: sql<number>`COALESCE(SUM(${schema.saleLines.quantity}), 0)::int`,
+        revenueCents: sql<number>`COALESCE(SUM(${schema.saleLines.totalCents}), 0)::int`,
+      })
+      .from(schema.saleLines)
+      .innerJoin(schema.sales, eq(schema.sales.id, schema.saleLines.saleId))
+      .leftJoin(schema.productVariants, eq(schema.productVariants.id, schema.saleLines.variantId))
+      .leftJoin(schema.products, eq(schema.products.id, schema.productVariants.productId))
+      .where(
+        and(
+          gte(schema.sales.completedAt, startTs),
+          lt(schema.sales.completedAt, endTsExclusive),
+          sql`${schema.sales.status} IN ('completed', 'partially_refunded', 'refunded')`,
+        ),
+      )
+      .groupBy(
+        schema.saleLines.variantId,
+        schema.products.name,
+        schema.productVariants.name,
+        schema.productVariants.sku,
+        schema.productVariants.costCents,
+      )
+      .orderBy(desc(sql`COALESCE(SUM(${schema.saleLines.totalCents}), 0)`));
+
+    const out: ProductRow[] = rows.map((r) => {
+      const cost = canSeeFinancial ? r.costCents : null;
+      const margin =
+        canSeeFinancial && r.costCents != null ? r.revenueCents - r.costCents * r.quantity : null;
+      return {
+        variantId: r.variantId ?? '',
+        productName: r.productName ?? '(deleted product)',
+        variantName: r.variantName ?? null,
+        sku: r.sku ?? null,
+        quantity: r.quantity,
+        revenueCents: r.revenueCents,
+        costCents: cost,
+        marginCents: margin,
+      };
+    });
+
+    if (format === 'csv') {
+      requireExport(tenant);
+      const headers = ['product', 'variant', 'sku', 'quantity', 'revenue_cents'];
+      if (canSeeFinancial) headers.push('cost_cents', 'margin_cents');
+      const data = out.map((r) => {
+        const row: (string | number | null)[] = [
+          r.productName,
+          r.variantName,
+          r.sku,
+          r.quantity,
+          r.revenueCents,
+        ];
+        if (canSeeFinancial) row.push(r.costCents, r.marginCents);
+        return row;
+      });
+      sendCsv(res!, `sales-by-product-${startDate}-to-${endDate}.csv`, toCsv(headers, data));
+      return;
+    }
+    return out;
+  }
+
+  /**
+   * Inventory on-hand snapshot. Optional `locationId` filter and
+   * `lowStock` numeric threshold (returns rows where available <= N).
+   */
+  @Get('inventory/on-hand')
+  @RequirePermission('reports.inventory.view')
+  async inventory(
+    @CurrentTenant() tenant: RequestTenantContext,
+    @Query('locationId') locationId?: string,
+    @Query('lowStock') lowStockStr?: string,
+    @Query('format') format?: string,
+    @Res({ passthrough: true }) res?: Response,
+  ): Promise<InventoryRow[] | void> {
+    const where = locationId ? eq(schema.inventoryLevels.locationId, locationId) : undefined;
+    const rows = await this.db
+      .select({
+        variantId: schema.inventoryLevels.variantId,
+        locationId: schema.inventoryLevels.locationId,
+        productName: schema.products.name,
+        sku: schema.productVariants.sku,
+        variantName: schema.productVariants.name,
+        onHand: schema.inventoryLevels.onHand,
+        reserved: schema.inventoryLevels.reserved,
+      })
+      .from(schema.inventoryLevels)
+      .innerJoin(
+        schema.productVariants,
+        eq(schema.productVariants.id, schema.inventoryLevels.variantId),
+      )
+      .innerJoin(schema.products, eq(schema.products.id, schema.productVariants.productId))
+      .where(where)
+      .orderBy(schema.products.name, schema.productVariants.sku);
+
+    const all = rows.map((r) => ({
+      ...r,
+      available: Math.max(0, r.onHand - r.reserved),
+    }));
+    const lowStock = lowStockStr != null ? Number(lowStockStr) : NaN;
+    const filtered = Number.isFinite(lowStock) ? all.filter((r) => r.available <= lowStock) : all;
+
+    if (format === 'csv') {
+      requireExport(tenant);
+      sendCsv(
+        res!,
+        `inventory-on-hand-${new Date().toISOString().slice(0, 10)}.csv`,
+        toCsv(
+          ['product', 'variant', 'sku', 'on_hand', 'reserved', 'available'],
+          filtered.map((r) => [
+            r.productName,
+            r.variantName,
+            r.sku,
+            r.onHand,
+            r.reserved,
+            r.available,
+          ]),
+        ),
+      );
+      return;
+    }
+    return filtered;
+  }
+}
+
+function hasPermission(tenant: RequestTenantContext, permission: string): boolean {
+  if (tenant.isSuperAdmin) return true;
+  return tenant.permissions.has(permission as never);
+}
+
+function requireExport(tenant: RequestTenantContext): void {
+  if (!hasPermission(tenant, 'reports.export')) {
+    throw new ForbiddenException('reports.export permission required for CSV download');
+  }
+}
+
+function parseRange(start?: string, end?: string): { startDate: string; endDate: string } {
+  const today = new Date();
+  const isoToday = today.toISOString().slice(0, 10);
+  const defaultStart = new Date(today);
+  defaultStart.setUTCDate(defaultStart.getUTCDate() - 6);
+  const isoStart = defaultStart.toISOString().slice(0, 10);
+  return {
+    startDate: matchesDate(start) ? start! : isoStart,
+    endDate: matchesDate(end) ? end! : isoToday,
+  };
+}
+
+function matchesDate(s: string | undefined): boolean {
+  return Boolean(s && /^\d{4}-\d{2}-\d{2}$/.test(s));
+}
+
+function sendCsv(res: Response, filename: string, body: string): void {
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  res.send(body);
+}

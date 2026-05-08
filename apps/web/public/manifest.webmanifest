@@ -1,0 +1,10 @@
+{
+  "name": "Jetnine POS",
+  "short_name": "Jetnine",
+  "description": "Point-of-sale register and back office for Jetnine ERP.",
+  "start_url": "/pos",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#111111",
+  "orientation": "any"
+}

@@ -1,0 +1,1724 @@
+# Jetnine ERP
+
+Multi-tenant browser-based POS and retail operations platform. See [`PLAN.md`](./PLAN.md) for the full development plan.
+
+## Repository layout
+
+```
+apps/
+  api/        NestJS backend (TypeScript, Node 22)
+  web/        Next.js 15 frontend (App Router) — super admin, business admin, POS
+packages/
+  config/     Shared tsconfig + eslint flat configs
+  db/         Drizzle schema, migrations, seed scripts (skeleton in Phase 0)
+  shared/     Shared zod schemas, permission catalog, domain types
+  ui/         Shared React components beyond shadcn primitives
+```
+
+## Prerequisites
+
+- **Node 22+** (`.nvmrc` pins the major)
+- **pnpm 9+** (`corepack enable` is the easy path)
+- **Docker** (for local Postgres + Redis via `docker-compose.yml`)
+
+## First-time setup
+
+```bash
+# 1. Install dependencies
+pnpm install
+
+# 2. Copy env files
+cp .env.example .env
+cp apps/api/.env.example apps/api/.env
+cp apps/web/.env.example apps/web/.env
+
+# 3. Start Postgres + Redis
+docker compose up -d
+
+# 4. Run migrations & seed (available once Epic 1.1 lands)
+pnpm db:migrate
+pnpm db:seed
+
+# 5. Start dev servers
+pnpm dev
+```
+
+After `pnpm dev`:
+
+- API: http://localhost:4000 (Hello: `/`, liveness: `/health`, readiness: `/ready`)
+- Web: http://localhost:3000
+
+## Common commands
+
+| Command            | What it does                                      |
+| ------------------ | ------------------------------------------------- |
+| `pnpm dev`         | Run all apps in watch mode (Turborepo)            |
+| `pnpm build`       | Build everything for production                   |
+| `pnpm lint`        | ESLint across the workspace                       |
+| `pnpm typecheck`   | TypeScript check across the workspace             |
+| `pnpm test`        | Run all unit/integration tests (Vitest)           |
+| `pnpm format`      | Format all source with Prettier                   |
+| `pnpm db:generate` | Generate a Drizzle migration from schema changes  |
+| `pnpm db:migrate`  | Apply pending migrations to `DATABASE_URL`        |
+| `pnpm db:reset`    | Drop + recreate the `public` schema (destructive) |
+| `pnpm db:seed`     | Seed dev data                                     |
+
+## Branches & deployments
+
+- `main` is always deployable. Trunk-based with short-lived feature branches; squash-merge.
+- Pushes to `main` deploy `apps/api` to Fly.io via `.github/workflows/deploy-api.yml` (requires `FLY_API_TOKEN`).
+- `apps/web` is hosted on Vercel; PRs get preview deploys.
+
+## Local services
+
+`docker-compose.yml` runs:
+
+- **Postgres 16** on `localhost:5432` (user `postgres`, db `jetnine`)
+- **Redis 7** on `localhost:6379`
+
+Volumes `jetnine_pg_data` and `jetnine_redis_data` persist data between restarts. Run `docker compose down -v` to wipe.
+
+## Phase 0 status
+
+Phase 0 (Epics 0.1, 0.2, 0.3) is complete:
+
+- ✅ Turborepo + pnpm workspaces, Node 22 pinned
+- ✅ Apps and packages scaffolded
+- ✅ Shared TS/ESLint/Prettier
+- ✅ Husky + lint-staged
+- ✅ docker-compose for Postgres + Redis
+- ✅ `.env.example` files
+- ✅ GitHub Actions CI (lint, typecheck, test, build, format-check)
+- ✅ Drizzle migration drift check in CI
+- ✅ Fly.io deploy workflow for the API
+- ✅ Vercel config for the web app
+- ✅ Pino logger with request-id middleware
+- ✅ Sentry SDK in both apps
+- ✅ `/health` and `/ready` endpoints
+
+## Phase 1 — Epic 1.1 status (Database & RLS spine)
+
+Epic 1.1 is complete:
+
+- 19 tables modelled in Drizzle (`packages/db/src/schema/`) covering platform,
+  tenancy, audit, catalog, inventory, customers, and sales.
+- Row-Level Security enabled and **forced** on every table; tenant tables use
+  `business_id = current_business_id() OR is_super_admin()` for both `USING`
+  and `WITH CHECK` so reads and writes are isolated.
+- A non-login `app_user` role is provisioned by migration; the application
+  swaps to it via `SET LOCAL ROLE app_user` inside every request transaction
+  (see `packages/db/src/with-context.ts`).
+- `pnpm db:reset && pnpm db:migrate && pnpm db:seed` produces a working dev
+  database with a super admin, demo business, all five system roles, one
+  location, and three sample products with inventory.
+- 12 cross-tenant isolation tests in `packages/db/test/rls.test.ts`. They
+  prove that A cannot see B, INSERTs into another tenant are rejected,
+  super-admin context bypasses, and an empty context sees nothing.
+  Run with `TEST_DATABASE_URL=... pnpm --filter @jetnine/db test`.
+
+### How tenant context works at runtime
+
+```ts
+import { withTenantContext } from '@jetnine/db';
+
+await withTenantContext(sql, { businessId, userId, isSuperAdmin: false }, async (tx) => {
+  // every query through `tx` runs as app_user with RLS applied
+});
+```
+
+## Phase 1 — Epic 1.2 status (Auth)
+
+Epic 1.2 is complete:
+
+- **better-auth** integrated via the Drizzle adapter against our schema. The
+  adapter generates UUID PKs (configured via `advanced.database.generateId:
+'uuid'`) so it stays compatible with the rest of the database.
+- New tables: `accounts` (credentials per provider), `verifications`
+  (email-verify + reset tokens), `two_factors` (TOTP secret + backup codes).
+  `sessions` gained `token`, `updated_at`. RLS is force-enabled on every new
+  table; per-user policies on `accounts`/`two_factors`, super-admin-only on
+  `verifications`.
+- **Email/password** sign-up, sign-in, sign-out, with email verification
+  required before sign-in. Passwords hashed with better-auth's scrypt
+  defaults (PLAN.md §10.6 says argon2id; swap is a one-liner in
+  `apps/api/src/auth/auth.config.ts`).
+- **Email** sending abstracted behind `EmailService`. Resend backend when
+  `RESEND_API_KEY` is set; falls back to a memory transport (logs + captures
+  for tests) otherwise. Dev controller `/v1/dev/email/last?to=…` exposes
+  the last captured email so Playwright can pull verification/reset URLs.
+- **Password reset** end-to-end: request → email → token-bound reset form.
+- **TOTP 2FA** via better-auth's two-factor plugin. Enable on
+  `/2fa`, verify with an authenticator app, sign-in then prompts for the
+  6-digit code on every subsequent log-in.
+- **Session management**: `GET /v1/auth/sessions` lists the current user's
+  sessions (with a `current: true` flag for the active one); `DELETE
+/v1/auth/sessions/:id` revokes by id, scoped to self.
+- **Rate limiting** on the auth endpoints (5/min on sign-in/sign-up/reset,
+  10/min on TOTP verify, 100/min global). Memory by default; Redis-backed
+  when `REDIS_URL` is set.
+- **NestJS guard** (`AuthGuard`) validates the session cookie and exposes a
+  typed `CurrentUserPayload` via `@CurrentUser()`. The request-id and
+  redaction middleware from Phase 0 still apply.
+- **Web auth pages** under `(auth)` route group: `/login`, `/signup`,
+  `/verify`, `/reset`, `/2fa`, plus a placeholder `/dashboard` for the
+  post-login destination.
+- **Playwright E2E**: `apps/web/e2e/auth.spec.ts` exercises the full flow
+  (signup → email verify → login → enable 2FA → sign-out → sign-in with
+  TOTP → password reset → sign-in with new password + TOTP). CI installs
+  Chromium and runs the suite against a dedicated `jetnine_e2e` database.
+
+Run locally: `pnpm --filter @jetnine/web test:e2e` (requires Postgres up
+on `localhost:5432` with a `jetnine_e2e` database — `createdb jetnine_e2e`).
+
+Seeded credentials: `admin@jetnine.local` / `ChangeMe!2024` (super admin),
+`owner@acme.local` / `ChangeMe!2024` (demo business owner).
+
+## Phase 1 — Epic 1.3 status (Tenancy middleware & request context)
+
+Epic 1.3 is complete:
+
+- **Active-business resolution**: per-session cookie
+  `jetnine.active_business_id` (set/cleared by `POST/DELETE
+/v1/auth/active-business`); the `X-Business-Id` header overrides for
+  tests and machine clients.
+- **TenancyGuard** loads the user's membership, role, and permission set
+  for the active business once per request. `412 Precondition Failed`
+  when no business is selected; `403 Forbidden` when the user has no
+  membership in the requested business; super admins bypass with an
+  empty permission set (the per-permission check downstream lets them
+  through).
+- **PermissionGuard** + `@RequirePermission('products.view', ...)` —
+  multiple values are AND-ed; super admins always pass.
+- **`@TenantScoped()`** controller decorator stacks `TenancyGuard +
+PermissionGuard + RlsContextInterceptor` so tenant-scoped resources
+  opt in with one line. `AuthGuard` is global (with `@Public()`
+  opt-out) so every non-public endpoint has a session.
+- **RlsContextInterceptor** opens a Drizzle transaction per request,
+  runs `SET LOCAL ROLE app_user` + the tenant GUCs, stashes the
+  transaction handle in `AsyncLocalStorage`, and runs the handler
+  inside that scope. Handlers call `getRequestDb()` (from
+  `tenancy/request-context`) to issue ORM queries that automatically
+  inherit the RLS context.
+- **`@CurrentTenant()`** param decorator exposes
+  `{ businessId, membershipId, roleId, roleName, permissions, ... }`
+  alongside `@CurrentUser()`.
+- **`/v1/auth/me`** returns the current user plus their memberships so
+  the web app can render a business picker.
+- **Sample products endpoint** (`GET /v1/products`) gated by
+  `@RequirePermission('products.view')` — placeholder until Epic 1.7
+  fills in real CRUD; lets us prove the guard end-to-end.
+- **Integration test** at `apps/api/test/tenancy.int.spec.ts` boots the
+  full Nest app, signs in two users with different roles, and asserts
+  200/403/412/401 across the matrix. CI provisions a dedicated
+  `jetnine_tenancy` database for it.
+
+## Phase 1 — Epic 1.4 status (Audit log)
+
+Epic 1.4 is complete:
+
+- **`AuditService.log({ action, target, before, after, metadata })`** in
+  `apps/api/src/audit/audit.service.ts`. Reads actor + business + ip +
+  user-agent from `AsyncLocalStorage`; runs through the request-scoped
+  Drizzle transaction so the INSERT inherits the RLS context and rolls
+  back together with the handler on failure.
+- **`diffJson(before, after)`** computes a minimal field-level diff
+  (only changed columns) and returns null when nothing changed.
+- **`AuditInterceptor`** auto-logs every successful POST/PUT/PATCH/
+  DELETE that doesn't already have an explicit audit row. Stacked into
+  `@TenantScoped()` alongside the RLS interceptor so it always runs
+  inside the same transaction. Sensitive request-body fields are
+  redacted (same paths as the pino logger).
+- **Viewer endpoint** `GET /v1/audit-logs` (gated by
+  `@RequirePermission('audit.view')`) supports `action`, `actorUserId`,
+  `since`, `until` filters; capped at 200 newest-first.
+- **Web page** at `apps/web/src/app/(business)/audit/page.tsx` —
+  filterable table with timestamp / actor email / action / target /
+  pretty-printed JSON diff.
+- **Integration tests** (`apps/api/test/audit.int.spec.ts`, 4 cases):
+  PATCH variant price → audit row with exact before/after; Bookkeeper
+  (audit.view) lists audits; Cashier (no audit.view) → 403; action
+  filter narrows results. CI provisions a dedicated `jetnine_audit`
+  database for the suite.
+
+## Phase 1 — Epic 1.5 status (Super admin console)
+
+Epic 1.5 is complete:
+
+- **Businesses CRUD**: `GET /v1/admin/businesses` (joined with user +
+  location counts and `last_activity_at` from audit_logs), `POST` to
+  create + invite, `PATCH /:id/status` for suspend/unsuspend. All
+  gated by `@SuperAdminOnly()`.
+- **Owner invitations**: creating a business inserts a `verifications`
+  row (`identifier="invite:<email>"`, 72h TTL) and sends an email via
+  the EmailService. The invited user's account starts unverified +
+  password-less; their membership is `status='invited'`.
+- **`POST /v1/auth/accept-invite` (public)** validates the token,
+  hashes the chosen password via `better-auth/crypto`, upserts the
+  credential row, marks the user verified and membership active, and
+  burns the verification.
+- **Impersonation** via the `jetnine.impersonate_target` cookie. The
+  AuthGuard honors it only when the underlying session belongs to a
+  super admin and swaps the effective user.
+  `CurrentUserPayload.impersonatorUserId` and
+  `audit_logs.impersonator_user_id` carry the original super admin's
+  id; the AuditService stamps it onto every row.
+- **Impersonate endpoints**: `POST /v1/admin/impersonate
+{ userId, businessId }` sets the cookie pair (impersonate target +
+  active business) and writes an `auth.impersonate.start` audit row;
+  `DELETE /v1/admin/impersonate` clears them and writes
+  `auth.impersonate.stop`. Refuses to impersonate other super admins.
+- **`GET /v1/admin/metrics`**: total businesses, active businesses,
+  total users, sales count + gross cents in the last 30 days.
+- **Web pages** under `(super-admin)` route group: `/admin` (metrics
+  dashboard), `/admin/businesses` (list + create form + suspend
+  toggle), `/admin/businesses/[id]` (details + impersonate).
+  `(auth)/accept-invite` for invitees. Sticky red
+  `<ImpersonationBanner />` displays the active impersonation and a
+  one-click stop button on every super-admin page.
+- **Integration tests** (`apps/api/test/admin.int.spec.ts`, 8 cases):
+  super admin creates a business → invitation email captured →
+  owner accepts (membership flips active) → super admin impersonates
+  → impersonated PATCH writes audit row with `actor_user_id=owner`
+  and `impersonator_user_id=superAdmin` and exact before/after diff
+  → non-super-admin can't impersonate → suspend audit-logs the
+  status change → metrics return counts. CI provisions a dedicated
+  `jetnine_admin` database.
+
+## Phase 1 — Epic 1.6 status (Business admin console)
+
+Epic 1.6 is complete:
+
+- **Settings**: `GET /v1/business/settings` and `PATCH` for name,
+  default tax rate (basis points), receipt header/footer. Currency
+  is fixed to USD per PLAN §5.3 — single column, not editable yet.
+  All updates audit-log a before/after diff.
+- **Locations CRUD**: `GET / POST / PATCH /v1/business/locations`
+  with name, timezone, optional `taxRateBps` override (null inherits
+  the business default), and `isActive` toggle.
+- **Members**: `GET` lists members joined with users + roles.
+  `POST .../invite` invokes the new shared `InvitationService` to
+  create-or-find the user, open an `invited` membership, mint a
+  72-hour token, and send an invitation email — same code path the
+  super admin uses to invite a new business owner. `POST
+/:id/resend-invite`, `PATCH /:id` (role + status), and `POST
+/:id/disable` cover the rest of the lifecycle.
+- **Roles**: `GET / POST / PATCH / DELETE /v1/business/roles`. The
+  five system roles seeded per business are immutable (`isSystem:
+true` returns 403 on edit/delete); admins clone via `basedOnRoleId`
+  and then tweak permissions on the clone. `PATCH` replaces the role
+  permission set wholesale, with a before/after diff in audit_logs.
+  Roles in use by any membership can't be deleted.
+- **`GET /v1/permissions` (public)**: returns the full permission
+  catalog so the web role editor can render a grid grouped by module.
+- **Schema additions** (migration `0001_friendly_starfox.sql`):
+  `businesses.currency_code`, `default_tax_rate_bps`,
+  `receipt_header`, `receipt_footer`; `locations.tax_rate_bps`.
+- **Web pages** under the `(business)` route group with a shared
+  layout: `/settings`, `/locations`, `/members`, `/roles`,
+  `/audit` (Epic 1.4). The roles page renders a checkbox grid
+  grouped by permission prefix and writes back via PATCH.
+- **Integration tests** (`apps/api/test/business.int.spec.ts`,
+  10 cases): owner reads + updates settings (audit captures diff)
+  → owner creates a location with a tax override → owner invites a
+  cashier → cashier accepts via `/v1/auth/accept-invite` and signs
+  in → cashier has `products.view` (200) but lacks `products.update`
+  (403) and `audit.view` (403), plus super-admin endpoints reject
+  → owner clones the Cashier role and edits permissions → system
+  roles refuse edit/delete → disabling a member flips status to
+  `disabled` with an audit row → public permission catalog returns
+  the full list. CI provisions `jetnine_business`.
+
+## Phase 1 — Epic 1.7 status (Product catalog)
+
+Epic 1.7 is complete:
+
+- **Schema (migration 0002)**: new `product_images` table, plus generated
+  `search_tsv` tsvector columns on `products` (name + sku + description)
+  and `product_variants` (name + sku + barcode) with GIN indexes. The
+  generated columns rebuild automatically on UPDATE so search stays
+  consistent without trigger maintenance.
+- **Categories** at `/v1/categories`: tree CRUD with depth ≤ 3 enforced
+  in the controller. List returns both flat + tree views; deletes refuse
+  if the category has children.
+- **Products** at `/v1/products`:
+  • `GET ?q=...` runs `websearch_to_tsquery('simple', q) @@ search_tsv`
+  against products and any matching variants — finds the parent product
+  when a variant SKU or barcode hits. Ranked by `ts_rank`.
+  • `POST` creates a product + variants in one shot.
+  • `GET /:id`, `PATCH /:id`, `DELETE /:id` (soft via `is_active`).
+- **Variants** at `/v1/products/:productId/variants` and
+  `/v1/products/variants/:id`: full CRUD; the legacy
+  `PATCH /variants/:id/price` route used by Epic 1.3/1.4 tests stays.
+  `costCents` is redacted in `GET /:id` responses unless the user has
+  `products.cost.view` (or is super-admin).
+- **Images** at `/v1/products/:productId/images`:
+  • `POST .../upload-url` issues a unique storage key and a signed-URL
+  placeholder (real R2 presigning kicks in once `R2_ACCOUNT_ID` +
+  `R2_BUCKET` are configured).
+  • `POST .../images` registers the uploaded key; max 4 per product.
+  • `DELETE /v1/products/images/:id` removes the row.
+- **CSV import** at `/v1/products/import/{preview,commit}`: parses
+  `name,sku,price,barcode` headers; preview returns rows + per-row
+  errors + SKU conflicts; commit inserts products + a default variant
+  per row, skipping any SKU that already exists.
+- **Web pages** under `(business)`: `/products` list with search box and
+  inline CSV import; `/products/new` create form with variant rows;
+  `/products/[id]` detail with inline price edit + image registration;
+  `/categories` tree CRUD.
+- **Integration tests** (`apps/api/test/catalog.int.spec.ts`, 10 cases):
+  category create + 3-level depth enforcement → product with 3 variants
+  → search by partial SKU, by barcode, by free-text name → cashier sees
+  prices but `costCents` is null → 4-image cap → CSV preview parses 3
+  rows + commit creates them. CI provisions `jetnine_catalog`.
+
+## Phase 1 — Epic 1.8 status (Inventory)
+
+Epic 1.8 is complete:
+
+- **`GET /v1/inventory/levels?locationId=…`** joins `inventory_levels`
+  with the variant + product, exposes `onHand`, `reserved`, and a
+  computed `available = max(0, on_hand − reserved)`. Gated by
+  `inventory.view`.
+- **`GET /v1/inventory/movements`** returns the append-only ledger
+  (joined with the actor email) with optional filters: `variantId`,
+  `locationId`, `since`, `until`. Gated by `inventory.view`.
+- **`POST /v1/inventory/adjust`** writes one `inventory_movements`
+  row + upserts the matching `inventory_levels` row with
+  `ON CONFLICT … SET on_hand = GREATEST(0, on_hand + delta)`. Reason
+  must be one of `count_correction | damage | theft | other`. Gated
+  by `inventory.adjust`. Audit-logged with reason + delta.
+- **`POST /v1/inventory/receive`** takes a batch of positive lines
+  for a single location and applies them inside the request's RLS
+  transaction (partial failure rolls back). Returns the new `onHand`
+  per line. Gated by `inventory.receive`. Audit-logged with total
+  units + line count.
+- **Web pages**: `/inventory` — location picker + levels table with
+  inline Adjust dialog. `/inventory/receive` — search-and-add flow
+  that pulls product detail, expands every variant as a line, takes
+  quantities, and commits the batch. Both linked from the back-office
+  nav.
+- **Integration tests** (`apps/api/test/inventory.int.spec.ts`,
+  9 cases): receive 10 units → `on_hand=10` + 1 movement row →
+  receive 5 more stacks to 15 → adjust −3 with reason `damage`
+  audit-logs the delta → invalid reason → 400 → adjust −1000 floors
+  on_hand at 0 → levels endpoint returns joined product info →
+  cashier can list but `inventory.adjust`/`receive` are 403 →
+  movements endpoint surfaces the ledger newest-first with the
+  joined actor email. CI provisions `jetnine_inventory`.
+
+## Phase 1 — Epic 1.9 status (Customer records)
+
+Epic 1.9 is complete:
+
+- **Schema**: `customers.search_tsv` is a generated `tsvector` column
+  (Postgres `STORED`) over `first_name + last_name + email + phone`
+  with non-alphanumeric runs collapsed to spaces by `regexp_replace`,
+  so partial matches against emails (`bob@example`) and phone numbers
+  (`+1 555 …`) hit the same tokens. Backed by a GIN index
+  (`customers_search_tsv_idx`).
+- **`GET /v1/customers?q=…`** runs `websearch_to_tsquery('simple', …)`
+  against the generated tsvector and orders by `ts_rank`. Without `q`,
+  returns the most recent 50 sorted by last/first name. Gated by
+  `customers.view`. The controller normalizes the query string the
+  same way the column does to keep tokenization symmetric.
+- **`GET /v1/customers/:id`** returns the full customer record plus
+  the 20 most recent sales (`recentSales` placeholder until Epic 1.10
+  populates `sales`).
+- **`POST /v1/customers`** requires at least one of firstName,
+  lastName, email, or phone. Audit-logged.
+- **`PATCH /v1/customers/:id`** computes a per-field diff and only
+  audit-logs the keys that actually changed.
+- **`DELETE /v1/customers/:id`** removes the customer record; sales
+  reference customers via `ON DELETE SET NULL`, so historical sales
+  remain after the customer is removed.
+- **Web pages**: `/customers` (list + search box), `/customers/new`
+  (create form with at-least-one-identity validation), and
+  `/customers/[id]` (edit form + recent purchases section).
+- **Integration tests** (`apps/api/test/customers.int.spec.ts`, 10
+  cases): create + list → 400 when no identity given → search by
+  partial first name → search by partial email (`bob@example`) →
+  search by partial phone (`+15559999999`) → recentSales placeholder
+  is empty → edit emits an audit diff → cashier `customers.delete`
+  denied (403) → bookkeeper `customers.view` denied (403) → owner
+  delete succeeds. CI provisions `jetnine_customers`.
+
+## Phase 1 — Epic 1.10 status (POS register)
+
+Epic 1.10 is complete:
+
+- **Schema**: added `refund_lines` (refund header + per-line breakdown so
+  each refunded unit can be tied back to its sale line and propagate to
+  inventory). Added to `TENANT_SCOPED_TABLES` + `rls.sql` so RLS forces
+  on the new table. Generated as migration `0004_white_mystique.sql`.
+- **Pure totals helper** (`apps/api/src/sales/totals.ts`): subtotal,
+  line + order discounts (clamped), tax at sale level via
+  `taxRateBps`. Unit-tested with 9 cases. Used both by the API and
+  the web cart preview keeps the math identical.
+- **`GET /v1/pos/lookup?q=…`**: barcode-exact match first (so a scan
+  resolves to a single row) with ILIKE fallback on product name/SKU.
+  Returns active variants only. Gated by `pos.access`.
+- **`GET /v1/pos/locations`**: cashier-friendly location list (no
+  `locations.view` required) so the register can fetch tax rates.
+- **`POST /v1/sales`**: completes a sale in one shot inside the
+  request's RLS transaction — sale header, lines, payments, one
+  `inventory_movements` per line with `reason='sale'`, decrements
+  `inventory_levels.on_hand`, generates an `INV-YYYY-NNNNNN` number
+  with retry-on-conflict, and audit-logs `sale.complete`. Validates
+  payments-sum-equals-total and accepts split tender (cash + card).
+  Card payments record `processor='manual'` for MVP — Stripe Terminal
+  lands in Phase 2.
+- **`GET /v1/sales` / `GET /v1/sales/:id`**: list + detail with
+  joined lines, payments, refunds, and per-line `refundedQuantity`.
+- **`POST /v1/sales/:id/refund`**: per-line refund with quantity, restores
+  inventory via positive `inventory_movements` rows + level upsert,
+  enforces "cannot refund more than remaining", flips sale status to
+  `partially_refunded` or `refunded`, audit-logged. Gated by
+  `pos.refund.create`.
+- **Permissions**: added `sales.view` to the catalog (Cashier and
+  Bookkeeper get it; Owner/Manager already have it via the `*`
+  catalog).
+- **Web**: `/pos` is the register — barcode/search input that
+  auto-adds on exact match, cart with quantity / line discount,
+  customer attach modal that can also create a customer mid-sale,
+  totals panel, payment screen with split tender + change calc, and
+  receipt with `window.print()`. `/sales` lists completed sales;
+  `/sales/[id]` shows lines + payments + refunds with an inline
+  refund form. Customer detail's "Recent purchases" now populates
+  from real sale rows.
+- **Integration tests** (`apps/api/test/sales.int.spec.ts`, 11
+  cases): barcode + name lookup, role-gated lookup, full 50/50
+  cash+card sale with tax + audit + inventory decrement, list +
+  detail render, payment-sum mismatch (400), cashier denied refund,
+  owner refund of one line restores inventory and flips status to
+  `partially_refunded`, over-refund (400), final refund flips status
+  to `refunded`, sequential sale numbers within a year. Plus the
+  pure totals helper's 9 unit tests. CI provisions `jetnine_sales`.
+- **Acceptance:** A cashier can complete a sale paid 50% cash / 50%
+  card, see inventory decrement, view it in the sales list, refund
+  a single line, and the inventory is restored — exactly what the
+  integration suite walks through end-to-end.
+
+## Phase 1 — Epic 1.11 status (Reports & cash drawer)
+
+Epic 1.11 is complete:
+
+- **Schema**: added `cash_shifts` (one row per shift, with opening
+  float, opened/closed timestamps + actor user, expected/counted
+  cash and computed variance). Tenant-scoped + RLS-forced.
+  Migration `0005_glossy_vision.sql`.
+- **Permissions**: added `sales.view` already in 1.10; here Cashier
+  picks up `pos.cash.open` + `pos.cash.reconcile` so the role can
+  open and close drawers (acceptance criterion calls for "a cashier
+  reconciles cash").
+- **`GET /v1/reports/sales/daily?start=&end=&format=`**: three
+  slices in one response — by-day totals (subtotal/discount/tax/
+  total), by-associate (count + revenue), by-payment-method (cash
+  vs card). Defaults to the last 7 days. `format=csv` streams a
+  text/csv attachment of the by-day table; download requires
+  `reports.export`.
+- **`GET /v1/reports/sales/by-product?start=&end=&format=`**:
+  per-variant totals ordered by revenue. `costCents` and
+  `marginCents` are only returned when the caller has
+  `reports.financial.view` (Owner, Manager, Bookkeeper); otherwise
+  they're null.
+- **`GET /v1/reports/inventory/on-hand?locationId=&lowStock=&format=`**:
+  on-hand snapshot with optional location filter and low-stock
+  threshold (returns rows where `available <= N`). CSV export
+  available.
+- **`POST /v1/cash-shifts`**: opens a shift at a location with an
+  opening float; refuses (409) if a shift is still open at that
+  location.
+- **`POST /v1/cash-shifts/:id/close`**: computes
+  `expected = opening_float + sum(succeeded cash payments at this
+location during the shift window)` and persists
+  `variance = counted − expected` (signed, so $-2 means short).
+  Audit-logged.
+- **`GET /v1/cash-shifts` / `:id`**: list + detail with joined
+  location and opener/closer emails.
+- **Pure CSV writer** (`apps/api/src/reports/csv.ts`) with 4 unit
+  tests covering quoting and Date/null handling.
+- **Web**: `/reports` is a single page with three sections —
+  daily sales (with date pickers + per-section CSV download), sales
+  by product, inventory on hand (with low-stock threshold).
+  `/shifts` lists shifts with an inline open form;
+  `/shifts/[id]` shows totals and a close form for open shifts or a
+  signed variance for closed ones. Both linked from the back-office
+  nav.
+- **Integration tests** (`apps/api/test/reports.int.spec.ts`, 9
+  cases): cashier opens a shift → second open at same location 409s
+  → cashier rings $20 cash + $5 card → close with $118 counted
+  produces $-2 variance over $120 expected → daily report shows the
+  sales bucketed by day, by associate, by payment method →
+  by-product is ordered by revenue, hides margin from cashier (also
+  403'd for `reports.sales.view`), shows margin to bookkeeper →
+  low-stock filter returns only the gadget → CSV export sets
+  `Content-Type: text/csv` + the right header row. Plus the 4 CSV
+  unit tests. CI provisions `jetnine_reports`.
+- **Acceptance:** end-of-day close — a cashier reconciles cash
+  (open shift → ring sales → close with counted), an owner views
+  the day's totals, and exports to CSV. The integration test walks
+  through every step.
+
+## Phase 1 — Epic 1.12 status (Billing & read-only mode)
+
+Epic 1.12 is complete:
+
+- **Schema**: `subscriptions` table (one row per business) holds plan
+  (`starter` | `pro`), status (`trial` | `active` | `past_due` |
+  `canceled`), trial end, period start/end, and the Stripe
+  customer/subscription IDs that the production webhook integration
+  will populate. Tenant-scoped + RLS-forced. Migration
+  `0006_sleepy_ultimo.sql`.
+- **Pure pricing helper** (`apps/api/src/billing/pricing.ts`):
+  Starter $50/location/month, Pro $100/location/month. 4 unit tests.
+- **`GET /v1/billing/plans`** lists the catalog;
+  **`GET /v1/billing/subscription`** returns the current state with
+  computed `monthlyPriceCents` (plan price × current location count)
+  and a `readOnly` boolean the UI uses to render the lapse banner.
+- **`POST /v1/billing/subscribe`** transitions trial/cancelled →
+  active and resets the period. In production this is where we'd
+  redirect to Stripe Checkout; the body of the change-of-state
+  fires here so the rest of the system can exercise the
+  post-payment flow without real charges. Add `STRIPE_SECRET_KEY`
+  to swap in the real integration.
+- **`PATCH /v1/billing/subscription`** changes plan in-place;
+  **`POST /v1/billing/cancel`** flips status to `canceled` and
+  re-engages read-only mode.
+- **`POST /v1/billing/dev/expire-trial`** is a non-prod helper that
+  fast-forwards `trialEndsAt` and flips status to `past_due` —
+  used by the integration test to drive the lapse path. Refuses to
+  fire when `NODE_ENV=production` (Stripe webhooks are the
+  production equivalent).
+- **`SubscriptionGuard`**: runs alongside `TenancyGuard` via
+  `@TenantScoped()`. Lets through GET/HEAD, `/v1/billing/*`,
+  `/v1/business/settings`, and `/api/auth/*` so a lapsed business
+  can still log in, see their data, and pay. Everything else
+  returns **HTTP 402 Payment Required** when the subscription is in
+  `past_due` / `canceled` or in `trial` past `trialEndsAt`.
+- **Trial seeding**: `POST /v1/admin/businesses` now sets a
+  14-day trial and inserts a matching subscription row, so a brand
+  new business can use the app immediately without payment.
+- **Web**: `/settings/billing` renders the current plan, locations,
+  monthly price, and a banner when read-only is active. Plan picker
+  shows both tiers (highlighting the current one); cancel + dev
+  expire-trial are exposed where appropriate. Settings page links to
+  it.
+- **Integration tests** (`apps/api/test/billing.int.spec.ts`, 10
+  cases): trial state visible → in-trial sale succeeds → plan
+  catalog → expire-trial flips to `past_due` and `readOnly:true` →
+  next sale returns 402 → list (GET) still 200 → billing endpoints
+  still 200 → subscribe to Pro flips back to active and writes
+  resume → PATCH plan switch → cancel re-engages 402. Plus the 4
+  pricing unit tests. CI provisions `jetnine_billing`.
+- **Acceptance:** a business in trial, when the trial ends without
+  payment, becomes read-only across all UIs except billing settings —
+  exactly what the integration suite asserts end-to-end.
+
+## Phase 2.1 status (Stripe Connect for merchants)
+
+Phase 2.1 is complete. The platform billing model from Epic 1.12
+flips: instead of Jetnine charging merchants for using the platform,
+each merchant connects their own Stripe account so card payments at
+the POS go straight to their bank. Funds never touch a Jetnine
+account.
+
+- **Schema**: `merchant_stripe_accounts` (one row per business with
+  `stripe_account_id`, scope, livemode, charges/payouts enabled,
+  `disconnected_at` for soft-disconnect) + `stripe_oauth_states`
+  (single-use CSRF tokens for the OAuth handshake). Both tenant-
+  scoped + RLS-forced. Migration `0007_dashing_random.sql`.
+- **`StripeService`** wraps the official `stripe` SDK and exposes
+  `authorizeUrl`, `exchangeOauthCode`, `fetchAccount`, `disconnect`,
+  `chargeCard`, `refundCharge`. When `STRIPE_SECRET_KEY` is missing
+  it switches to STUB mode that returns deterministic fake ids and
+  always-succeed charges so dev / tests don't need real keys.
+- **`GET /v1/business/stripe/connect-url`** mints a state token and
+  returns the Stripe authorize URL. **`GET /v1/stripe/oauth/callback`**
+  is `@Public()`, validates the single-use state, exchanges the auth
+  code for a `stripe_user_id`, persists the merchant row, and
+  redirects back to `/settings/billing?stripe=connected`.
+- **`GET /v1/business/stripe`** returns connection status + the
+  publishable key the web app needs to mount Stripe Elements scoped
+  to that merchant. **`POST /v1/business/stripe/disconnect`**
+  revokes via Stripe + soft-marks the row.
+- **Card payments at the POS** now flow through Stripe when the
+  payment line carries a `stripePaymentMethodId` and the business
+  has a connected account. The backend creates + confirms a
+  PaymentIntent on the merchant's account in one call and rolls the
+  whole sale back if the charge isn't `succeeded`. Cards without a
+  PaymentMethod id (or businesses without Stripe) fall through to
+  the legacy manual-capture path so the existing test fixtures keep
+  passing.
+- **Refunds through Stripe**: when the original payment was
+  `processor='stripe'`, `POST /v1/sales/:id/refund` issues a
+  `refunds.create` against the merchant's account (allocated
+  Stripe-first, falling back to bookkeeping-only for cash tenders)
+  before recording the refund rows.
+- **Web /settings/billing** now leads with "Connect Stripe" + status
+  panel (account email, account id, livemode, charges/payouts
+  enabled, disconnect button). The self-serve plan picker is paused
+  while we settle the platform billing model.
+- **Web /pos payment screen** swaps in **Stripe Elements** when the
+  business has a connected account. The cashier types cash, the
+  card portion is computed automatically, and `<CardElement />` is
+  used to tokenize the card client-side. The resulting
+  PaymentMethod id is sent to `POST /v1/sales`. Stub mode bypasses
+  the live tokenization with `pm_card_stub` so the form is usable
+  without keys.
+- **Required env** (production): `STRIPE_SECRET_KEY`,
+  `STRIPE_PUBLISHABLE_KEY`, `STRIPE_CONNECT_CLIENT_ID`,
+  `STRIPE_OAUTH_REDIRECT_URI`, `STRIPE_WEBHOOK_SECRET`. Without
+  them the API logs a warning + falls back to stub mode (safe for
+  dev; never deploy that way).
+- **Integration tests** (`apps/api/test/stripe.int.spec.ts`, 11
+  cases): initial unconnected state → connect-url issues a state →
+  OAuth callback persists the row + redirects → state is
+  single-use → Stripe-charged sale records `processor='stripe'` +
+  `pi_stub_*` ref → refund flips status and reverses the
+  PaymentIntent → mixed cash + Stripe sale routes the card portion
+  only → bare `method:'card'` without payment method falls back to
+  manual capture → disconnect sets `disconnected_at` → post-
+  disconnect Stripe sale is rejected. Runs entirely against the
+  stub. CI provisions `jetnine_stripe`.
+- **What still needs you** before live charges work in production:
+  the four Stripe env vars above (a free Connect Standard
+  application; no platform Stripe payments are ever processed)
+  plus the OAuth redirect URI configured in your Stripe Connect
+  settings. The webhook handler is in place; just point a Stripe
+  webhook endpoint at `https://<api-host>/v1/stripe/webhook` and
+  set `STRIPE_WEBHOOK_SECRET`.
+
+## Phase 2.2 status (Stripe webhooks)
+
+Phase 2.2 is complete. The webhook handler is the bridge that keeps
+our merchant state in sync with whatever happens on Stripe's side
+(merchants editing their account, disputes, payouts disabled, etc.).
+
+- **`stripe_webhook_events`** table (RLS-forced, super-admin only)
+  records every event we accept by `event_id` so retries are
+  idempotent. Failure messages are stashed alongside the row for
+  debugging without re-firing the handler. Migration
+  `0008_clever_wallop.sql`.
+- **`POST /v1/stripe/webhook`** is `@Public()`, signature-verified
+  via `StripeService.verifyWebhook(rawBody, signature)`. The Nest
+  app boots with `rawBody: true` so Express keeps the unparsed
+  bytes for signature checking. In stub mode (no
+  `STRIPE_WEBHOOK_SECRET` set) the handler accepts a parsed JSON
+  payload directly so dev / tests work without signed events.
+- **Idempotency**: the handler `INSERT … ON CONFLICT DO NOTHING`s
+  the event id; replays return `200 { received: true, deduped: true }`
+  without re-running side effects.
+- **Always responds 200 once the event is durably recorded**, even
+  if a downstream handler throws — Stripe would otherwise retry
+  forever for a code bug. Errors are written to the event row.
+- **Handlers wired:**
+  - `account.updated` → syncs `charges_enabled` / `payouts_enabled`
+    / email / default currency on the merchant row.
+  - `account.application.deauthorized` → soft-disconnects the
+    merchant (set `disconnected_at`, force charges/payouts off).
+  - `charge.dispute.created` → writes a `sale.dispute` audit row
+    with the dispute id, amount, and reason against the originating
+    sale.
+  - Unknown event types are accepted and logged but no-op (so
+    Stripe stops retrying — we'll wire more handlers as needs
+    come up).
+- **Setup:** in your Stripe dashboard → Developers → Webhooks →
+  add endpoint `https://<api-host>/v1/stripe/webhook`. Subscribe
+  to at least `account.updated`, `account.application.deauthorized`,
+  `charge.dispute.created`. Copy the signing secret into
+  `STRIPE_WEBHOOK_SECRET`.
+- **Integration tests** added 7 cases on top of the existing
+  Stripe spec: account.updated syncs merchant fields, replay is
+  deduped, dispute writes the audit row, deauthorized
+  soft-disconnects, unknown types pass, malformed payload returns 400. Total Stripe spec: 18/18; repo: 122 tests, all green.
+
+## Phase 2.3 status (Vendors & Purchase Orders)
+
+Phase 2.3 is complete. Merchants can now manage suppliers, write
+purchase orders against them, receive stock against the PO, and have
+the inventory ledger automatically reflect every receipt.
+
+- **Schema**: `vendors`, `purchase_orders`, `purchase_order_lines`.
+  POs reference vendors with `ON DELETE RESTRICT` so a vendor can't
+  be hard-deleted while a PO points at them. Tenant-scoped + RLS
+  forced on all three. Migration `0009_cold_multiple_man.sql`.
+- **Permissions**: `vendors.view` / `.manage`,
+  `purchase_orders.view` / `.create` / `.receive` / `.cancel`. The
+  Inventory Clerk role gets all six (since this is their job);
+  Owner / Manager already have the platform-wide `*` set.
+- **`/v1/vendors`** full CRUD with audit trail. Duplicate-name
+  inserts return 400 (unique on `business_id + name`); deletes are
+  refused while POs still reference the vendor (suggest deactivate
+  via `isActive=false` instead).
+- **`/v1/purchase-orders`** list (with status filter), get,
+  create. PO numbers are `PO-YYYY-NNNNNN`, generated per-business
+  per-year with retry-on-conflict. Create validates every variant
+  - vendor + location, computes the subtotal, supports
+    `place: false` to leave the PO in `draft` for later edits;
+    default is to mark `ordered` immediately.
+- **`POST /v1/purchase-orders/:id/receive`** is the meaningful
+  operation: validates each line up-front so the whole receipt is
+  all-or-nothing, then for every line writes one
+  `inventory_movements` row (`reason='receive_po'`,
+  `reference_type='purchase_order'`) and increments
+  `inventory_levels.on_hand`. After all lines are processed, the
+  PO transitions automatically: `ordered` →
+  `partially_received` →
+  `received` once every line's `quantity_received` catches up to
+  `quantity_ordered`. Audit-logged with the unit count and new
+  status.
+- **`POST /v1/purchase-orders/:id/cancel`** flips the PO to
+  `canceled` (allowed from `draft`, `ordered`,
+  `partially_received` only).
+- **Web**: `/vendors` is the supplier list with an inline create
+  form and delete; `/purchase-orders` is the list (status badge,
+  vendor, subtotal, date); `/purchase-orders/new` is a search-and-
+  add form that auto-computes the line subtotal as you type;
+  `/purchase-orders/[id]` shows the lines with received-vs-ordered
+  counters and an inline "Record receipt" form for partial or full
+  receipts. All linked from the back-office nav under "Purchasing".
+- **Integration tests** (`apps/api/test/purchasing.int.spec.ts`,
+  11 cases): vendor create + duplicate refusal → cashier denied
+  PO create → clerk creates a 2-line PO → 6/10 widgets received
+  → over-receive 400 → finish receipt flips to `received` →
+  ledger has 3 movements with `reason=receive_po` →
+  re-receive against `received` PO 403s → cancel a draft PO →
+  vendor delete is refused while POs reference it. CI provisions
+  `jetnine_purchasing`. Repo: 133 tests, all green.
+
+## Phase 2.4 status (Stock transfers between locations)
+
+Phase 2.4 is complete. Multi-location merchants can now move stock
+between their own locations through a draft → in-transit → received
+flow with the inventory ledger reflecting both sides.
+
+- **Schema**: `stock_transfers` (status: `draft` / `in_transit` /
+  `received` / `canceled`, with `from_location_id` and
+  `to_location_id` plus a CHECK constraint that forbids the same
+  location on both sides) and `stock_transfer_lines`
+  (`quantity_shipped`, `quantity_received`). Both tenant-scoped +
+  RLS-forced. Migration `0010_orange_chronomancer.sql`.
+- **Permissions**: reuses the existing `inventory.transfer`
+  permission (already on Owner / Manager / Inventory Clerk via the
+  catalog).
+- **`/v1/stock-transfers`** list (status filter, joined location
+  names via aliased table joins) and get.
+- **`POST /v1/stock-transfers`** validates locations differ, every
+  variant exists, every line quantity is positive, then mints a
+  `ST-YYYY-NNNNNN` number. `ship: true` skips the draft step and
+  ships the deduction immediately.
+- **`POST /v1/stock-transfers/:id/ship`** snapshots origin
+  inventory, refuses if any line would go negative (the cashier
+  hasn't physically moved it yet — a stale count means we should
+  fail loud), then writes one `inventory_movements` row per line
+  with `reason='transfer_out'` /
+  `reference_type='stock_transfer'` and decrements
+  `inventory_levels.on_hand` at the origin. Status → `in_transit`.
+- **`POST /v1/stock-transfers/:id/receive`** mirrors the ship side:
+  validates each receipt line (cap at remaining), writes
+  `transfer_in` movements, increments destination on-hand. Auto-
+  flips to `received` once every line's `quantityReceived` matches
+  `quantityShipped`. Partial receipts supported.
+- **`POST /v1/stock-transfers/:id/cancel`** is restricted to draft
+  status only — once stock is in transit, the only way out is to
+  receive what arrived (partial receipts cover the discrepancy).
+- **Web**: `/transfers` list with status badges,
+  `/transfers/new` (search-and-add form, optional ship-on-create),
+  `/transfers/[id]` detail with ship / receive / cancel buttons
+  contextual to status. Linked from the back-office nav.
+- **Integration tests** (`apps/api/test/transfers.int.spec.ts`,
+  12 cases): cashier role denied → same-location rejected → 8+4
+  draft created → over-shipping caught at ship-time → ship deducts
+  origin (destination unchanged) → cancel-after-ship 403 → 5/8
+  widgets received → over-receive 400 → finish receive flips to
+  `received` → ledger has matching transfer_out / transfer_in
+  pairs summing to zero → ship-on-create succeeds. Repo: 145
+  tests, all green. CI provisions `jetnine_transfers`.
+
+## Phase 2.5 status (Tax classes per product)
+
+Phase 2.5 is complete. Merchants can override the location/business
+default tax rate at the product level — common cases are
+groceries (exempt), prepared food (higher rate), and clothing in
+states with a reduced rate.
+
+- **Schema**: `tax_classes` table (per business name + rate in
+  basis points + optional default flag) plus a
+  `products.tax_class_id` column (`ON DELETE SET NULL`, so deleting
+  a class lets products fall back to the location/business default
+  cleanly). RLS-forced. Migration `0011_tense_virginia_dare.sql`.
+- **Refactored `computeTotals`**: each line now carries an optional
+  `taxRateBps` that overrides the sale-level default. Order-level
+  discount is allocated to lines pro-rata by post-line-discount net
+  with the residue absorbed by the last line, and the line's
+  `taxableBase` is `net - allocated_share` so per-line tax math
+  stays accurate even with mixed rates and an order discount. The
+  pure helper now also returns `taxRateBps` and `taxCents` per
+  line, which we persist to `sale_lines`.
+- **`/v1/business/tax-classes`** full CRUD with audit. Duplicate
+  class names hit a 400; `isDefault` is single-flip (promoting one
+  demotes the previous default in a single atomic update);
+  product-count is reported per class so the UI can warn before
+  destruction.
+- **Catalog**: `POST /v1/products` and `PATCH /v1/products/:id`
+  accept `taxClassId`; `GET /v1/products/:id` returns it.
+- **Sales**: when computing totals, the sales controller joins
+  `product_variants → products → tax_classes` and passes each
+  line's class rate (or `null` for fallback) to `computeTotals`.
+  Lines without a class continue to use the location/business
+  default — fully backwards-compatible with all existing tests.
+- **Web**: new `/settings/tax-classes` page (list + inline create
+  - per-row edit + delete with product-impact warning); the
+    settings page header now has a "Tax classes" button next to
+    Billing. The product detail page picks up a "Tax class" section
+    with a select that includes "(use default)" plus every class.
+- **Integration tests** (`apps/api/test/taxes.int.spec.ts`,
+  10 cases): create exempt + prepared classes → duplicate name 400
+  → cashier denied → assign classes via product PATCH → mixed
+  sale (coffee 15% + milk 0%) computes per-line tax correctly →
+  detached product falls back to default 10% → PATCH a class rate
+  audit-logs the diff → delete class → referencing products
+  fall back to default → isDefault is single-flip. Plus 4 new
+  unit tests in `totals.spec.ts` covering per-line rates,
+  pro-rated order discount allocation, mixed-rate math, and
+  rejection of negative line rates. Repo: 159 tests, all green.
+  CI provisions `jetnine_taxes`.
+
+## Phase 2.6 status (Discount codes)
+
+Phase 2.6 is complete. Merchants can mint coupon codes (percent or
+fixed dollar amount) with optional scheduled windows, total usage
+caps, per-customer caps, and a minimum-subtotal floor; cashiers
+type the code at checkout and the backend validates everything
+before the sale completes.
+
+- **Schema**: `discount_codes` (citext code → case-insensitive,
+  kind ∈ {`percent`, `fixed`}, value in basis points or cents,
+  starts/ends, usage_limit, usage_count, per_customer_limit,
+  min_subtotal_cents, is_active) and `discount_redemptions`
+  (per-sale + per-customer audit). Tenant-scoped + RLS-forced.
+  Migration `0012_fancy_mercury.sql`.
+- **Permissions**: `discounts.view` (Cashier + Owner/Manager) and
+  `discounts.manage` (Owner/Manager).
+- **`/v1/business/discount-codes`** full CRUD with audit. Code
+  format `^[A-Z0-9][A-Z0-9_-]{1,31}$` (case-insensitive). Delete
+  cascades the redemption history; the audit row records how many
+  redemptions were swept along (suggesting the merchant toggle
+  `isActive=false` instead if they want to keep history).
+- **`POST /v1/sales`** now accepts a `discountCode` field
+  (mutually exclusive with `orderDiscountCents`). The controller
+  validates: code exists, active, in-window, usage_limit not
+  exhausted, post-line-discount subtotal meets minSubtotalCents,
+  and (when set) per_customer_limit not exhausted for the
+  attached customer (which the code makes mandatory). The
+  computed cents amount is passed to `computeTotals` as the order
+  discount; after the sale is durable, `usage_count` is bumped
+  and a `discount_redemptions` row is written so history survives
+  even if the code is later updated.
+- **Web**: new `/settings/discounts` page (list with usage / cap
+  display, inline create with kind toggle and all the optional
+  fields, enable/disable toggle, delete with usage warning); the
+  settings page header now links to "Discounts" alongside "Tax
+  classes". The POS payment screen gained a "Discount code"
+  input that disables the manual order-discount field when set
+  and explains that the server computes the final amount.
+- **Integration tests** (`apps/api/test/discounts.int.spec.ts`,
+  16 cases): create percent + fixed codes → case-insensitive
+  duplicate 400 → cashier denied manage → percent applied at
+  checkout → case-insensitive lookup → both code+manual = 400
+  → min subtotal enforced → fixed code applied + usage tracked
+  → exhausted code blocked → inactive blocked → future-windowed
+  blocked → per-customer limit blocked + scoped per customer →
+  redemptions table records every use → unknown code 404 →
+  delete sweeps redemptions and audits the count. Repo: 175
+  tests, all green. CI provisions `jetnine_discounts`.
+
+## Phase 2.7 status (Outbound webhooks)
+
+Phase 2.7 is complete. Merchants can register HTTPS endpoints to
+receive signed JSON pushes whenever their business produces an
+event Jetnine knows about — the same pattern Stripe + Shopify
+use, so integrators can use familiar verification code.
+
+- **Schema**: `webhook_endpoints` (per-business URL + secret +
+  events array + active flag + health counters) and
+  `webhook_deliveries` (one row per attempted POST with status,
+  HTTP response, error, and the shared `event_id` used to dedupe
+  across endpoints). Tenant-scoped + RLS-forced. Migration
+  `0013_fine_tiger_shark.sql`.
+- **`WebhookDispatcher`** is a `@Global()`-injectable service.
+  `fire({ businessId, eventType, payload })` is fire-and-forget
+  from the controller (`void this.webhooks.fire(...)`); inside,
+  it persists a delivery row, signs the body with HMAC-SHA256,
+  POSTs with a 5-second timeout, captures the response or
+  network error, and bumps the endpoint's success or failure
+  counters. Production should swap the inline POST for a Redis
+  worker queue with retries; the synchronous path here keeps
+  request latency unaffected and gets us shipping fast.
+- **Signature**: `X-Jetnine-Signature: t=<unix>,v1=<hmacsha256(t.body)>`
+  using the per-endpoint secret. Identical recipe to Stripe's
+  `Stripe-Signature`, so customers integrating with both pay the
+  cost of writing the verifier exactly once.
+- **`/v1/business/webhooks`** full CRUD + `/event-types` (the
+  catalog) + `POST /:id/test` (synthetic `webhook.test` event,
+  result returned synchronously) + `GET /:id/deliveries` (recent
+  history). The secret is returned exactly once at create time;
+  list/get never echo it.
+- **Events wired to fire today**: `sale.created`, `sale.refunded`,
+  `customer.created`, `inventory.adjusted`,
+  `purchase_order.received`, `stock_transfer.received`. The
+  literal `*` matches every event type in the endpoint's
+  subscription array.
+- **Permissions**: `webhooks.view` (Owner/Manager) and
+  `webhooks.manage` (Owner/Manager). Cashiers don't see this UI.
+- **Web**: `/settings/webhooks` lists endpoints with health badges
+  (consecutive failures, total deliveries, last success), inline
+  create form with checkbox-grid event picker + wildcard, the
+  one-time secret reveal, Test / History / Pause / Delete row
+  actions, and an inline delivery history modal. Linked from the
+  settings header.
+- **Integration tests** (`apps/api/test/webhooks.int.spec.ts`,
+  13 cases): owner creates an endpoint → cashier denied list →
+  list view doesn't echo the secret → test-fire delivers and
+  records success → sale fires `sale.created` and the receiver
+  sees it → customer fires `customer.created` → unsubscribed
+  events are not delivered → 5xx from receiver records `failed`
+  - bumps consecutive failures → wildcard subscription delivers
+    any type → deactivating suppresses → /deliveries surfaces
+    history → unknown event type 400 → duplicate URL on the same
+    business 400. Repo: 188 tests, all green. CI provisions
+    `jetnine_webhooks`.
+
+## Phase 2.8 status (Public API + API keys)
+
+Phase 2.8 is complete. Pairs with the outbound webhooks for a
+complete integration story: customers can both react to events
+(2.7) AND drive Jetnine programmatically with a scoped API key.
+
+- **Schema**: `api_keys` table with `key_hash` (SHA-256 of the
+  full key), `key_prefix` (display-only), `scopes` (JSONB array),
+  `livemode` ('live' | 'test'), `last_used_at`, `revoked_at`
+  (soft revoke so historical audits resolve). Tenant-scoped +
+  RLS-forced. Migration `0014_complete_la_nuit.sql`.
+- **Key format**: `jet_<env>_<48-hex>` — same shape as Stripe's
+  `sk_test_…` so devs recognize them on sight. Full key is
+  shown exactly once at create time and never persisted.
+- **`AuthGuard` extended**: an incoming
+  `Authorization: Bearer jet_*` header is preferred over the
+  session cookie. The guard SHA-256s the bearer, looks it up
+  by the unique-indexed `key_hash`, sets `req.apiKey` (id,
+  businessId, scopes, name), bumps `last_used_at`, and returns.
+  If the lookup misses or the key is revoked, the request 401s.
+- **`TenancyGuard` extended**: when `req.apiKey` is set, the
+  guard skips the membership lookup and synthesizes a tenant
+  context with `userId: null`, `apiKeyId: <key.id>`, and
+  permissions = `key.scopes`. The X-Business-Id header is
+  unnecessary — the key implies the business.
+- **`AuditService` extended**: when `apiKeyId` is set on the
+  request context, audit rows go in with `actor_type='api_key'`
+  - `actor_user_id=null` + the key id in `changes_json.metadata`,
+    so the audit log filter can answer "what did this integration
+    do" without a schema change.
+- **`/v1/business/api-keys`**: list, get scopes (the platform
+  permission catalog), create (returns `key` exactly once),
+  revoke (soft). Gated by `api_keys.view` / `api_keys.manage`
+  (Owner/Manager).
+- **Web**: `/settings/api-keys` lists keys with prefix + scopes
+  - last-used + status, an inline create form with a filterable
+    scope checkbox grid + test/live toggle, the one-time key
+    reveal, and a Revoke action. Linked from the settings header.
+- **Integration tests** (`apps/api/test/api-keys.int.spec.ts`,
+  13 cases): cashier denied create → owner mints a sales.view
+  test key → list never echoes the secret → mint a write key
+  → unknown scope 400 → bearer auth on `/v1/sales` succeeds
+  without `X-Business-Id` → read-only key 403s on a write
+  endpoint (scope enforcement) → write key creates a sale and
+  the audit row records `api_key` actor + key id in metadata
+  → invalid bearer 401 → non-jet bearer falls through to
+  session auth → revoke immediately invalidates → re-revoke
+  400 → `last_used_at` ticks on every authenticated request →
+  `/scopes` exposes the full permission catalog. Repo: 201
+  tests, all green. CI provisions `jetnine_api_keys`.
+
+## Phase 2.9 status (Idempotency-Key headers)
+
+Phase 2.9 is complete. Stripe-style idempotency: any mutating
+endpoint becomes safely retryable when the client supplies an
+`Idempotency-Key` header. Pairs with the public API (2.8) so
+integrators can retry a failed network round-trip without
+double-charging.
+
+- **Schema**: `idempotency_keys` table with `(business_id, key)`
+  unique, a SHA-256 `request_fingerprint` (method + path + stable
+  body), `status` ('pending' | 'completed'), the cached
+  `response_status` + `response_body` (JSONB), `locked_at` for
+  stale-lock detection, `created_at` for the 24h sweep window.
+  Tenant-scoped + RLS-forced. Migration
+  `0015_silent_shinobi_shaw.sql`.
+- **`IdempotencyInterceptor`**: wired into `TenantScoped()` so
+  every mutating endpoint already gets it for free; no per-
+  controller work. Reads the `Idempotency-Key` header (validates
+  charset + length), computes a stable fingerprint, and:
+  - on a fresh key → reserves a `pending` row, runs the handler,
+    persists the response on success, releases the lock on
+    failure (errors are not cached so transient failures can be
+    retried)
+  - on a completed row with matching fingerprint → replays the
+    cached status + body and sets an `Idempotent-Replayed: true`
+    response header
+  - on a completed row with a different fingerprint → 409
+    Conflict (key reuse across operations is forbidden)
+  - on a `pending` row younger than 60s → 409 (a request is
+    already in flight); older than 60s → reclaimed as stale.
+- **Lock outside the RLS tx**: the interceptor runs ahead of
+  `RlsContextInterceptor`, against the root db connection. So
+  the lock survives a handler rollback — a partial failure
+  releases the lock cleanly via the catch path, never leaving a
+  stuck row that would deny future legitimate retries.
+- **Stable body fingerprint**: bodies are canonicalized via an
+  order-stable JSON stringify, so `{a:1,b:2}` and `{b:2,a:1}`
+  hash identically. Saves clients from accidental
+  property-reordering causing spurious 409s.
+- **Per-tenant scope**: the unique constraint is
+  `(business_id, key)`, so two businesses can independently use
+  the same key string with no collision.
+- **GET requests ignore the header**: lookups aren't side-
+  effecting, so the interceptor short-circuits without writing a
+  row. Malformed keys (whitespace, > 255 chars, invalid charset)
+  are rejected 400 before any handler work.
+- **Integration tests** (`apps/api/test/idempotency.int.spec.ts`,
+  10 cases): mutation without the header doesn't write a row →
+  two POSTs with the same key insert one customer and replay the
+  cached body → reusing a key with a different body → 409 →
+  cross-tenant key collision is allowed → idempotent sale
+  creation only decrements inventory once → GET ignores the
+  header → malformed key 400s → handler error releases the lock
+  so a fresh retry succeeds → key body order doesn't matter
+  (stable stringify) → completed row carries response status +
+  body. Repo: 211 tests, all green. CI provisions
+  `jetnine_idempotency`.
+
+## Phase 2.10 status (cursor pagination)
+
+Phase 2.10 is complete. Every list endpoint now returns the same
+`{ data, nextCursor }` envelope and is safely paginatable. Pairs
+with the public API (2.8) so integrators can stream the full
+table out without hitting the 200-row hard cap.
+
+- **Helper**: `apps/api/src/common/pagination.ts` exposes
+  `clampLimit(raw)`, `decodeCursor(raw)`, `encodeCursor(value, id)`,
+  and `buildPage(rows, limit, valueFn)`. Cursors are base64url JSON
+  of `{ v, id }` — opaque to clients, stable in shape. The id is
+  always carried as a tiebreaker so duplicate sort-key values can't
+  cause cross-page duplicates or skips.
+- **Applied to**: `/v1/sales`, `/v1/customers`, `/v1/products`,
+  `/v1/inventory/movements`, `/v1/audit-logs`. Search paths
+  (`?q=`) bypass cursoring and return a single page with
+  `nextCursor: null`, since `ts_rank` ordering isn't stable
+  across queries.
+- **Default sort**: newest-first by `(created_at, id)` for time-
+  series tables, alphabetical by `(name, id)` for products. Limit
+  defaults to 50, max 200.
+- **Breaking change**: list endpoints used to return `T[]`. They
+  now return `{ data: T[], nextCursor: string | null }`. All
+  in-repo web pages and tests have been updated. Public-API
+  consumers don't yet exist (Phase 2.8 just shipped), so the
+  break is internal.
+- **Malformed cursors**: 400 with "Invalid cursor". Empty / absent
+  cursor → page 1.
+- **Integration tests** (`apps/api/test/pagination.int.spec.ts`,
+  7 cases): list returns the envelope → walking the cursor visits
+  every row exactly once → last page sets `nextCursor: null` →
+  malformed cursor 400s → `?limit=` is clamped to 200 → search
+  path returns a single page → products and audit-logs share the
+  envelope. Repo: 218 tests, all green. CI provisions
+  `jetnine_pagination`.
+
+## Phase 2.11 status (OpenAPI spec)
+
+Phase 2.11 is complete. A hand-curated OpenAPI 3.1 spec covers
+the public-API surface (sales, customers, products, inventory)
+and is served from the same origin as the dashboard, alongside a
+Swagger UI page for browsing.
+
+- **`/v1/openapi.json`** — machine-readable OpenAPI 3.1, public,
+  cached 5 minutes. Pulls in:
+  - bearer-auth security scheme (matches Phase 2.8)
+  - `Idempotency-Key` header documented on every mutation
+    (matches Phase 2.9)
+  - `{ data, nextCursor }` page envelope schema referenced by
+    every list endpoint (matches Phase 2.10)
+  - all error shapes, including 401/403/404/409 references
+- **`/v1/docs`** — self-contained HTML page that loads
+  Swagger UI v5 from a pinned CDN and renders the live spec.
+  Public; integrators can browse without an account.
+- **Surface documented**: `/v1/sales` (list, create), `/v1/sales/{id}`
+  (get), `/v1/sales/{id}/refund` (post), `/v1/customers` (list,
+  create), `/v1/customers/{id}` (get, patch, delete),
+  `/v1/products` (list), `/v1/products/{id}` (get),
+  `/v1/inventory/levels` (list), `/v1/inventory/movements`
+  (list). Admin / web-only routes are intentionally excluded so
+  the public docs reflect only what an integrator can use.
+- **Hand-curated rather than generated**: the public surface is
+  a focused subset of the controller layer; an auto-generated
+  spec would leak the rest. Maintenance burden is ~10 minutes
+  per added endpoint and the spec lives next to the code.
+- **Web link**: `/settings/api-keys` now ends with an "API
+  reference →" link to `/v1/docs`, so a merchant minting their
+  first key has a one-click handoff to the docs.
+- **Integration tests** (`apps/api/test/openapi.int.spec.ts`,
+  6 cases): public spec endpoint → bearer security scheme is
+  declared → exact set of paths matches the public surface →
+  list endpoints reference the page envelope schema → mutating
+  endpoints document the Idempotency-Key header → docs page
+  serves Swagger UI HTML. Repo: 224 tests, all green. CI
+  provisions `jetnine_openapi`.
+
+## Phase 2.12 status (`<Money>` component)
+
+Phase 2.12 is complete. All cents-to-display arithmetic is now
+funneled through a single helper module so the codebase has one
+place to localize, one place to swap currencies, and one place
+to fix any rounding drift.
+
+- **`@jetnine/shared/money`**: `formatMoney(cents, opts)`,
+  `parseMoneyToCents(raw, opts)`, `centsToInputString(cents)`,
+  and a `CurrencyCode` type. USD-only at MVP; the `currency`
+  parameter exists so the day we add a second currency doesn't
+  require a sweep through every page.
+  - `formatMoney(123456) === '$1,234.56'`,
+    `formatMoney(-50) === '-$0.50'`
+  - `parseMoneyToCents('$1,234.56') === 123456`,
+    `parseMoneyToCents('abc') === null`
+  - `centsToInputString(50) === '0.50'` for input `defaultValue`
+  - Round-trips losslessly: `parse(format(c)) === c` for every
+    integer.
+- **`<Money>` component** (`apps/web/src/components/money.tsx`):
+  thin React wrapper over `formatMoney`. Handles negative values,
+  optional `symbolless` mode for tables that already declare USD
+  in the column header, an optional `title` for accessibility.
+- **Refactored 13 pages**: sales (list + detail), purchase orders
+  (new, list, detail), customers/[id], shifts (list + detail),
+  settings/discounts, products/[id], reports, pos, super-admin
+  metrics. Every `(cents / 100).toFixed(2)` site is now either
+  `<Money cents={…}>` (in JSX) or `formatMoney(…)` (inside string
+  templates) or `centsToInputString(…)` (in `defaultValue`).
+- **Unit tests** (`packages/shared/src/money.test.ts`, 10 cases):
+  positive / negative formatting, symbolless mode, common parse
+  shapes, half-cent rounding, garbage input, format/parse round
+  trip, input-string round trip. Repo: 234 tests, all green.
+
+## Phase 2.13 status (gift cards / store credit)
+
+Phase 2.13 is complete. Gift cards are first-class POS tender:
+issue at the back office, redeem at the register, credit back on
+refund. The cents math reuses Phase 2.12's helpers; the new
+`gift_card` payment method slots into the existing tender plumbing
+without disturbing cash or card flows.
+
+- **Schema**: two new RLS-forced tables (43 total). `gift_cards`
+  carries the cached `current_balance_cents`, a citext `code`
+  unique per business, status (`active` | `redeemed` |
+  `cancelled` | `expired`), optional `expires_at`, and the
+  recipient/issuer ids. `gift_card_transactions` is the append-
+  only ledger — every balance change writes one row with
+  `kind` ∈ {issue, redeem, refund, adjust, cancel}, signed
+  amount, and the balance after. The cached balance must equal
+  `SUM(transactions.amount_cents)`; an integration test asserts
+  the invariant after every flow. Migration
+  `0016_sad_mac_gargan.sql`.
+- **Codes**: 16 chars from a 30-symbol unambiguous alphabet
+  (no 0/1/O/I/L). 30^16 ≈ 1.4e23 keyspace; collisions are
+  ceremonial. The unique constraint `(business_id, code)` is
+  the real guard, and the issue endpoint retries 4 times on the
+  off-chance of a hit. The code IS the secret in this MVP
+  (anyone holding it can spend it); a future pass can add a PIN.
+- **Permissions**: `gift_cards.view` (Cashier + Owner +
+  Manager — needed for POS lookup), `gift_cards.issue` (Owner
+  - Manager), `gift_cards.adjust` (Owner + Manager — also gates
+    cancel).
+- **`/v1/gift-cards`**: list (cursor-paginated, newest first),
+  POST (issue — full code returned exactly once), GET `/:id`
+  (detail with full transaction history), POST `/:id/adjust`
+  (signed delta, blocks below-zero), DELETE `/:id` (cancel —
+  voids remaining balance and writes the wipeout to the ledger).
+- **`/v1/gift-cards/lookup?code=…`**: cashier-facing fast path
+  for the POS register. Case-insensitive (citext); returns just
+  the spendable shape.
+- **POS tender**: `payments[].method` accepts `'gift_card'`.
+  When present, the body must include `giftCardCode`. The sales
+  controller pre-validates state + balance up front (before any
+  Stripe charge), inserts the sale, then charges each gift card
+  via `GiftCardsService.charge` — which decrements the cached
+  balance, writes a `redeem` ledger row tagged with the sale id,
+  and stamps `payments.processor_ref` with the gift card id so
+  refund flow can find it again.
+- **Refund-back path**: when a sale paid (in part) on a gift
+  card is refunded, the controller credits the same card after
+  the Stripe refund allocation. A mixed-tender sale (card +
+  gift card) refunds the card first (matches what the customer
+  expects) and only touches the gift card if the refund exceeds
+  the card-paid portion. The credit resurrects a 'redeemed' card
+  back to 'active' if a positive amount lands on a zero-balance
+  card; cancelled cards reject the credit.
+- **Web**: `/gift-cards` (list with status badge + balance over
+  initial), `/gift-cards/new` (issue form with one-time code
+  reveal — formatted in 4-char chunks for legibility),
+  `/gift-cards/[id]` (balance, adjust form, cancel button, full
+  transaction ledger). Linked from the back-office nav header.
+- **OpenAPI**: `payments[].method` now enumerates
+  `cash | card | gift_card`, so integrators see the new tender
+  in `/v1/docs`.
+- **Integration tests** (`apps/api/test/gift-cards.int.spec.ts`,
+  14 cases): cashier denied issue → owner mints $50 card → list
+  view returns envelope → cashier code lookup → 404 on bad code
+  → cashier redeems $10 (balance + ledger updated) →
+  insufficient balance 400 (no debit) → mixed cash + gift_card
+  tender works → refund credits the card back → owner adjusts
+  positive delta → below-zero adjust 400 → detail returns full
+  history with all 4 kinds → cancelled card rejects redemption
+  → audit row written → citext lookup is case-insensitive. CI
+  provisions `jetnine_gift_cards`.
+
+## Phase 2.14 status (offline POS — sales queue)
+
+Phase 2.14 ships the first-pass offline POS: when the connection
+drops mid-shift, sales queue locally and replay safely on
+reconnect. Pairs with Phase 2.9's idempotency layer so a queued
+sale can be retried any number of times without double-charging.
+
+- **`apps/web/src/lib/offline.ts`**: `idb`-backed IndexedDB
+  store (`jetnine-offline`, v1) with two object stores:
+  - `pendingSales` — outbound queue keyed by Idempotency-Key,
+    indexed by business id
+  - `variants` — lazy variant cache populated on every
+    successful `/v1/pos/lookup` while online, indexed by both
+    business id and `[business, barcode]` for the scan path
+- **`useOnlineStatus` hook**: thin wrapper over
+  `navigator.onLine` + the `online`/`offline` events. SSR-safe;
+  defaults to `true` until hydration so the first paint
+  doesn't flash an offline badge.
+- **POS page integration**:
+  - Offline banner at the top of `/pos` when the browser
+    reports we're disconnected. A second info banner shows
+    "Syncing N queued sales…" after reconnect, with a link to
+    the queue page.
+  - Lookup falls back to the local cache when offline — exact
+    barcode hit first, then case-insensitive substring on
+    name + SKU. Online lookups write hits into the cache so
+    a few minutes of online use covers the common items.
+  - `complete()` checks `online` before submitting. On
+    success → normal flow. On a network failure mid-charge →
+    enqueues with the same Idempotency-Key (so a server that
+    already accepted the original will replay the cached
+    response, not double-charge). On offline → enqueues
+    immediately and shows a "QUEUED — will sync" placeholder
+    receipt with the cart's lines + payments + locally-
+    computed totals.
+  - Auto-sync: a `useEffect` watches `online` and drains the
+    queue when it flips to `true`. Also triggered on initial
+    mount so a refresh after reconnect picks up where we left
+    off.
+- **`/pos/pending` tray**: lists every queued sale with
+  enqueued-at, line count, total (from the queued payments),
+  attempt count, last error message, and a Discard action.
+  "Sync now" button drains the queue manually.
+- **Idempotency-Key generation**: `pos_<crypto.randomUUID()>`
+  per sale at enqueue time. The same key is reused on every
+  retry so the server's Phase 2.9 cache replays the original
+  201 response, never re-running the side effects.
+- **Concurrent-safe**: `syncAll` serializes via an in-flight
+  promise lock so a manual "Sync now" click + the auto-sync
+  trigger don't step on each other.
+- **Per-tenant partitioning**: `(business_id, code)` for
+  variants and `business_id` for the queue. A user who
+  switches active business in another tab can't redeem a
+  queued sale against the wrong tenant.
+- **Known limit (deferred)**: no service worker yet, so a hard
+  refresh while offline still loses the page. The queued sales
+  themselves survive (they're in IndexedDB), but the UI shell
+  needs to be online once before the cashier can interact with
+  it. App-shell caching is queued for a follow-up phase.
+- **All format/lint/typecheck/build gates green**.
+
+## Phase 2.15 status (offline POS — app-shell service worker)
+
+Phase 2.15 closes the hard-refresh gap from Phase 2.14: the POS
+shell now survives a full reload while offline, so a cashier
+who accidentally hits refresh (or whose iPad sleeps and wakes)
+keeps a working register.
+
+- **`apps/web/public/sw.js`**: service worker scoped to `/pos`
+  navigations + Next.js static chunks. Two named caches:
+  `jetnine-shell-v1` (HTML) and `jetnine-static-v1` (hashed
+  JS/CSS). The activate step prunes any cache whose name
+  doesn't match the current pair, so a deploy bump cleanly
+  retires old artifacts.
+  - Static chunks (`/_next/static/*`) — cache-first, write-
+    through. Paths are content-hashed so the cached entry is
+    safely immutable.
+  - POS navigations (`/pos`, `/pos/pending`) — stale-while-
+    revalidate. Cached HTML loads instantly even offline; a
+    fresh fetch updates the cache for next time.
+  - Manifest + favicon — cache-first.
+  - Cross-origin requests (the API), `/api/auth/*` flows, and
+    every other route — pass through. We deliberately do NOT
+    cache anything tenant-specific or auth-bearing.
+  - Last-resort offline fallback: a tiny synthesized HTML
+    page with a "you haven't loaded this yet" message, so the
+    browser doesn't show its raw chrome error.
+- **`apps/web/public/manifest.webmanifest`**: minimal PWA
+  manifest with `start_url: /pos`, `display: standalone` so
+  the cashier can "Add to Home Screen" on an iPad and launch
+  the register full-screen.
+- **`<ServiceWorkerRegister>`** client component: registers
+  `/sw.js` once on mount, scoped to `/`. No-op during SSR and
+  on the dev server (Next HMR misbehaves under SW caching);
+  set `NEXT_PUBLIC_SW_DEV=1` to opt in for local debugging.
+- **Per-route opt-in**: the register component lives in
+  `apps/web/src/app/(business)/pos/layout.tsx`, not the root
+  layout. Only `/pos` and `/pos/pending` register the SW —
+  the rest of the back office (which expects fresh server-
+  rendered HTML for tenant data) is unaffected.
+- **Cache versioning**: bumping `VERSION` in `sw.js` retires
+  both caches on the next activate. Use this when the shell
+  HTML or chunk graph changes meaningfully.
+- **All format/lint/typecheck/build gates green**.
+
+## Phase 2.16 status (offline POS — Playwright e2e)
+
+Phase 2.16 protects the offline flow with a real browser test:
+ring up online → drop offline → ring up again (queued) →
+reconnect → assert exactly one extra sale row landed
+server-side and the queue is empty.
+
+- **`apps/web/e2e/offline-pos.spec.ts`**: signup-and-verify a
+  fresh user, seed a tenant via the new `/v1/dev/e2e-seed`
+  shortcut, log in, set the active business, then exercise the
+  full online → offline → reconnect cycle. Uses Playwright's
+  `context.setOffline(true)` so the browser flips
+  `navigator.onLine` and triggers our `useOnlineStatus` path.
+- **New `/v1/dev/e2e-seed` controller** (gated to non-prod
+  alongside the dev email inbox): given a verified user, wires
+  a business + Owner membership + one location + one product
+  with inventory. Keeps the e2e fixture self-contained without
+  pulling Drizzle into the Playwright bundle.
+- **What the assertion proves**:
+  - Offline banner appears on `setOffline(true)`
+  - `complete()` enqueues instead of failing; the placeholder
+    "QUEUED" receipt renders
+  - `/pos/pending` shows exactly one row
+  - On reconnect, the auto-sync drains the queue (table becomes
+    empty)
+  - Server `/v1/sales` count grows by exactly +1 (the
+    Idempotency-Key replay didn't double-charge)
+- **Test isolation**: same dedicated `jetnine_e2e` DB the auth
+  spec uses; the `beforeAll` resets + migrates, so a re-run
+  never sees stale queue state from a previous attempt's
+  IndexedDB. (IDB lives in the browser profile Playwright
+  spins up fresh per run, so cross-run leakage isn't a
+  concern.)
+- **All format/lint/typecheck/build gates green**.
+
+## Phase 2.17 status (receipt printing)
+
+Phase 2.17 wires browser-native receipt printing into the POS
+done screen and the sale-detail page. No hardware required —
+`window.print()` works at any cashier station, on plain office
+printers, and (with the right driver) on 80mm thermal printers.
+
+- **`<PrintableReceipt>`** (`apps/web/src/components/printable-
+receipt.tsx`): self-contained presentational component, takes
+  a sale + business shape and renders a compact receipt. CSS is
+  inlined via a `<style>` block so the component drops in
+  without global stylesheet wiring. The wrapper carries a
+  `data-printable` attribute and is `display: none` on screen,
+  so it doesn't double up with the in-app receipt card.
+- **`@media print` rules**: hide every other element on the
+  page (`body * { visibility: hidden }`) and re-show only
+  `.receipt`. The `position: absolute; inset: 0` puts the
+  receipt at the top-left of the print canvas; `@page { margin:
+8mm }` keeps the trim. Designed for 80mm thermal column
+  width but reflows on letter/A4.
+- **POS done screen**: the existing "Print receipt" button
+  now actually produces a clean receipt. The button is
+  disabled when the sale is queued (`number` starts with
+  "QUEUED") so a cashier doesn't print a placeholder; the
+  button comes alive after sync.
+- **`/sales/[id]`** (re-print from history): a new "Print
+  receipt" button in the heading row. Loads `/v1/business/
+settings` alongside the sale to fill in the merchant name
+  - receipt header/footer.
+- **Header / footer reuse**: `receiptHeader` / `receiptFooter`
+  on `business_settings` (already in place since Phase 1.5)
+  feed straight into the printed receipt — no schema change.
+  Empty values are simply omitted.
+- **Tender labels**: cash / card / gift card render as
+  human-readable strings on the printed copy.
+- **All format/lint/typecheck/build gates green**.
+
+## Phase 2.18 status (tax classes per location)
+
+Phase 2.18 finishes the per-tenant tax story we started in
+Phase 2.5. A merchant with multiple locations can now assign
+different rates to the same tax class — e.g. "Apparel: 0% in
+NJ, 8.875% in NY" — without spinning up a separate class per
+state.
+
+- **New `tax_class_rates` table** (44 RLS-forced total).
+  `(tax_class_id, location_id)` unique with both columns
+  cascading on parent delete. Migration
+  `0017_parched_sprite.sql`.
+- **Resolution order at sale time**:
+  1. `tax_class_rates(tax_class_id, sale.location_id)` — the
+     per-location override
+  2. `tax_classes.rate_bps` — the class fallback (Phase 2.5)
+  3. `locations.tax_rate_bps` — the location default (Phase
+     1.5)
+  4. `businesses.default_tax_rate_bps` — the catch-all
+- **Sales controller**: collects every distinct tax class id
+  from the line variants, then issues a single batched lookup
+  against `tax_class_rates` filtered by the sale's
+  `location_id`. Constant round-trip count regardless of cart
+  size.
+- **`/v1/business/tax-classes/:id/rates`**:
+  - `GET` — list overrides for a class
+  - `PUT /:locationId` (upsert) — set or update a single
+    override; idempotent so the UI can save the same row
+    multiple times safely
+  - `DELETE /:locationId` — remove an override; reverts the
+    line to the class fallback
+  - All gated by `business.settings.view` / `update`
+- **Web**: `/settings/tax-classes` rows gain a "Per-location"
+  toggle that expands a panel listing every location with an
+  inline rate input. Empty input + Save removes the override
+  (revert to class fallback). The placeholder shows the
+  fallback rate so empty rows make their inheritance obvious.
+- **3 new integration tests** in `apps/api/test/taxes.int.spec.ts`:
+  override shadows the fallback at sale time across two
+  locations → list + delete reverts to fallback → invalid
+  rateBps is 400 + missing class is 404.
+- **All format/lint/typecheck/build gates green**.
+
+## Phase 2.19 status (multi-currency)
+
+Phase 2.19 lifts the USD-only constraint from the merchant UI.
+Each business still operates in a single currency at a time
+(no cross-currency conversion in scope), but that currency is
+now selectable from a curated set and threaded through every
+`<Money>` render automatically.
+
+- **`@jetnine/shared/money` extended**:
+  - `CurrencyCode` widened to `USD | EUR | GBP | CAD | AUD | JPY`
+  - `SUPPORTED_CURRENCIES`, `CURRENCY_LABELS`,
+    `fractionDigitsFor`, `isSupportedCurrency` exported for
+    reuse on both the API and the web
+  - `formatMoney` / `parseMoneyToCents` / `centsToInputString`
+    use the per-currency fraction-digits map. JPY is the only
+    0-decimal entry today and exercises the
+    minor-units-without-decimals branch (formatted as `¥1,234`,
+    parsed from `'1234'` to `1234`)
+  - 7 new unit tests bring the helper suite to 17 cases and
+    cover the EUR/GBP/JPY paths end-to-end
+- **`BusinessSettingsProvider`** (web): a tiny context that
+  fetches `/v1/business/settings` once on layout mount and
+  exposes the active currency to descendants. Wraps the entire
+  `(business)` subtree.
+- **`<Money>`** now reads from that context when no `currency`
+  prop is passed — every existing render site picks up the
+  business currency without a code change. Explicit override
+  still wins when a caller passes `currency={...}`.
+- **API**: `PATCH /v1/business/settings` accepts a
+  `currencyCode` field. Validates against
+  `SUPPORTED_CURRENCIES`, normalizes to upper-case, audits the
+  before/after as a regular settings change.
+- **Web**: `/settings` swaps the disabled "USD only for MVP"
+  field for a real dropdown listing every supported currency
+  with its human label. Includes a small note about
+  bookkeeper coordination — switching currency only changes
+  display, not the stored minor-unit values.
+- **What's deferred**: cross-currency transactions, FX rates,
+  and reporting consolidation across currencies. Multi-
+  currency invoicing within a single business is a separate
+  effort.
+- **4 new API integration tests** in
+  `apps/api/test/business.int.spec.ts`: switch to EUR succeeds
+  → lowercase + JPY normalize and persist → unsupported code
+  is 400 → restore USD for downstream tests in the file. Plus
+  the 7 unit tests in `packages/shared`.
+- **All format/lint/typecheck/build gates green**.
+
+## Deployment (Phase 2.21 — Vercel-only)
+
+Both the web app and the NestJS API run on a single Vercel
+project. The API is hosted as a serverless function: the
+catch-all at `apps/web/src/pages/api/[...path].ts` boots the
+entire NestJS DI graph on the first request and caches the
+Express app for the lifetime of the warm instance. Public-
+facing URLs (`/v1/*`, `/health`, `/api/auth/*`) are wired to
+the catch-all via Next.js rewrites in `next.config.mjs`, so
+the OpenAPI spec, integration tests, and any external API key
+holders see the same paths they always did.
+
+### What you need
+
+- A Vercel account (free tier covers a hobby deployment)
+- A Postgres database — anything that gives you a
+  `postgresql://...` URL. Vercel's own Postgres, Neon, or
+  Supabase all work. Free tiers exist on all three.
+- A Resend API key for transactional email (free tier:
+  3,000/month)
+- _(Optional)_ Stripe test keys, Sentry DSN
+
+### Step-by-step
+
+**1. Provision the database.**
+
+Whichever Postgres host you pick, copy the connection string
+(it'll look like `postgresql://user:pass@host:5432/db`).
+
+**2. Apply migrations once locally.**
+
+Vercel has no `release_command` equivalent, so we run
+migrations from a local shell pointed at the production DB.
+Re-run this whenever you ship a schema change.
+
+```bash
+cd packages/db
+DATABASE_URL='postgresql://...' pnpm migrate
+```
+
+**3. Import the repo at vercel.com/new.**
+
+- Framework: Vercel auto-detects Next.js.
+- **Root Directory**: click **Edit** → set to `apps/web`.
+  (The `vercel.json` there `cd ../..`'s back to the workspace
+  root for install + build.)
+
+**4. Environment variables** (Production + Preview):
+
+```
+DATABASE_URL=postgresql://...
+BETTER_AUTH_SECRET=<openssl rand -hex 32>
+RESEND_API_KEY=re_...
+STRIPE_SECRET_KEY=sk_test_...           # or sk_live_
+STRIPE_PUBLISHABLE_KEY=pk_test_...
+STRIPE_WEBHOOK_SECRET=whsec_...         # populate after step 6
+```
+
+Optional:
+
+```
+NEXT_PUBLIC_SENTRY_DSN=...
+SENTRY_DSN=...
+SENTRY_AUTH_TOKEN=...                   # for sourcemap upload at build
+SENTRY_ORG=...
+SENTRY_PROJECT=...
+```
+
+You don't need `NEXT_PUBLIC_API_URL` or `CORS_ORIGIN` —
+everything is same-origin now. `BETTER_AUTH_URL` is also
+optional; better-auth picks up the request origin at runtime.
+You don't need `REDIS_URL` either — the Redis module returns
+null when unset and the rate limiter falls back to in-memory.
+
+**5. Deploy.**
+
+Vercel deploys on save. Subsequent pushes to `main`
+auto-deploy; PRs get preview URLs.
+
+**6. Stripe webhook (only if you want real-time sale events).**
+
+In dashboard.stripe.com → Webhooks → Add endpoint:
+
+- URL: `https://your-app.vercel.app/v1/stripe/webhook`
+- Events: `account.updated`, `payment_intent.succeeded`,
+  `charge.refunded`
+
+Copy the signing secret → Vercel → Settings → Environment
+Variables → set `STRIPE_WEBHOOK_SECRET=whsec_...` →
+**redeploy** so the value lands in the function env.
+
+### Schema migrations on deploy
+
+Migrations are NOT automatic on Vercel. After every push that
+touches `packages/db/drizzle/*.sql` or
+`packages/db/src/schema/*.ts`, run:
+
+```bash
+DATABASE_URL='postgresql://...' pnpm --filter @jetnine/db migrate
+```
+
+The `migrate` script is idempotent (it tracks applied
+migrations in a `__drizzle_migrations` table) so re-running
+is safe.
+
+### Smoke checklist after first deploy
+
+- `curl https://your-app.vercel.app/health` →
+  `{"status":"ok"}`
+- `curl https://your-app.vercel.app/v1/openapi.json` → 200,
+  schema body
+- Open the Vercel URL → `/login` should render
+- Sign up → verify email (Resend captured email or live
+  inbox) → land on `/welcome` (no-membership) or
+  `/dashboard` with the onboarding checklist
+- POS register at `/pos` loads `/v1/pos/locations` from the
+  same origin (no CORS errors in devtools)
+
+### Cold starts + duration
+
+- Cold start of the catch-all (NestJS DI graph): ~1-2s on
+  Vercel Hobby. Subsequent requests on a warm instance are
+  fast.
+- Vercel Hobby caps function duration at 10s. Every endpoint
+  in this app finishes well under that; the offline POS queue
+  (Phase 2.14) papers over any user-perceived latency on the
+  POS register specifically.
+- If you outgrow Hobby, Vercel Pro raises the duration cap and
+  gives a higher concurrency limit. Same code, no
+  restructuring.
+
+### Cost
+
+Free for the deployment surfaces above (Vercel Hobby +
+Neon/Supabase/Vercel Postgres free tier + Resend free tier).
+Stripe charges per-transaction at sale time, not per-deploy.
+
+## First-run onboarding (Phase 2.20)
+
+A fresh signup now lands in a guided path instead of a blank
+dashboard. Three pieces:
+
+- **`POST /v1/onboarding/business`**: any authenticated user
+  can self-serve a new business (becomes its Owner). Seeds
+  the system roles + permissions, opens a 14-day trial
+  subscription, accepts `currencyCode` and
+  `defaultTaxRateBps` up front so the new tenant doesn't
+  need a follow-up settings round-trip. Capped at 5
+  businesses per user (super-admin path is uncapped).
+- **`GET /v1/onboarding/checklist`**: returns a 5-step
+  "next steps" panel for the user's most recently-created
+  business — business created → location added → product
+  added → teammate invited → Stripe connected. Each step
+  carries an `href` so the UI links to the relevant page.
+  Returns `null` when the user has no memberships at all.
+- **Web**:
+  - `/welcome` (new): branches on memberships. With existing
+    memberships → picker that sets the active-business
+    cookie and bounces to `/dashboard`. Without → "Create
+    your business" form (name, slug, currency, default tax
+    rate).
+  - `/dashboard` (rewrite): redirects to `/welcome` on first
+    visit if the user has zero memberships, otherwise
+    renders a "Get started" checklist card that ticks off
+    as the merchant configures the platform. Hides itself
+    once every step is green; replaces with an "Open the
+    register" nudge.
+- **8 integration tests** in
+  `apps/api/test/onboarding.int.spec.ts` cover the empty-
+  checklist case, full self-service create, step-tick when
+  adding a location, slug uniqueness, slug validation,
+  currency validation, and the 5-business cap.
+- **All format/lint/typecheck/build gates green**. CI
+  provisions `jetnine_onboarding`.

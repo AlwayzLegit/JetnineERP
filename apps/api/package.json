@@ -1,0 +1,62 @@
+{
+  "name": "@jetnine/api",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Jetnine ERP backend API (NestJS).",
+  "main": "./dist/main.js",
+  "exports": {
+    "./app.module": {
+      "types": "./dist/app.module.d.ts",
+      "default": "./dist/app.module.js"
+    }
+  },
+  "scripts": {
+    "build": "nest build",
+    "dev": "nest start --watch",
+    "start": "node dist/main.js",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@jetnine/db": "workspace:*",
+    "@jetnine/shared": "workspace:*",
+    "@nestjs/common": "^10.4.15",
+    "@nestjs/config": "^3.3.0",
+    "@nestjs/core": "^10.4.15",
+    "@nestjs/platform-express": "^10.4.15",
+    "@nestjs/terminus": "^10.2.3",
+    "@sentry/node": "^8.47.0",
+    "@sentry/profiling-node": "^8.47.0",
+    "better-auth": "^1.6.9",
+    "drizzle-orm": "^0.45.2",
+    "ioredis": "^5.10.1",
+    "nestjs-pino": "^4.1.0",
+    "pino": "^9.5.0",
+    "pino-http": "^10.3.0",
+    "pino-pretty": "^13.0.0",
+    "postgres": "^3.4.5",
+    "reflect-metadata": "^0.2.2",
+    "resend": "^6.12.3",
+    "rxjs": "^7.8.1",
+    "stripe": "^22.1.1",
+    "uuid": "^11.0.3",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@jetnine/config": "workspace:*",
+    "@nestjs/cli": "^10.4.9",
+    "@nestjs/schematics": "^10.2.3",
+    "@nestjs/testing": "^10.4.15",
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.10.2",
+    "@types/uuid": "^10.0.0",
+    "eslint": "^9.17.0",
+    "supertest": "^7.0.0",
+    "ts-loader": "^9.5.1",
+    "tsconfig-paths": "^4.2.0",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}
