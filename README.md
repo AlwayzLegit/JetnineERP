@@ -1384,3 +1384,38 @@ keeps a working register.
   both caches on the next activate. Use this when the shell
   HTML or chunk graph changes meaningfully.
 - **All format/lint/typecheck/build gates green**.
+
+## Phase 2.16 status (offline POS — Playwright e2e)
+
+Phase 2.16 protects the offline flow with a real browser test:
+ring up online → drop offline → ring up again (queued) →
+reconnect → assert exactly one extra sale row landed
+server-side and the queue is empty.
+
+- **`apps/web/e2e/offline-pos.spec.ts`**: signup-and-verify a
+  fresh user, seed a tenant via the new `/v1/dev/e2e-seed`
+  shortcut, log in, set the active business, then exercise the
+  full online → offline → reconnect cycle. Uses Playwright's
+  `context.setOffline(true)` so the browser flips
+  `navigator.onLine` and triggers our `useOnlineStatus` path.
+- **New `/v1/dev/e2e-seed` controller** (gated to non-prod
+  alongside the dev email inbox): given a verified user, wires
+  a business + Owner membership + one location + one product
+  with inventory. Keeps the e2e fixture self-contained without
+  pulling Drizzle into the Playwright bundle.
+- **What the assertion proves**:
+  - Offline banner appears on `setOffline(true)`
+  - `complete()` enqueues instead of failing; the placeholder
+    "QUEUED" receipt renders
+  - `/pos/pending` shows exactly one row
+  - On reconnect, the auto-sync drains the queue (table becomes
+    empty)
+  - Server `/v1/sales` count grows by exactly +1 (the
+    Idempotency-Key replay didn't double-charge)
+- **Test isolation**: same dedicated `jetnine_e2e` DB the auth
+  spec uses; the `beforeAll` resets + migrates, so a re-run
+  never sees stale queue state from a previous attempt's
+  IndexedDB. (IDB lives in the browser profile Playwright
+  spins up fresh per run, so cross-run leakage isn't a
+  concern.)
+- **All format/lint/typecheck/build gates green**.
