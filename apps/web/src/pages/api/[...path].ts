@@ -124,6 +124,71 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return;
   }
 
+  // Debug bypass: ?step=N — incrementally exercises the boot path, reports
+  // which step failed and how long each took. Step 0=baseline, 1=core import,
+  // 2=express import, 3=AppModule import, 4=NestFactory.create, 5=nest.init.
+  if (typeof req.query.step === 'string') {
+    const target = Number(req.query.step);
+    const timings: Record<string, number> = {};
+    let lastStep = 'start';
+    try {
+      const t0 = Date.now();
+      lastStep = '1-import-nestjs-core';
+      const { NestFactory } = await import('@nestjs/core');
+      timings[lastStep] = Date.now() - t0;
+      if (target < 2) {
+        return void res.status(200).json({ ok: true, stoppedAfter: lastStep, timings });
+      }
+
+      const t1 = Date.now();
+      lastStep = '2-import-express';
+      const { ExpressAdapter } = await import('@nestjs/platform-express');
+      const { default: express } = await import('express');
+      timings[lastStep] = Date.now() - t1;
+      if (target < 3) {
+        return void res.status(200).json({ ok: true, stoppedAfter: lastStep, timings });
+      }
+
+      const t2 = Date.now();
+      lastStep = '3-import-app-module';
+      const { AppModule } = await import('@jetnine/api/app.module');
+      timings[lastStep] = Date.now() - t2;
+      if (target < 4) {
+        return void res.status(200).json({ ok: true, stoppedAfter: lastStep, timings });
+      }
+
+      const t3 = Date.now();
+      lastStep = '4-nest-factory-create';
+      const expressApp = express();
+      const nest = await NestFactory.create(AppModule, new ExpressAdapter(expressApp), {
+        bufferLogs: true,
+        rawBody: true,
+      });
+      timings[lastStep] = Date.now() - t3;
+      if (target < 5) {
+        return void res.status(200).json({ ok: true, stoppedAfter: lastStep, timings });
+      }
+
+      const t4 = Date.now();
+      lastStep = '5-nest-init';
+      await nest.init();
+      timings[lastStep] = Date.now() - t4;
+      return void res.status(200).json({ ok: true, stoppedAfter: lastStep, timings });
+    } catch (err) {
+      const e = err as Error & { code?: string };
+      res.status(200).json({
+        ok: false,
+        failedAt: lastStep,
+        timings,
+        name: e?.name,
+        code: e?.code,
+        message: e?.message,
+        stack: e?.stack?.split('\n').slice(0, 30),
+      });
+    }
+    return;
+  }
+
   // Debug bypass: ?boot=1 boots Nest but doesn't dispatch the request through
   // it. Reports the time taken plus any error. Always returns 200 — Next's
   // Pages Router was rewriting our 500 JSON responses to the static /500 page,
