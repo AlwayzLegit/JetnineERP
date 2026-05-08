@@ -26,6 +26,14 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 // Capture whatever's silently crashing the function so we can surface it
 // in the next request's response.
 const capturedFailures: Array<{ kind: string; message?: string; stack?: string[] }> = [];
+
+// Track how far through bootstrap we got. If the function crashes mid-step,
+// the next request on the same warm instance reports the last value.
+let lastReachedStep: { step: string; at: number } | null = null;
+const mark = (step: string) => {
+  lastReachedStep = { step, at: Date.now() };
+  console.log('[catch-all] reached', step);
+};
 process.on('uncaughtException', (err) => {
   console.error('[catch-all] uncaughtException:', err);
   capturedFailures.push({
@@ -143,6 +151,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         hasAuthUrl: Boolean(process.env.BETTER_AUTH_URL),
       },
       capturedFailures,
+      lastReachedStep,
     });
     return;
   }
@@ -182,9 +191,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
       const t3 = Date.now();
       lastStep = '4a-create-context-only';
-      const ctx = await NestFactory.createApplicationContext(AppModule, { bufferLogs: true });
+      mark('4a-before-createApplicationContext');
+      const ctx = await NestFactory.createApplicationContext(AppModule, { bufferLogs: false });
+      mark('4a-after-createApplicationContext');
       timings[lastStep] = Date.now() - t3;
       await ctx.close();
+      mark('4a-after-close');
 
       const t3b = Date.now();
       lastStep = '4-nest-factory-create';
