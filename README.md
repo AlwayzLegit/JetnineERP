@@ -1548,98 +1548,142 @@ now selectable from a curated set and threaded through every
   the 7 unit tests in `packages/shared`.
 - **All format/lint/typecheck/build gates green**.
 
-## Deployment
+## Deployment (Phase 2.21 — Vercel-only)
 
-Web → Vercel, API → Fly.io. Both auto-deploy on push to `main`.
+Both the web app and the NestJS API run on a single Vercel
+project. The API is hosted as a serverless function: the
+catch-all at `apps/web/src/pages/api/[...path].ts` boots the
+entire NestJS DI graph on the first request and caches the
+Express app for the lifetime of the warm instance. Public-
+facing URLs (`/v1/*`, `/health`, `/api/auth/*`) are wired to
+the catch-all via Next.js rewrites in `next.config.mjs`, so
+the OpenAPI spec, integration tests, and any external API key
+holders see the same paths they always did.
 
-### Vercel (web)
+### What you need
 
-`apps/web/vercel.json` ships the install + build commands so a
-fresh project just needs:
+- A Vercel account (free tier covers a hobby deployment)
+- A Postgres database — anything that gives you a
+  `postgresql://...` URL. Vercel's own Postgres, Neon, or
+  Supabase all work. Free tiers exist on all three.
+- A Resend API key for transactional email (free tier:
+  3,000/month)
+- _(Optional)_ Stripe test keys, Sentry DSN
 
-1. **Import the repo** at vercel.com/new and set
-   **Root Directory** to `apps/web`. (vercel.json's commands
-   `cd ../..` to reach the workspace root.)
-2. **Environment variables** (Production + Preview):
-   - `NEXT_PUBLIC_API_URL` — `https://jetnine-api.fly.dev` (or
-     wherever Fly puts the API)
-   - `NEXT_PUBLIC_SENTRY_DSN` — optional, the web SDK no-ops
-     without it
-   - `SENTRY_AUTH_TOKEN`, `SENTRY_ORG`, `SENTRY_PROJECT` —
-     optional, only used by the build to upload sourcemaps
-3. **Auto-deploy**: enabled by default on `main`. Preview
-   deploys go up on every PR.
-4. The service worker (`/sw.js`) is gated behind
-   `NODE_ENV=production`, so dev `pnpm dev` runs unaffected.
-   `next.config.mjs` adds the `Service-Worker-Allowed: /`
-   header so the worker can claim the whole origin.
+### Step-by-step
 
-### Fly.io (API)
+**1. Provision the database.**
 
-`fly.toml` lives at the repo root so the docker build context
-covers the whole monorepo (the Dockerfile copies the
-`packages/` tree alongside `apps/api/`).
+Whichever Postgres host you pick, copy the connection string
+(it'll look like `postgresql://user:pass@host:5432/db`).
 
-First-time setup:
+**2. Apply migrations once locally.**
+
+Vercel has no `release_command` equivalent, so we run
+migrations from a local shell pointed at the production DB.
+Re-run this whenever you ship a schema change.
 
 ```bash
-# 1. Authenticate
-fly auth login
-
-# 2. Provision the app, Postgres, Redis (one-shot)
-fly launch --no-deploy --copy-config --name jetnine-api
-fly postgres create --name jetnine-api-db --region iad
-fly postgres attach jetnine-api-db --app jetnine-api  # sets DATABASE_URL
-fly redis create --name jetnine-api-redis --region iad
-# fly redis attach is in flux; copy the URL from `fly redis status`
-# and set REDIS_URL manually:
-fly secrets set --app jetnine-api REDIS_URL=redis://...
-
-# 3. Application secrets (one-time)
-fly secrets set --app jetnine-api \
-  BETTER_AUTH_SECRET=$(openssl rand -hex 32) \
-  BETTER_AUTH_URL=https://jetnine-api.fly.dev \
-  CORS_ORIGIN=https://your-app.vercel.app \
-  AUTH_TRUSTED_ORIGINS=https://your-app.vercel.app \
-  STRIPE_SECRET_KEY=sk_live_... \
-  STRIPE_PUBLISHABLE_KEY=pk_live_... \
-  STRIPE_WEBHOOK_SECRET=whsec_... \
-  RESEND_API_KEY=re_... \
-  SENTRY_DSN=...
-
-# 4. First deploy
-fly deploy
+cd packages/db
+DATABASE_URL='postgresql://...' pnpm migrate
 ```
 
-Once deployed, point the web's `NEXT_PUBLIC_API_URL` at
-`https://jetnine-api.fly.dev` (or your custom domain) and
-redeploy the web on Vercel.
+**3. Import the repo at vercel.com/new.**
 
-### Auto-deploy
+- Framework: Vercel auto-detects Next.js.
+- **Root Directory**: click **Edit** → set to `apps/web`.
+  (The `vercel.json` there `cd ../..`'s back to the workspace
+  root for install + build.)
 
-`.github/workflows/fly-deploy.yml` runs `flyctl deploy
---remote-only` on every push to `main` that touches the API,
-its workspace deps, or the Dockerfile. Add the `FLY_API_TOKEN`
-secret to the GitHub repo (Settings → Secrets and variables →
-Actions → New repository secret) — generate it with
-`fly tokens create deploy` in the API directory.
+**4. Environment variables** (Production + Preview):
 
-The fly `release_command` (`node packages/db/dist/migrate.js`)
-runs migrations on every deploy. If a migration fails the
-deploy aborts and the previous machine keeps serving — no
-mid-deploy schema drift.
+```
+DATABASE_URL=postgresql://...
+BETTER_AUTH_SECRET=<openssl rand -hex 32>
+RESEND_API_KEY=re_...
+STRIPE_SECRET_KEY=sk_test_...           # or sk_live_
+STRIPE_PUBLISHABLE_KEY=pk_test_...
+STRIPE_WEBHOOK_SECRET=whsec_...         # populate after step 6
+```
+
+Optional:
+
+```
+NEXT_PUBLIC_SENTRY_DSN=...
+SENTRY_DSN=...
+SENTRY_AUTH_TOKEN=...                   # for sourcemap upload at build
+SENTRY_ORG=...
+SENTRY_PROJECT=...
+```
+
+You don't need `NEXT_PUBLIC_API_URL` or `CORS_ORIGIN` —
+everything is same-origin now. `BETTER_AUTH_URL` is also
+optional; better-auth picks up the request origin at runtime.
+You don't need `REDIS_URL` either — the Redis module returns
+null when unset and the rate limiter falls back to in-memory.
+
+**5. Deploy.**
+
+Vercel deploys on save. Subsequent pushes to `main`
+auto-deploy; PRs get preview URLs.
+
+**6. Stripe webhook (only if you want real-time sale events).**
+
+In dashboard.stripe.com → Webhooks → Add endpoint:
+
+- URL: `https://your-app.vercel.app/v1/stripe/webhook`
+- Events: `account.updated`, `payment_intent.succeeded`,
+  `charge.refunded`
+
+Copy the signing secret → Vercel → Settings → Environment
+Variables → set `STRIPE_WEBHOOK_SECRET=whsec_...` →
+**redeploy** so the value lands in the function env.
+
+### Schema migrations on deploy
+
+Migrations are NOT automatic on Vercel. After every push that
+touches `packages/db/drizzle/*.sql` or
+`packages/db/src/schema/*.ts`, run:
+
+```bash
+DATABASE_URL='postgresql://...' pnpm --filter @jetnine/db migrate
+```
+
+The `migrate` script is idempotent (it tracks applied
+migrations in a `__drizzle_migrations` table) so re-running
+is safe.
 
 ### Smoke checklist after first deploy
 
-- `curl https://jetnine-api.fly.dev/health` → `{"status":"ok"}`
-- `curl https://jetnine-api.fly.dev/v1/openapi.json` → 200,
+- `curl https://your-app.vercel.app/health` →
+  `{"status":"ok"}`
+- `curl https://your-app.vercel.app/v1/openapi.json` → 200,
   schema body
 - Open the Vercel URL → `/login` should render
 - Sign up → verify email (Resend captured email or live
   inbox) → land on `/welcome` (no-membership) or
   `/dashboard` with the onboarding checklist
-- POS register loads `/v1/pos/locations` from the Fly URL
-  (devtools network tab)
+- POS register at `/pos` loads `/v1/pos/locations` from the
+  same origin (no CORS errors in devtools)
+
+### Cold starts + duration
+
+- Cold start of the catch-all (NestJS DI graph): ~1-2s on
+  Vercel Hobby. Subsequent requests on a warm instance are
+  fast.
+- Vercel Hobby caps function duration at 10s. Every endpoint
+  in this app finishes well under that; the offline POS queue
+  (Phase 2.14) papers over any user-perceived latency on the
+  POS register specifically.
+- If you outgrow Hobby, Vercel Pro raises the duration cap and
+  gives a higher concurrency limit. Same code, no
+  restructuring.
+
+### Cost
+
+Free for the deployment surfaces above (Vercel Hobby +
+Neon/Supabase/Vercel Postgres free tier + Resend free tier).
+Stripe charges per-transaction at sale time, not per-deploy.
 
 ## First-run onboarding (Phase 2.20)
 

@@ -35,7 +35,7 @@ interface Po {
 
 export default function PurchaseOrderDetailPage() {
   const params = useParams<{ id: string }>();
-  const id = params.id as string;
+  const id = (params?.id ?? '') as string;
   const [po, setPo] = useState<Po | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [recvQty, setRecvQty] = useState<Record<string, number>>({});

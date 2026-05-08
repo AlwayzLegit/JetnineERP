@@ -25,7 +25,7 @@ interface Membership {
 
 export default function BusinessDetailPage() {
   const params = useParams<{ id: string }>();
-  const id = params.id as string;
+  const id = (params?.id ?? '') as string;
   const [biz, setBiz] = useState<BusinessSummary | null>(null);
   const [members, setMembers] = useState<Membership[] | null>(null);
   const [error, setError] = useState<string | null>(null);

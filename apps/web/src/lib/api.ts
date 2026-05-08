@@ -1,6 +1,12 @@
 // Tiny fetch wrapper used by the admin pages. Always sends credentials so
 // the session cookie + impersonate cookies travel with each request.
-export const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
+//
+// `apiUrl` used to point at a separate origin (NEXT_PUBLIC_API_URL); after
+// Phase 2.21 the API runs as a Vercel function on the same origin as the
+// web app, so the value is empty string by default and every call goes
+// out as a relative URL. Setting NEXT_PUBLIC_API_URL is still supported
+// for local dev pointing at a separate API server.
+export const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? '';
 
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${apiUrl}${path}`, {

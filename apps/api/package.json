@@ -3,6 +3,13 @@
   "version": "0.0.0",
   "private": true,
   "description": "Jetnine ERP backend API (NestJS).",
+  "main": "./dist/main.js",
+  "exports": {
+    "./app.module": {
+      "types": "./dist/app.module.d.ts",
+      "default": "./dist/app.module.js"
+    }
+  },
   "scripts": {
     "build": "nest build",
     "dev": "nest start --watch",

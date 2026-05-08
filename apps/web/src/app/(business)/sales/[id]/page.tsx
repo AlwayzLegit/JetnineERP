@@ -48,7 +48,7 @@ interface Sale {
 
 export default function SaleDetailPage() {
   const params = useParams<{ id: string }>();
-  const id = params.id as string;
+  const id = (params?.id ?? '') as string;
   const [sale, setSale] = useState<Sale | null>(null);
   const [business, setBusiness] = useState<ReceiptBusiness | null>(null);
   const [error, setError] = useState<string | null>(null);

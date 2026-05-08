@@ -33,7 +33,7 @@ interface GiftCardDetail {
 
 export default function GiftCardDetailPage() {
   const params = useParams();
-  const id = params.id as string;
+  const id = (params?.id ?? '') as string;
   const [card, setCard] = useState<GiftCardDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [adjust, setAdjust] = useState('');

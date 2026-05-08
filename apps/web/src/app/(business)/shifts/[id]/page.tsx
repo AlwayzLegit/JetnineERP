@@ -23,7 +23,7 @@ interface Shift {
 
 export default function ShiftDetailPage() {
   const params = useParams<{ id: string }>();
-  const id = params.id as string;
+  const id = (params?.id ?? '') as string;
   const [shift, setShift] = useState<Shift | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [countedStr, setCountedStr] = useState('');

@@ -40,7 +40,7 @@ interface TaxClass {
 
 export default function ProductDetailPage() {
   const params = useParams<{ id: string }>();
-  const id = params.id as string;
+  const id = (params?.id ?? '') as string;
   const [p, setP] = useState<Product | null>(null);
   const [taxClasses, setTaxClasses] = useState<TaxClass[]>([]);
   const [error, setError] = useState<string | null>(null);

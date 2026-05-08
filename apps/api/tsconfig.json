@@ -9,7 +9,7 @@
     "baseUrl": "./",
     "experimentalDecorators": true,
     "emitDecoratorMetadata": true,
-    "declaration": false,
+    "declaration": true,
     "verbatimModuleSyntax": false,
     "esModuleInterop": true,
     "isolatedModules": false

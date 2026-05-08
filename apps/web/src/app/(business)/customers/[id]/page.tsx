@@ -29,7 +29,7 @@ interface Customer {
 export default function CustomerDetailPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
-  const id = params.id as string;
+  const id = (params?.id ?? '') as string;
   const [c, setC] = useState<Customer | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);

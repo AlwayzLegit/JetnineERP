@@ -8,7 +8,7 @@ import { api } from '@/lib/api';
 
 function AcceptInviteInner() {
   const params = useSearchParams();
-  const token = params.get('token') ?? '';
+  const token = params?.get('token') ?? '';
 
   if (!token) {
     return (

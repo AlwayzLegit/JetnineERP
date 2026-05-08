@@ -7,7 +7,7 @@ import { authClient } from '@/lib/auth-client';
 
 function ResetInner() {
   const params = useSearchParams();
-  const token = params.get('token');
+  const token = params?.get('token') ?? null;
 
   if (token) {
     return (

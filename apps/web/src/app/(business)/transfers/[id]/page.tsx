@@ -30,7 +30,7 @@ interface Transfer {
 
 export default function TransferDetailPage() {
   const params = useParams<{ id: string }>();
-  const id = params.id as string;
+  const id = (params?.id ?? '') as string;
   const [t, setT] = useState<Transfer | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [recvQty, setRecvQty] = useState<Record<string, number>>({});
