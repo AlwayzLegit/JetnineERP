@@ -420,9 +420,11 @@ export class SalesController {
         priceCents: schema.productVariants.priceCents,
         productName: schema.products.name,
         variantName: schema.productVariants.name,
-        // Per-product tax class override; null means "use the
-        // location/business default rate".
-        taxClassRateBps: schema.taxClasses.rateBps,
+        // The product's tax class id (may be null). The resolved rate
+        // is computed below — first the per-location override, then
+        // the class's fallback, then location/business defaults.
+        taxClassId: schema.products.taxClassId,
+        taxClassFallbackRateBps: schema.taxClasses.rateBps,
       })
       .from(schema.productVariants)
       .innerJoin(schema.products, eq(schema.products.id, schema.productVariants.productId))
@@ -431,6 +433,30 @@ export class SalesController {
     const byId = new Map(variants.map((v) => [v.id, v]));
     for (const id of variantIds) {
       if (!byId.has(id)) throw new NotFoundException(`Variant not found: ${id}`);
+    }
+
+    // Phase 2.18: resolve per-location overrides for any tax class
+    // that's actually referenced on a line. Doing this in one query
+    // (one IN list) keeps the round-trip count constant regardless of
+    // how many distinct classes appear in the cart.
+    const taxClassIds = Array.from(
+      new Set(variants.map((v) => v.taxClassId).filter((id): id is string => Boolean(id))),
+    );
+    const overrideMap = new Map<string, number>();
+    if (taxClassIds.length > 0) {
+      const overrides = await this.db
+        .select({
+          taxClassId: schema.taxClassRates.taxClassId,
+          rateBps: schema.taxClassRates.rateBps,
+        })
+        .from(schema.taxClassRates)
+        .where(
+          and(
+            inArray(schema.taxClassRates.taxClassId, taxClassIds),
+            eq(schema.taxClassRates.locationId, body.locationId),
+          ),
+        );
+      for (const o of overrides) overrideMap.set(o.taxClassId, o.rateBps);
     }
 
     // Resolve a discount code if one was supplied. We compute the
@@ -529,7 +555,13 @@ export class SalesController {
               lineDiscountCents: l.lineDiscountCents,
               // Tax-class override; falls through to the sale-level
               // taxRateBps inside computeTotals when this is null.
-              taxRateBps: v.taxClassRateBps ?? undefined,
+              // Resolution order: per-location override → class
+              // fallback → undefined (defers to location/business
+              // default inside computeTotals).
+              taxRateBps:
+                (v.taxClassId ? overrideMap.get(v.taxClassId) : undefined) ??
+                v.taxClassFallbackRateBps ??
+                undefined,
             };
           }),
         });

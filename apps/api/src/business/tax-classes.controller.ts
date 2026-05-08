@@ -9,8 +9,9 @@ import {
   Param,
   Patch,
   Post,
+  Put,
 } from '@nestjs/common';
-import { asc, eq, isNotNull } from 'drizzle-orm';
+import { and, asc, eq, isNotNull } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { schema } from '@jetnine/db';
 import { AuditService } from '../audit/audit.service';
@@ -30,6 +31,12 @@ interface TaxClassRow {
   updatedAt: Date;
 }
 
+interface TaxClassRateRow {
+  id: string;
+  locationId: string;
+  rateBps: number;
+}
+
 interface CreateBody {
   name?: string;
   description?: string | null;
@@ -38,6 +45,10 @@ interface CreateBody {
 }
 
 type UpdateBody = CreateBody;
+
+interface UpsertRateBody {
+  rateBps?: number;
+}
 
 @TenantScoped()
 @Controller('v1/business/tax-classes')
@@ -256,6 +267,136 @@ export class TaxClassesController {
       targetId: id,
       before: { name: existing.name, rateBps: existing.rateBps },
       metadata: { detachedProductCount: referencingProducts.length },
+    });
+    return { deleted: true };
+  }
+
+  /**
+   * Per-location overrides for a tax class. PUT semantics: if a row
+   * for (taxClassId, locationId) exists, update it; otherwise insert.
+   * Lets a merchant configure "Apparel: 0% in NJ, 8% in NY" with a
+   * single round-trip per location.
+   */
+  @Get(':id/rates')
+  @RequirePermission('business.settings.view')
+  async listRates(
+    @CurrentTenant() _tenant: RequestTenantContext,
+    @Param('id') id: string,
+  ): Promise<TaxClassRateRow[]> {
+    const [taxClass] = await this.db
+      .select()
+      .from(schema.taxClasses)
+      .where(eq(schema.taxClasses.id, id))
+      .limit(1);
+    if (!taxClass) throw new NotFoundException('Tax class not found');
+    const rows = await this.db
+      .select({
+        id: schema.taxClassRates.id,
+        locationId: schema.taxClassRates.locationId,
+        rateBps: schema.taxClassRates.rateBps,
+      })
+      .from(schema.taxClassRates)
+      .where(eq(schema.taxClassRates.taxClassId, id));
+    return rows;
+  }
+
+  @Put(':id/rates/:locationId')
+  @RequirePermission('business.settings.update')
+  async upsertRate(
+    @CurrentTenant() tenant: RequestTenantContext,
+    @Param('id') taxClassId: string,
+    @Param('locationId') locationId: string,
+    @Body() body: UpsertRateBody,
+  ): Promise<TaxClassRateRow> {
+    if (
+      typeof body.rateBps !== 'number' ||
+      !Number.isInteger(body.rateBps) ||
+      body.rateBps < 0 ||
+      body.rateBps > 100_000
+    ) {
+      throw new BadRequestException('rateBps must be a non-negative integer ≤ 100000');
+    }
+    const [taxClass] = await this.db
+      .select()
+      .from(schema.taxClasses)
+      .where(eq(schema.taxClasses.id, taxClassId))
+      .limit(1);
+    if (!taxClass) throw new NotFoundException('Tax class not found');
+    const [location] = await this.db
+      .select()
+      .from(schema.locations)
+      .where(eq(schema.locations.id, locationId))
+      .limit(1);
+    if (!location) throw new NotFoundException('Location not found');
+
+    const [existing] = await this.db
+      .select()
+      .from(schema.taxClassRates)
+      .where(
+        and(
+          eq(schema.taxClassRates.taxClassId, taxClassId),
+          eq(schema.taxClassRates.locationId, locationId),
+        ),
+      )
+      .limit(1);
+
+    let row;
+    if (existing) {
+      [row] = await this.db
+        .update(schema.taxClassRates)
+        .set({ rateBps: body.rateBps, updatedAt: new Date() })
+        .where(eq(schema.taxClassRates.id, existing.id))
+        .returning();
+    } else {
+      [row] = await this.db
+        .insert(schema.taxClassRates)
+        .values({
+          businessId: tenant.businessId!,
+          taxClassId,
+          locationId,
+          rateBps: body.rateBps,
+        })
+        .returning();
+    }
+    if (!row) throw new BadRequestException('failed to upsert tax class rate');
+
+    await this.audit.log({
+      action: 'tax_class.rate.upsert',
+      targetType: 'tax_class',
+      targetId: taxClassId,
+      before: existing ? { rateBps: existing.rateBps } : null,
+      after: { locationId, rateBps: body.rateBps },
+    });
+    return { id: row.id, locationId: row.locationId, rateBps: row.rateBps };
+  }
+
+  @Delete(':id/rates/:locationId')
+  @RequirePermission('business.settings.update')
+  async removeRate(
+    @CurrentTenant() _tenant: RequestTenantContext,
+    @Param('id') taxClassId: string,
+    @Param('locationId') locationId: string,
+  ): Promise<{ deleted: true }> {
+    const [existing] = await this.db
+      .select()
+      .from(schema.taxClassRates)
+      .where(
+        and(
+          eq(schema.taxClassRates.taxClassId, taxClassId),
+          eq(schema.taxClassRates.locationId, locationId),
+        ),
+      )
+      .limit(1);
+    if (!existing) {
+      // Idempotent — removing a row that doesn't exist is fine.
+      return { deleted: true };
+    }
+    await this.db.delete(schema.taxClassRates).where(eq(schema.taxClassRates.id, existing.id));
+    await this.audit.log({
+      action: 'tax_class.rate.remove',
+      targetType: 'tax_class',
+      targetId: taxClassId,
+      before: { locationId, rateBps: existing.rateBps },
     });
     return { deleted: true };
   }

@@ -369,4 +369,147 @@ describe('Phase 2.5 — Tax classes', () => {
     expect(defaults.length).toBe(1);
     expect(defaults[0].id).toBe(b.body.id);
   });
+
+  it('Phase 2.18: per-location override shadows the class fallback at sale time', async () => {
+    // Mint a fresh "Apparel" tax class with a 10% fallback.
+    const apparel = await request(app.getHttpServer())
+      .post('/v1/business/tax-classes')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ name: 'Apparel', rateBps: 1000 });
+    expect(apparel.status).toBe(201);
+    const apparelId = apparel.body.id as string;
+
+    // Create a second location ("NJ") and override the rate to 0%.
+    const njLoc = await request(app.getHttpServer())
+      .post('/v1/business/locations')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ name: 'NJ Outlet', timezone: 'America/New_York' });
+    expect(njLoc.status).toBe(201);
+    const njLocationId = njLoc.body.id as string;
+    // Inventory at the new location for the coffee variant.
+    {
+      const sql = postgres(TEST_DB_URL, { max: 1, prepare: false });
+      try {
+        await sql`INSERT INTO inventory_levels (business_id, variant_id, location_id, on_hand)
+                  VALUES (${businessId}, ${coffeeVariantId}, ${njLocationId}, 100)`;
+      } finally {
+        await sql.end({ timeout: 5 });
+      }
+    }
+
+    // Tag coffee with the Apparel class (we're not modeling real
+    // categories — the test only cares that a class is attached so
+    // the override path lights up).
+    await request(app.getHttpServer())
+      .patch(`/v1/products/${coffeeProductId}`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ taxClassId: apparelId });
+
+    // Override: 0% in NJ.
+    const upsert = await request(app.getHttpServer())
+      .put(`/v1/business/tax-classes/${apparelId}/rates/${njLocationId}`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ rateBps: 0 });
+    expect(upsert.status).toBe(200);
+    expect(upsert.body.rateBps).toBe(0);
+
+    // Sale at the original location uses the 10% fallback.
+    const mainSale = await request(app.getHttpServer())
+      .post('/v1/sales')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({
+        locationId,
+        lines: [{ variantId: coffeeVariantId, quantity: 1 }],
+        payments: [{ method: 'cash', amountCents: 550 }],
+      });
+    expect(mainSale.status).toBe(201);
+    expect(mainSale.body.taxCents).toBe(50); // 500 * 10%
+    expect(mainSale.body.totalCents).toBe(550);
+
+    // Sale at the NJ location uses the 0% override.
+    const njSale = await request(app.getHttpServer())
+      .post('/v1/sales')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({
+        locationId: njLocationId,
+        lines: [{ variantId: coffeeVariantId, quantity: 1 }],
+        payments: [{ method: 'cash', amountCents: 500 }],
+      });
+    expect(njSale.status).toBe(201);
+    expect(njSale.body.taxCents).toBe(0);
+    expect(njSale.body.totalCents).toBe(500);
+  });
+
+  it('Phase 2.18: list rates + delete override reverts to fallback', async () => {
+    // List shows the override we just made.
+    const apparels = await request(app.getHttpServer())
+      .get('/v1/business/tax-classes')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId);
+    const apparel = apparels.body.find((c: { name: string }) => c.name === 'Apparel');
+    expect(apparel).toBeDefined();
+
+    const rates = await request(app.getHttpServer())
+      .get(`/v1/business/tax-classes/${apparel.id}/rates`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId);
+    expect(rates.status).toBe(200);
+    expect(rates.body.length).toBe(1);
+    expect(rates.body[0].rateBps).toBe(0);
+
+    const njLocationId = rates.body[0].locationId as string;
+
+    // Delete the override → next sale at NJ goes back to the
+    // class's 10% fallback.
+    const del = await request(app.getHttpServer())
+      .delete(`/v1/business/tax-classes/${apparel.id}/rates/${njLocationId}`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId);
+    expect(del.status).toBe(200);
+
+    const sale = await request(app.getHttpServer())
+      .post('/v1/sales')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({
+        locationId: njLocationId,
+        lines: [{ variantId: coffeeVariantId, quantity: 1 }],
+        payments: [{ method: 'cash', amountCents: 550 }],
+      });
+    expect(sale.status).toBe(201);
+    expect(sale.body.taxCents).toBe(50); // back to fallback
+  });
+
+  it('Phase 2.18: invalid rateBps is 400; missing class is 404', async () => {
+    const apparels = await request(app.getHttpServer())
+      .get('/v1/business/tax-classes')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId);
+    const apparel = apparels.body.find((c: { name: string }) => c.name === 'Apparel');
+    const locs = await request(app.getHttpServer())
+      .get('/v1/pos/locations')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId);
+    const someLocId = locs.body[0].id as string;
+
+    const bad = await request(app.getHttpServer())
+      .put(`/v1/business/tax-classes/${apparel.id}/rates/${someLocId}`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ rateBps: -1 });
+    expect(bad.status).toBe(400);
+
+    const missing = await request(app.getHttpServer())
+      .put(`/v1/business/tax-classes/00000000-0000-0000-0000-000000000000/rates/${someLocId}`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ rateBps: 500 });
+    expect(missing.status).toBe(404);
+  });
 });

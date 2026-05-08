@@ -49,6 +49,7 @@ export const TENANT_SCOPED_TABLES = [
   'stock_transfers',
   'stock_transfer_lines',
   'tax_classes',
+  'tax_class_rates',
   'discount_codes',
   'discount_redemptions',
   'webhook_endpoints',

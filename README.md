@@ -1456,3 +1456,46 @@ settings` alongside the sale to fill in the merchant name
 - **Tender labels**: cash / card / gift card render as
   human-readable strings on the printed copy.
 - **All format/lint/typecheck/build gates green**.
+
+## Phase 2.18 status (tax classes per location)
+
+Phase 2.18 finishes the per-tenant tax story we started in
+Phase 2.5. A merchant with multiple locations can now assign
+different rates to the same tax class — e.g. "Apparel: 0% in
+NJ, 8.875% in NY" — without spinning up a separate class per
+state.
+
+- **New `tax_class_rates` table** (44 RLS-forced total).
+  `(tax_class_id, location_id)` unique with both columns
+  cascading on parent delete. Migration
+  `0017_parched_sprite.sql`.
+- **Resolution order at sale time**:
+  1. `tax_class_rates(tax_class_id, sale.location_id)` — the
+     per-location override
+  2. `tax_classes.rate_bps` — the class fallback (Phase 2.5)
+  3. `locations.tax_rate_bps` — the location default (Phase
+     1.5)
+  4. `businesses.default_tax_rate_bps` — the catch-all
+- **Sales controller**: collects every distinct tax class id
+  from the line variants, then issues a single batched lookup
+  against `tax_class_rates` filtered by the sale's
+  `location_id`. Constant round-trip count regardless of cart
+  size.
+- **`/v1/business/tax-classes/:id/rates`**:
+  - `GET` — list overrides for a class
+  - `PUT /:locationId` (upsert) — set or update a single
+    override; idempotent so the UI can save the same row
+    multiple times safely
+  - `DELETE /:locationId` — remove an override; reverts the
+    line to the class fallback
+  - All gated by `business.settings.view` / `update`
+- **Web**: `/settings/tax-classes` rows gain a "Per-location"
+  toggle that expands a panel listing every location with an
+  inline rate input. Empty input + Save removes the override
+  (revert to class fallback). The placeholder shows the
+  fallback rate so empty rows make their inheritance obvious.
+- **3 new integration tests** in `apps/api/test/taxes.int.spec.ts`:
+  override shadows the fallback at sale time across two
+  locations → list + delete reverts to fallback → invalid
+  rateBps is 400 + missing class is 404.
+- **All format/lint/typecheck/build gates green**.

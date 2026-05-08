@@ -13,16 +13,34 @@ interface TaxClass {
   productCount: number;
 }
 
+interface LocationRow {
+  id: string;
+  name: string;
+}
+
+interface OverrideRow {
+  id: string;
+  locationId: string;
+  rateBps: number;
+}
+
 export default function TaxClassesPage() {
   const [rows, setRows] = useState<TaxClass[] | null>(null);
+  const [locations, setLocations] = useState<LocationRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [expanded, setExpanded] = useState<string | null>(null);
 
   async function load() {
     setError(null);
     try {
-      setRows(await api<TaxClass[]>('/v1/business/tax-classes'));
+      const [classes, locs] = await Promise.all([
+        api<TaxClass[]>('/v1/business/tax-classes'),
+        api<LocationRow[]>('/v1/pos/locations'),
+      ]);
+      setRows(classes);
+      setLocations(locs);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -158,31 +176,190 @@ export default function TaxClassesPage() {
                     onCancel={() => setEditing(null)}
                   />
                 ) : (
-                  <tr key={r.id} style={{ borderBottom: '1px solid #f3f3f3' }}>
-                    <Td>
-                      <strong>{r.name}</strong>
-                      {r.description && (
-                        <div style={{ color: '#666', fontSize: 12 }}>{r.description}</div>
-                      )}
-                    </Td>
-                    <Td>{(r.rateBps / 100).toFixed(2)}%</Td>
-                    <Td>{r.isDefault ? 'yes' : '—'}</Td>
-                    <Td>{r.productCount}</Td>
-                    <Td>
-                      <button onClick={() => setEditing(r.id)} style={linkBtn}>
-                        Edit
-                      </button>{' '}
-                      <button onClick={() => destroy(r)} style={linkBtnDanger}>
-                        Delete
-                      </button>
-                    </Td>
-                  </tr>
+                  <FragmentRow
+                    key={r.id}
+                    row={r}
+                    locations={locations}
+                    expanded={expanded === r.id}
+                    onToggleExpand={() => setExpanded(expanded === r.id ? null : r.id)}
+                    onEdit={() => setEditing(r.id)}
+                    onDelete={() => destroy(r)}
+                  />
                 ),
               )}
             </tbody>
           </table>
         )}
       </div>
+    </div>
+  );
+}
+
+function FragmentRow({
+  row,
+  locations,
+  expanded,
+  onToggleExpand,
+  onEdit,
+  onDelete,
+}: {
+  row: TaxClass;
+  locations: LocationRow[];
+  expanded: boolean;
+  onToggleExpand: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+}) {
+  return (
+    <>
+      <tr style={{ borderBottom: '1px solid #f3f3f3' }}>
+        <Td>
+          <strong>{row.name}</strong>
+          {row.description && <div style={{ color: '#666', fontSize: 12 }}>{row.description}</div>}
+        </Td>
+        <Td>{(row.rateBps / 100).toFixed(2)}%</Td>
+        <Td>{row.isDefault ? 'yes' : '—'}</Td>
+        <Td>{row.productCount}</Td>
+        <Td>
+          <button onClick={onToggleExpand} style={linkBtn}>
+            {expanded ? 'Hide overrides' : 'Per-location'}
+          </button>{' '}
+          <button onClick={onEdit} style={linkBtn}>
+            Edit
+          </button>{' '}
+          <button onClick={onDelete} style={linkBtnDanger}>
+            Delete
+          </button>
+        </Td>
+      </tr>
+      {expanded && (
+        <tr>
+          <td colSpan={5} style={{ background: '#fafafa', padding: 12 }}>
+            <OverridesPanel taxClass={row} locations={locations} />
+          </td>
+        </tr>
+      )}
+    </>
+  );
+}
+
+function OverridesPanel({ taxClass, locations }: { taxClass: TaxClass; locations: LocationRow[] }) {
+  const [overrides, setOverrides] = useState<Map<string, OverrideRow> | null>(null);
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function load() {
+    try {
+      const rows = await api<OverrideRow[]>(`/v1/business/tax-classes/${taxClass.id}/rates`);
+      const next = new Map<string, OverrideRow>();
+      const nextDrafts: Record<string, string> = {};
+      for (const r of rows) {
+        next.set(r.locationId, r);
+        nextDrafts[r.locationId] = (r.rateBps / 100).toFixed(2);
+      }
+      setOverrides(next);
+      setDrafts(nextDrafts);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
+  useEffect(() => {
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [taxClass.id]);
+
+  async function saveRate(locationId: string) {
+    const raw = drafts[locationId]?.trim() ?? '';
+    if (raw === '') {
+      // Empty input → delete the override (revert to class fallback).
+      setBusy(locationId);
+      try {
+        await api(`/v1/business/tax-classes/${taxClass.id}/rates/${locationId}`, {
+          method: 'DELETE',
+        });
+        await load();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setBusy(null);
+      }
+      return;
+    }
+    const pct = Number(raw);
+    if (!Number.isFinite(pct) || pct < 0) {
+      setError(`Invalid rate for ${locationId}`);
+      return;
+    }
+    setBusy(locationId);
+    try {
+      await api(`/v1/business/tax-classes/${taxClass.id}/rates/${locationId}`, {
+        method: 'PUT',
+        body: JSON.stringify({ rateBps: Math.round(pct * 100) }),
+      });
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  if (overrides == null) return <p style={{ color: '#888', fontSize: 12, margin: 0 }}>Loading…</p>;
+  if (locations.length === 0) {
+    return <p style={{ color: '#666', fontSize: 12, margin: 0 }}>No locations yet.</p>;
+  }
+
+  return (
+    <div>
+      <p style={{ color: '#555', fontSize: 12, margin: '0 0 8px' }}>
+        Override the <strong>{(taxClass.rateBps / 100).toFixed(2)}%</strong> fallback per location.
+        Leave blank to use the fallback. Empty input + Save removes the override.
+      </p>
+      {error && <p style={{ color: '#b00', fontSize: 12 }}>{error}</p>}
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+        <thead>
+          <tr style={{ textAlign: 'left', color: '#666' }}>
+            <th style={{ padding: '4px 6px', fontWeight: 500 }}>Location</th>
+            <th style={{ padding: '4px 6px', fontWeight: 500 }}>Rate (%)</th>
+            <th style={{ padding: '4px 6px', fontWeight: 500 }}>Source</th>
+            <th />
+          </tr>
+        </thead>
+        <tbody>
+          {locations.map((l) => {
+            const ov = overrides.get(l.id);
+            return (
+              <tr key={l.id}>
+                <td style={{ padding: '4px 6px' }}>{l.name}</td>
+                <td style={{ padding: '4px 6px' }}>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min={0}
+                    placeholder={(taxClass.rateBps / 100).toFixed(2)}
+                    value={drafts[l.id] ?? ''}
+                    onChange={(e) => setDrafts((prev) => ({ ...prev, [l.id]: e.target.value }))}
+                    style={{ ...inputStyle, width: 90 }}
+                  />
+                </td>
+                <td style={{ padding: '4px 6px', color: '#666', fontSize: 12 }}>
+                  {ov ? 'override' : 'class fallback'}
+                </td>
+                <td style={{ padding: '4px 6px' }}>
+                  <button
+                    onClick={() => void saveRate(l.id)}
+                    disabled={busy === l.id}
+                    style={primaryBtn}
+                  >
+                    {busy === l.id ? '…' : 'Save'}
+                  </button>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }
