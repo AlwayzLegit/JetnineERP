@@ -91,8 +91,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   // Debug bypass: ?boot=1 boots Nest but doesn't dispatch the request through
-  // it. Reports the time taken plus any error. Lets us tell whether Nest
-  // bootstrap itself fails or whether the request dispatch is the problem.
+  // it. Reports the time taken plus any error. Always returns 200 — Next's
+  // Pages Router was rewriting our 500 JSON responses to the static /500 page,
+  // hiding the error detail.
   if (typeof req.query.boot === 'string') {
     const start = Date.now();
     try {
@@ -104,7 +105,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       });
     } catch (err) {
       const e = err as Error & { code?: string };
-      res.status(500).json({
+      res.status(200).json({
+        ok: false,
         error: 'nest_boot_failed',
         bootMs: Date.now() - start,
         name: e?.name,
