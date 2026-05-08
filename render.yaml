@@ -1,0 +1,40 @@
+# Render Blueprint — declares the JetnineERP API as a free Docker web service.
+# Drop this file into the repo, then in Render: New → Blueprint → point at
+# this repo. Render reads the spec, creates the service, and auto-deploys on
+# every push to `main`. Set the secret env vars (DATABASE_URL, BETTER_AUTH_*,
+# CORS_ORIGIN) once via the dashboard — they're flagged `sync: false` so the
+# blueprint won't try to clobber them.
+#
+# Free instance details: 512 MB RAM, sleeps after 15 min idle (~30s cold
+# start on the next request). For a low-traffic admin tool this is fine.
+
+services:
+  - type: web
+    name: jetnine-api
+    runtime: docker
+    plan: free
+    region: oregon
+    branch: main
+    rootDir: .
+    dockerfilePath: ./apps/api/Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 4000
+      - key: DATABASE_URL
+        sync: false
+      - key: BETTER_AUTH_SECRET
+        sync: false
+      - key: BETTER_AUTH_URL
+        sync: false
+      - key: AUTH_TRUSTED_ORIGINS
+        sync: false
+      - key: CORS_ORIGIN
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: RESEND_FROM_EMAIL
+        sync: false

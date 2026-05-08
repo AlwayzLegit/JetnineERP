@@ -4,11 +4,5 @@
   "installCommand": "cd ../.. && pnpm install --frozen-lockfile --prod=false",
   "buildCommand": "cd ../.. && pnpm turbo build --filter=@jetnine/web",
   "outputDirectory": ".next",
-  "ignoreCommand": "npx turbo-ignore @jetnine/web",
-  "functions": {
-    "src/pages/api/[...path].ts": {
-      "memory": 3008,
-      "maxDuration": 60
-    }
-  }
+  "ignoreCommand": "npx turbo-ignore @jetnine/web"
 }

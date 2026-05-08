@@ -1,24 +1,8 @@
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { withSentryConfig } from '@sentry/nextjs';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
-  // Trace from the monorepo root so Vercel's serverless bundler follows
-  // pnpm symlinks into apps/api/dist and other workspace packages.
-  // Without this the catch-all API function ships without
-  // @jetnine/api's compiled output and crashes with "Cannot find module".
-  outputFileTracingRoot: path.join(__dirname, '../..'),
-  outputFileTracingIncludes: {
-    '/api/**/*': [
-      '../api/dist/**/*',
-      '../../packages/db/dist/**/*',
-      '../../packages/shared/dist/**/*',
-    ],
-  },
   transpilePackages: ['@jetnine/shared', '@jetnine/ui'],
   /**
    * Service-worker headers. The browser refuses to register a worker
@@ -42,94 +26,6 @@ const nextConfig = {
         headers: [{ key: 'Cache-Control', value: 'public, max-age=300, must-revalidate' }],
       },
     ];
-  },
-  /**
-   * Public API URLs stayed as `/v1/*`, `/health`, `/ready` from when
-   * the API ran on its own origin (Phase 1.1+). Vercel's Pages
-   * Router constrains functions to `/api/*`, so we forward the
-   * legacy paths to the catch-all at `/api/[...path]` — the
-   * handler then strips `/api` and forwards to NestJS, which sees
-   * its native paths. This keeps the OpenAPI spec, the integration
-   * tests, and any external API key holders working unchanged.
-   */
-  async rewrites() {
-    return [
-      { source: '/v1/:path*', destination: '/api/v1/:path*' },
-      { source: '/health', destination: '/api/health' },
-      { source: '/ready', destination: '/api/ready' },
-    ];
-  },
-  /**
-   * `transpilePackages` covers our internal workspace TS that the
-   * Next compiler reads. `@jetnine/api` is consumed as compiled JS
-   * (its `dist/`), so it doesn't go through here, but Express and
-   * NestJS imports inside the catch-all need to resolve at build
-   * time — make sure they're externalised, not bundled.
-   */
-  /**
-   * The catch-all at /pages/api/[...path].ts pulls in the entire
-   * NestJS DI graph (via @jetnine/api/app.module). Letting webpack
-   * try to bundle it triggers parser errors on Nest's source-map
-   * files and the dynamic `require` calls @nestjs/terminus uses
-   * for optional peer-dep checks. Marking the relevant packages as
-   * webpack externals on the server bundle leaves them as plain
-   * `require()` calls resolved at runtime — which is exactly what
-   * Vercel's Node runtime + node_modules give us.
-   *
-   * `serverExternalPackages` covers Next 15's first-class
-   * externalisation; the webpack externals below catch the
-   * subpaths and pnpm-symlinked deep paths that the simple list
-   * misses.
-   */
-  serverExternalPackages: [
-    '@jetnine/api',
-    '@nestjs/common',
-    '@nestjs/core',
-    '@nestjs/platform-express',
-    '@nestjs/config',
-    '@nestjs/terminus',
-    'better-auth',
-    'drizzle-orm',
-    'postgres',
-    'ioredis',
-    'pino',
-    'pino-http',
-    'pino-pretty',
-    'nestjs-pino',
-    'stripe',
-    'resend',
-  ],
-  experimental: {
-    typedRoutes: true,
-    // Allow `require()` of ESM-only subpaths like
-    // `better-auth/adapters/drizzle` — those are reached via
-    // @jetnine/api's compiled CJS at runtime; the loose mode lets
-    // Next emit that import without rejecting at build time.
-    esmExternals: 'loose',
-  },
-  webpack: (config, { isServer }) => {
-    if (isServer) {
-      const externals = config.externals;
-      const ours = [
-        '@jetnine/api',
-        /^@nestjs\//,
-        /^better-auth($|\/)/,
-        /^drizzle-orm($|\/)/,
-        'postgres',
-        'ioredis',
-        /^pino($|\/)/,
-        /^pino-/,
-        'nestjs-pino',
-        'stripe',
-        'resend',
-      ];
-      if (Array.isArray(externals)) {
-        externals.push(...ours);
-      } else {
-        config.externals = [externals, ...ours].filter(Boolean);
-      }
-    }
-    return config;
   },
 };
 
