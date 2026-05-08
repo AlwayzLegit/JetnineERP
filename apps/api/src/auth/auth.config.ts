@@ -1,9 +1,10 @@
 import { schema } from '@jetnine/db';
-import { betterAuth, type BetterAuthOptions } from 'better-auth';
-import { drizzleAdapter } from 'better-auth/adapters/drizzle';
-import { twoFactor } from 'better-auth/plugins';
+import type { BetterAuthOptions, betterAuth as BetterAuthFactory } from 'better-auth';
+import type { drizzleAdapter as DrizzleAdapterFactory } from 'better-auth/adapters/drizzle';
+import type { twoFactor as TwoFactorFactory } from 'better-auth/plugins';
 import type { Redis } from 'ioredis';
 import type { EmailService } from '../email/email.service';
+import { importESM } from '../utils/import-esm';
 
 export interface AuthDeps {
   db: unknown; // Drizzle DB instance
@@ -21,11 +22,22 @@ export interface AuthDeps {
   requireEmailVerification: boolean;
 }
 
-export type AuthInstance = ReturnType<typeof createAuth>;
+export type AuthInstance = Awaited<ReturnType<typeof createAuth>>;
 
-export function createAuth(deps: AuthDeps) {
+export async function createAuth(deps: AuthDeps) {
   const { db, email, redis, baseURL, trustedOrigins, secret, productionMode } = deps;
   const { requireEmailVerification } = deps;
+
+  // better-auth ships ESM only. importESM bypasses TS's require()-shim for
+  // dynamic imports so the CJS-compiled apps/api output running in the
+  // Vercel function loads it via real `import(...)` instead.
+  const { betterAuth } = await importESM<{ betterAuth: typeof BetterAuthFactory }>('better-auth');
+  const { drizzleAdapter } = await importESM<{ drizzleAdapter: typeof DrizzleAdapterFactory }>(
+    'better-auth/adapters/drizzle',
+  );
+  const { twoFactor } = await importESM<{ twoFactor: typeof TwoFactorFactory }>(
+    'better-auth/plugins',
+  );
 
   const adapter = drizzleAdapter(db as Record<string, unknown>, {
     provider: 'pg',

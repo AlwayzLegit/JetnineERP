@@ -7,12 +7,12 @@ import {
   Post,
   UnauthorizedException,
 } from '@nestjs/common';
-import { hashPassword } from 'better-auth/crypto';
 import { and, eq, gte, like } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { schema } from '@jetnine/db';
 import { DRIZZLE } from '../database/database.module';
 import { Public } from '../tenancy/decorators';
+import { importESM } from '../utils/import-esm';
 
 const INVITE_PREFIX = 'invite:';
 
@@ -68,6 +68,11 @@ export class AcceptInviteController {
       .limit(1);
     if (!user) throw new NotFoundException('Invited user no longer exists');
 
+    // better-auth ships ESM only; importESM bypasses TS's require()-shim
+    // so the CJS-compiled output uses a real native dynamic import.
+    const { hashPassword } = await importESM<{
+      hashPassword: (pw: string) => Promise<string>;
+    }>('better-auth/crypto');
     const passwordHash = await hashPassword(password);
 
     // Upsert the credential. better-auth uses (provider_id='credential',
