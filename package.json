@@ -19,7 +19,7 @@
     "db:migrate": "pnpm --filter @jetnine/db migrate",
     "db:reset": "pnpm --filter @jetnine/db reset",
     "db:seed": "pnpm --filter @jetnine/db seed",
-    "prepare": "husky"
+    "prepare": "husky || true"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
