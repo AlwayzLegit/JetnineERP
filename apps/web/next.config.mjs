@@ -1,8 +1,24 @@
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { withSentryConfig } from '@sentry/nextjs';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  // Trace from the monorepo root so Vercel's serverless bundler follows
+  // pnpm symlinks into apps/api/dist and other workspace packages.
+  // Without this the catch-all API function ships without
+  // @jetnine/api's compiled output and crashes with "Cannot find module".
+  outputFileTracingRoot: path.join(__dirname, '../..'),
+  outputFileTracingIncludes: {
+    '/api/**/*': [
+      '../api/dist/**/*',
+      '../../packages/db/dist/**/*',
+      '../../packages/shared/dist/**/*',
+    ],
+  },
   transpilePackages: ['@jetnine/shared', '@jetnine/ui'],
   /**
    * Service-worker headers. The browser refuses to register a worker
