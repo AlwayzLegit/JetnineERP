@@ -71,6 +71,25 @@ export const config = {
 export default async function handler(req: NextApiRequest, res: NextApiResponse): Promise<void> {
   console.log('[catch-all] handler entered for', req.url);
 
+  // Debug bypass: ?probe=1 returns immediately without booting Nest, so we can
+  // tell whether the function infra works on its own.
+  if (typeof req.query.probe === 'string') {
+    res.status(200).json({
+      ok: true,
+      message: 'probe ok — function infra is working',
+      url: req.url,
+      method: req.method,
+      env: {
+        NODE_ENV: process.env.NODE_ENV,
+        VERCEL: process.env.VERCEL,
+        hasDatabaseUrl: Boolean(process.env.DATABASE_URL),
+        hasAuthSecret: Boolean(process.env.BETTER_AUTH_SECRET),
+        hasAuthUrl: Boolean(process.env.BETTER_AUTH_URL),
+      },
+    });
+    return;
+  }
+
   let app: Express;
   try {
     console.log('[catch-all] calling getApp()');
