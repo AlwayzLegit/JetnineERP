@@ -69,15 +69,20 @@ export const config = {
 };
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse): Promise<void> {
+  console.log('[catch-all] handler entered for', req.url);
+
   let app: Express;
   try {
+    console.log('[catch-all] calling getApp()');
     app = await getApp();
+    console.log('[catch-all] getApp() resolved');
   } catch (err) {
     // Surface boot errors directly so we can debug without scrolling
     // through truncated runtime logs. Includes the message + stack,
     // since "Cannot find module ..." in the deployed bundle is the
     // most common failure mode.
     const e = err as Error & { code?: string };
+    console.error('[catch-all] bootstrap failed:', e);
     res.status(500).json({
       error: 'bootstrap_failed',
       name: e?.name,
@@ -99,6 +104,19 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   if (!original.startsWith('/api/auth')) {
     req.url = original.replace(/^\/api(?=\/|\?|$)/, '') || '/';
   }
+  console.log('[catch-all] dispatching to express, url=', req.url);
 
-  app(req, res);
+  try {
+    app(req, res);
+  } catch (err) {
+    const e = err as Error;
+    console.error('[catch-all] express dispatch threw synchronously:', e);
+    if (!res.headersSent) {
+      res.status(500).json({
+        error: 'dispatch_failed_sync',
+        message: e?.message,
+        stack: e?.stack?.split('\n').slice(0, 20),
+      });
+    }
+  }
 }
