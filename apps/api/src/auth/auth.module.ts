@@ -16,7 +16,7 @@ import { AUTH_INSTANCE } from './auth.tokens';
   providers: [
     {
       provide: AUTH_INSTANCE,
-      useFactory: (
+      useFactory: async (
         config: ConfigService,
         db: unknown,
         email: EmailService,
@@ -34,7 +34,7 @@ import { AUTH_INSTANCE } from './auth.tokens';
           .map((s) => s.trim())
           .filter(Boolean);
 
-        return createAuth({
+        return await createAuth({
           db,
           email,
           redis,

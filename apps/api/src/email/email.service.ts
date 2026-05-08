@@ -1,6 +1,7 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Resend } from 'resend';
+import type { Resend } from 'resend';
+import { importESM } from '../utils/import-esm';
 
 export interface SendEmailInput {
   to: string;
@@ -22,16 +23,29 @@ export interface EmailTransport {
 
 class ResendTransport implements EmailTransport {
   private readonly logger = new Logger('ResendTransport');
-  private readonly resend: Resend;
+  private readonly apiKey: string;
   private readonly from: string;
+  // resend ships ESM only — lazy-init keeps the dependency loadable from
+  // the CJS-compiled apps/api output that runs in the Vercel function.
+  private resendInstance: Resend | null = null;
 
   constructor(apiKey: string, from: string) {
-    this.resend = new Resend(apiKey);
+    this.apiKey = apiKey;
     this.from = from;
   }
 
+  private async getResend(): Promise<Resend> {
+    if (this.resendInstance) return this.resendInstance;
+    const { Resend: ResendCtor } = await importESM<{ Resend: new (key: string) => Resend }>(
+      'resend',
+    );
+    this.resendInstance = new ResendCtor(this.apiKey);
+    return this.resendInstance;
+  }
+
   async send(input: SendEmailInput): Promise<void> {
-    const { error } = await this.resend.emails.send({
+    const resend = await this.getResend();
+    const { error } = await resend.emails.send({
       from: this.from,
       to: [input.to],
       subject: input.subject,
