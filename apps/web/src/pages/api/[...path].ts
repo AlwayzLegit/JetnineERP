@@ -181,13 +181,19 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }
 
       const t3 = Date.now();
+      lastStep = '4a-create-context-only';
+      const ctx = await NestFactory.createApplicationContext(AppModule, { bufferLogs: true });
+      timings[lastStep] = Date.now() - t3;
+      await ctx.close();
+
+      const t3b = Date.now();
       lastStep = '4-nest-factory-create';
       const expressApp = express();
       const nest = await NestFactory.create(AppModule, new ExpressAdapter(expressApp), {
         bufferLogs: true,
         rawBody: true,
       });
-      timings[lastStep] = Date.now() - t3;
+      timings[lastStep] = Date.now() - t3b;
       if (target < 5) {
         return void res.status(200).json({ ok: true, stoppedAfter: lastStep, timings });
       }
