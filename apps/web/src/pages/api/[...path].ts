@@ -63,7 +63,24 @@ export const config = {
 };
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse): Promise<void> {
-  const app = await getApp();
+  let app: Express;
+  try {
+    app = await getApp();
+  } catch (err) {
+    // Surface boot errors directly so we can debug without scrolling
+    // through truncated runtime logs. Includes the message + stack,
+    // since "Cannot find module ..." in the deployed bundle is the
+    // most common failure mode.
+    const e = err as Error & { code?: string };
+    res.status(500).json({
+      error: 'bootstrap_failed',
+      name: e?.name,
+      code: e?.code,
+      message: e?.message,
+      stack: e?.stack?.split('\n').slice(0, 20),
+    });
+    return;
+  }
 
   // The catch-all sits at /api/[...path] so every request lands
   // here with `/api/` already in the URL. NestJS controllers are
