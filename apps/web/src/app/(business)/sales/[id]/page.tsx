@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { api } from '@/lib/api';
 import { Money } from '@/components/money';
+import { PrintableReceipt, type ReceiptBusiness } from '@/components/printable-receipt';
 
 interface SaleLine {
   id: string;
@@ -49,6 +50,7 @@ export default function SaleDetailPage() {
   const params = useParams<{ id: string }>();
   const id = params.id as string;
   const [sale, setSale] = useState<Sale | null>(null);
+  const [business, setBusiness] = useState<ReceiptBusiness | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [refundQty, setRefundQty] = useState<Record<string, number>>({});
   const [reason, setReason] = useState('');
@@ -63,6 +65,19 @@ export default function SaleDetailPage() {
   }
   useEffect(() => {
     void load();
+    void api<{ name: string; receiptHeader: string | null; receiptFooter: string | null }>(
+      '/v1/business/settings',
+    )
+      .then((s) =>
+        setBusiness({
+          name: s.name,
+          receiptHeader: s.receiptHeader,
+          receiptFooter: s.receiptFooter,
+        }),
+      )
+      .catch(() => {
+        // Print receipt will fall back to "Sale" as the header.
+      });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
@@ -101,12 +116,48 @@ export default function SaleDetailPage() {
       <p style={{ marginBottom: 12 }}>
         <Link href="/sales">← All sales</Link>
       </p>
-      <h1 style={{ fontSize: 22, marginBottom: 4 }}>
-        <code>{sale.number}</code>
-      </h1>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 4 }}>
+        <h1 style={{ fontSize: 22, margin: 0 }}>
+          <code>{sale.number}</code>
+        </h1>
+        <button
+          type="button"
+          onClick={() => window.print()}
+          style={{
+            marginLeft: 'auto',
+            padding: '6px 12px',
+            background: '#111',
+            color: '#fff',
+            border: 'none',
+            borderRadius: 4,
+            cursor: 'pointer',
+            fontSize: 13,
+          }}
+        >
+          Print receipt
+        </button>
+      </div>
       <p style={{ color: '#666', fontSize: 13, marginBottom: 24 }}>
         {sale.status} · {new Date(sale.completedAt ?? sale.createdAt).toLocaleString()}
       </p>
+      <PrintableReceipt
+        sale={{
+          number: sale.number,
+          completedAt: sale.completedAt,
+          createdAt: sale.createdAt,
+          subtotalCents: sale.subtotalCents,
+          discountCents: sale.discountCents,
+          taxCents: sale.taxCents,
+          totalCents: sale.totalCents,
+          lines: sale.lines.map((l) => ({
+            description: l.description,
+            quantity: l.quantity,
+            totalCents: l.totalCents,
+          })),
+          payments: sale.payments,
+        }}
+        business={business}
+      />
 
       <div style={card}>
         <h2 style={section}>Lines</h2>

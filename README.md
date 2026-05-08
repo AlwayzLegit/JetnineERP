@@ -1419,3 +1419,40 @@ server-side and the queue is empty.
   spins up fresh per run, so cross-run leakage isn't a
   concern.)
 - **All format/lint/typecheck/build gates green**.
+
+## Phase 2.17 status (receipt printing)
+
+Phase 2.17 wires browser-native receipt printing into the POS
+done screen and the sale-detail page. No hardware required —
+`window.print()` works at any cashier station, on plain office
+printers, and (with the right driver) on 80mm thermal printers.
+
+- **`<PrintableReceipt>`** (`apps/web/src/components/printable-
+receipt.tsx`): self-contained presentational component, takes
+  a sale + business shape and renders a compact receipt. CSS is
+  inlined via a `<style>` block so the component drops in
+  without global stylesheet wiring. The wrapper carries a
+  `data-printable` attribute and is `display: none` on screen,
+  so it doesn't double up with the in-app receipt card.
+- **`@media print` rules**: hide every other element on the
+  page (`body * { visibility: hidden }`) and re-show only
+  `.receipt`. The `position: absolute; inset: 0` puts the
+  receipt at the top-left of the print canvas; `@page { margin:
+8mm }` keeps the trim. Designed for 80mm thermal column
+  width but reflows on letter/A4.
+- **POS done screen**: the existing "Print receipt" button
+  now actually produces a clean receipt. The button is
+  disabled when the sale is queued (`number` starts with
+  "QUEUED") so a cashier doesn't print a placeholder; the
+  button comes alive after sync.
+- **`/sales/[id]`** (re-print from history): a new "Print
+  receipt" button in the heading row. Loads `/v1/business/
+settings` alongside the sale to fill in the merchant name
+  - receipt header/footer.
+- **Header / footer reuse**: `receiptHeader` / `receiptFooter`
+  on `business_settings` (already in place since Phase 1.5)
+  feed straight into the printed receipt — no schema change.
+  Empty values are simply omitted.
+- **Tender labels**: cash / card / gift card render as
+  human-readable strings on the printed copy.
+- **All format/lint/typecheck/build gates green**.

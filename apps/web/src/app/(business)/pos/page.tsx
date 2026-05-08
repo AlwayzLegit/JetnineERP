@@ -17,6 +17,7 @@ import {
 } from '@/lib/offline';
 import { useOnlineStatus } from '@/lib/use-online-status';
 import { Money } from '@/components/money';
+import { PrintableReceipt, type ReceiptBusiness } from '@/components/printable-receipt';
 
 interface LookupRow {
   variantId: string;
@@ -86,6 +87,7 @@ export default function PosPage() {
   const [completedSale, setCompletedSale] = useState<SaleResp | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [stripeStatus, setStripeStatus] = useState<StripeStatus | null>(null);
+  const [receiptBusiness, setReceiptBusiness] = useState<ReceiptBusiness | null>(null);
   const [pendingSync, setPendingSync] = useState(0);
   const scanRef = useRef<HTMLInputElement>(null);
   const online = useOnlineStatus();
@@ -94,9 +96,12 @@ export default function PosPage() {
   useEffect(() => {
     void (async () => {
       try {
-        const [locs, stripe] = await Promise.all([
+        const [locs, stripe, settings] = await Promise.all([
           api<LocationRow[]>('/v1/pos/locations'),
           api<StripeStatus>('/v1/business/stripe').catch(() => null),
+          api<{ name: string; receiptHeader: string | null; receiptFooter: string | null }>(
+            '/v1/business/settings',
+          ).catch(() => null),
         ]);
         setLocations(locs);
         if (locs.length > 0) {
@@ -105,6 +110,13 @@ export default function PosPage() {
           setTaxRateBps(first.taxRateBps ?? 0);
         }
         setStripeStatus(stripe);
+        if (settings) {
+          setReceiptBusiness({
+            name: settings.name,
+            receiptHeader: settings.receiptHeader,
+            receiptFooter: settings.receiptFooter,
+          });
+        }
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
       }
@@ -345,7 +357,9 @@ export default function PosPage() {
   }
 
   if (phase === 'done' && completedSale) {
-    return <Receipt sale={completedSale} onNew={reset} customer={customer} />;
+    return (
+      <Receipt sale={completedSale} onNew={reset} customer={customer} business={receiptBusiness} />
+    );
   }
 
   if (phase === 'pay') {
@@ -1057,18 +1071,40 @@ function StripePaymentForm({
 function Receipt({
   sale,
   customer,
+  business,
   onNew,
 }: {
   sale: SaleResp;
   customer: CustomerRow | null;
+  business: ReceiptBusiness | null;
   onNew: () => void;
 }) {
+  const isQueued = sale.number.startsWith('QUEUED');
   return (
     <div style={{ maxWidth: 420 }}>
       <h1 style={{ fontSize: 22, marginBottom: 8 }}>Sale complete</h1>
       <p style={{ color: '#666', fontSize: 13, marginBottom: 16 }}>
         <code>{sale.number}</code>
       </p>
+      {!isQueued && (
+        <PrintableReceipt
+          sale={{
+            number: sale.number,
+            completedAt: sale.completedAt,
+            subtotalCents: sale.subtotalCents,
+            discountCents: sale.discountCents,
+            taxCents: sale.taxCents,
+            totalCents: sale.totalCents,
+            lines: sale.lines.map((l) => ({
+              description: l.description,
+              quantity: l.quantity,
+              totalCents: l.totalCents,
+            })),
+            payments: sale.payments,
+          }}
+          business={business}
+        />
+      )}
       <div style={card}>
         {customer && (
           <p style={{ fontSize: 13 }}>
@@ -1129,12 +1165,19 @@ function Receipt({
         </table>
       </div>
       <div style={{ marginTop: 16, display: 'flex', gap: 8 }}>
-        <button onClick={() => window.print()} style={primaryBtn}>
+        <button
+          onClick={() => window.print()}
+          disabled={isQueued}
+          title={isQueued ? 'Sale is still queued; print after it syncs' : ''}
+          style={isQueued ? { ...primaryBtn, opacity: 0.5, cursor: 'not-allowed' } : primaryBtn}
+        >
           Print receipt
         </button>
-        <Link href={`/sales/${sale.id}`} style={{ ...linkBtn, textDecoration: 'none' }}>
-          Open sale
-        </Link>
+        {!isQueued && (
+          <Link href={`/sales/${sale.id}`} style={{ ...linkBtn, textDecoration: 'none' }}>
+            Open sale
+          </Link>
+        )}
         <button onClick={onNew} style={linkBtn}>
           New sale
         </button>
