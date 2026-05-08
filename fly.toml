@@ -1,0 +1,60 @@
+# Fly.io app config for the Jetnine API.
+#
+# This file lives at the repo root (not in apps/api/) so fly's docker
+# build context covers the whole monorepo — the Dockerfile copies
+# pnpm-workspace.yaml, the packages/ tree, and apps/api/, none of
+# which would be reachable from a per-app context.
+#
+# First-time setup:
+#   fly launch --no-deploy --copy-config --name jetnine-api
+#   fly secrets set DATABASE_URL=... REDIS_URL=... \
+#     BETTER_AUTH_SECRET=... BETTER_AUTH_URL=https://api.example.com \
+#     STRIPE_SECRET_KEY=... STRIPE_WEBHOOK_SECRET=... \
+#     CORS_ORIGIN=https://your-vercel-url.vercel.app \
+#     RESEND_API_KEY=... SENTRY_DSN=...
+#   fly deploy
+
+app = "jetnine-api"
+primary_region = "iad"
+
+[build]
+  dockerfile = "apps/api/Dockerfile"
+
+# release_command runs in a one-off ephemeral machine after the
+# build, before any new app machine is rolled in. We use it to run
+# the compiled migrate.js, which reads sql files from
+# packages/db/drizzle and packages/db/src/migrations and applies
+# them to DATABASE_URL. If migration fails the deploy aborts —
+# old machines keep serving traffic, no schema drift sneaks in.
+[deploy]
+  release_command = "node packages/db/dist/migrate.js"
+
+[env]
+  NODE_ENV = "production"
+  PORT = "4000"
+  LOG_LEVEL = "info"
+
+[http_service]
+  internal_port = 4000
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    grace_period = "10s"
+    interval = "30s"
+    method = "GET"
+    timeout = "5s"
+    path = "/health"
+
+  [[http_service.checks]]
+    grace_period = "10s"
+    interval = "30s"
+    method = "GET"
+    timeout = "5s"
+    path = "/ready"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

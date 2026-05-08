@@ -1547,3 +1547,95 @@ now selectable from a curated set and threaded through every
   is 400 → restore USD for downstream tests in the file. Plus
   the 7 unit tests in `packages/shared`.
 - **All format/lint/typecheck/build gates green**.
+
+## Deployment
+
+Web → Vercel, API → Fly.io. Both auto-deploy on push to `main`.
+
+### Vercel (web)
+
+`apps/web/vercel.json` ships the install + build commands so a
+fresh project just needs:
+
+1. **Import the repo** at vercel.com/new and set
+   **Root Directory** to `apps/web`. (vercel.json's commands
+   `cd ../..` to reach the workspace root.)
+2. **Environment variables** (Production + Preview):
+   - `NEXT_PUBLIC_API_URL` — `https://jetnine-api.fly.dev` (or
+     wherever Fly puts the API)
+   - `NEXT_PUBLIC_SENTRY_DSN` — optional, the web SDK no-ops
+     without it
+   - `SENTRY_AUTH_TOKEN`, `SENTRY_ORG`, `SENTRY_PROJECT` —
+     optional, only used by the build to upload sourcemaps
+3. **Auto-deploy**: enabled by default on `main`. Preview
+   deploys go up on every PR.
+4. The service worker (`/sw.js`) is gated behind
+   `NODE_ENV=production`, so dev `pnpm dev` runs unaffected.
+   `next.config.mjs` adds the `Service-Worker-Allowed: /`
+   header so the worker can claim the whole origin.
+
+### Fly.io (API)
+
+`fly.toml` lives at the repo root so the docker build context
+covers the whole monorepo (the Dockerfile copies the
+`packages/` tree alongside `apps/api/`).
+
+First-time setup:
+
+```bash
+# 1. Authenticate
+fly auth login
+
+# 2. Provision the app, Postgres, Redis (one-shot)
+fly launch --no-deploy --copy-config --name jetnine-api
+fly postgres create --name jetnine-api-db --region iad
+fly postgres attach jetnine-api-db --app jetnine-api  # sets DATABASE_URL
+fly redis create --name jetnine-api-redis --region iad
+# fly redis attach is in flux; copy the URL from `fly redis status`
+# and set REDIS_URL manually:
+fly secrets set --app jetnine-api REDIS_URL=redis://...
+
+# 3. Application secrets (one-time)
+fly secrets set --app jetnine-api \
+  BETTER_AUTH_SECRET=$(openssl rand -hex 32) \
+  BETTER_AUTH_URL=https://jetnine-api.fly.dev \
+  CORS_ORIGIN=https://your-app.vercel.app \
+  AUTH_TRUSTED_ORIGINS=https://your-app.vercel.app \
+  STRIPE_SECRET_KEY=sk_live_... \
+  STRIPE_PUBLISHABLE_KEY=pk_live_... \
+  STRIPE_WEBHOOK_SECRET=whsec_... \
+  RESEND_API_KEY=re_... \
+  SENTRY_DSN=...
+
+# 4. First deploy
+fly deploy
+```
+
+Once deployed, point the web's `NEXT_PUBLIC_API_URL` at
+`https://jetnine-api.fly.dev` (or your custom domain) and
+redeploy the web on Vercel.
+
+### Auto-deploy
+
+`.github/workflows/fly-deploy.yml` runs `flyctl deploy
+--remote-only` on every push to `main` that touches the API,
+its workspace deps, or the Dockerfile. Add the `FLY_API_TOKEN`
+secret to the GitHub repo (Settings → Secrets and variables →
+Actions → New repository secret) — generate it with
+`fly tokens create deploy` in the API directory.
+
+The fly `release_command` (`node packages/db/dist/migrate.js`)
+runs migrations on every deploy. If a migration fails the
+deploy aborts and the previous machine keeps serving — no
+mid-deploy schema drift.
+
+### Smoke checklist after first deploy
+
+- `curl https://jetnine-api.fly.dev/health` → `{"status":"ok"}`
+- `curl https://jetnine-api.fly.dev/v1/openapi.json` → 200,
+  schema body
+- Open the Vercel URL → `/login` should render
+- Sign up → verify email (Resend captured email or live
+  inbox) → land on `/dashboard`
+- POS register loads `/v1/pos/locations` from the Fly URL
+  (devtools network tab)

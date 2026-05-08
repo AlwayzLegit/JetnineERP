@@ -1,0 +1,38 @@
+name: Deploy API to Fly
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/api/**'
+      - 'packages/db/**'
+      - 'packages/shared/**'
+      - 'packages/config/**'
+      - 'pnpm-lock.yaml'
+      - 'turbo.json'
+      - 'fly.toml'
+      - 'Dockerfile'
+      - 'apps/api/Dockerfile'
+      - '.github/workflows/fly-deploy.yml'
+
+# Only one deploy at a time. A second push while a deploy is mid-
+# flight cancels the in-progress run; the latest commit always wins.
+concurrency:
+  group: fly-deploy
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: fly deploy
+    runs-on: ubuntu-latest
+    # Don't fan out — Fly only needs one runner.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+      # `--remote-only` builds inside Fly's builder VMs instead of
+      # this runner — no Docker layer cache locally, but cuts the
+      # transfer time and isolates secrets. The release_command in
+      # fly.toml runs migrations as part of the deploy.
+      - run: flyctl deploy --remote-only
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
