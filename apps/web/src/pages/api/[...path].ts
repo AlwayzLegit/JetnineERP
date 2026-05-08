@@ -162,6 +162,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   if (typeof req.query.step === 'string') {
     const target = Number(req.query.step);
     const timings: Record<string, number> = {};
+    const memory: Record<string, number> = {};
+    const mem = (label: string) => {
+      memory[label] = Math.round(process.memoryUsage().rss / 1024 / 1024);
+    };
+    mem('start');
     let lastStep = 'start';
     try {
       const t0 = Date.now();
@@ -169,7 +174,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const { NestFactory } = await import('@nestjs/core');
       timings[lastStep] = Date.now() - t0;
       if (target < 2) {
-        return void res.status(200).json({ ok: true, stoppedAfter: lastStep, timings });
+        mem(lastStep);
+        return void res.status(200).json({ ok: true, stoppedAfter: lastStep, timings, memory });
       }
 
       const t1 = Date.now();
@@ -178,7 +184,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const { default: express } = await import('express');
       timings[lastStep] = Date.now() - t1;
       if (target < 3) {
-        return void res.status(200).json({ ok: true, stoppedAfter: lastStep, timings });
+        mem(lastStep);
+        return void res.status(200).json({ ok: true, stoppedAfter: lastStep, timings, memory });
       }
 
       const t2 = Date.now();
@@ -186,7 +193,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const { AppModule } = await import('@jetnine/api/app.module');
       timings[lastStep] = Date.now() - t2;
       if (target < 4) {
-        return void res.status(200).json({ ok: true, stoppedAfter: lastStep, timings });
+        mem(lastStep);
+        return void res.status(200).json({ ok: true, stoppedAfter: lastStep, timings, memory });
       }
 
       const t3 = Date.now();
@@ -207,7 +215,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       });
       timings[lastStep] = Date.now() - t3b;
       if (target < 5) {
-        return void res.status(200).json({ ok: true, stoppedAfter: lastStep, timings });
+        mem(lastStep);
+        return void res.status(200).json({ ok: true, stoppedAfter: lastStep, timings, memory });
       }
 
       const t4 = Date.now();
@@ -217,10 +226,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return void res.status(200).json({ ok: true, stoppedAfter: lastStep, timings });
     } catch (err) {
       const e = err as Error & { code?: string };
+      mem('failed');
       res.status(200).json({
         ok: false,
         failedAt: lastStep,
         timings,
+        memory,
         name: e?.name,
         code: e?.code,
         message: e?.message,
