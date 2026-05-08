@@ -90,6 +90,32 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return;
   }
 
+  // Debug bypass: ?boot=1 boots Nest but doesn't dispatch the request through
+  // it. Reports the time taken plus any error. Lets us tell whether Nest
+  // bootstrap itself fails or whether the request dispatch is the problem.
+  if (typeof req.query.boot === 'string') {
+    const start = Date.now();
+    try {
+      await getApp();
+      res.status(200).json({
+        ok: true,
+        message: 'nest booted',
+        bootMs: Date.now() - start,
+      });
+    } catch (err) {
+      const e = err as Error & { code?: string };
+      res.status(500).json({
+        error: 'nest_boot_failed',
+        bootMs: Date.now() - start,
+        name: e?.name,
+        code: e?.code,
+        message: e?.message,
+        stack: e?.stack?.split('\n').slice(0, 30),
+      });
+    }
+    return;
+  }
+
   let app: Express;
   try {
     console.log('[catch-all] calling getApp()');
