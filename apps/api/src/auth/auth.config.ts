@@ -13,12 +13,19 @@ export interface AuthDeps {
   trustedOrigins: string[];
   secret: string;
   productionMode: boolean;
+  /**
+   * When true, signups must verify their email before signing in.
+   * Set to false on deployments without a working email transport so
+   * the user isn't stuck waiting for an email that's only logged.
+   */
+  requireEmailVerification: boolean;
 }
 
 export type AuthInstance = ReturnType<typeof createAuth>;
 
 export function createAuth(deps: AuthDeps) {
   const { db, email, redis, baseURL, trustedOrigins, secret, productionMode } = deps;
+  const { requireEmailVerification } = deps;
 
   const adapter = drizzleAdapter(db as Record<string, unknown>, {
     provider: 'pg',
@@ -74,8 +81,11 @@ export function createAuth(deps: AuthDeps) {
 
     emailAndPassword: {
       enabled: true,
-      autoSignIn: false,
-      requireEmailVerification: true,
+      // Auto-sign-in only when the merchant hasn't configured email
+      // delivery — otherwise they'd never receive the verification
+      // link and the signup would dead-end.
+      autoSignIn: !requireEmailVerification,
+      requireEmailVerification,
       minPasswordLength: 12,
       maxPasswordLength: 128,
       sendResetPassword: async ({ user, url }) => {

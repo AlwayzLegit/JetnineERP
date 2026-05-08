@@ -42,6 +42,13 @@ import { AUTH_INSTANCE } from './auth.tokens';
           trustedOrigins,
           secret,
           productionMode: config.get<string>('NODE_ENV') === 'production',
+          // Email verification is only enforced when a real transport
+          // is configured. Without RESEND_API_KEY the memory transport
+          // would log the verification email but never deliver it,
+          // leaving signups stuck. Auto-verify in that case so a fresh
+          // deploy is testable end-to-end before the merchant configures
+          // Resend.
+          requireEmailVerification: Boolean(config.get<string>('RESEND_API_KEY')),
         });
       },
       inject: [ConfigService, DRIZZLE, EmailService, REDIS],

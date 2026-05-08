@@ -94,7 +94,15 @@ export class EmailService {
 
 export function createEmailTransport(config: ConfigService): EmailTransport {
   const apiKey = config.get<string>('RESEND_API_KEY');
-  const from = config.get<string>('EMAIL_FROM') ?? 'Jetnine <noreply@jetnine.local>';
+  // Accept either env name. EMAIL_FROM is the legacy var; RESEND_FROM_EMAIL
+  // pairs visually with RESEND_API_KEY in the Vercel dashboard. Default
+  // points at Resend's testing-only sender, which lets a fresh deploy
+  // send to the address that owns the Resend account before the
+  // merchant verifies their own domain.
+  const from =
+    config.get<string>('RESEND_FROM_EMAIL') ??
+    config.get<string>('EMAIL_FROM') ??
+    'Jetnine <onboarding@resend.dev>';
   if (apiKey) {
     return new ResendTransport(apiKey, from);
   }
