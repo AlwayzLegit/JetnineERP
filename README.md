@@ -1636,6 +1636,45 @@ mid-deploy schema drift.
   schema body
 - Open the Vercel URL → `/login` should render
 - Sign up → verify email (Resend captured email or live
-  inbox) → land on `/dashboard`
+  inbox) → land on `/welcome` (no-membership) or
+  `/dashboard` with the onboarding checklist
 - POS register loads `/v1/pos/locations` from the Fly URL
   (devtools network tab)
+
+## First-run onboarding (Phase 2.20)
+
+A fresh signup now lands in a guided path instead of a blank
+dashboard. Three pieces:
+
+- **`POST /v1/onboarding/business`**: any authenticated user
+  can self-serve a new business (becomes its Owner). Seeds
+  the system roles + permissions, opens a 14-day trial
+  subscription, accepts `currencyCode` and
+  `defaultTaxRateBps` up front so the new tenant doesn't
+  need a follow-up settings round-trip. Capped at 5
+  businesses per user (super-admin path is uncapped).
+- **`GET /v1/onboarding/checklist`**: returns a 5-step
+  "next steps" panel for the user's most recently-created
+  business — business created → location added → product
+  added → teammate invited → Stripe connected. Each step
+  carries an `href` so the UI links to the relevant page.
+  Returns `null` when the user has no memberships at all.
+- **Web**:
+  - `/welcome` (new): branches on memberships. With existing
+    memberships → picker that sets the active-business
+    cookie and bounces to `/dashboard`. Without → "Create
+    your business" form (name, slug, currency, default tax
+    rate).
+  - `/dashboard` (rewrite): redirects to `/welcome` on first
+    visit if the user has zero memberships, otherwise
+    renders a "Get started" checklist card that ticks off
+    as the merchant configures the platform. Hides itself
+    once every step is green; replaces with an "Open the
+    register" nudge.
+- **8 integration tests** in
+  `apps/api/test/onboarding.int.spec.ts` cover the empty-
+  checklist case, full self-service create, step-tick when
+  adding a location, slug uniqueness, slug validation,
+  currency validation, and the 5-business cap.
+- **All format/lint/typecheck/build gates green**. CI
+  provisions `jetnine_onboarding`.

@@ -22,6 +22,7 @@ import { GiftCardsModule } from './gift-cards/gift-cards.module';
 import { HealthController } from './health/health.controller';
 import { IdempotencyModule } from './idempotency/idempotency.module';
 import { InventoryModule } from './inventory/inventory.module';
+import { OnboardingModule } from './onboarding/onboarding.module';
 import { OpenApiModule } from './openapi/openapi.module';
 import { PurchasingModule } from './purchasing/purchasing.module';
 import { RedisModule } from './redis/redis.module';
@@ -88,6 +89,7 @@ import { WebhooksModule } from './webhooks/webhooks.module';
     WebhooksModule,
     ApiKeysModule,
     OpenApiModule,
+    OnboardingModule,
     AdminModule,
   ],
   controllers: [AppController, HealthController],
