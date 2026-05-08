@@ -23,6 +23,27 @@ import 'reflect-metadata';
 import type { Express } from 'express';
 import type { NextApiRequest, NextApiResponse } from 'next';
 
+// Capture whatever's silently crashing the function so we can surface it
+// in the next request's response.
+const capturedFailures: Array<{ kind: string; message?: string; stack?: string[] }> = [];
+process.on('uncaughtException', (err) => {
+  console.error('[catch-all] uncaughtException:', err);
+  capturedFailures.push({
+    kind: 'uncaughtException',
+    message: err?.message,
+    stack: err?.stack?.split('\n').slice(0, 30),
+  });
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('[catch-all] unhandledRejection:', reason);
+  const e = reason as Error | undefined;
+  capturedFailures.push({
+    kind: 'unhandledRejection',
+    message: e?.message ?? String(reason),
+    stack: e?.stack?.split('\n').slice(0, 30),
+  });
+});
+
 let cached: Express | null = null;
 let booting: Promise<Express> | null = null;
 
@@ -106,7 +127,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   // Debug bypass: ?probe=1 returns immediately without booting Nest, so we can
-  // tell whether the function infra works on its own.
+  // tell whether the function infra works on its own. Includes any
+  // capturedFailures from previous invocations on the same warm instance.
   if (typeof req.query.probe === 'string') {
     res.status(200).json({
       ok: true,
@@ -120,6 +142,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         hasAuthSecret: Boolean(process.env.BETTER_AUTH_SECRET),
         hasAuthUrl: Boolean(process.env.BETTER_AUTH_URL),
       },
+      capturedFailures,
     });
     return;
   }
