@@ -71,6 +71,40 @@ export const config = {
 export default async function handler(req: NextApiRequest, res: NextApiResponse): Promise<void> {
   console.log('[catch-all] handler entered for', req.url);
 
+  // Debug bypass: ?fail=sync throws synchronously to see whether Next or
+  // Vercel rewrites our error response, vs ?fail=catch which throws and
+  // catches inside the handler.
+  if (req.query.fail === 'sync') {
+    throw new Error('synthetic-sync-throw');
+  }
+  if (req.query.fail === 'catch') {
+    try {
+      throw new Error('synthetic-caught-throw');
+    } catch (err) {
+      const e = err as Error;
+      res.status(500).json({
+        ok: false,
+        error: 'caught_throw',
+        status_returned: 500,
+        message: e.message,
+      });
+      return;
+    }
+  }
+  if (req.query.fail === 'catch200') {
+    try {
+      throw new Error('synthetic-caught-throw-200');
+    } catch (err) {
+      const e = err as Error;
+      res.status(200).json({
+        ok: false,
+        error: 'caught_throw_200',
+        message: e.message,
+      });
+      return;
+    }
+  }
+
   // Debug bypass: ?probe=1 returns immediately without booting Nest, so we can
   // tell whether the function infra works on its own.
   if (typeof req.query.probe === 'string') {
