@@ -4,6 +4,7 @@ import type { ReactNode } from 'react';
 export const metadata: Metadata = {
   title: 'Jetnine ERP',
   description: 'Multi-tenant browser POS and retail operations platform.',
+  manifest: '/manifest.webmanifest',
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

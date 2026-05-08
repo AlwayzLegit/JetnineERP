@@ -1340,3 +1340,47 @@ sale can be retried any number of times without double-charging.
   needs to be online once before the cashier can interact with
   it. App-shell caching is queued for a follow-up phase.
 - **All format/lint/typecheck/build gates green**.
+
+## Phase 2.15 status (offline POS — app-shell service worker)
+
+Phase 2.15 closes the hard-refresh gap from Phase 2.14: the POS
+shell now survives a full reload while offline, so a cashier
+who accidentally hits refresh (or whose iPad sleeps and wakes)
+keeps a working register.
+
+- **`apps/web/public/sw.js`**: service worker scoped to `/pos`
+  navigations + Next.js static chunks. Two named caches:
+  `jetnine-shell-v1` (HTML) and `jetnine-static-v1` (hashed
+  JS/CSS). The activate step prunes any cache whose name
+  doesn't match the current pair, so a deploy bump cleanly
+  retires old artifacts.
+  - Static chunks (`/_next/static/*`) — cache-first, write-
+    through. Paths are content-hashed so the cached entry is
+    safely immutable.
+  - POS navigations (`/pos`, `/pos/pending`) — stale-while-
+    revalidate. Cached HTML loads instantly even offline; a
+    fresh fetch updates the cache for next time.
+  - Manifest + favicon — cache-first.
+  - Cross-origin requests (the API), `/api/auth/*` flows, and
+    every other route — pass through. We deliberately do NOT
+    cache anything tenant-specific or auth-bearing.
+  - Last-resort offline fallback: a tiny synthesized HTML
+    page with a "you haven't loaded this yet" message, so the
+    browser doesn't show its raw chrome error.
+- **`apps/web/public/manifest.webmanifest`**: minimal PWA
+  manifest with `start_url: /pos`, `display: standalone` so
+  the cashier can "Add to Home Screen" on an iPad and launch
+  the register full-screen.
+- **`<ServiceWorkerRegister>`** client component: registers
+  `/sw.js` once on mount, scoped to `/`. No-op during SSR and
+  on the dev server (Next HMR misbehaves under SW caching);
+  set `NEXT_PUBLIC_SW_DEV=1` to opt in for local debugging.
+- **Per-route opt-in**: the register component lives in
+  `apps/web/src/app/(business)/pos/layout.tsx`, not the root
+  layout. Only `/pos` and `/pos/pending` register the SW —
+  the rest of the back office (which expects fresh server-
+  rendered HTML for tenant data) is unaffected.
+- **Cache versioning**: bumping `VERSION` in `sw.js` retires
+  both caches on the next activate. Use this when the shell
+  HTML or chunk graph changes meaningfully.
+- **All format/lint/typecheck/build gates green**.
