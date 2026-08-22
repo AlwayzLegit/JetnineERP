@@ -24,6 +24,7 @@ import { IdempotencyModule } from './idempotency/idempotency.module';
 import { InventoryModule } from './inventory/inventory.module';
 import { OnboardingModule } from './onboarding/onboarding.module';
 import { OpenApiModule } from './openapi/openapi.module';
+import { OrdersModule } from './orders/orders.module';
 import { PurchasingModule } from './purchasing/purchasing.module';
 import { RedisModule } from './redis/redis.module';
 import { ReportsModule } from './reports/reports.module';
@@ -82,6 +83,7 @@ import { WebhooksModule } from './webhooks/webhooks.module';
     PurchasingModule,
     TransfersModule,
     SalesModule,
+    OrdersModule,
     CashModule,
     ReportsModule,
     BillingModule,

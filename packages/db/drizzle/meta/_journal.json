@@ -127,6 +127,13 @@
       "when": 1778220821892,
       "tag": "0017_parched_sprite",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1787381630538,
+      "tag": "0018_storis_order_spine",
+      "breakpoints": true
     }
   ]
 }

@@ -1,4 +1,4 @@
-import { ALL_PERMISSIONS, type Permission } from './permissions.js';
+import { ALL_PERMISSIONS, SUPER_ADMIN_ONLY_PERMISSIONS, type Permission } from './permissions.js';
 
 export type SystemRoleName = 'Owner' | 'Manager' | 'Cashier' | 'Inventory Clerk' | 'Bookkeeper';
 
@@ -8,7 +8,13 @@ export interface SystemRoleDefinition {
   permissions: Permission[];
 }
 
-const ownerPermissions: Permission[] = [...ALL_PERMISSIONS];
+// Platform surfaces (templates, agencies) belong to the super admin, not
+// to any business role — not even Owner.
+const superAdminOnly = new Set<Permission>(SUPER_ADMIN_ONLY_PERMISSIONS);
+
+const businessPermissions: Permission[] = ALL_PERMISSIONS.filter((p) => !superAdminOnly.has(p));
+
+const ownerPermissions: Permission[] = [...businessPermissions];
 
 const managerExclusions = new Set<Permission>([
   'business.billing.view',
@@ -17,7 +23,9 @@ const managerExclusions = new Set<Permission>([
   'users.disable',
 ]);
 
-const managerPermissions: Permission[] = ALL_PERMISSIONS.filter((p) => !managerExclusions.has(p));
+const managerPermissions: Permission[] = businessPermissions.filter(
+  (p) => !managerExclusions.has(p),
+);
 
 const cashierPermissions: Permission[] = [
   'pos.access',
@@ -32,6 +40,16 @@ const cashierPermissions: Permission[] = [
   'inventory.view',
   'discounts.view',
   'gift_cards.view',
+  // Cutover: a cashier writes orders and takes money on them, but does
+  // not reschedule deliveries or cancel someone else's order.
+  'orders.view',
+  'orders.create',
+  'orders.update',
+  'orders.deposit.take',
+  'deliveries.view',
+  'commissions.view_own',
+  'service_orders.view',
+  'service_orders.create',
 ];
 
 const inventoryClerkPermissions: Permission[] = [
@@ -45,6 +63,15 @@ const inventoryClerkPermissions: Permission[] = [
   'purchase_orders.view',
   'purchase_orders.create',
   'purchase_orders.receive',
+  // Cutover: the clerk works the special-order queue, the serial book,
+  // and loads the trucks.
+  'orders.view',
+  'special_orders.manage',
+  'serials.view',
+  'serials.manage',
+  'deliveries.view',
+  'deliveries.schedule',
+  'deliveries.complete',
 ];
 
 const bookkeeperPermissions: Permission[] = [
@@ -54,6 +81,13 @@ const bookkeeperPermissions: Permission[] = [
   'reports.export',
   'sales.view',
   'audit.view',
+  // Cutover: the books need order revenue, receivables, and the
+  // commission run — read-only.
+  'orders.view',
+  'deliveries.view',
+  'payment_plans.view',
+  'commissions.view_all',
+  'service_orders.view',
 ];
 
 export const SYSTEM_ROLES: SystemRoleDefinition[] = [

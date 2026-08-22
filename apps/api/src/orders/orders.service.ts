@@ -1,0 +1,357 @@
+import { Inject, Injectable } from '@nestjs/common';
+import { and, eq, inArray, sql } from 'drizzle-orm';
+import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
+import { schema } from '@jetnine/db';
+import { DRIZZLE } from '../database/database.module';
+import { computeTotals } from '../sales/totals';
+import {
+  planReleases,
+  planReservations,
+  type Release,
+  type Reservation,
+  type Shortfall,
+  type StockLevel,
+} from './order-math';
+
+export interface OrderTotalsSnapshot {
+  subtotalCents: number;
+  discountCents: number;
+  taxCents: number;
+  totalCents: number;
+}
+
+/**
+ * Order-side operations that outlive the controller: stock commitment
+ * and totals maintenance. The delivery/fulfillment flow (Day 3) calls the
+ * same reserve/release primitives, so they live here rather than inline
+ * in the controller.
+ *
+ * Every method takes the caller's `db` handle. Inside a request that is
+ * the RLS transaction opened by `RlsContextInterceptor`, which is what
+ * makes a failure anywhere in a multi-step write roll the whole thing
+ * back — including the inventory side effects.
+ */
+@Injectable()
+export class OrdersService {
+  constructor(@Inject(DRIZZLE) private readonly db: PostgresJsDatabase) {}
+
+  /**
+   * Read current stock for a set of variants at one location, keyed by
+   * variant id. Variants with no `inventory_levels` row are simply
+   * absent — `planReservations` reads that as zero available.
+   */
+  async stockLevels(
+    db: PostgresJsDatabase,
+    locationId: string,
+    variantIds: readonly string[],
+    opts: { lock?: boolean } = {},
+  ): Promise<Map<string, StockLevel>> {
+    if (variantIds.length === 0) return new Map();
+    const query = db
+      .select({
+        variantId: schema.inventoryLevels.variantId,
+        onHand: schema.inventoryLevels.onHand,
+        reserved: schema.inventoryLevels.reserved,
+      })
+      .from(schema.inventoryLevels)
+      .where(
+        and(
+          eq(schema.inventoryLevels.locationId, locationId),
+          inArray(schema.inventoryLevels.variantId, [...new Set(variantIds)]),
+        ),
+      );
+    // Reserving is read-then-write: without a lock, two registers can both
+    // read "1 available" and both commit it. Locking the level rows for the
+    // rest of the request transaction serializes them, so the second one
+    // sees the first one's reservation and reports a shortfall instead.
+    //
+    // A variant with no level row yet cannot be locked (there is no row),
+    // but it also has nothing to reserve — planReservations reads a missing
+    // row as zero available — so the unprotected case commits nothing.
+    const rows = await (opts.lock ? query.for('update') : query);
+    return new Map(rows.map((r) => [r.variantId, { onHand: r.onHand, reserved: r.reserved }]));
+  }
+
+  /**
+   * Commit units to an order: bump `inventory_levels.reserved`, bump the
+   * line's `qty_reserved`, and write an `order_reserve` movement per line
+   * (D3 — movements stay the single audit trail).
+   *
+   * Reservations move `reserved`, never `on_hand`: the goods are still in
+   * the building, they are just spoken for. `on_hand` drops at
+   * fulfillment.
+   */
+  async applyReservations(
+    db: PostgresJsDatabase,
+    args: {
+      businessId: string;
+      orderId: string;
+      locationId: string;
+      actorUserId: string | null;
+      reservations: readonly Reservation[];
+    },
+  ): Promise<void> {
+    for (const r of args.reservations) {
+      await db
+        .update(schema.orderLines)
+        .set({ qtyReserved: sql`${schema.orderLines.qtyReserved} + ${r.quantity}` })
+        .where(eq(schema.orderLines.id, r.orderLineId));
+
+      await db
+        .insert(schema.inventoryLevels)
+        .values({
+          businessId: args.businessId,
+          variantId: r.variantId,
+          locationId: args.locationId,
+          onHand: 0,
+          reserved: r.quantity,
+        })
+        .onConflictDoUpdate({
+          target: [schema.inventoryLevels.variantId, schema.inventoryLevels.locationId],
+          set: {
+            reserved: sql`${schema.inventoryLevels.reserved} + ${r.quantity}`,
+            updatedAt: new Date(),
+          },
+        });
+
+      // Delta is 0 because on-hand did not change — the movement records
+      // the commitment itself, which is what the audit trail needs to
+      // explain why available stock dropped.
+      await db.insert(schema.inventoryMovements).values({
+        businessId: args.businessId,
+        variantId: r.variantId,
+        locationId: args.locationId,
+        delta: 0,
+        reason: 'order_reserve',
+        referenceType: 'order',
+        referenceId: args.orderId,
+        actorUserId: args.actorUserId,
+        notes: `reserved ${r.quantity}`,
+      });
+    }
+  }
+
+  /**
+   * Hand committed units back to available stock. Mirrors
+   * `applyReservations`; used by cancel and by line removal.
+   *
+   * `reserved` is floored at zero defensively — a negative reservation
+   * count would make every availability read wrong, and no amount of
+   * upstream care is worth trusting a counter that can go negative.
+   */
+  async applyReleases(
+    db: PostgresJsDatabase,
+    args: {
+      businessId: string;
+      orderId: string;
+      locationId: string;
+      actorUserId: string | null;
+      releases: readonly Release[];
+      /** Skip the order_lines write when the lines are being deleted anyway. */
+      updateLines?: boolean;
+    },
+  ): Promise<void> {
+    const updateLines = args.updateLines ?? true;
+    for (const r of args.releases) {
+      if (updateLines) {
+        await db
+          .update(schema.orderLines)
+          .set({
+            qtyReserved: sql`GREATEST(0, ${schema.orderLines.qtyReserved} - ${r.quantity})`,
+          })
+          .where(eq(schema.orderLines.id, r.orderLineId));
+      }
+
+      await db
+        .update(schema.inventoryLevels)
+        .set({
+          reserved: sql`GREATEST(0, ${schema.inventoryLevels.reserved} - ${r.quantity})`,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(schema.inventoryLevels.variantId, r.variantId),
+            eq(schema.inventoryLevels.locationId, args.locationId),
+          ),
+        );
+
+      await db.insert(schema.inventoryMovements).values({
+        businessId: args.businessId,
+        variantId: r.variantId,
+        locationId: args.locationId,
+        delta: 0,
+        reason: 'order_release',
+        referenceType: 'order',
+        referenceId: args.orderId,
+        actorUserId: args.actorUserId,
+        notes: `released ${r.quantity}`,
+      });
+    }
+  }
+
+  /**
+   * Reserve as much of an order as stock allows, returning what could not
+   * be covered. Idempotent by construction: `planReservations` only ever
+   * asks for the units a line still lacks, so calling this twice in a row
+   * reserves nothing the second time.
+   */
+  async reserveOrder(
+    db: PostgresJsDatabase,
+    args: { businessId: string; orderId: string; locationId: string; actorUserId: string | null },
+  ): Promise<{ reservations: Reservation[]; shortfalls: Shortfall[] }> {
+    const lines = await db
+      .select({
+        id: schema.orderLines.id,
+        variantId: schema.orderLines.variantId,
+        quantity: schema.orderLines.quantity,
+        qtyReserved: schema.orderLines.qtyReserved,
+        lineType: schema.orderLines.lineType,
+      })
+      .from(schema.orderLines)
+      .where(eq(schema.orderLines.orderId, args.orderId));
+
+    const variantIds = lines.map((l) => l.variantId).filter((id): id is string => Boolean(id));
+    const levels = await this.stockLevels(db, args.locationId, variantIds, { lock: true });
+    const plan = planReservations(lines, levels);
+
+    await this.applyReservations(db, { ...args, reservations: plan.reservations });
+    return plan;
+  }
+
+  /** Release everything an order currently holds. */
+  async releaseOrder(
+    db: PostgresJsDatabase,
+    args: {
+      businessId: string;
+      orderId: string;
+      locationId: string;
+      actorUserId: string | null;
+      updateLines?: boolean;
+    },
+  ): Promise<Release[]> {
+    const lines = await db
+      .select({
+        id: schema.orderLines.id,
+        variantId: schema.orderLines.variantId,
+        quantity: schema.orderLines.quantity,
+        qtyReserved: schema.orderLines.qtyReserved,
+        lineType: schema.orderLines.lineType,
+      })
+      .from(schema.orderLines)
+      .where(eq(schema.orderLines.orderId, args.orderId));
+
+    const releases = planReleases(lines);
+    await this.applyReleases(db, { ...args, releases });
+    return releases;
+  }
+
+  /**
+   * Recompute an order's header money from its lines and persist it.
+   * Called after every line mutation so the header is never stale —
+   * totals are stored (they're what the customer signed), but they are
+   * always a function of the lines, never edited directly.
+   */
+  async recomputeTotals(db: PostgresJsDatabase, orderId: string): Promise<OrderTotalsSnapshot> {
+    const [order] = await db
+      .select({ orderDiscountCents: schema.orders.orderDiscountCents })
+      .from(schema.orders)
+      .where(eq(schema.orders.id, orderId))
+      .limit(1);
+
+    const lines = await db
+      .select({
+        id: schema.orderLines.id,
+        variantId: schema.orderLines.variantId,
+        description: schema.orderLines.description,
+        quantity: schema.orderLines.quantity,
+        unitPriceCents: schema.orderLines.unitPriceCents,
+        discountCents: schema.orderLines.discountCents,
+        taxRateBps: schema.orderLines.taxRateBps,
+      })
+      .from(schema.orderLines)
+      .where(eq(schema.orderLines.orderId, orderId))
+      .orderBy(schema.orderLines.createdAt);
+
+    if (lines.length === 0) {
+      const empty: OrderTotalsSnapshot = {
+        subtotalCents: 0,
+        discountCents: 0,
+        taxCents: 0,
+        totalCents: 0,
+      };
+      await db
+        .update(schema.orders)
+        .set({ ...empty, updatedAt: new Date() })
+        .where(eq(schema.orders.id, orderId));
+      return empty;
+    }
+
+    const totals = computeTotals({
+      taxRateBps: 0,
+      orderDiscountCents: order?.orderDiscountCents ?? 0,
+      lines: lines.map((l) => ({
+        variantId: l.variantId ?? l.id,
+        description: l.description,
+        quantity: l.quantity,
+        unitPriceCents: l.unitPriceCents,
+        lineDiscountCents: l.discountCents,
+        taxRateBps: l.taxRateBps,
+      })),
+    });
+
+    // Push each line's share of tax back down — the order-level discount
+    // is allocated pro-rata inside computeTotals, so a line's tax is only
+    // knowable after the whole cart is priced.
+    for (let i = 0; i < lines.length; i++) {
+      const computed = totals.lines[i]!;
+      await db
+        .update(schema.orderLines)
+        .set({ taxCents: computed.taxCents, totalCents: computed.totalCents })
+        .where(eq(schema.orderLines.id, lines[i]!.id));
+    }
+
+    const snapshot: OrderTotalsSnapshot = {
+      subtotalCents: totals.subtotalCents,
+      discountCents: totals.discountCents,
+      taxCents: totals.taxCents,
+      totalCents: totals.totalCents,
+    };
+    await db
+      .update(schema.orders)
+      .set({ ...snapshot, updatedAt: new Date() })
+      .where(eq(schema.orders.id, orderId));
+    return snapshot;
+  }
+
+  /**
+   * Per-business, per-year sequential order number ("SO-2026-000123").
+   * Same shape and same retry behaviour as the POS sale numbering — a
+   * concurrent insert that wins the race just pushes us to the next
+   * candidate.
+   */
+  async generateOrderNumber(db: PostgresJsDatabase, businessId: string): Promise<string> {
+    const year = new Date().getUTCFullYear();
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const rows = await db
+        .select({ count: sql<number>`COUNT(*)::int` })
+        .from(schema.orders)
+        .where(
+          and(
+            eq(schema.orders.businessId, businessId),
+            sql`${schema.orders.number} LIKE ${`SO-${year}-%`}`,
+          ),
+        );
+      const seq = (rows[0]?.count ?? 0) + 1 + attempt;
+      const candidate = `SO-${year}-${String(seq).padStart(6, '0')}`;
+      const [existing] = await db
+        .select({ id: schema.orders.id })
+        .from(schema.orders)
+        .where(and(eq(schema.orders.businessId, businessId), eq(schema.orders.number, candidate)))
+        .limit(1);
+      if (!existing) return candidate;
+    }
+    return `SO-${year}-${Math.floor(Math.random() * 1_000_000)
+      .toString()
+      .padStart(6, '0')}`;
+  }
+}

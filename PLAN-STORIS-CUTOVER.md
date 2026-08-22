@@ -79,8 +79,8 @@ orders (
   business_id, location_id, number ("SO-2026-000123", unique per business),
   status: 'quote' | 'open' | 'partially_fulfilled' | 'fulfilled' | 'completed' | 'cancelled',
   customer_id (NOT NULL — orders always have a customer, unlike POS sales),
-  salesperson_membership_id, second_salesperson_membership_id, split_pct,
-  subtotal_cents, discount_cents, tax_cents, total_cents,
+  salesperson_membership_id, second_salesperson_membership_id, split_bps,
+  subtotal_cents, order_discount_cents, discount_cents, tax_cents, total_cents,
   deposit_required_cents,            -- policy: e.g. 25% of total, editable per order
   fulfillment_type: 'delivery' | 'pickup',
   address snapshot fields (line1/line2/city/region/postal/phone),
@@ -106,6 +106,14 @@ deliveries (
 
 delivery_lines ( business_id, delivery_id, order_line_id, quantity )
 ```
+
+Two clarifications made while building Day 1: the split is stored in **basis points**
+(`split_bps`, 0–10000) rather than a percent, matching every other rate in the codebase;
+and the operator's order-level discount is kept in its own `order_discount_cents`
+column, with `discount_cents` remaining the line+order aggregate that
+`sales.discount_cents` already means. Totals are recomputed from the lines after every
+edit, and that recompute needs the operator's input back — reading the aggregate would
+compound the discount on each edit.
 
 Derived, never stored: `paid_cents` = Σ succeeded payments; `balance_due_cents` =
 `total_cents − paid_cents`. Status transitions are service-enforced, movements written
@@ -206,9 +214,22 @@ business_templates ( name, source_business_id, snapshot_json, created_by, scope 
 agencies ( name, owner_user_id, branding_json )                 -- platform-level (P2)
 businesses += agency_id nullable, branding_json (logo_url, colors), subdomain unique nullable (P3)
 memberships: agency-scoped memberships (agency_id XOR business_id)
-legacy_refs ( business_id, entity, legacy_id, jetnine_id, unique(business_id, entity, legacy_id) )  -- D7
-staging.* tables for the importer (see §7)
+legacy_refs ( business_id, entity, legacy_id, jetnine_id, source, import_batch_id,
+              unique(business_id, entity, legacy_id) )                        -- D7
+import_batches ( business_id, entity, source, filename, status, mapping_json,
+                 validation_json, row/valid/invalid/committed counts,
+                 uploaded_by_user_id, validated_at, committed_at )            -- staging
+import_rows ( business_id, batch_id, row_number, legacy_id, raw_json,
+              normalized_json, status, errors_json, jetnine_id )              -- staging
 ```
+
+The importer's staging tables live in the **public schema as ordinary tenant tables**
+(`import_batches` / `import_rows`), not in a separate `staging` Postgres schema as the
+sketch above originally read. They then inherit the same RLS policy, `business_id`
+indexing, and migration tooling as every other table; a separate schema would need its
+own grants and policy wiring for no gain. They are entity-agnostic — one batch per
+uploaded CSV, one row per source line, `raw_json` kept alongside `normalized_json` so a
+recon mismatch traces back to the exact source line without re-uploading.
 
 Customer **timeline** = merged feed of sales, orders, deliveries, service orders, plans,
 notes, campaigns — read-model query, no new event table.

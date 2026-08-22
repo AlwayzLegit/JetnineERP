@@ -11,6 +11,9 @@
 export const WEBHOOK_EVENT_TYPES = [
   'sale.created',
   'sale.refunded',
+  'order.created',
+  'order.payment_received',
+  'order.cancelled',
   'customer.created',
   'inventory.adjusted',
   'purchase_order.received',

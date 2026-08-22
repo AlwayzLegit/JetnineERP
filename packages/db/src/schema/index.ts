@@ -5,6 +5,7 @@ export * from './audit';
 export * from './catalog';
 export * from './inventory';
 export * from './customers';
+export * from './orders';
 export * from './sales';
 export * from './cash';
 export * from './billing';
@@ -17,6 +18,7 @@ export * from './webhooks';
 export * from './api-keys';
 export * from './idempotency';
 export * from './gift-cards';
+export * from './migration';
 
 // List of tables that carry a `business_id` and need RLS. Kept in sync with
 // the migration script in src/migrations/rls.sql — when you add a new
@@ -36,6 +38,10 @@ export const TENANT_SCOPED_TABLES = [
   'customers',
   'sales',
   'sale_lines',
+  'orders',
+  'order_lines',
+  'deliveries',
+  'delivery_lines',
   'payments',
   'refunds',
   'refund_lines',
@@ -58,4 +64,7 @@ export const TENANT_SCOPED_TABLES = [
   'idempotency_keys',
   'gift_cards',
   'gift_card_transactions',
+  'legacy_refs',
+  'import_batches',
+  'import_rows',
 ] as const;

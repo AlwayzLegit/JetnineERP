@@ -1,8 +1,19 @@
-import { index, integer, pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
+import {
+  check,
+  index,
+  integer,
+  pgTable,
+  text,
+  timestamp,
+  uniqueIndex,
+  uuid,
+} from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
 import { businesses, users } from './platform';
 import { locations } from './tenancy';
 import { customers } from './customers';
 import { productVariants } from './catalog';
+import { orders } from './orders';
 
 export const sales = pgTable(
   'sales',
@@ -65,6 +76,14 @@ export const saleLines = pgTable(
   }),
 );
 
+/**
+ * Tenders. Generalized in the STORIS cutover (sprint decision D2) to
+ * cover order money as well as POS money: `sale_id` became nullable,
+ * `order_id` was added, and a CHECK enforces exactly one of them. A
+ * deposit is nothing more special than a payment on an open order,
+ * which keeps one table behind the cash drawer, the shift reconcile,
+ * and every revenue report.
+ */
 export const payments = pgTable(
   'payments',
   {
@@ -72,22 +91,48 @@ export const payments = pgTable(
     businessId: uuid('business_id')
       .notNull()
       .references(() => businesses.id, { onDelete: 'cascade' }),
-    saleId: uuid('sale_id')
-      .notNull()
-      .references(() => sales.id, { onDelete: 'cascade' }),
-    // 'cash' | 'card' | 'store_credit' | 'gift_card'
+    saleId: uuid('sale_id').references(() => sales.id, { onDelete: 'cascade' }),
+    orderId: uuid('order_id').references(() => orders.id, { onDelete: 'cascade' }),
+    /**
+     * 'sale' — POS cash-and-carry tender
+     * 'deposit' — money down on an order that is not yet fulfilled
+     * 'balance' — the rest, usually collected at delivery
+     * 'installment' — a scheduled layaway / in-house plan payment (G4)
+     */
+    kind: text('kind').notNull().default('sale'),
+    /**
+     * 'cash' | 'card' | 'store_credit' | 'gift_card' | 'financing'
+     * | 'external_card' | 'check'
+     *
+     * `financing` records a third-party approval (D5 — we keep the
+     * record, the provider keeps the loan); `external_card` is a card
+     * run on a standalone terminal outside Jetnine, which still has to
+     * land in the drawer.
+     */
     method: text('method').notNull(),
     amountCents: integer('amount_cents').notNull(),
     processor: text('processor'),
     processorRef: text('processor_ref'),
+    // For method='financing': who approved it and under what number.
+    financingProvider: text('financing_provider'),
+    financingRef: text('financing_ref'),
     // 'pending' | 'succeeded' | 'failed' | 'refunded'
     status: text('status').notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => ({
     saleIdx: index('payments_sale_id_idx').on(t.saleId),
+    orderIdx: index('payments_order_id_idx').on(t.orderId),
     businessIdx: index('payments_business_id_idx').on(t.businessId),
     processorRefIdx: index('payments_processor_ref_idx').on(t.processor, t.processorRef),
+    kindIdx: index('payments_business_kind_idx').on(t.businessId, t.kind),
+    // A payment belongs to exactly one document. Without this, an
+    // order deposit could also be counted against a sale and the
+    // drawer would double-count it.
+    parentExactlyOne: check(
+      'payments_parent_exactly_one',
+      sql`num_nonnulls(${t.saleId}, ${t.orderId}) = 1`,
+    ),
   }),
 );
 
