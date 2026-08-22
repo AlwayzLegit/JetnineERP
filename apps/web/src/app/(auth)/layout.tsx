@@ -29,7 +29,7 @@ export default function AuthLayout({ children }: { children: ReactNode }) {
           boxShadow: '0 1px 3px rgba(0,0,0,0.08)',
         }}
       >
-        <h1 style={{ fontSize: 22, marginBottom: 8 }}>Jetnine ERP</h1>
+        <h1 style={{ fontSize: 22, marginBottom: 8 }}>LA Mattress ERP</h1>
         {children}
       </div>
     </main>

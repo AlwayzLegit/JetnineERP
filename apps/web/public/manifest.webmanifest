@@ -1,7 +1,7 @@
 {
-  "name": "Jetnine POS",
-  "short_name": "Jetnine",
-  "description": "Point-of-sale register and back office for Jetnine ERP.",
+  "name": "LA Mattress POS",
+  "short_name": "LA Mattress",
+  "description": "Point-of-sale register and back office for LA Mattress ERP.",
   "start_url": "/pos",
   "display": "standalone",
   "background_color": "#ffffff",

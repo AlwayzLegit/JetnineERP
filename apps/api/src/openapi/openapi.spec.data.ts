@@ -58,11 +58,11 @@ const idempotencyHeader = {
 export const openapiSpec = {
   openapi: '3.1.0',
   info: {
-    title: 'Jetnine ERP API',
+    title: 'LA Mattress ERP API',
     version: '1.0.0',
     description:
-      'Public REST API for Jetnine ERP. Authenticate with `Authorization: Bearer jet_live_…` (or `jet_test_…`). The key implies the business; you do not need `X-Business-Id`. Mutating endpoints accept an `Idempotency-Key` header for retry safety. List endpoints return `{ data, nextCursor }`; round-trip the cursor to fetch the next page.',
-    contact: { name: 'Jetnine', url: 'https://jetnine.example' },
+      'Public REST API for LA Mattress ERP. Authenticate with `Authorization: Bearer jet_live_…` (or `jet_test_…`). The key implies the business; you do not need `X-Business-Id`. Mutating endpoints accept an `Idempotency-Key` header for retry safety. List endpoints return `{ data, nextCursor }`; round-trip the cursor to fetch the next page.',
+    contact: { name: 'LA Mattress ERP', url: 'https://jetnine.example' },
   },
   servers: [{ url: '/', description: 'Same origin as your dashboard' }],
   security: [{ bearerAuth: [] }],

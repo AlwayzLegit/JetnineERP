@@ -140,8 +140,8 @@ export default function WebhooksPage() {
       </div>
 
       <p style={{ color: '#666', fontSize: 13, marginBottom: 16 }}>
-        Jetnine will POST a JSON body to your URL whenever a subscribed event fires. Verify the{' '}
-        <code>X-Jetnine-Signature</code> header (Stripe-style{' '}
+        LA Mattress ERP will POST a JSON body to your URL whenever a subscribed event fires. Verify
+        the <code>X-Jetnine-Signature</code> header (Stripe-style{' '}
         <code>t=&lt;unix&gt;,v1=&lt;hmacsha256(t.body)&gt;</code>) using the secret shown once at
         create time.
       </p>
@@ -183,7 +183,7 @@ export default function WebhooksPage() {
             <input
               name="url"
               type="url"
-              placeholder="https://example.com/webhooks/jetnine"
+              placeholder="https://example.com/webhooks/la-mattress-erp"
               required
               style={inputStyle}
             />

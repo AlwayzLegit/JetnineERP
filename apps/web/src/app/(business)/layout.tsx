@@ -26,7 +26,7 @@ export default function BusinessLayout({ children }: { children: ReactNode }) {
             gap: 24,
           }}
         >
-          <strong style={{ fontSize: 16 }}>Jetnine — Back office</strong>
+          <strong style={{ fontSize: 16 }}>LA Mattress ERP — Back office</strong>
           <nav style={{ display: 'flex', gap: 16, fontSize: 13 }}>
             <Link href="/dashboard" style={{ color: '#ccc' }}>
               Dashboard

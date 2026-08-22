@@ -57,7 +57,7 @@ describe('Phase 2.11 — OpenAPI', () => {
     const res = await request(app.getHttpServer()).get('/v1/openapi.json');
     expect(res.status).toBe(200);
     expect(res.body.openapi).toMatch(/^3\.1\./);
-    expect(res.body.info.title).toContain('Jetnine');
+    expect(res.body.info.title).toContain('LA Mattress');
     expect(typeof res.body.paths).toBe('object');
   });
 

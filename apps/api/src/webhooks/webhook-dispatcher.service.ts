@@ -86,7 +86,7 @@ export class WebhookDispatcher {
       endpoint,
       randomUUID(),
       'webhook.test' as WebhookEventType,
-      { message: 'This is a test event from Jetnine.', sentAt: new Date().toISOString() },
+      { message: 'This is a test event from LA Mattress ERP.', sentAt: new Date().toISOString() },
     );
     const [delivery] = await this.db
       .select({ status: schema.webhookDeliveries.status })
