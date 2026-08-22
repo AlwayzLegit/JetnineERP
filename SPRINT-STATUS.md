@@ -18,7 +18,7 @@
       deposit/balance payments, stock reserve/release via `inventory_levels.reserved` +
       movements (`order_reserve`/`order_release`), cancel; unit tests for totals + reserve math
 - [ ] **Build:** Permission catalog additions (plan §5) seeded into system roles
-- [ ] **Ops:** Kick off every STORIS export (plan §7 entity list) — subscription still active
+- [ ] **Ops:** Kick off every STORIS export (checklist: `docs/STORIS-EXPORTS.md`) — subscription still active
 - [ ] **Ops:** Order Stripe Terminal readers / confirm interim standalone terminal
 
 _Acceptance: migration applies cleanly from empty DB; API can create an order, take a
