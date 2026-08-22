@@ -19,6 +19,19 @@ BEGIN
 END
 $$;
 
+-- The connecting role must be able to SET LOCAL ROLE app_user, which
+-- requires membership. Superusers can SET ROLE to anything, so this never
+-- mattered locally — but on managed Postgres the app connects as a plain
+-- owner role and every tenant request dies here without the grant.
+-- (pg_has_role is always true for superusers, making this a no-op locally.)
+DO $$
+BEGIN
+  IF NOT pg_has_role(current_user, 'app_user', 'MEMBER') THEN
+    EXECUTE format('GRANT app_user TO %I', current_user);
+  END IF;
+END
+$$;
+
 GRANT USAGE ON SCHEMA public TO app_user;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO app_user;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO app_user;
@@ -252,3 +265,41 @@ DROP POLICY IF EXISTS stripe_webhook_events_super_admin_only ON stripe_webhook_e
 CREATE POLICY stripe_webhook_events_super_admin_only ON stripe_webhook_events
   USING (is_super_admin())
   WITH CHECK (is_super_admin());
+
+-- ============================================================================
+-- Root-connection bypass (managed Postgres)
+-- ============================================================================
+-- Everything above assumes the API's root connection — the role that runs
+-- migrations and serves better-auth / audit / admin queries — bypasses row
+-- security. That holds locally and in CI, where the connection role is the
+-- `postgres` superuser. It does NOT hold on managed Postgres (Render, RDS,
+-- Neon): there the app's role merely owns the tables, and FORCE ROW LEVEL
+-- SECURITY subjects owners to policies too. First symptom in production was
+-- sign-up dying on the users INSERT policy before tenant code ever ran.
+--
+-- So: give the role running this script an explicit allow-all policy on
+-- every RLS-enabled table. Tenant isolation is untouched — policies are
+-- per-role, and request transactions demoted via SET LOCAL ROLE app_user
+-- can never match a policy scoped to the root role. Superuser environments
+-- are unaffected (they bypass RLS regardless). The loop reads pg_tables so
+-- new RLS'd tables are covered without maintaining a second list.
+
+DO $$
+DECLARE
+  t text;
+BEGIN
+  IF current_user = 'app_user' THEN
+    RAISE EXCEPTION 'rls.sql must run as the root/owner role, not app_user';
+  END IF;
+  FOR t IN
+    SELECT tablename FROM pg_tables
+    WHERE schemaname = 'public' AND rowsecurity
+  LOOP
+    EXECUTE format('DROP POLICY IF EXISTS root_bypass ON %I', t);
+    EXECUTE format(
+      'CREATE POLICY root_bypass ON %I TO %I USING (true) WITH CHECK (true)',
+      t, current_user
+    );
+  END LOOP;
+END
+$$;
