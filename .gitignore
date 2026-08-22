@@ -44,3 +44,6 @@ Thumbs.db
 
 # Fly.io
 fly.toml.local
+
+# Redis snapshot dropped by a locally-running redis-server
+dump.rdb
