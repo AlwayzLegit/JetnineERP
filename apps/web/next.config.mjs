@@ -1,9 +1,31 @@
 import { withSentryConfig } from '@sentry/nextjs';
 
+/**
+ * Where API traffic goes. The client fetches relative URLs (`/v1/...`,
+ * `/api/auth/...`); Next rewrites proxy them to the NestJS service on
+ * Render so the browser only ever talks to one origin. Same-origin keeps
+ * better-auth's session cookie and the offline-POS `document.cookie` read
+ * first-party — no CORS preflights, no SameSite=None, no Safari/ITP
+ * blocking — at the cost of a proxy hop per API call.
+ *
+ * Override per environment with API_PROXY_TARGET (build-time env).
+ * Setting NEXT_PUBLIC_API_URL back to an absolute origin bypasses the
+ * proxy entirely, which restores the split-origin behavior of PR #21.
+ */
+const apiProxyTarget = process.env.API_PROXY_TARGET ?? 'https://jetnine-api.onrender.com';
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
   transpilePackages: ['@jetnine/shared', '@jetnine/ui'],
+  async rewrites() {
+    return [
+      { source: '/v1/:path*', destination: `${apiProxyTarget}/v1/:path*` },
+      { source: '/api/auth/:path*', destination: `${apiProxyTarget}/api/auth/:path*` },
+      { source: '/health', destination: `${apiProxyTarget}/health` },
+      { source: '/ready', destination: `${apiProxyTarget}/ready` },
+    ];
+  },
   /**
    * Service-worker headers. The browser refuses to register a worker
    * with a wider scope than the script's path unless the response
