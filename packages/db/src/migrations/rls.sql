@@ -24,10 +24,14 @@ $$;
 -- mattered locally — but on managed Postgres the app connects as a plain
 -- owner role and every tenant request dies here without the grant.
 -- (pg_has_role is always true for superusers, making this a no-op locally.)
+-- The guard must test the SET privilege specifically, not MEMBER: on PG16
+-- the role that CREATEs app_user gets an admin-option row (SET FALSE) that
+-- makes MEMBER read true while SET ROLE still fails — which is exactly the
+-- state a fresh managed cluster ends up in after the first migration run.
 DO $$
 BEGIN
-  IF NOT pg_has_role(current_user, 'app_user', 'MEMBER') THEN
-    EXECUTE format('GRANT app_user TO %I', current_user);
+  IF NOT pg_has_role(current_user, 'app_user', 'SET') THEN
+    EXECUTE format('GRANT app_user TO %I WITH SET TRUE', current_user);
   END IF;
 END
 $$;
