@@ -5,24 +5,33 @@
 > tracker with the work. **Ops** items are the human's — surface them, don't do them.
 > Slip policy and never-cut list live in the plan §8.
 
-**Sprint state:** not started · **Current day:** 1 · **Rehearsal imports done:** 0/2 · **Recon gates passed:** 0/5
+**Sprint state:** Day 1 build track complete · **Current day:** 1 (Ops track open) · **Rehearsal imports done:** 0/2 · **Recon gates passed:** 0/5
 
 ---
 
 ## Day 1 — Order spine + extraction kickoff
 
-- [ ] **Build:** Schema batch 1: `orders`, `order_lines`, `deliveries`, `delivery_lines`,
+- [x] **Build:** Schema batch 1: `orders`, `order_lines`, `deliveries`, `delivery_lines`,
       payments generalization (nullable `sale_id`, add `order_id`, `kind`, financing fields,
       CHECK exactly-one), `legacy_refs`, staging tables — with RLS + generated migration
-- [ ] **Build:** `orders` NestJS module: CRUD, lines, totals (reuse `sales/totals.ts` pattern),
+      — _2026-08-22: `packages/db/src/schema/orders.ts` + `migration.ts`, migration
+      `0018_storis_order_spine`, 7 new tables in `TENANT_SCOPED_TABLES` + `rls.sql`._
+- [x] **Build:** `orders` NestJS module: CRUD, lines, totals (reuse `sales/totals.ts` pattern),
       deposit/balance payments, stock reserve/release via `inventory_levels.reserved` +
       movements (`order_reserve`/`order_release`), cancel; unit tests for totals + reserve math
-- [ ] **Build:** Permission catalog additions (plan §5) seeded into system roles
+      — _2026-08-22: `apps/api/src/orders/` (controller + service + `order-math.ts`);
+      34 unit tests, 22 integration tests._
+- [x] **Build:** Permission catalog additions (plan §5) seeded into system roles
+      — _2026-08-22: 27 permissions added; `SUPER_ADMIN_ONLY_PERMISSIONS` keeps the two
+      platform perms out of every business role, Owner included._
 - [ ] **Ops:** Kick off every STORIS export (checklist: `docs/STORIS-EXPORTS.md`) — subscription still active
 - [ ] **Ops:** Order Stripe Terminal readers / confirm interim standalone terminal
 
 _Acceptance: migration applies cleanly from empty DB; API can create an order, take a
-deposit, and reserved stock shows in inventory; drift check green._
+deposit, and reserved stock shows in inventory; drift check green._ **✅ met** — verified
+against a scratch Postgres 16: reset → migrate applies `0018` from empty, the integration
+suite writes an order, takes a deposit, and asserts `inventory_levels.reserved` moved while
+`on_hand` did not; `drizzle-kit generate` reports no drift.
 
 ## Day 2 — Order writer
 
@@ -38,6 +47,10 @@ _Acceptance: write an order with deposit end-to-end in the browser; committed qt
 - [ ] **Build:** `deliveries` module + calendar UI (week/day), drag-to-schedule, driver day-sheet (print)
 - [ ] **Build:** Fulfillment flow: decrement stock, serial pick (stub until Day 4), collect balance, order receipt print; completion requires balance = 0 or `orders.complete_with_balance`
 - [ ] **Build:** Reports union `sales` + `orders` (revenue, drawer picks up order payments)
+      — ⚠️ carried from Day 1: `cash-shifts.controller.ts` and `reports.controller.ts` both
+      `innerJoin(sales, sales.id = payments.sale_id)`, so order payments are silently
+      **excluded** from the drawer and the tender mix today. Nothing is broken, but the
+      drawer will not balance against order deposits until this lands.
 - [ ] **Ops:** First export files land — joint sanity read; freeze SKU/category cleanup decisions
 
 _Acceptance: schedule → deliver → collect balance → order completed; day's drawer includes deposits._
@@ -97,4 +110,24 @@ _Acceptance: layaway order pays off across installments; commission entries matc
 
 _(newest first — sessions append: date · day · what shipped · open flags)_
 
+- 2026-08-22 · Day 1 · **Build track shipped.** Schema batch 1 (7 tables + payments
+  generalization per D2) with RLS and migration `0018_storis_order_spine`; the `orders`
+  module (write → price → commit stock → take money → cancel) with `order-math.ts` as the
+  pure, tested core; 27 new permissions seeded into system roles.
+  · **Open flags:** (1) both **Ops** items are untouched and are the sprint's critical
+  path — the STORIS exports (plan §7) and the Stripe Terminal readers both need to start
+  today; the export especially, since the subscription is still live and every day it
+  slips, the whole sprint slips. (2) Cash drawer and tender-mix reports still join
+  `payments → sales`, so order deposits do not reach them — noted on the Day 3 item.
+  (3) `orders/:id/complete` is deliberately **not** built: completion is a fulfillment
+  event and lands with `deliveries` on Day 3. The `orders.complete_with_balance`
+  permission is seeded and waiting for it. (4) Two plan clarifications made and written
+  back into `PLAN-STORIS-CUTOVER.md` §4.1/§4.7: `split_bps` instead of `split_pct` plus a
+  separate `order_discount_cents`, and importer staging as public-schema
+  `import_batches`/`import_rows` rather than a `staging` Postgres schema.
+  · **Env note:** every `*.int.spec.ts` fails in the sandbox on a Node/vitest interaction
+  with the `Function('return import(s)')` ESM shim (`apps/api/src/utils/import-esm.ts`) —
+  pre-existing and unrelated to this work; reproduced on a bare test with no repo code.
+  The orders suite was verified 22/22 by bypassing that shim locally; the shim itself is
+  unchanged in the commit.
 - 2026-08-22 · pre-sprint · Plan + handoff docs written (`PLAN-STORIS-CUTOVER.md`, `CLAUDE.md`, this tracker). Sprint not started.

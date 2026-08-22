@@ -13,7 +13,13 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import postgres from 'postgres';
 import { drizzle } from 'drizzle-orm/postgres-js';
-import { businesses, categories, products, productVariants } from '../src/schema';
+import {
+  TENANT_SCOPED_TABLES,
+  businesses,
+  categories,
+  products,
+  productVariants,
+} from '../src/schema';
 import { withTenantContext } from '../src/with-context';
 
 const url =
@@ -202,7 +208,17 @@ describe('cross-tenant isolation (RLS)', () => {
 });
 
 describe('schema sanity', () => {
-  it('all 44 tables have RLS enabled and forced', async () => {
+  /**
+   * Every table in `public` must have RLS enabled AND forced — no
+   * exceptions, including platform tables (they get owner/self policies
+   * rather than a tenant policy).
+   *
+   * Asserted as a set rather than a row count: a hard-coded count has to
+   * be bumped by hand on every schema batch, and the pressure is always
+   * to bump the number rather than ask why it moved. Naming the tables
+   * that lack a policy fails with the answer already in the message.
+   */
+  it('every public table has RLS enabled and forced', async () => {
     const rows = await root<
       { relname: string; relrowsecurity: boolean; relforcerowsecurity: boolean }[]
     >`
@@ -212,8 +228,39 @@ describe('schema sanity', () => {
       WHERE n.nspname = 'public' AND c.relkind = 'r'
       ORDER BY c.relname
     `;
-    expect(rows).toHaveLength(44);
-    const missing = rows.filter((r) => !r.relrowsecurity || !r.relforcerowsecurity);
+    // Guard against a query that silently returns nothing — an empty
+    // result would otherwise pass every assertion below.
+    expect(rows.length).toBeGreaterThanOrEqual(TENANT_SCOPED_TABLES.length);
+    const missing = rows
+      .filter((r) => !r.relrowsecurity || !r.relforcerowsecurity)
+      .map((r) => r.relname);
+    expect(missing).toEqual([]);
+  });
+
+  /**
+   * `TENANT_SCOPED_TABLES` and the array in `src/migrations/rls.sql` are
+   * maintained by hand in two places. This catches the case where a new
+   * tenant table is added to one and forgotten in the other — the table
+   * would exist with RLS off, or with no `tenant_isolation` policy, and
+   * would silently serve every business's rows.
+   */
+  it('every tenant-scoped table carries the tenant_isolation policy', async () => {
+    const rows = await root<{ tablename: string }[]>`
+      SELECT tablename FROM pg_policies
+      WHERE schemaname = 'public' AND policyname = 'tenant_isolation'
+    `;
+    const withPolicy = new Set(rows.map((r) => r.tablename));
+    const missing = TENANT_SCOPED_TABLES.filter((t) => !withPolicy.has(t));
+    expect(missing).toEqual([]);
+  });
+
+  it('every tenant-scoped table actually exists with a business_id column', async () => {
+    const rows = await root<{ table_name: string }[]>`
+      SELECT table_name FROM information_schema.columns
+      WHERE table_schema = 'public' AND column_name = 'business_id'
+    `;
+    const present = new Set(rows.map((r) => r.table_name));
+    const missing = TENANT_SCOPED_TABLES.filter((t) => !present.has(t));
     expect(missing).toEqual([]);
   });
 

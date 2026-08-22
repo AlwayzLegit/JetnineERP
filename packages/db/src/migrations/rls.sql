@@ -81,6 +81,10 @@ DECLARE
     'customers',
     'sales',
     'sale_lines',
+    'orders',
+    'order_lines',
+    'deliveries',
+    'delivery_lines',
     'payments',
     'refunds',
     'refund_lines',
@@ -102,7 +106,10 @@ DECLARE
     'api_keys',
     'idempotency_keys',
     'gift_cards',
-    'gift_card_transactions'
+    'gift_card_transactions',
+    'legacy_refs',
+    'import_batches',
+    'import_rows'
   ];
 BEGIN
   FOREACH t IN ARRAY tenant_tables LOOP
