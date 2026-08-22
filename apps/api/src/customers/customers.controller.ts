@@ -11,7 +11,7 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
-import { and, desc, eq, lt, or, sql } from 'drizzle-orm';
+import { and, desc, eq, sql } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { schema } from '@jetnine/db';
 import { AuditService } from '../audit/audit.service';
@@ -20,6 +20,8 @@ import {
   buildPage,
   clampLimit as clampPageLimit,
   decodeCursor,
+  timestampCursorOrder,
+  timestampCursorWhere,
   type PageResponse,
 } from '../common/pagination';
 import { DRIZZLE } from '../database/database.module';
@@ -88,19 +90,13 @@ export class CustomersController {
     }
     const cursor = decodeCursor(cursorStr);
     const where = cursor
-      ? or(
-          lt(schema.customers.createdAt, new Date(cursor.v as string)),
-          and(
-            eq(schema.customers.createdAt, new Date(cursor.v as string)),
-            lt(schema.customers.id, cursor.id),
-          ),
-        )
+      ? timestampCursorWhere(schema.customers.createdAt, schema.customers.id, cursor)
       : undefined;
     const rows = await this.db
       .select(SELECT_COLS)
       .from(schema.customers)
       .where(where)
-      .orderBy(desc(schema.customers.createdAt), desc(schema.customers.id))
+      .orderBy(...timestampCursorOrder(schema.customers.createdAt, schema.customers.id))
       .limit(limit + 1);
     return buildPage(rows, limit, (r) => r.createdAt);
   }

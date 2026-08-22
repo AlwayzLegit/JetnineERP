@@ -1,6 +1,8 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
+import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { schema } from '@jetnine/db';
-import { getRequestContext, getRequestDb } from '../tenancy/request-context';
+import { DRIZZLE } from '../database/database.module';
+import { tryGetRequestContext } from '../tenancy/request-context';
 import { type JsonDiff, diffJson } from './diff';
 
 type ActorType = 'user' | 'super_admin' | 'system' | 'api_key';
@@ -18,10 +20,22 @@ export interface AuditLogInput {
   /** Pair these to compute a minimal field-level diff via diffJson(). */
   before?: Record<string, unknown> | null;
   after?: Record<string, unknown> | null;
+  /**
+   * Only for routes that run outside the tenant pipeline (no
+   * `@TenantScoped()`, so no request context to read these from). Self-
+   * service onboarding is the case that matters: the business does not
+   * exist until the handler creates it, so there is nothing for
+   * `@TenantScoped()` to resolve, yet the creation is exactly the kind of
+   * event the audit log must not miss.
+   */
+  businessId?: string | null;
+  actorUserId?: string | null;
 }
 
 @Injectable()
 export class AuditService {
+  constructor(@Inject(DRIZZLE) private readonly rootDb: PostgresJsDatabase) {}
+
   /**
    * Records an audit log row using the request's RLS-scoped transaction.
    * Reads actor + business + ip + user-agent from AsyncLocalStorage; only
@@ -29,10 +43,16 @@ export class AuditService {
    *
    * Marks the request as audit-logged so the generic AuditInterceptor
    * skips its fallback row.
+   *
+   * Outside a request scope (a route without `@TenantScoped()`), falls back
+   * to the root connection and takes `businessId` / `actorUserId` from the
+   * input. Previously this threw, which turned self-service business
+   * creation into a 500 *after* the business, its roles and the owner
+   * membership had already been written.
    */
   async log(input: AuditLogInput): Promise<void> {
-    const ctx = getRequestContext();
-    const db = getRequestDb();
+    const ctx = tryGetRequestContext();
+    const db = ctx?.db ?? this.rootDb;
 
     let changesJson: Record<string, unknown> | null = null;
     if (input.before !== undefined || input.after !== undefined) {
@@ -42,7 +62,7 @@ export class AuditService {
     // For API-key requests we add the key id to the metadata so the audit
     // log filter can answer "what did this integration do" without
     // touching schema.
-    if (ctx.apiKeyId) {
+    if (ctx?.apiKeyId) {
       changesJson = {
         ...(changesJson ?? {}),
         metadata: {
@@ -56,19 +76,23 @@ export class AuditService {
     }
 
     await db.insert(schema.auditLogs).values({
-      businessId: ctx.businessId,
-      actorUserId: ctx.userId,
-      actorType: actorTypeFor(ctx.isSuperAdmin, ctx.impersonatorUserId, ctx.apiKeyId),
-      impersonatorUserId: ctx.impersonatorUserId,
+      businessId: input.businessId ?? ctx?.businessId ?? null,
+      actorUserId: input.actorUserId ?? ctx?.userId ?? null,
+      actorType: actorTypeFor(
+        ctx?.isSuperAdmin ?? false,
+        ctx?.impersonatorUserId ?? null,
+        ctx?.apiKeyId ?? null,
+      ),
+      impersonatorUserId: ctx?.impersonatorUserId ?? null,
       action: input.action,
       targetType: input.targetType ?? null,
       targetId: input.targetId ?? null,
       changesJson: changesJson ?? null,
-      ip: ctx.ip,
-      userAgent: ctx.userAgent,
+      ip: ctx?.ip ?? null,
+      userAgent: ctx?.userAgent ?? null,
     });
 
-    ctx.auditLogged = true;
+    if (ctx) ctx.auditLogged = true;
   }
 }
 

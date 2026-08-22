@@ -50,6 +50,12 @@ export default defineConfig({
       reuseExistingServer: !process.env.CI,
       env: {
         NEXT_PUBLIC_API_URL: `http://localhost:${API_PORT}`,
+        // The offline-POS spec goes offline and then navigates, which only
+        // works if the service worker is controlling the page. Registration
+        // is skipped outside production unless this escape hatch is set, so
+        // without it the SW never installs and the offline half of that spec
+        // cannot pass — `page.goto` fails with ERR_INTERNET_DISCONNECTED.
+        NEXT_PUBLIC_SW_DEV: '1',
       },
       stdout: 'pipe',
       stderr: 'pipe',

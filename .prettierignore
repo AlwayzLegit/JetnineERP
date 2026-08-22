@@ -6,4 +6,5 @@ build
 coverage
 pnpm-lock.yaml
 PLAN.md
+PLAN-STORIS-CUTOVER.md
 packages/db/drizzle

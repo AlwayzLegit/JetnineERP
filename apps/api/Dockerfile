@@ -29,8 +29,10 @@ COPY packages/db ./packages/db
 COPY packages/shared ./packages/shared
 COPY packages/config ./packages/config
 
-RUN pnpm --filter @jetnine/db build
+# shared first: db's seed.ts imports it (excluded from db's build, but the
+# order stays correct for anything that compiles against shared's dist).
 RUN pnpm --filter @jetnine/shared build
+RUN pnpm --filter @jetnine/db build
 RUN pnpm --filter @jetnine/api build
 
 # Strip dev deps and prune the workspace to just what apps/api needs.

@@ -4,6 +4,7 @@ import {
   ConflictException,
   type ExecutionContext,
   HttpException,
+  Inject,
   Injectable,
   type NestInterceptor,
 } from '@nestjs/common';
@@ -32,7 +33,14 @@ const KEY_RE = /^[A-Za-z0-9._:\-+/=]{1,255}$/;
  */
 @Injectable()
 export class IdempotencyInterceptor implements NestInterceptor {
-  constructor(private readonly idem: IdempotencyService) {}
+  // Explicit @Inject rather than relying on the reflected parameter type:
+  // `design:paramtypes` metadata is emitted by tsc but NOT by esbuild, which
+  // is what vitest transforms with. Without the token, Nest resolves this to
+  // undefined under test and every request carrying an Idempotency-Key 500s
+  // — while production, built by tsc, works fine. Naming the token makes DI
+  // independent of the transformer, and matches how every other provider in
+  // this codebase is wired.
+  constructor(@Inject(IdempotencyService) private readonly idem: IdempotencyService) {}
 
   intercept(execCtx: ExecutionContext, next: CallHandler): Observable<unknown> {
     const req = execCtx.switchToHttp().getRequest<Request & { tenant?: RequestTenantContext }>();

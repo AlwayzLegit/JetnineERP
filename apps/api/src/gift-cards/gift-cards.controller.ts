@@ -10,7 +10,7 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
-import { and, desc, eq, lt, or } from 'drizzle-orm';
+import { desc, eq } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { schema } from '@jetnine/db';
 import { AuditService } from '../audit/audit.service';
@@ -20,6 +20,8 @@ import {
   buildPage,
   clampLimit as clampPageLimit,
   decodeCursor,
+  timestampCursorOrder,
+  timestampCursorWhere,
   type PageResponse,
 } from '../common/pagination';
 import { DRIZZLE } from '../database/database.module';
@@ -97,19 +99,13 @@ export class GiftCardsController {
     const limit = clampPageLimit(limitStr);
     const cursor = decodeCursor(cursorStr);
     const where = cursor
-      ? or(
-          lt(schema.giftCards.createdAt, new Date(cursor.v as string)),
-          and(
-            eq(schema.giftCards.createdAt, new Date(cursor.v as string)),
-            lt(schema.giftCards.id, cursor.id),
-          ),
-        )
+      ? timestampCursorWhere(schema.giftCards.createdAt, schema.giftCards.id, cursor)
       : undefined;
     const rows = await this.db
       .select(SELECT_COLS)
       .from(schema.giftCards)
       .where(where)
-      .orderBy(desc(schema.giftCards.createdAt), desc(schema.giftCards.id))
+      .orderBy(...timestampCursorOrder(schema.giftCards.createdAt, schema.giftCards.id))
       .limit(limit + 1);
     return buildPage(rows, limit, (r) => r.createdAt);
   }

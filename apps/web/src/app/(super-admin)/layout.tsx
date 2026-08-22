@@ -21,7 +21,7 @@ export default function SuperAdminLayout({ children }: { children: ReactNode }) 
           gap: 24,
         }}
       >
-        <strong style={{ fontSize: 16 }}>Jetnine — Super admin</strong>
+        <strong style={{ fontSize: 16 }}>LA Mattress ERP — Super admin</strong>
         <nav style={{ display: 'flex', gap: 16, fontSize: 13 }}>
           <Link href="/admin" style={{ color: '#ccc' }}>
             Metrics

@@ -58,6 +58,16 @@ export function getRequestContext(): RequestContext {
   return ctx;
 }
 
+/**
+ * Like `getRequestContext()` but returns null instead of throwing when the
+ * caller is outside a request scope. For code that legitimately runs on both
+ * sides of the tenant pipeline — e.g. audit logging from a route that has no
+ * business yet, which is exactly the case `@TenantScoped()` cannot cover.
+ */
+export function tryGetRequestContext(): RequestContext | null {
+  return store.getStore() ?? null;
+}
+
 export function getRequestDb(): PostgresJsDatabase {
   return getRequestContext().db;
 }

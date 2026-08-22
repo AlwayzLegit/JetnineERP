@@ -128,7 +128,7 @@ export class InvitationService {
     const link = `${baseURL}/accept-invite?token=${encodeURIComponent(token)}`;
     await this.email.send({
       to: email,
-      subject: `You've been invited to ${input.businessName} on Jetnine`,
+      subject: `You've been invited to ${input.businessName} on LA Mattress ERP`,
       text: `Accept your invitation: ${link}`,
       html: inviteEmail(input.businessName, link),
     });
@@ -141,7 +141,7 @@ function inviteEmail(businessName: string, link: string): string {
   return `<!doctype html>
 <html><body style="font-family: system-ui, sans-serif; max-width: 560px; margin: 0 auto; padding: 24px;">
   <h1 style="font-size: 20px;">You've been invited</h1>
-  <p>You've been invited to <strong>${escapeHtml(businessName)}</strong> on Jetnine.</p>
+  <p>You've been invited to <strong>${escapeHtml(businessName)}</strong> on LA Mattress ERP.</p>
   <p>
     <a href="${escapeHtml(link)}" style="display:inline-block;background:#111;color:#fff;padding:12px 18px;border-radius:6px;text-decoration:none;">Accept invitation</a>
   </p>

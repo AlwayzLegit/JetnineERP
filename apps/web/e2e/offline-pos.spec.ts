@@ -127,16 +127,42 @@ test.describe('Phase 2.16 — offline POS', () => {
     await page.goto('/pos');
     await expect(page.getByRole('heading', { name: 'Register' })).toBeVisible();
 
+    // Wait for the service worker to actually control this page. It is
+    // registered from a useEffect and claims clients asynchronously, so for
+    // the first moments after load nothing is being cached at all.
+    await page.waitForFunction(() => navigator.serviceWorker?.controller != null, null, {
+      timeout: 20_000,
+    });
+
+    // Now visit the pending tray once while online. The SW caches /pos*
+    // pages as they are visited — there is no precache list — so a route
+    // never opened online is not available offline, and the offline
+    // navigation later in this test would land on the "You're offline"
+    // shell. This mirrors what the app tells the user: "The register hasn't
+    // loaded this page yet ... reconnect once and the page will be cached."
+    await page.goto('/pos/pending');
+    await expect(page.getByRole('heading', { name: /Pending sales/i })).toBeVisible();
+
+    await page.goto('/pos');
+    await expect(page.getByRole('heading', { name: 'Register' })).toBeVisible();
+
     // First (online) sale: search for the seeded variant SKU and ring it up.
     await page.getByPlaceholder(/scan|search/i).fill(variantSku);
     await page.keyboard.press('Enter');
-    // The lookup may auto-add (barcode hit) or show a result list. If
-    // a list appears, click the first row.
+    // The seeded variant carries a SKU but no barcode, and the register only
+    // auto-adds on an exact barcode hit — so searching by SKU always renders a
+    // result list that has to be clicked. The previous `isVisible()` probe
+    // resolved instantly, before the lookup request had come back, so the
+    // click was silently skipped and the cart stayed empty; Pay then sat
+    // disabled until the 180s timeout. Wait for the row instead.
     const result = page.getByText(/Widget/i).first();
-    if (await result.isVisible().catch(() => false)) {
-      await result.click();
-    }
-    await page.getByRole('button', { name: /^Pay/ }).click();
+    await expect(result).toBeVisible();
+    await result.click();
+    // Fail here, with a clear message, rather than 3 minutes later on a
+    // disabled button, if the row click ever stops filling the cart.
+    const payButton = page.getByRole('button', { name: /^Pay/ });
+    await expect(payButton).toBeEnabled();
+    await payButton.click();
     await page.getByLabel(/Cash tendered/i).fill('10.00');
     await page.getByRole('button', { name: /Confirm payment/i }).click();
     await expect(page.getByRole('heading', { name: /Sale complete/i })).toBeVisible({
@@ -153,16 +179,21 @@ test.describe('Phase 2.16 — offline POS', () => {
     await page.getByRole('button', { name: /New sale|Start new/i }).click();
     await page.getByPlaceholder(/scan|search/i).fill(variantSku);
     await page.keyboard.press('Enter');
+    // Same wait as the first sale — this lookup is still online, so the row
+    // has to arrive before it can be clicked.
     const result2 = page.getByText(/Widget/i).first();
-    if (await result2.isVisible().catch(() => false)) {
-      await result2.click();
-    }
+    await expect(result2).toBeVisible();
+    await result2.click();
+    // Cart must be filled *before* going offline; otherwise the offline
+    // assertions below chase a register that has nothing to sell.
+    const payButton2 = page.getByRole('button', { name: /^Pay/ });
+    await expect(payButton2).toBeEnabled();
 
     // Drop offline before paying.
     await context.setOffline(true);
     await expect(page.getByText(/Offline\./i)).toBeVisible();
 
-    await page.getByRole('button', { name: /^Pay/ }).click();
+    await payButton2.click();
     await page.getByLabel(/Cash tendered/i).fill('10.00');
     await page.getByRole('button', { name: /Confirm payment/i }).click();
     // Queued receipt should render.

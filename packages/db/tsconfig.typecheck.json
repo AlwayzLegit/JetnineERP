@@ -1,0 +1,10 @@
+{
+  // Typecheck-only view: everything in tsconfig.json PLUS seed.ts, which the
+  // build excludes (see tsconfig.json). Turbo runs typecheck after ^build, so
+  // @jetnine/shared's dist exists here even though it may not during build.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "exclude": ["node_modules", "dist", "drizzle"]
+}

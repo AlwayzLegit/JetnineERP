@@ -116,7 +116,7 @@ export function createEmailTransport(config: ConfigService): EmailTransport {
   const from =
     config.get<string>('RESEND_FROM_EMAIL') ??
     config.get<string>('EMAIL_FROM') ??
-    'Jetnine <onboarding@resend.dev>';
+    'LA Mattress ERP <onboarding@resend.dev>';
   if (apiKey) {
     return new ResendTransport(apiKey, from);
   }

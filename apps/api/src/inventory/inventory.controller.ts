@@ -8,7 +8,7 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
-import { and, asc, desc, eq, gte, lt, or, sql } from 'drizzle-orm';
+import { and, asc, eq, gte, lt, sql } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { schema } from '@jetnine/db';
 import { AuditService } from '../audit/audit.service';
@@ -18,6 +18,8 @@ import {
   buildPage,
   clampLimit as clampPageLimit,
   decodeCursor,
+  timestampCursorOrder,
+  timestampCursorWhere,
   type PageResponse,
 } from '../common/pagination';
 import { DRIZZLE } from '../database/database.module';
@@ -143,12 +145,10 @@ export class InventoryController {
     const cursor = decodeCursor(cursorStr);
     if (cursor) {
       conditions.push(
-        or(
-          lt(schema.inventoryMovements.createdAt, new Date(cursor.v as string)),
-          and(
-            eq(schema.inventoryMovements.createdAt, new Date(cursor.v as string)),
-            lt(schema.inventoryMovements.id, cursor.id),
-          ),
+        timestampCursorWhere(
+          schema.inventoryMovements.createdAt,
+          schema.inventoryMovements.id,
+          cursor,
         )!,
       );
     }
@@ -169,7 +169,9 @@ export class InventoryController {
       .from(schema.inventoryMovements)
       .leftJoin(schema.users, eq(schema.users.id, schema.inventoryMovements.actorUserId))
       .where(conditions.length ? and(...conditions) : undefined)
-      .orderBy(desc(schema.inventoryMovements.createdAt), desc(schema.inventoryMovements.id))
+      .orderBy(
+        ...timestampCursorOrder(schema.inventoryMovements.createdAt, schema.inventoryMovements.id),
+      )
       .limit(limit + 1);
     const enriched = rows.map((r) => ({ ...r, actorEmail: r.actorEmail ?? null }));
     return buildPage(enriched, limit, (r) => r.createdAt);

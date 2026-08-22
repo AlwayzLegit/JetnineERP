@@ -11,5 +11,8 @@
     "verbatimModuleSyntax": false
   },
   "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist", "drizzle"]
+  // seed.ts runs via tsx (`pnpm seed`), never from dist, and it's the only
+  // file here importing @jetnine/shared — compiling it would force shared
+  // to build before db, which broke deploys that build db first.
+  "exclude": ["node_modules", "dist", "drizzle", "src/seed.ts"]
 }

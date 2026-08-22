@@ -136,7 +136,7 @@ export default function WelcomePage() {
   // memberships is empty (or hidden) → create form.
   return (
     <Wrapper>
-      <h1 style={h1}>Welcome to Jetnine</h1>
+      <h1 style={h1}>Welcome to LA Mattress ERP</h1>
       <p style={muted}>Set up your business in under a minute. You can change everything later.</p>
 
       {error && <p style={{ color: '#b00', fontSize: 13 }}>{error}</p>}

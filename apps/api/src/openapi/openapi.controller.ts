@@ -38,7 +38,7 @@ const DOCS_HTML = `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Jetnine ERP API — docs</title>
+<title>LA Mattress ERP API — docs</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@${SWAGGER_VERSION}/swagger-ui.css">
 <style>body { margin: 0 } #swagger-ui { max-width: 1200px; margin: 0 auto }</style>

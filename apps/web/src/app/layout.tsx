@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
 
 export const metadata: Metadata = {
-  title: 'Jetnine ERP',
+  title: 'LA Mattress ERP',
   description: 'Multi-tenant browser POS and retail operations platform.',
   manifest: '/manifest.webmanifest',
 };

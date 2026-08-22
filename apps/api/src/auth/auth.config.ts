@@ -55,7 +55,7 @@ export async function createAuth(deps: AuthDeps) {
   });
 
   const options = {
-    appName: 'Jetnine ERP',
+    appName: 'LA Mattress ERP',
     baseURL,
     secret,
     trustedOrigins,
@@ -103,7 +103,7 @@ export async function createAuth(deps: AuthDeps) {
       sendResetPassword: async ({ user, url }) => {
         await email.send({
           to: user.email,
-          subject: 'Reset your Jetnine password',
+          subject: 'Reset your LA Mattress ERP password',
           text: `Click to reset your password: ${url}`,
           html: passwordResetEmail(url),
         });
@@ -116,7 +116,7 @@ export async function createAuth(deps: AuthDeps) {
       sendVerificationEmail: async ({ user, url }) => {
         await email.send({
           to: user.email,
-          subject: 'Verify your Jetnine email',
+          subject: 'Verify your LA Mattress ERP email',
           text: `Click to verify your email: ${url}`,
           html: verificationEmail(url),
         });
@@ -125,7 +125,7 @@ export async function createAuth(deps: AuthDeps) {
 
     plugins: [
       twoFactor({
-        issuer: 'Jetnine ERP',
+        issuer: 'LA Mattress ERP',
         otpOptions: {
           period: 30,
           digits: 6,
@@ -184,7 +184,7 @@ function verificationEmail(url: string): string {
   <p>
     <a href="${escapeHtml(url)}" style="display:inline-block;background:#111;color:#fff;padding:12px 18px;border-radius:6px;text-decoration:none;">Verify email</a>
   </p>
-  <p style="color:#666;font-size:12px;">If you didn't create a Jetnine account, you can ignore this email.</p>
+  <p style="color:#666;font-size:12px;">If you didn't create an LA Mattress ERP account, you can ignore this email.</p>
 </body></html>`;
 }
 

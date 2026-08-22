@@ -1,14 +1,41 @@
 /**
- * TypeScript with `module: "CommonJS"` transpiles `import(specifier)` into a
- * `require(specifier)` call wrapped in a Promise. That breaks for packages
- * that ship ESM only (better-auth, resend, etc.) — at runtime Node throws
- * `ERR_REQUIRE_ESM` because it can't `require()` an `.mjs` file.
+ * Load an ESM-only package (better-auth, resend, …) from the CJS-compiled
+ * apps/api output.
  *
- * Wrapping the dynamic import in `new Function(...)` hides it from the TS
- * compiler so the generated JavaScript keeps a native `import(...)` that
- * Node executes as a real dynamic import. Use this everywhere we need to
- * load an ESM-only module from the CJS-compiled apps/api output (which is
- * what runs in the Vercel function).
+ * Two runtimes have to be satisfied at once, and they want opposite things:
+ *
+ * 1. **Production** (`tsc` → CommonJS, run by Node). TypeScript rewrites a
+ *    literal `import(specifier)` into `require(specifier)`, which throws
+ *    `ERR_REQUIRE_ESM` on an ESM-only package. Hiding the import inside
+ *    `Function(...)` keeps a native `import(...)` in the emitted JS.
+ *
+ * 2. **Tests** (vitest, which evaluates modules in a VM context). A function
+ *    built by the `Function` constructor does not inherit the host's
+ *    dynamic-import callback, so the very same trick throws
+ *    `ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING`. There the *literal* form is
+ *    what works: the runner transforms this call site and resolves the
+ *    import itself.
+ *
+ * So: try the constructed import, and fall back to the literal one only on
+ * that specific error. The fallback is unreachable in production (Node's
+ * CJS loader always installs an import callback), and the primary path is
+ * unreachable under vitest — each runtime takes the branch that works for
+ * it, and neither silently degrades.
+ *
+ * Do not "simplify" this to one branch. Dropping the fallback makes every
+ * integration test fail at Nest bootstrap; dropping the constructed import
+ * breaks the production bundle. That failure mode stayed invisible for a
+ * while because CI was dying earlier in setup — hence `import-esm.spec.ts`,
+ * which pins both halves.
  */
-export const importESM = <T = unknown>(specifier: string): Promise<T> =>
-  (Function('s', 'return import(s)') as (s: string) => Promise<T>)(specifier);
+
+const NO_IMPORT_CALLBACK = 'ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING';
+
+export const importESM = async <T = unknown>(specifier: string): Promise<T> => {
+  try {
+    return await (Function('s', 'return import(s)') as (s: string) => Promise<T>)(specifier);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException | null)?.code !== NO_IMPORT_CALLBACK) throw err;
+    return (await import(specifier)) as T;
+  }
+};

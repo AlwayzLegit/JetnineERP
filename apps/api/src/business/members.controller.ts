@@ -298,6 +298,6 @@ export class MembersController {
       .from(schema.businesses)
       .where(eq(schema.businesses.id, businessId))
       .limit(1);
-    return b?.name ?? 'Jetnine';
+    return b?.name ?? 'LA Mattress ERP';
   }
 }

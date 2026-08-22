@@ -1,4 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
+import { type SQL, and, desc, eq, lt, or, sql } from 'drizzle-orm';
+import type { PgColumn } from 'drizzle-orm/pg-core';
 
 /**
  * Standard list-endpoint response envelope.
@@ -87,4 +89,55 @@ export function buildPage<T extends { id: string }>(
   const last = data[data.length - 1];
   const nextCursor = hasMore && last ? encodeCursor(cursorValue(last), last.id) : null;
   return { data, nextCursor };
+}
+
+/**
+ * Postgres `timestamptz` keeps **microseconds**; a JavaScript `Date` — and
+ * therefore `toISOString()`, and therefore the cursor — keeps only
+ * milliseconds. Comparing a cursor against the raw column means the boundary
+ * row can never match: a row stored as `…19.699720+00` is neither `<` nor `=`
+ * the cursor's `…19.699Z`, so the page after it comes back empty and the walk
+ * stops early. Rows inserted in one statement all share a timestamp, so this
+ * silently truncated every list endpoint to a single page.
+ *
+ * Both sides are therefore compared at millisecond resolution, which is
+ * exactly the resolution the cursor can carry. The `ORDER BY` has to use the
+ * same expression as the predicate or the two disagree for rows sharing a
+ * millisecond but differing in microseconds — which would skip rows instead
+ * of stopping early, a worse failure. There is no index on
+ * `(created_at, id)` on any of these tables, so the planner was already
+ * sorting; truncating the sort key costs nothing.
+ */
+function msTruncated(column: PgColumn): SQL {
+  return sql`date_trunc('milliseconds', ${column})`;
+}
+
+/**
+ * Keyset predicate for "rows strictly after the cursor" under
+ * `timestampCursorOrder`. Returns undefined when there is no cursor, so it
+ * drops cleanly into an `and(...)` list.
+ */
+export function timestampCursorWhere(
+  column: PgColumn,
+  idColumn: PgColumn,
+  cursor: CursorValue | null,
+): SQL | undefined {
+  if (!cursor) return undefined;
+  const parsed = new Date(cursor.v as string);
+  if (Number.isNaN(parsed.getTime())) throw new BadRequestException('Invalid cursor');
+  // Bound as an ISO string, not a Date: the left-hand side is a raw SQL
+  // expression rather than a column, so the driver has no column type to
+  // serialize a Date against and throws. Postgres infers timestamptz for the
+  // parameter from the comparison instead.
+  const v = parsed.toISOString();
+  const t = msTruncated(column);
+  // Built with drizzle's operators rather than a raw template so the id
+  // comparison carries the column's type — bound as plain text, Postgres
+  // rejects `uuid < text` for want of an operator.
+  return or(lt(t, v), and(eq(t, v), lt(idColumn, cursor.id)));
+}
+
+/** The matching ORDER BY. Must be used with `timestampCursorWhere`. */
+export function timestampCursorOrder(column: PgColumn, idColumn: PgColumn): [SQL, SQL] {
+  return [desc(msTruncated(column)), desc(idColumn)];
 }

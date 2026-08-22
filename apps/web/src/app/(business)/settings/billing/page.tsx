@@ -151,7 +151,7 @@ function BillingPageInner() {
         <h2 style={section}>Stripe</h2>
         <p style={{ color: '#666', fontSize: 13, marginBottom: 12 }}>
           Connect your Stripe account so card payments at the POS go straight to your bank. Money
-          never touches Jetnine — we only orchestrate the charge on your behalf.
+          never touches LA Mattress ERP — we only orchestrate the charge on your behalf.
         </p>
 
         {stripe?.stubMode && (
