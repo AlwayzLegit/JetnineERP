@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   listPending,
   type QueuedSale,
@@ -29,8 +29,46 @@ export default function PendingSalesPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [businessId]);
 
+  // Guards the queue against two drains at once — the automatic one below
+  // and the "Sync now" button racing each other would try to POST the same
+  // queued sales twice. A ref rather than `busy` state so the effect does
+  // not re-run when it flips.
+  const syncing = useRef(false);
+
+  /**
+   * Drain the queue as soon as connectivity returns. The register at /pos
+   * already does this on reconnect; this tray did not, which meant the one
+   * screen a cashier actually watches to see the queue clear was the one
+   * screen that would sit there full until somebody pressed the button.
+   *
+   * Silent when there is nothing to send: an automatic run should not
+   * announce "Nothing to sync." on every visit. Only a real outcome — or a
+   * failure the cashier has to know about — sets a message.
+   */
+  useEffect(() => {
+    if (!online || !businessId || syncing.current) return;
+    syncing.current = true;
+    void (async () => {
+      try {
+        const result = await syncAll(businessId);
+        if (result.succeeded > 0 && result.failed === 0) {
+          setMessage(`Synced ${result.succeeded} sale${result.succeeded === 1 ? '' : 's'}.`);
+        } else if (result.failed > 0) {
+          setMessage(
+            `Synced ${result.succeeded}, failed ${result.failed}. First error: ${result.errors[0]?.message ?? 'unknown'}`,
+          );
+        }
+        await load();
+      } finally {
+        syncing.current = false;
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [online, businessId]);
+
   async function syncNow() {
-    if (!businessId || !online) return;
+    if (!businessId || !online || syncing.current) return;
+    syncing.current = true;
     setBusy(true);
     setMessage(null);
     const result = await syncAll(businessId);
@@ -44,6 +82,7 @@ export default function PendingSalesPage() {
     } else {
       setMessage('Nothing to sync.');
     }
+    syncing.current = false;
     void load();
   }
 
