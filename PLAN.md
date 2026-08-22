@@ -4,6 +4,14 @@
 
 ---
 
+> **Phase 3 update (2026-08):** the active plan is the 10-day STORIS cutover sprint —
+> sales orders, deliveries, special orders, financing/layaway, commissions, service
+> orders, the GHL-style platform layer (templates, agencies, white-label, CRM), and
+> the full STORIS data migration. See [`PLAN-STORIS-CUTOVER.md`](./PLAN-STORIS-CUTOVER.md);
+> it extends (and where it conflicts, supersedes) the Phase 3 section below.
+
+---
+
 ## 1. Vision
 
 A multi-tenant, browser-based Point of Sale and retail operations platform inspired by STORIS, but generalized for any retail vertical. Sold as SaaS to retail businesses. Each business is fully isolated, has its own admins, users, locations, products, customers, and transactions. The platform owner ("super admin") can administer all businesses from a separate console.
