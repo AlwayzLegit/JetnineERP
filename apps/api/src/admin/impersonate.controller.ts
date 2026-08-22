@@ -85,7 +85,11 @@ export class ImpersonateController {
       maxAge: 8 * 60 * 60 * 1000,
     };
     res.cookie(IMPERSONATE_COOKIE, userId, cookieOpts);
-    res.cookie(ACTIVE_BUSINESS_COOKIE, businessId, cookieOpts);
+    // The active-business cookie has to stay readable from JavaScript even on
+    // this path — see the note on cookieOptions() in
+    // active-business.controller.ts. The impersonation marker above stays
+    // httpOnly; only this one is relaxed, and only to the same degree.
+    res.cookie(ACTIVE_BUSINESS_COOKIE, businessId, { ...cookieOpts, httpOnly: false });
 
     await this.audit.log({
       action: 'auth.impersonate.start',
@@ -118,7 +122,9 @@ export class ImpersonateController {
       path: '/',
     };
     res.clearCookie(IMPERSONATE_COOKIE, cookieOpts);
-    res.clearCookie(ACTIVE_BUSINESS_COOKIE, cookieOpts);
+    // Mirror the attributes it was set with, so the browser matches and
+    // actually drops it rather than leaving a stale tenant behind.
+    res.clearCookie(ACTIVE_BUSINESS_COOKIE, { ...cookieOpts, httpOnly: false });
     return { stopped: true };
   }
 }

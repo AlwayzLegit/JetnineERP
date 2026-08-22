@@ -126,7 +126,23 @@ export class ActiveBusinessController {
 
   private cookieOptions() {
     return {
-      httpOnly: true,
+      /**
+       * Deliberately readable from JavaScript. The offline POS layer reads
+       * this cookie directly — `readActiveBusinessId()` in
+       * `apps/web/src/lib/offline.ts` — to partition the IndexedDB sale queue
+       * and variant cache by tenant. Marked `httpOnly` it was invisible to
+       * `document.cookie`, so `businessId` was always null in the browser and
+       * every Phase 2.16 path silently died: offline sales were never queued,
+       * variants were never cached, and the reconnect sync never ran. The
+       * register just stopped working the moment it lost connectivity.
+       *
+       * Safe to expose: the value is a business id the caller was already
+       * proven a member of above, and it grants nothing on its own —
+       * TenancyGuard re-resolves membership from the session on every single
+       * request, and RLS enforces the boundary in the database besides. The
+       * session cookie stays httpOnly; this one is a UI hint.
+       */
+      httpOnly: false,
       sameSite: 'lax' as const,
       secure: this.config.get<string>('NODE_ENV') === 'production',
       path: '/',

@@ -127,6 +127,25 @@ test.describe('Phase 2.16 — offline POS', () => {
     await page.goto('/pos');
     await expect(page.getByRole('heading', { name: 'Register' })).toBeVisible();
 
+    // Wait for the service worker to actually control this page. It is
+    // registered from a useEffect and claims clients asynchronously, so for
+    // the first moments after load nothing is being cached at all.
+    await page.waitForFunction(() => navigator.serviceWorker?.controller != null, null, {
+      timeout: 20_000,
+    });
+
+    // Now visit the pending tray once while online. The SW caches /pos*
+    // pages as they are visited — there is no precache list — so a route
+    // never opened online is not available offline, and the offline
+    // navigation later in this test would land on the "You're offline"
+    // shell. This mirrors what the app tells the user: "The register hasn't
+    // loaded this page yet ... reconnect once and the page will be cached."
+    await page.goto('/pos/pending');
+    await expect(page.getByRole('heading', { name: /Pending sales/i })).toBeVisible();
+
+    await page.goto('/pos');
+    await expect(page.getByRole('heading', { name: 'Register' })).toBeVisible();
+
     // First (online) sale: search for the seeded variant SKU and ring it up.
     await page.getByPlaceholder(/scan|search/i).fill(variantSku);
     await page.keyboard.press('Enter');

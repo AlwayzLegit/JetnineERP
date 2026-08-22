@@ -197,3 +197,42 @@ describe('Epic 1.3 — @RequirePermission gating', () => {
     expect(res.status).toBe(403);
   });
 });
+
+describe('active-business cookie', () => {
+  /**
+   * The offline POS layer reads this cookie from `document.cookie`
+   * (`readActiveBusinessId()` in apps/web/src/lib/offline.ts) to partition
+   * the IndexedDB sale queue and variant cache by tenant. It was set
+   * `httpOnly`, which made it invisible to the browser — `businessId` was
+   * always null, so offline sales were never queued, variants were never
+   * cached, and the reconnect sync never ran. Nothing failed loudly; the
+   * register just quietly stopped working whenever it lost connectivity.
+   *
+   * This pins the attribute so a future "harden the cookies" pass has to
+   * fail a test rather than silently disable offline POS again.
+   */
+  it('is readable from JavaScript, or offline POS silently dies', async () => {
+    const res = await request(app.getHttpServer())
+      .post('/v1/auth/active-business')
+      .set('Cookie', owner.cookie)
+      .send({ businessId });
+    expect(res.status).toBe(201);
+
+    const setCookie = (res.get('Set-Cookie') ?? []).find((c) =>
+      c.startsWith('jetnine.active_business_id='),
+    );
+    expect(setCookie).toBeTruthy();
+    expect(setCookie!.toLowerCase()).not.toContain('httponly');
+  });
+
+  it('still gates on membership before setting anything', async () => {
+    // Readable does not mean unguarded: the endpoint proves membership
+    // first, and TenancyGuard re-resolves it on every later request.
+    const res = await request(app.getHttpServer())
+      .post('/v1/auth/active-business')
+      .set('Cookie', owner.cookie)
+      .send({ businessId: '00000000-0000-0000-0000-000000000000' });
+    expect(res.status).toBe(403);
+    expect(res.get('Set-Cookie') ?? []).toHaveLength(0);
+  });
+});
