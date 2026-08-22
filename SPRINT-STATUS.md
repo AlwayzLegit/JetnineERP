@@ -35,12 +35,23 @@ suite writes an order, takes a deposit, and asserts `inventory_levels.reserved` 
 
 ## Day 2 — Order writer
 
-- [ ] **Build:** `(business)/orders` — pipeline board (quote→open→partially_fulfilled→fulfilled→completed), order writer screen (share cart components with POS), order detail with payments + timeline
-- [ ] **Build:** POS: "Save as order / take deposit" flow
-- [ ] **Build:** Committed-stock visibility in inventory views
+- [x] **Build:** `(business)/orders` — pipeline board (quote→open→partially*fulfilled→fulfilled→completed), order writer screen (share cart components with POS), order detail with payments + timeline
+      — \_2026-08-22: board + writer + detail under `(business)/orders/`; CustomerPicker
+      extracted to `components/customer-picker.tsx` and shared with POS; audit-logs API
+      gained targetType/targetId filters to feed the order timeline.*
+- [x] **Build:** POS: "Save as order / take deposit" flow
+      — _2026-08-22: SaveAsOrderDialog on the register — confirms the order (committing
+      stock) and posts the deposit as an order payment in one step._
+- [x] **Build:** Committed-stock visibility in inventory views
+      — _2026-08-22: already satisfied — inventory levels API + page carried
+      on-hand/reserved/available since Phase 2; Day 1 reservations feed `reserved`.
+      Verified in `e2e/orders.spec.ts`._
 - [ ] **Ops:** Chase exports; write the STORIS daily-routine script (becomes the QA script)
 
 _Acceptance: write an order with deposit end-to-end in the browser; committed qty visible._
+**✅ met** — `apps/web/e2e/orders.spec.ts`: writer → confirm → cash deposit →
+reserved=1/available=99 in inventory → order on the board; plus the POS
+save-as-order path with the suggested 25% deposit. 2 e2e tests green.
 
 ## Day 3 — Delivery & fulfillment
 
