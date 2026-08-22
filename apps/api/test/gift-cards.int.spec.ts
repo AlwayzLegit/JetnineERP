@@ -310,9 +310,13 @@ describe('Phase 2.13 — gift cards', () => {
     expect(await getBalance(cardId)).toBe(2500);
 
     const lineId = sale.body.lines[0].id;
+    // Refund as the owner: `pos.refund.create` is deliberately withheld from
+    // the Cashier role (see the explicit assertion in sales.int.spec.ts).
+    // Who performs the refund is incidental here — what is under test is that
+    // the gift card gets credited back.
     const refund = await request(app.getHttpServer())
       .post(`/v1/sales/${sale.body.id}/refund`)
-      .set('Cookie', cashierCookie)
+      .set('Cookie', ownerCookie)
       .set('X-Business-Id', businessId)
       .send({ lines: [{ saleLineId: lineId, quantity: 1 }] });
     expect(refund.status).toBe(201);

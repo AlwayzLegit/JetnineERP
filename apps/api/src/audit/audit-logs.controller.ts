@@ -1,11 +1,13 @@
 import { Controller, Get, Query } from '@nestjs/common';
-import { and, desc, eq, gte, lt, or } from 'drizzle-orm';
+import { and, eq, gte, lt } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
 import { schema } from '@jetnine/db';
 import {
   buildPage,
   clampLimit as clampPageLimit,
   decodeCursor,
+  timestampCursorOrder,
+  timestampCursorWhere,
   type PageResponse,
 } from '../common/pagination';
 import { TenantScoped, RequirePermission } from '../tenancy/decorators';
@@ -63,13 +65,7 @@ export class AuditLogsController {
     const cursor = decodeCursor(cursorStr);
     if (cursor) {
       conditions.push(
-        or(
-          lt(schema.auditLogs.createdAt, new Date(cursor.v as string)),
-          and(
-            eq(schema.auditLogs.createdAt, new Date(cursor.v as string)),
-            lt(schema.auditLogs.id, cursor.id),
-          ),
-        )!,
+        timestampCursorWhere(schema.auditLogs.createdAt, schema.auditLogs.id, cursor)!,
       );
     }
 
@@ -92,7 +88,7 @@ export class AuditLogsController {
       .from(schema.auditLogs)
       .leftJoin(schema.users, eq(schema.users.id, schema.auditLogs.actorUserId))
       .where(where)
-      .orderBy(desc(schema.auditLogs.createdAt), desc(schema.auditLogs.id))
+      .orderBy(...timestampCursorOrder(schema.auditLogs.createdAt, schema.auditLogs.id))
       .limit(limit + 1);
 
     const enriched = rows.map((r) => ({ ...r, actorEmail: r.actorEmail ?? null }));

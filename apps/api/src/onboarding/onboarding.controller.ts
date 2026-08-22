@@ -6,9 +6,11 @@ import {
   ForbiddenException,
   Get,
   Inject,
+  Res,
   Post,
   UnprocessableEntityException,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { and, count, eq } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { schema } from '@jetnine/db';
@@ -135,8 +137,10 @@ export class OnboardingController {
         })
         .returning();
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      if (message.includes('businesses_slug_uniq')) {
+      // Drizzle wraps the driver error, so the constraint name lives on the
+      // `cause`, not the top-level message — checking only the latter let
+      // every duplicate slug surface as a 500 instead of a 409.
+      if (isUniqueViolation(err, 'businesses_slug_uniq')) {
         throw new ConflictException(`A business with slug "${slug}" already exists`);
       }
       throw err;
@@ -187,10 +191,15 @@ export class OnboardingController {
       acceptedAt: new Date(),
     });
 
+    // This route runs outside the tenant pipeline (the business does not
+    // exist until the lines above), so the audit row's identity has to be
+    // passed rather than read from the request context.
     await this.audit.log({
       action: 'business.create.self_service',
       targetType: 'business',
       targetId: biz.id,
+      businessId: biz.id,
+      actorUserId: actor.id,
       after: { slug, name, currencyCode, defaultTaxRateBps: taxBps },
     });
 
@@ -206,7 +215,15 @@ export class OnboardingController {
    * the panel.
    */
   @Get('checklist')
-  async checklist(@CurrentUser() actor: CurrentUserPayload): Promise<OnboardingChecklist | null> {
+  async checklist(
+    @CurrentUser() actor: CurrentUserPayload,
+    // Passthrough so we can emit a literal JSON `null` for the "no business
+    // yet" case. Returning `null` from the handler makes Nest end the
+    // response with an empty body, so a client doing `await res.json()`
+    // throws a parse error instead of reading the documented
+    // `OnboardingChecklist | null`.
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<OnboardingChecklist | null> {
     const memberships = await this.db
       .select({
         businessId: schema.memberships.businessId,
@@ -215,7 +232,10 @@ export class OnboardingController {
       .from(schema.memberships)
       .innerJoin(schema.businesses, eq(schema.businesses.id, schema.memberships.businessId))
       .where(and(eq(schema.memberships.userId, actor.id), eq(schema.memberships.status, 'active')));
-    if (memberships.length === 0) return null;
+    if (memberships.length === 0) {
+      res.json(null);
+      return null;
+    }
     // Most recently-created business is the one we onboard against.
     memberships.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
     const businessId = memberships[0]!.businessId;
@@ -285,4 +305,25 @@ export class OnboardingController {
       complete: steps.every((s) => s.done),
     };
   }
+}
+
+/**
+ * True when `err` (or anything in its `cause` chain) is a Postgres unique
+ * violation, optionally for a specific constraint. Walks the chain because
+ * drizzle re-throws driver errors wrapped in its own `Failed query: …`
+ * error, which hides both the SQLSTATE and the constraint name.
+ */
+function isUniqueViolation(err: unknown, constraint?: string): boolean {
+  const UNIQUE_VIOLATION = '23505';
+  let cur: unknown = err;
+  for (let depth = 0; cur && depth < 5; depth++) {
+    const e = cur as { code?: string; constraint_name?: string; message?: string; cause?: unknown };
+    const isUnique = e.code === UNIQUE_VIOLATION;
+    const named =
+      !constraint || e.constraint_name === constraint || (e.message ?? '').includes(constraint);
+    if (isUnique && named) return true;
+    if (constraint && (e.message ?? '').includes(constraint)) return true;
+    cur = e.cause;
+  }
+  return false;
 }
