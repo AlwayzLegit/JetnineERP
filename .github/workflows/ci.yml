@@ -51,6 +51,7 @@ jobs:
       INVENTORY_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/jetnine_inventory
       CUSTOMERS_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/jetnine_customers
       SALES_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/jetnine_sales
+      ORDERS_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/jetnine_orders
       REPORTS_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/jetnine_reports
       BILLING_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/jetnine_billing
       STRIPE_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/jetnine_stripe
@@ -92,6 +93,7 @@ jobs:
           createdb -h localhost -U postgres jetnine_inventory
           createdb -h localhost -U postgres jetnine_customers
           createdb -h localhost -U postgres jetnine_sales
+          createdb -h localhost -U postgres jetnine_orders
           createdb -h localhost -U postgres jetnine_reports
           createdb -h localhost -U postgres jetnine_billing
           createdb -h localhost -U postgres jetnine_stripe

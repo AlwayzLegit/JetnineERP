@@ -56,6 +56,41 @@ export const PERMISSIONS = {
   'gift_cards.issue': 'Issue gift cards',
   'gift_cards.adjust': 'Adjust gift card balance / cancel a gift card',
 
+  'orders.view': 'View sales orders',
+  'orders.create': 'Write sales orders',
+  'orders.update': 'Update sales orders and their lines',
+  'orders.cancel': 'Cancel a sales order',
+  'orders.deposit.take': 'Take a deposit or balance payment on an order',
+  'orders.complete_with_balance': 'Complete an order that still has a balance due',
+
+  'deliveries.view': 'View the delivery calendar and day sheets',
+  'deliveries.schedule': 'Schedule / reschedule deliveries',
+  'deliveries.complete': 'Mark deliveries delivered or failed',
+
+  'special_orders.manage': 'Manage the to-order queue and PO allocations',
+
+  'payment_plans.view': 'View layaway / in-house payment plans',
+  'payment_plans.manage': 'Create plans and take installment payments',
+
+  'commissions.view_own': 'View own commission entries',
+  'commissions.view_all': 'View all commission entries',
+  'commissions.manage': 'Manage commission plans, approve and mark entries paid',
+
+  'service_orders.view': 'View service orders',
+  'service_orders.create': 'Intake service orders',
+  'service_orders.update': 'Update service orders, notes and charges',
+  'service_orders.complete': 'Complete service orders',
+
+  'serials.view': 'View serial units',
+  'serials.manage': 'Create / update serial units',
+
+  'crm.notes.manage': 'Create / update customer notes',
+  'crm.tags.manage': 'Manage customer tags',
+  'crm.campaigns.manage': 'Create and send email campaigns',
+  'crm.automations.manage': 'Manage post-purchase automations',
+
+  'import.run': 'Run the legacy data import (upload, validate, commit)',
+
   'pos.access': 'Access the POS register',
   'pos.transaction.create': 'Create sales',
   'pos.transaction.discount': 'Apply line/order discounts',
@@ -72,7 +107,21 @@ export const PERMISSIONS = {
   'reports.export': 'Export reports',
 
   'audit.view': 'View audit log',
+
+  // Super-admin only — platform surfaces, never granted to a business role.
+  'platform.templates.manage': 'Create and apply business templates (snapshots)',
+  'platform.agencies.manage': 'Manage agencies and their business assignments',
 } as const;
+
+/**
+ * Permissions that only ever belong to a platform super admin. They are
+ * excluded from every seeded business role, Owner included — an Owner
+ * runs their business, not the platform.
+ */
+export const SUPER_ADMIN_ONLY_PERMISSIONS = [
+  'platform.templates.manage',
+  'platform.agencies.manage',
+] as const satisfies readonly (keyof typeof PERMISSIONS)[];
 
 export type Permission = keyof typeof PERMISSIONS;
 
