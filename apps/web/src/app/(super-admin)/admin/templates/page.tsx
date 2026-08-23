@@ -1,6 +1,8 @@
 'use client';
 
+import { Camera } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import { Button, Card, EmptyState, Input, PageHeader, Select } from '@/components/ui';
 import { api } from '@/lib/api';
 
 /**
@@ -110,146 +112,126 @@ export default function TemplatesPage() {
 
   return (
     <div>
-      <h1 style={{ fontSize: 22, marginBottom: 12 }}>Business templates</h1>
-      {error && <p style={{ color: '#b00', fontSize: 13 }}>{error}</p>}
-      {message && <p style={{ color: '#2c7a4b', fontSize: 13 }}>{message}</p>}
+      <PageHeader title="Business templates" />
+      {error && <p style={{ color: 'var(--danger)', fontSize: 13 }}>{error}</p>}
+      {message && <p style={{ color: 'var(--success)', fontSize: 13 }}>{message}</p>}
 
-      <div style={card}>
-        <strong style={{ fontSize: 14 }}>Save a business as a template</strong>
-        <div style={{ display: 'flex', gap: 8, marginTop: 8, alignItems: 'center' }}>
-          <select value={sourceId} onChange={(e) => setSourceId(e.target.value)} style={input}>
+      <Card title="Save a business as a template" style={{ marginBottom: 16 }}>
+        <div className="flex flex-wrap items-center gap-2">
+          <Select value={sourceId} onChange={(e) => setSourceId(e.target.value)}>
             {businesses.map((b) => (
               <option key={b.id} value={b.id}>
                 {b.name} ({b.slug})
               </option>
             ))}
-          </select>
-          <input
+          </Select>
+          <Input
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="Template name"
-            style={input}
             data-testid="template-name"
           />
-          <label style={{ fontSize: 13, color: '#444' }}>
+          <label
+            style={{
+              fontSize: 13,
+              color: 'var(--text-secondary)',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 4,
+            }}
+          >
             <input
               type="checkbox"
               checked={includeProducts}
               onChange={(e) => setIncludeProducts(e.target.checked)}
+              style={{ accentColor: 'var(--brand)' }}
             />{' '}
             include catalog
           </label>
-          <button
+          <Button
+            variant="primary"
             onClick={() => void snapshot()}
             disabled={busy || !name.trim() || !sourceId}
-            style={darkBtn}
             data-testid="snapshot-template"
           >
+            <Camera size={14} aria-hidden />
             Snapshot
-          </button>
+          </Button>
         </div>
-        <p style={{ fontSize: 12, color: '#888', margin: '8px 0 0' }}>
+        <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '8px 0 0' }}>
           Captures custom roles, categories, tax classes, and settings (catalog optional). Pass the
           template when creating a business, or apply it to an existing one below — applying is
           additive and skips anything that already exists.
         </p>
-      </div>
+      </Card>
 
-      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-        <thead>
-          <tr style={{ textAlign: 'left', borderBottom: '1px solid #ddd' }}>
-            <th style={th}>Name</th>
-            <th style={th}>Scope</th>
-            <th style={th}>Created</th>
-            <th style={th}>Apply to</th>
-            <th style={th} />
-          </tr>
-        </thead>
-        <tbody>
-          {templates.map((t) => (
-            <tr key={t.id} style={{ borderBottom: '1px solid #eee' }}>
-              <td style={td}>
-                <strong>{t.name}</strong>
-                {t.description && <span style={{ color: '#888' }}> — {t.description}</span>}
-              </td>
-              <td style={td}>
-                {Object.entries(t.scopeJson)
-                  .filter(([, v]) => v)
-                  .map(([k]) => k)
-                  .join(', ')}
-              </td>
-              <td style={td}>{new Date(t.createdAt).toLocaleDateString()}</td>
-              <td style={td}>
-                <select
-                  value={applyTarget[t.id] ?? ''}
-                  onChange={(e) => setApplyTarget({ ...applyTarget, [t.id]: e.target.value })}
-                  style={input}
-                >
-                  <option value="">— pick business —</option>
-                  {businesses.map((b) => (
-                    <option key={b.id} value={b.id}>
-                      {b.name}
-                    </option>
-                  ))}
-                </select>
-              </td>
-              <td style={{ ...td, whiteSpace: 'nowrap' }}>
-                <button
-                  onClick={() => void apply(t)}
-                  disabled={busy || !applyTarget[t.id]}
-                  style={{ ...darkBtn, marginRight: 8 }}
-                >
-                  Apply
-                </button>
-                <button onClick={() => void remove(t)} style={ghostBtn}>
-                  Delete
-                </button>
-              </td>
-            </tr>
-          ))}
-          {templates.length === 0 && (
+      <Card style={{ padding: 0, overflowX: 'auto' }}>
+        <table className="table">
+          <thead>
             <tr>
-              <td style={{ ...td, color: '#888' }} colSpan={5}>
-                No templates yet — snapshot a configured business above.
-              </td>
+              <th>Name</th>
+              <th>Scope</th>
+              <th>Created</th>
+              <th>Apply to</th>
+              <th />
             </tr>
-          )}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {templates.map((t) => (
+              <tr key={t.id}>
+                <td>
+                  <strong>{t.name}</strong>
+                  {t.description && (
+                    <span style={{ color: 'var(--text-muted)' }}> — {t.description}</span>
+                  )}
+                </td>
+                <td>
+                  {Object.entries(t.scopeJson)
+                    .filter(([, v]) => v)
+                    .map(([k]) => k)
+                    .join(', ')}
+                </td>
+                <td>{new Date(t.createdAt).toLocaleDateString()}</td>
+                <td>
+                  <Select
+                    value={applyTarget[t.id] ?? ''}
+                    onChange={(e) => setApplyTarget({ ...applyTarget, [t.id]: e.target.value })}
+                  >
+                    <option value="">— pick business —</option>
+                    {businesses.map((b) => (
+                      <option key={b.id} value={b.id}>
+                        {b.name}
+                      </option>
+                    ))}
+                  </Select>
+                </td>
+                <td style={{ whiteSpace: 'nowrap' }}>
+                  <span style={{ display: 'inline-flex', gap: 8 }}>
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      onClick={() => void apply(t)}
+                      disabled={busy || !applyTarget[t.id]}
+                    >
+                      Apply
+                    </Button>
+                    <Button variant="danger" size="sm" onClick={() => void remove(t)}>
+                      Delete
+                    </Button>
+                  </span>
+                </td>
+              </tr>
+            ))}
+            {templates.length === 0 && (
+              <tr>
+                <td colSpan={5}>
+                  <EmptyState>No templates yet — snapshot a configured business above.</EmptyState>
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </Card>
     </div>
   );
 }
-
-const card: React.CSSProperties = {
-  border: '1px solid #e2e2e2',
-  borderRadius: 8,
-  padding: 16,
-  marginBottom: 16,
-  background: '#fff',
-};
-const th: React.CSSProperties = { padding: '6px 8px', fontWeight: 600 };
-const td: React.CSSProperties = { padding: '6px 8px' };
-const input: React.CSSProperties = {
-  padding: '6px 10px',
-  border: '1px solid #ccc',
-  borderRadius: 4,
-  fontSize: 13,
-};
-const darkBtn: React.CSSProperties = {
-  padding: '8px 14px',
-  background: '#111',
-  color: '#fff',
-  border: 'none',
-  borderRadius: 4,
-  cursor: 'pointer',
-  fontSize: 13,
-};
-const ghostBtn: React.CSSProperties = {
-  padding: '6px 12px',
-  background: 'transparent',
-  color: '#b00',
-  border: '1px solid #ccc',
-  borderRadius: 4,
-  cursor: 'pointer',
-  fontSize: 13,
-};

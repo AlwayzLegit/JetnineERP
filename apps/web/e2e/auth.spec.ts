@@ -116,11 +116,28 @@ test.describe('auth golden path', () => {
       const code = authenticator.generate(totpSecret);
       await page.getByLabel('6-digit code').fill(code);
       await page.getByRole('button', { name: 'Verify' }).click();
-      await page.waitForURL('**/dashboard');
-      await expect(page.getByTestId('dashboard-email')).toContainText(email);
-      // Sign out again before the password-reset step.
-      await page.getByRole('button', { name: 'Sign out' }).click();
-      await page.waitForURL('**/login');
+      // A business-less account gets bounced from /dashboard to /welcome by
+      // the onboarding checklist, so asserting dashboard content here races
+      // that redirect. Landing on either page proves the TOTP sign-in
+      // worked; the session endpoint proves who signed in.
+      await page.waitForURL(/\/(dashboard|welcome)/);
+      const sessionEmail = await page.evaluate(async (apiUrl) => {
+        const res = await fetch(`${apiUrl}/api/auth/get-session`, { credentials: 'include' });
+        const data = (await res.json()) as { user?: { email?: string } } | null;
+        return data?.user?.email ?? null;
+      }, API_URL);
+      expect(sessionEmail).toBe(email);
+      // Sign out again before the password-reset step — through the auth
+      // API from the page context, since /welcome has no sign-out button.
+      await page.evaluate(async (apiUrl) => {
+        await fetch(`${apiUrl}/api/auth/sign-out`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: '{}',
+        });
+      }, API_URL);
+      await page.goto('/login');
     });
 
     await test.step('request a password reset and follow the email link', async () => {

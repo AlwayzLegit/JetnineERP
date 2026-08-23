@@ -3,8 +3,10 @@
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { Plus, X } from 'lucide-react';
 import { formatMoney } from '@jetnine/shared';
 import { api } from '@/lib/api';
+import { Button, Card, Field, Input, LoadingRows, PageHeader, Select } from '@/components/ui';
 
 /**
  * Service board (STORIS cutover G6): every open ticket by status, plus
@@ -117,60 +119,89 @@ export default function ServiceBoardPage() {
 
   return (
     <div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
-        <h1 style={{ fontSize: 22, margin: 0 }}>Service</h1>
-        <button onClick={() => setShowIntake((v) => !v)} style={darkBtn} data-testid="new-ticket">
-          {showIntake ? 'Close intake' : '+ New ticket'}
-        </button>
-      </div>
-      {error && <p style={{ color: '#b00', fontSize: 13 }}>{error}</p>}
+      <PageHeader
+        title="Service"
+        actions={
+          <Button
+            variant="primary"
+            onClick={() => setShowIntake((v) => !v)}
+            data-testid="new-ticket"
+          >
+            {showIntake ? <X size={14} aria-hidden /> : <Plus size={14} aria-hidden />}
+            {showIntake ? 'Close intake' : '+ New ticket'}
+          </Button>
+        }
+      />
+      {error && <p style={{ color: 'var(--danger)', fontSize: 13 }}>{error}</p>}
 
       {showIntake && (
-        <div style={card} data-testid="intake-form">
-          <strong style={{ fontSize: 14 }}>Intake</strong>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 8 }}>
-            <label style={lbl}>
-              Location
-              <select
+        <Card title="Intake" style={{ marginBottom: 16 }} data-testid="intake-form">
+          <div className="grid gap-2 sm:grid-cols-2">
+            <Field label="Location">
+              <Select
                 value={locationId}
                 onChange={(e) => setLocationId(e.target.value)}
-                style={input}
+                style={{ width: '100%' }}
               >
                 {locations.map((l) => (
                   <option key={l.id} value={l.id}>
                     {l.name}
                   </option>
                 ))}
-              </select>
-            </label>
+              </Select>
+            </Field>
             {/* A <div>, not a <label>: label activation would forward the
                 click on a result row to whatever control renders next
                 (the "change" button), instantly un-picking the customer. */}
-            <div style={lbl}>
-              Customer
+            <div>
+              <span className="field-label">Customer</span>
               {customer ? (
-                <div style={{ ...input, display: 'flex', justifyContent: 'space-between' }}>
+                <div
+                  className="input"
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    width: '100%',
+                  }}
+                >
                   <span data-testid="intake-customer">
                     {customer.firstName} {customer.lastName}
                   </span>
                   <button
                     onClick={() => setCustomer(null)}
-                    style={{ border: 'none', background: 'none', color: '#06c', cursor: 'pointer' }}
+                    style={{
+                      border: 'none',
+                      background: 'none',
+                      color: 'var(--brand)',
+                      cursor: 'pointer',
+                      fontSize: 12,
+                      padding: 0,
+                    }}
                   >
                     change
                   </button>
                 </div>
               ) : (
                 <>
-                  <input
+                  <Input
                     value={customerQ}
                     onChange={(e) => void searchCustomers(e.target.value)}
                     placeholder="Search name / email / phone…"
-                    style={input}
+                    style={{ width: '100%' }}
                     data-testid="intake-customer-search"
                   />
                   {customerHits.length > 0 && (
-                    <div style={{ border: '1px solid #ddd', borderRadius: 4, marginTop: 2 }}>
+                    <div
+                      style={{
+                        border: '1px solid var(--border)',
+                        borderRadius: 'var(--radius-sm)',
+                        marginTop: 4,
+                        background: 'var(--surface)',
+                        boxShadow: 'var(--shadow-md)',
+                        overflow: 'hidden',
+                      }}
+                    >
                       {customerHits.map((c) => (
                         <button
                           key={c.id}
@@ -180,16 +211,7 @@ export default function ServiceBoardPage() {
                             setCustomer(c);
                             setCustomerHits([]);
                           }}
-                          style={{
-                            display: 'block',
-                            width: '100%',
-                            textAlign: 'left',
-                            padding: '6px 10px',
-                            border: 'none',
-                            background: 'none',
-                            cursor: 'pointer',
-                            fontSize: 13,
-                          }}
+                          style={hitBtn}
                         >
                           {c.firstName} {c.lastName} {c.email ? `· ${c.email}` : ''}
                         </button>
@@ -199,29 +221,35 @@ export default function ServiceBoardPage() {
                 </>
               )}
             </div>
-            <label style={lbl}>
-              Item
-              <input
+            <Field label="Item">
+              <Input
                 value={itemDescription}
                 onChange={(e) => setItemDescription(e.target.value)}
                 placeholder="e.g. Queen adjustable base"
-                style={input}
+                style={{ width: '100%' }}
                 data-testid="intake-item"
               />
-            </label>
-            <label style={lbl}>
-              Issue *
-              <input
+            </Field>
+            <Field label="Issue *">
+              <Input
                 value={issue}
                 onChange={(e) => setIssue(e.target.value)}
                 placeholder="What's wrong?"
-                style={input}
+                style={{ width: '100%' }}
                 data-testid="intake-issue"
               />
-            </label>
+            </Field>
           </div>
-          <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginTop: 8 }}>
-            <label style={{ fontSize: 13, color: '#444' }}>
+          <div
+            style={{
+              display: 'flex',
+              gap: 12,
+              alignItems: 'center',
+              marginTop: 12,
+              flexWrap: 'wrap',
+            }}
+          >
+            <label style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
               <input
                 type="checkbox"
                 checked={warranty}
@@ -230,118 +258,125 @@ export default function ServiceBoardPage() {
               />{' '}
               Warranty work (parts & labor price at $0)
             </label>
-            <button
+            <Button
+              variant="primary"
               onClick={() => void createTicket()}
               disabled={busy || !customer || !issue.trim()}
-              style={darkBtn}
               data-testid="create-ticket"
             >
               Create ticket
-            </button>
+            </Button>
+          </div>
+        </Card>
+      )}
+
+      {!tickets && !error && <LoadingRows rows={4} />}
+
+      {tickets && (
+        <div className="overflow-x-auto pb-2">
+          <div className="flex gap-3 lg:grid lg:grid-cols-4">
+            {COLUMNS.map((col) => {
+              const rows = tickets.filter((t) => t.status === col.key);
+              return (
+                <div
+                  key={col.key}
+                  className="min-w-[240px] flex-1 lg:min-w-0"
+                  style={{
+                    background: 'var(--neutral-soft)',
+                    borderRadius: 'var(--radius)',
+                    padding: 8,
+                  }}
+                >
+                  <p
+                    style={{
+                      fontSize: 11,
+                      fontWeight: 600,
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.05em',
+                      color: 'var(--text-secondary)',
+                      margin: '0 0 8px',
+                      padding: '2px 4px',
+                    }}
+                  >
+                    {col.label} ({rows.length})
+                  </p>
+                  {rows.map((t) => (
+                    <Link
+                      key={t.id}
+                      href={`/service/${t.id}`}
+                      className="card card-hover"
+                      style={{
+                        display: 'block',
+                        padding: 10,
+                        margin: '0 0 8px',
+                        textDecoration: 'none',
+                        color: 'inherit',
+                      }}
+                      data-testid={`ticket-${t.number}`}
+                    >
+                      <div
+                        style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}
+                      >
+                        <strong>{t.number}</strong>
+                        {t.warranty && <span className="badge badge-warning">WARRANTY</span>}
+                      </div>
+                      <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                        {t.customerName}
+                      </div>
+                      <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
+                        {t.itemDescription ?? t.issue}
+                      </div>
+                      {t.balanceDueCents > 0 && (
+                        <div style={{ fontSize: 12, color: 'var(--danger)', marginTop: 2 }}>
+                          due {formatMoney(t.balanceDueCents)}
+                        </div>
+                      )}
+                    </Link>
+                  ))}
+                  {rows.length === 0 && (
+                    <p className="muted" style={{ fontSize: 12, padding: '2px 4px', margin: 0 }}>
+                      —
+                    </p>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
-        {COLUMNS.map((col) => {
-          const rows = tickets?.filter((t) => t.status === col.key) ?? [];
-          return (
-            <div key={col.key} style={{ background: '#f7f7f7', borderRadius: 8, padding: 10 }}>
-              <p style={{ fontSize: 12, fontWeight: 700, color: '#666', margin: '0 0 8px' }}>
-                {col.label} ({rows.length})
-              </p>
-              {rows.map((t) => (
-                <Link
-                  key={t.id}
-                  href={`/service/${t.id}`}
-                  style={{
-                    display: 'block',
-                    background: '#fff',
-                    border: '1px solid #e2e2e2',
-                    borderRadius: 6,
-                    padding: 10,
-                    marginBottom: 8,
-                    textDecoration: 'none',
-                    color: '#222',
-                  }}
-                  data-testid={`ticket-${t.number}`}
-                >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
-                    <strong>{t.number}</strong>
-                    {t.warranty && (
-                      <span style={{ fontSize: 11, color: '#8a6d1a', fontWeight: 700 }}>
-                        WARRANTY
-                      </span>
-                    )}
-                  </div>
-                  <div style={{ fontSize: 12, color: '#666' }}>{t.customerName}</div>
-                  <div style={{ fontSize: 12, color: '#888', marginTop: 2 }}>
-                    {t.itemDescription ?? t.issue}
-                  </div>
-                  {t.balanceDueCents > 0 && (
-                    <div style={{ fontSize: 12, color: '#8a2f2f', marginTop: 2 }}>
-                      due {formatMoney(t.balanceDueCents)}
-                    </div>
-                  )}
-                </Link>
-              ))}
-              {rows.length === 0 && <p style={{ fontSize: 12, color: '#aaa' }}>—</p>}
-            </div>
-          );
-        })}
-      </div>
-
       {completed.length > 0 && (
-        <div style={{ marginTop: 20 }}>
-          <p style={{ fontSize: 12, fontWeight: 700, color: '#666' }}>Recently completed</p>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-            <tbody>
-              {completed.map((t) => (
-                <tr key={t.id} style={{ borderBottom: '1px solid #eee' }}>
-                  <td style={{ padding: '6px 8px' }}>
-                    <Link href={`/service/${t.id}`} style={{ color: '#06c' }}>
-                      {t.number}
-                    </Link>
-                  </td>
-                  <td style={{ padding: '6px 8px' }}>{t.customerName}</td>
-                  <td style={{ padding: '6px 8px' }}>{t.itemDescription ?? t.issue}</td>
-                  <td style={{ padding: '6px 8px', textAlign: 'right' }}>
-                    {formatMoney(t.totalCents)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <Card title="Recently completed" style={{ marginTop: 20 }}>
+          <div className="overflow-x-auto">
+            <table className="table">
+              <tbody>
+                {completed.map((t) => (
+                  <tr key={t.id}>
+                    <td>
+                      <Link href={`/service/${t.id}`}>{t.number}</Link>
+                    </td>
+                    <td>{t.customerName}</td>
+                    <td>{t.itemDescription ?? t.issue}</td>
+                    <td className="num">{formatMoney(t.totalCents)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
       )}
     </div>
   );
 }
 
-const card: React.CSSProperties = {
-  border: '1px solid #e2e2e2',
-  borderRadius: 8,
-  padding: 16,
-  marginBottom: 16,
-  background: '#fff',
-};
-const lbl: React.CSSProperties = { fontSize: 12, color: '#444' };
-const input: React.CSSProperties = {
+const hitBtn: React.CSSProperties = {
   display: 'block',
   width: '100%',
-  padding: '6px 10px',
-  border: '1px solid #ccc',
-  borderRadius: 4,
-  fontSize: 13,
-  marginTop: 2,
-  boxSizing: 'border-box',
-};
-const darkBtn: React.CSSProperties = {
-  padding: '8px 14px',
-  background: '#111',
-  color: '#fff',
+  textAlign: 'left',
+  padding: '7px 10px',
   border: 'none',
-  borderRadius: 4,
+  background: 'none',
   cursor: 'pointer',
   fontSize: 13,
+  color: 'var(--text)',
 };

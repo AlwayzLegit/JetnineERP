@@ -2,7 +2,9 @@
 
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
+import { FileText } from 'lucide-react';
 import { api } from '@/lib/api';
+import { Button, Card, EmptyState, LoadingRows, PageHeader, Select } from '@/components/ui';
 
 /**
  * The to-order queue (STORIS cutover G3): everything customers have
@@ -87,111 +89,99 @@ export default function SpecialOrdersPage() {
 
   return (
     <div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
-        <h1 style={{ fontSize: 22, margin: 0 }}>Special orders to buy</h1>
-        <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
-          <select
-            value={vendorId}
-            onChange={(e) => setVendorId(e.target.value)}
-            style={{ padding: '6px 10px', border: '1px solid #ccc', borderRadius: 4, fontSize: 13 }}
-          >
-            {vendors.length === 0 && <option value="">No vendors yet</option>}
-            {vendors.map((v) => (
-              <option key={v.id} value={v.id}>
-                {v.name}
-              </option>
-            ))}
-          </select>
-          <button
-            onClick={() => void generate()}
-            disabled={busy || !vendorId || selected.length === 0}
-            style={{
-              padding: '8px 14px',
-              background: '#111',
-              color: '#fff',
-              border: 'none',
-              borderRadius: 4,
-              cursor: 'pointer',
-              fontSize: 13,
-            }}
-            data-testid="generate-po"
-          >
-            Generate PO ({selected.length})
-          </button>
-        </div>
-      </div>
-      <p style={{ fontSize: 12, color: '#888', margin: '0 0 12px' }}>
-        Receiving the PO later commits the arrived units to these customers automatically and emails
-        them that their item is in.
-      </p>
-      {error && <p style={{ color: '#b00', fontSize: 13 }}>{error}</p>}
-      {message && <p style={{ color: '#2c7a4b', fontSize: 13 }}>{message}</p>}
+      <PageHeader
+        title="Special orders to buy"
+        sub="Receiving the PO later commits the arrived units to these customers automatically and emails them that their item is in."
+        actions={
+          <span className="flex flex-wrap items-center gap-2">
+            <Select value={vendorId} onChange={(e) => setVendorId(e.target.value)}>
+              {vendors.length === 0 && <option value="">No vendors yet</option>}
+              {vendors.map((v) => (
+                <option key={v.id} value={v.id}>
+                  {v.name}
+                </option>
+              ))}
+            </Select>
+            <Button
+              variant="primary"
+              onClick={() => void generate()}
+              disabled={busy || !vendorId || selected.length === 0}
+              data-testid="generate-po"
+            >
+              <FileText size={14} aria-hidden />
+              Generate PO ({selected.length})
+            </Button>
+          </span>
+        }
+      />
+      {error && <p style={{ color: 'var(--danger)', fontSize: 13 }}>{error}</p>}
+      {message && <p style={{ color: 'var(--success)', fontSize: 13 }}>{message}</p>}
 
+      {!rows && !error && <LoadingRows rows={4} />}
       {rows && rows.length === 0 && (
-        <p style={{ color: '#888', fontSize: 13 }}>
-          Queue is clear — every special order is on a PO or fulfilled.
-        </p>
+        <EmptyState>Queue is clear — every special order is on a PO or fulfilled.</EmptyState>
       )}
       {rows && rows.length > 0 && (
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-          <thead>
-            <tr style={{ textAlign: 'left', borderBottom: '1px solid #ddd' }}>
-              <th style={th}>
-                <input
-                  type="checkbox"
-                  checked={checked.size === rows.length}
-                  onChange={(e) =>
-                    setChecked(
-                      e.target.checked ? new Set(rows.map((r) => r.orderLineId)) : new Set(),
-                    )
-                  }
-                />
-              </th>
-              <th style={th}>Order</th>
-              <th style={th}>Customer</th>
-              <th style={th}>Item</th>
-              <th style={th}>SKU</th>
-              <th style={th}>Qty</th>
-              <th style={th}>On PO</th>
-              <th style={th}>To order</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r) => (
-              <tr key={r.orderLineId} style={{ borderBottom: '1px solid #f3f3f3' }}>
-                <td style={td}>
-                  <input
-                    type="checkbox"
-                    checked={checked.has(r.orderLineId)}
-                    onChange={(e) => {
-                      const next = new Set(checked);
-                      if (e.target.checked) next.add(r.orderLineId);
-                      else next.delete(r.orderLineId);
-                      setChecked(next);
-                    }}
-                  />
-                </td>
-                <td style={td}>
-                  <Link href={`/orders/${r.orderId}`} style={{ color: '#06c' }}>
-                    {r.orderNumber}
-                  </Link>
-                </td>
-                <td style={td}>{r.customerName ?? '—'}</td>
-                <td style={td}>{r.description}</td>
-                <td style={td}>
-                  <code>{r.sku ?? '—'}</code>
-                </td>
-                <td style={td}>{r.quantity}</td>
-                <td style={td}>{r.allocated}</td>
-                <td style={{ ...td, fontWeight: 700 }}>{r.toOrder}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <Card style={{ padding: 0 }}>
+          <div style={{ overflowX: 'auto' }}>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>
+                    <input
+                      type="checkbox"
+                      checked={checked.size === rows.length}
+                      onChange={(e) =>
+                        setChecked(
+                          e.target.checked ? new Set(rows.map((r) => r.orderLineId)) : new Set(),
+                        )
+                      }
+                    />
+                  </th>
+                  <th>Order</th>
+                  <th>Customer</th>
+                  <th>Item</th>
+                  <th>SKU</th>
+                  <th className="num">Qty</th>
+                  <th className="num">On PO</th>
+                  <th className="num">To order</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr key={r.orderLineId}>
+                    <td>
+                      <input
+                        type="checkbox"
+                        checked={checked.has(r.orderLineId)}
+                        onChange={(e) => {
+                          const next = new Set(checked);
+                          if (e.target.checked) next.add(r.orderLineId);
+                          else next.delete(r.orderLineId);
+                          setChecked(next);
+                        }}
+                      />
+                    </td>
+                    <td>
+                      <Link href={`/orders/${r.orderId}`}>{r.orderNumber}</Link>
+                    </td>
+                    <td>{r.customerName ?? '—'}</td>
+                    <td>{r.description}</td>
+                    <td>
+                      <code>{r.sku ?? '—'}</code>
+                    </td>
+                    <td className="num">{r.quantity}</td>
+                    <td className="num">{r.allocated}</td>
+                    <td className="num" style={{ fontWeight: 700 }}>
+                      {r.toOrder}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
       )}
     </div>
   );
 }
-
-const th = { padding: '8px 6px', fontWeight: 600 } as const;
-const td = { padding: '8px 6px' } as const;

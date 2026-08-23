@@ -1,8 +1,11 @@
 'use client';
 
 import Link from 'next/link';
+import { Save, Trash2 } from 'lucide-react';
+import { toast } from 'sonner';
 import { useEffect, useState, type FormEvent } from 'react';
 import { useParams, useRouter } from 'next/navigation';
+import { Button, Card, EmptyState, Field, Input, LoadingRows, StatusBadge } from '@/components/ui';
 import { api } from '@/lib/api';
 import { Money } from '@/components/money';
 
@@ -80,92 +83,106 @@ export default function CustomerDetailPage() {
       await api(`/v1/customers/${id}`, { method: 'DELETE' });
       router.push('/customers');
     } catch (err) {
-      alert(err instanceof Error ? err.message : String(err));
+      toast.error(err instanceof Error ? err.message : String(err));
     }
   }
 
-  if (error && !c) return <p style={{ color: '#b00' }}>{error}</p>;
-  if (!c) return <p>Loading…</p>;
+  if (error && !c) return <p style={{ color: 'var(--danger)' }}>{error}</p>;
+  if (!c) return <LoadingRows />;
 
   const name = [c.firstName, c.lastName].filter(Boolean).join(' ') || '(no name)';
 
   return (
     <div>
-      <p style={{ marginBottom: 12 }}>
+      <p style={{ margin: '0 0 12px' }}>
         <Link href="/customers">← All customers</Link>
       </p>
-      <h1 style={{ fontSize: 22, marginBottom: 4 }}>{name}</h1>
-      <p style={{ color: '#666', fontSize: 13, marginBottom: 24 }}>
+      <h1 className="page-title" style={{ marginBottom: 4 }}>
+        {name}
+      </h1>
+      <p style={{ color: 'var(--text-secondary)', fontSize: 13, margin: '0 0 24px' }}>
         Customer since {new Date(c.createdAt).toLocaleDateString()}
       </p>
 
-      <Section title="Details">
+      <Card title="Details">
         <form onSubmit={save} style={{ display: 'grid', gap: 8, maxWidth: 560 }}>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+          <div className="grid gap-2 sm:grid-cols-2">
             <Field label="First name">
-              <input name="firstName" defaultValue={c.firstName ?? ''} style={fieldStyle} />
+              <Input name="firstName" defaultValue={c.firstName ?? ''} style={{ width: '100%' }} />
             </Field>
             <Field label="Last name">
-              <input name="lastName" defaultValue={c.lastName ?? ''} style={fieldStyle} />
+              <Input name="lastName" defaultValue={c.lastName ?? ''} style={{ width: '100%' }} />
             </Field>
           </div>
           <Field label="Email">
-            <input name="email" type="email" defaultValue={c.email ?? ''} style={fieldStyle} />
+            <Input
+              name="email"
+              type="email"
+              defaultValue={c.email ?? ''}
+              style={{ width: '100%' }}
+            />
           </Field>
           <Field label="Phone">
-            <input name="phone" defaultValue={c.phone ?? ''} style={fieldStyle} />
+            <Input name="phone" defaultValue={c.phone ?? ''} style={{ width: '100%' }} />
           </Field>
           <Field label="Notes">
             <textarea
               name="notes"
               defaultValue={c.notes ?? ''}
               rows={3}
-              style={{ ...fieldStyle, resize: 'vertical' }}
+              className="textarea"
+              style={{ width: '100%', resize: 'vertical' }}
             />
           </Field>
-          {error && <p style={{ color: '#b00', margin: 0 }}>{error}</p>}
-          {saved && <p style={{ color: '#070', margin: 0, fontSize: 13 }}>Saved.</p>}
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button type="submit" disabled={saving} style={primaryBtn}>
+          {error && <p style={{ color: 'var(--danger)', margin: 0 }}>{error}</p>}
+          {saved && <p style={{ color: 'var(--success)', margin: 0, fontSize: 13 }}>Saved.</p>}
+          <div className="flex flex-wrap gap-2">
+            <Button type="submit" variant="primary" disabled={saving}>
+              <Save size={14} aria-hidden />
               {saving ? 'Saving…' : 'Save changes'}
-            </button>
-            <button type="button" onClick={destroy} style={dangerBtn}>
+            </Button>
+            <Button type="button" variant="danger" onClick={destroy}>
+              <Trash2 size={14} aria-hidden />
               Delete customer
-            </button>
+            </Button>
           </div>
         </form>
-      </Section>
+      </Card>
 
-      <Section title="Recent purchases">
+      <Card title="Recent purchases">
         {c.recentSales.length === 0 ? (
-          <p style={{ color: '#888', fontSize: 13, margin: 0 }}>No purchases yet.</p>
+          <EmptyState>No purchases yet.</EmptyState>
         ) : (
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-            <thead>
-              <tr style={{ textAlign: 'left', borderBottom: '1px solid #ddd' }}>
-                <Th>Sale</Th>
-                <Th>Status</Th>
-                <Th>Total</Th>
-                <Th>Date</Th>
-              </tr>
-            </thead>
-            <tbody>
-              {c.recentSales.map((s) => (
-                <tr key={s.id} style={{ borderBottom: '1px solid #f3f3f3' }}>
-                  <Td>
-                    <code>{s.number}</code>
-                  </Td>
-                  <Td>{s.status}</Td>
-                  <Td>
-                    <Money cents={s.totalCents} />
-                  </Td>
-                  <Td>{new Date(s.completedAt ?? s.createdAt).toLocaleDateString()}</Td>
+          <div style={{ overflowX: 'auto' }}>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Sale</th>
+                  <th>Status</th>
+                  <th className="num">Total</th>
+                  <th>Date</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {c.recentSales.map((s) => (
+                  <tr key={s.id}>
+                    <td>
+                      <code>{s.number}</code>
+                    </td>
+                    <td>
+                      <StatusBadge status={s.status} />
+                    </td>
+                    <td className="num">
+                      <Money cents={s.totalCents} />
+                    </td>
+                    <td>{new Date(s.completedAt ?? s.createdAt).toLocaleDateString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
-      </Section>
+      </Card>
     </div>
   );
 }
@@ -174,62 +191,3 @@ function blankToNull(v: FormDataEntryValue | null): string | null {
   const s = v == null ? '' : String(v).trim();
   return s.length > 0 ? s : null;
 }
-
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <section
-      style={{
-        background: '#fff',
-        padding: 16,
-        borderRadius: 6,
-        boxShadow: '0 1px 2px rgba(0,0,0,0.06)',
-        marginBottom: 16,
-      }}
-    >
-      <h2 style={{ fontSize: 16, marginBottom: 12 }}>{title}</h2>
-      {children}
-    </section>
-  );
-}
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12 }}>
-      <span style={{ color: '#555' }}>{label}</span>
-      {children}
-    </label>
-  );
-}
-
-function Th({ children }: { children: React.ReactNode }) {
-  return <th style={{ padding: '8px 6px', fontWeight: 600 }}>{children}</th>;
-}
-function Td({ children }: { children: React.ReactNode }) {
-  return <td style={{ padding: '8px 6px' }}>{children}</td>;
-}
-
-const fieldStyle = {
-  width: '100%',
-  padding: '6px 8px',
-  border: '1px solid #ccc',
-  borderRadius: 4,
-  fontSize: 13,
-} as const;
-const primaryBtn = {
-  padding: '8px 14px',
-  background: '#111',
-  color: '#fff',
-  border: 'none',
-  borderRadius: 4,
-  cursor: 'pointer',
-  fontSize: 13,
-} as const;
-const dangerBtn = {
-  padding: '8px 14px',
-  background: 'transparent',
-  color: '#b00',
-  border: '1px solid #b00',
-  borderRadius: 4,
-  cursor: 'pointer',
-  fontSize: 13,
-} as const;

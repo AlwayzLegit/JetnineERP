@@ -1,8 +1,10 @@
 'use client';
 
 import Link from 'next/link';
+import { toast } from 'sonner';
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
+import { Button, Card, Input, LoadingRows, StatusBadge } from '@/components/ui';
 import { api } from '@/lib/api';
 
 interface BusinessSummary {
@@ -60,56 +62,72 @@ export default function BusinessDetailPage() {
       });
       window.location.href = '/dashboard';
     } catch (err) {
-      alert(err instanceof Error ? err.message : String(err));
+      toast.error(err instanceof Error ? err.message : String(err));
     }
   }
 
-  if (error) return <p style={{ color: '#b00' }}>{error}</p>;
-  if (!biz) return <p>Loading…</p>;
+  if (error) return <p style={{ color: 'var(--danger)' }}>{error}</p>;
+  if (!biz) return <LoadingRows />;
 
   return (
     <div>
-      <p style={{ marginBottom: 12 }}>
+      <p style={{ margin: '0 0 12px' }}>
         <Link href="/admin/businesses">← All businesses</Link>
       </p>
-      <h1 style={{ fontSize: 22, marginBottom: 4 }}>{biz.name}</h1>
-      <p style={{ color: '#666', fontSize: 13, marginBottom: 24 }}>
-        slug <code>{biz.slug}</code> · status <strong>{biz.status}</strong> · users {biz.userCount}{' '}
-        · locations {biz.locationCount}
+      <h1 className="page-title" style={{ marginBottom: 4 }}>
+        {biz.name}
+      </h1>
+      <p
+        style={{
+          color: 'var(--text-secondary)',
+          fontSize: 13,
+          margin: '0 0 24px',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 6,
+          flexWrap: 'wrap',
+        }}
+      >
+        slug <code>{biz.slug}</code> · status <StatusBadge status={biz.status} /> · users{' '}
+        {biz.userCount} · locations {biz.locationCount}
       </p>
-      <Section title="Members">
+      <Card title="Members">
         {members ? (
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-            <thead>
-              <tr style={{ textAlign: 'left', borderBottom: '1px solid #ddd' }}>
-                <th style={{ padding: '6px' }}>Email</th>
-                <th style={{ padding: '6px' }}>Role</th>
-                <th style={{ padding: '6px' }}>Status</th>
-                <th style={{ padding: '6px' }}>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {members.map((m) => (
-                <tr key={m.membershipId} style={{ borderBottom: '1px solid #f3f3f3' }}>
-                  <td style={{ padding: '6px' }}>{m.email}</td>
-                  <td style={{ padding: '6px' }}>{m.roleName}</td>
-                  <td style={{ padding: '6px' }}>{m.status}</td>
-                  <td style={{ padding: '6px' }}>
-                    <button onClick={() => impersonate(m.userId)} style={impersonateBtn}>
-                      Impersonate
-                    </button>
-                  </td>
+          <div style={{ overflowX: 'auto' }}>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Email</th>
+                  <th>Role</th>
+                  <th>Status</th>
+                  <th>Actions</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {members.map((m) => (
+                  <tr key={m.membershipId}>
+                    <td>{m.email}</td>
+                    <td>{m.roleName}</td>
+                    <td>
+                      <StatusBadge status={m.status} />
+                    </td>
+                    <td>
+                      <Button size="sm" variant="primary" onClick={() => impersonate(m.userId)}>
+                        Impersonate
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         ) : (
-          <p style={{ color: '#666', fontSize: 13 }}>
+          <p style={{ color: 'var(--text-secondary)', fontSize: 13, marginTop: 0 }}>
             Member listing API is Epic 1.6. Use the user&rsquo;s id directly:
           </p>
         )}
         <DirectImpersonate onSubmit={impersonate} />
-      </Section>
+      </Card>
     </div>
   );
 }
@@ -122,50 +140,17 @@ function DirectImpersonate({ onSubmit }: { onSubmit: (userId: string) => void })
         e.preventDefault();
         if (userId) onSubmit(userId);
       }}
-      style={{ marginTop: 12, display: 'flex', gap: 8, alignItems: 'center' }}
+      className="mt-3 flex flex-wrap items-center gap-2"
     >
-      <input
+      <Input
         value={userId}
         onChange={(e) => setUserId(e.target.value)}
         placeholder="user uuid to impersonate"
-        style={{
-          flex: 1,
-          padding: '6px 8px',
-          border: '1px solid #ccc',
-          borderRadius: 4,
-          fontSize: 13,
-        }}
+        className="min-w-[200px] flex-1"
       />
-      <button type="submit" style={impersonateBtn}>
+      <Button type="submit" variant="primary" size="sm">
         Impersonate
-      </button>
+      </Button>
     </form>
-  );
-}
-
-const impersonateBtn = {
-  padding: '6px 10px',
-  background: '#06c',
-  color: '#fff',
-  border: 'none',
-  borderRadius: 4,
-  cursor: 'pointer',
-  fontSize: 12,
-} as const;
-
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <section
-      style={{
-        background: '#fff',
-        padding: 16,
-        borderRadius: 6,
-        boxShadow: '0 1px 2px rgba(0,0,0,0.06)',
-        marginBottom: 16,
-      }}
-    >
-      <h2 style={{ fontSize: 16, marginBottom: 12 }}>{title}</h2>
-      {children}
-    </section>
   );
 }

@@ -1,6 +1,8 @@
 'use client';
 
+import { Upload } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
+import { Button, Card, PageHeader, StatusBadge } from '@/components/ui';
 import { api } from '@/lib/api';
 
 /**
@@ -153,39 +155,36 @@ export default function ImportWizardPage() {
 
   return (
     <div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
-        <h1 style={{ fontSize: 22, margin: 0 }}>STORIS data import</h1>
-        <button onClick={() => void loadRecon()} style={ghostBtn} data-testid="recon-refresh">
-          Recon report
-        </button>
-      </div>
-      <p style={{ fontSize: 12, color: '#888', margin: '0 0 16px' }}>
-        Import in this order — later files reference earlier ones. Re-uploading a corrected file
-        updates the same records instead of duplicating them.
-      </p>
-      {error && <p style={{ color: '#b00', fontSize: 13 }}>{error}</p>}
+      <PageHeader
+        title="STORIS data import"
+        sub="Import in this order — later files reference earlier ones. Re-uploading a corrected file updates the same records instead of duplicating them."
+        actions={
+          <Button variant="secondary" onClick={() => void loadRecon()} data-testid="recon-refresh">
+            Recon report
+          </Button>
+        }
+      />
+      {error && <p style={{ color: 'var(--danger)', fontSize: 13 }}>{error}</p>}
 
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 16 }}>
+      <div className="mb-4 flex flex-wrap gap-2">
         {entities.map((e, i) => (
-          <button
+          <Button
             key={e.entity}
+            variant={entity === e.entity ? 'primary' : 'secondary'}
+            size="sm"
             onClick={() => setEntity(e.entity)}
-            style={{
-              ...ghostBtn,
-              background: entity === e.entity ? '#111' : 'transparent',
-              color: entity === e.entity ? '#fff' : '#444',
-            }}
             data-testid={`entity-${e.entity}`}
           >
             {i + 1}. {e.label}
-          </button>
+          </Button>
         ))}
       </div>
 
-      <div style={card}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+      <Card>
+        <div className="flex flex-wrap items-center gap-3">
           <strong style={{ fontSize: 14 }}>{spec?.label ?? entity}</strong>
-          <label style={{ ...ghostBtn, cursor: 'pointer' }}>
+          <label className="btn btn-secondary btn-sm" style={{ cursor: 'pointer' }}>
+            <Upload size={13} aria-hidden />
             {busy ? 'Working…' : 'Upload CSV'}
             <input
               type="file"
@@ -202,74 +201,84 @@ export default function ImportWizardPage() {
           </label>
         </div>
         {batches.length > 0 && (
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, marginTop: 12 }}>
-            <thead>
-              <tr style={{ textAlign: 'left', borderBottom: '1px solid #ddd' }}>
-                <th style={th}>File</th>
-                <th style={th}>Status</th>
-                <th style={th}>Rows</th>
-                <th style={th}>Valid</th>
-                <th style={th}>Invalid</th>
-                <th style={th}>Committed</th>
-                <th style={th} />
-              </tr>
-            </thead>
-            <tbody>
-              {batches.map((b) => (
-                <tr key={b.id} style={{ borderBottom: '1px solid #eee' }}>
-                  <td style={td}>{b.filename ?? b.id.slice(0, 8)}</td>
-                  <td style={td}>{b.status}</td>
-                  <td style={td}>{b.rowCount}</td>
-                  <td style={td}>{b.validRowCount}</td>
-                  <td style={{ ...td, color: b.invalidRowCount > 0 ? '#b00' : undefined }}>
-                    {b.invalidRowCount}
-                  </td>
-                  <td style={td}>{b.committedRowCount}</td>
-                  <td style={td}>
-                    <button onClick={() => void refreshActive(b.id)} style={ghostBtn}>
-                      Open
-                    </button>
-                  </td>
+          <div style={{ overflowX: 'auto', marginTop: 12 }}>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>File</th>
+                  <th>Status</th>
+                  <th className="num">Rows</th>
+                  <th className="num">Valid</th>
+                  <th className="num">Invalid</th>
+                  <th className="num">Committed</th>
+                  <th />
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {batches.map((b) => (
+                  <tr key={b.id}>
+                    <td>{b.filename ?? b.id.slice(0, 8)}</td>
+                    <td>
+                      <StatusBadge status={b.status} />
+                    </td>
+                    <td className="num">{b.rowCount}</td>
+                    <td className="num">{b.validRowCount}</td>
+                    <td
+                      className="num"
+                      style={{ color: b.invalidRowCount > 0 ? 'var(--danger)' : undefined }}
+                    >
+                      {b.invalidRowCount}
+                    </td>
+                    <td className="num">{b.committedRowCount}</td>
+                    <td style={{ textAlign: 'right' }}>
+                      <Button size="sm" variant="ghost" onClick={() => void refreshActive(b.id)}>
+                        Open
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
-      </div>
+      </Card>
 
       {active && spec && (
-        <div style={card} data-testid="batch-panel">
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
+        <Card data-testid="batch-panel">
+          <div className="mb-2 flex flex-wrap items-center gap-3">
             <strong style={{ fontSize: 14 }}>
               {active.filename ?? 'Batch'} — {active.status}
             </strong>
-            <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
-              <button
+            <div className="ml-auto flex flex-wrap gap-2">
+              <Button
+                variant="primary"
                 onClick={() => void run('validate')}
                 disabled={busy || active.status === 'committed'}
-                style={darkBtn}
                 data-testid="validate-batch"
               >
                 Validate
-              </button>
-              <button
+              </Button>
+              <Button
+                variant="primary"
                 onClick={() => void run('commit')}
                 disabled={busy || !['validated', 'committed'].includes(active.status)}
-                style={darkBtn}
                 data-testid="commit-batch"
               >
                 Commit
-              </button>
+              </Button>
             </div>
           </div>
 
-          <p style={{ fontSize: 12, color: '#888', margin: '0 0 8px' }}>Column mapping</p>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
+          <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '0 0 8px' }}>
+            Column mapping
+          </p>
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
             {spec.fields.map((f) => (
-              <label key={f.name} style={{ fontSize: 12, color: '#444' }}>
+              <label key={f.name} style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
                 {f.name}
                 {f.required ? ' *' : ''}
                 <select
+                  className="select"
                   value={mapping[f.name] ?? ''}
                   disabled={active.status === 'committed'}
                   onChange={(e) => {
@@ -278,7 +287,7 @@ export default function ImportWizardPage() {
                     else next[f.name] = e.target.value;
                     void saveMapping(next);
                   }}
-                  style={{ display: 'block', width: '100%', padding: 6, marginTop: 2 }}
+                  style={{ display: 'block', width: '100%', marginTop: 2 }}
                 >
                   <option value="">— not mapped —</option>
                   {headers.map((h) => (
@@ -295,22 +304,31 @@ export default function ImportWizardPage() {
             <div style={{ marginTop: 12 }}>
               <p style={{ fontSize: 13, margin: '0 0 6px' }}>
                 <strong>{active.validationJson.valid}</strong> valid ·{' '}
-                <strong style={{ color: active.validationJson.invalid > 0 ? '#b00' : undefined }}>
+                <strong
+                  style={{
+                    color: active.validationJson.invalid > 0 ? 'var(--danger)' : undefined,
+                  }}
+                >
                   {active.validationJson.invalid}
                 </strong>{' '}
                 invalid
               </p>
               {active.validationJson.errors.length > 0 && (
-                <div style={{ maxHeight: 220, overflow: 'auto', border: '1px solid #eee' }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                <div
+                  style={{
+                    maxHeight: 220,
+                    overflow: 'auto',
+                    border: '1px solid var(--border)',
+                    borderRadius: 'var(--radius-sm)',
+                  }}
+                >
+                  <table className="table" style={{ fontSize: 12 }}>
                     <tbody>
                       {active.validationJson.errors.map((e) => (
-                        <tr key={e.row} style={{ borderBottom: '1px solid #f2f2f2' }}>
-                          <td style={{ ...td, whiteSpace: 'nowrap' }}>row {e.row}</td>
-                          <td style={td}>{e.legacyId}</td>
-                          <td style={td}>
-                            {e.errors.map((er) => `${er.field}: ${er.message}`).join('; ')}
-                          </td>
+                        <tr key={e.row}>
+                          <td style={{ whiteSpace: 'nowrap' }}>row {e.row}</td>
+                          <td>{e.legacyId}</td>
+                          <td>{e.errors.map((er) => `${er.field}: ${er.message}`).join('; ')}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -319,51 +337,52 @@ export default function ImportWizardPage() {
               )}
             </div>
           )}
-        </div>
+        </Card>
       )}
 
       {recon && (
-        <div style={card} data-testid="recon-panel">
-          <strong style={{ fontSize: 14 }}>Reconciliation gates</strong>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, marginTop: 8 }}>
-            <tbody>
-              {recon.gate1_rowCounts.map((g) => (
+        <Card data-testid="recon-panel" title="Reconciliation gates">
+          <div style={{ overflowX: 'auto' }}>
+            <table className="table">
+              <tbody>
+                {recon.gate1_rowCounts.map((g) => (
+                  <ReconRow
+                    key={g.entity}
+                    label={`Gate 1 — ${g.entity} rows`}
+                    source={String(g.source)}
+                    db={String(g.db)}
+                    match={g.match}
+                  />
+                ))}
                 <ReconRow
-                  key={g.entity}
-                  label={`Gate 1 — ${g.entity} rows`}
-                  source={String(g.source)}
-                  db={String(g.db)}
-                  match={g.match}
+                  label="Gate 2 — units on hand"
+                  source={String(recon.gate2_inventory.units.source)}
+                  db={String(recon.gate2_inventory.units.db)}
+                  match={recon.gate2_inventory.units.match}
                 />
-              ))}
-              <ReconRow
-                label="Gate 2 — units on hand"
-                source={String(recon.gate2_inventory.units.source)}
-                db={String(recon.gate2_inventory.units.db)}
-                match={recon.gate2_inventory.units.match}
-              />
-              <ReconRow
-                label="Gate 2 — valuation at cost"
-                source={money(recon.gate2_inventory.valuationCents.source)}
-                db={money(recon.gate2_inventory.valuationCents.db)}
-                match={recon.gate2_inventory.valuationCents.match}
-              />
-              <ReconRow
-                label="Gate 3 — deposits held"
-                source={money(recon.gate3_depositsHeldCents.source)}
-                db={money(recon.gate3_depositsHeldCents.db)}
-                match={recon.gate3_depositsHeldCents.match}
-              />
-              <ReconRow
-                label="Gate 4 — open AR"
-                source={money(recon.gate4_openArCents.source)}
-                db={money(recon.gate4_openArCents.db)}
-                match={recon.gate4_openArCents.match}
-              />
-            </tbody>
-          </table>
-          <p style={{ fontSize: 12, color: '#888', marginTop: 8 }}>{recon.gate5}</p>
-        </div>
+                <ReconRow
+                  label="Gate 2 — valuation at cost"
+                  source={money(recon.gate2_inventory.valuationCents.source)}
+                  db={money(recon.gate2_inventory.valuationCents.db)}
+                  match={recon.gate2_inventory.valuationCents.match}
+                />
+                <ReconRow
+                  label="Gate 3 — deposits held"
+                  source={money(recon.gate3_depositsHeldCents.source)}
+                  db={money(recon.gate3_depositsHeldCents.db)}
+                  match={recon.gate3_depositsHeldCents.match}
+                />
+                <ReconRow
+                  label="Gate 4 — open AR"
+                  source={money(recon.gate4_openArCents.source)}
+                  db={money(recon.gate4_openArCents.db)}
+                  match={recon.gate4_openArCents.match}
+                />
+              </tbody>
+            </table>
+          </div>
+          <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 8 }}>{recon.gate5}</p>
+        </Card>
       )}
     </div>
   );
@@ -371,41 +390,13 @@ export default function ImportWizardPage() {
 
 function ReconRow(props: { label: string; source: string; db: string; match: boolean }) {
   return (
-    <tr style={{ borderBottom: '1px solid #eee' }}>
-      <td style={td}>{props.label}</td>
-      <td style={td}>STORIS: {props.source}</td>
-      <td style={td}>Jetnine: {props.db}</td>
-      <td style={{ ...td, color: props.match ? '#2c7a4b' : '#b00', fontWeight: 600 }}>
+    <tr>
+      <td>{props.label}</td>
+      <td>STORIS: {props.source}</td>
+      <td>Jetnine: {props.db}</td>
+      <td style={{ color: props.match ? 'var(--success)' : 'var(--danger)', fontWeight: 600 }}>
         {props.match ? '✓ match' : '✗ mismatch'}
       </td>
     </tr>
   );
 }
-
-const card: React.CSSProperties = {
-  border: '1px solid #e2e2e2',
-  borderRadius: 8,
-  padding: 16,
-  marginBottom: 16,
-  background: '#fff',
-};
-const th: React.CSSProperties = { padding: '6px 8px', fontWeight: 600 };
-const td: React.CSSProperties = { padding: '6px 8px' };
-const ghostBtn: React.CSSProperties = {
-  padding: '6px 12px',
-  background: 'transparent',
-  color: '#444',
-  border: '1px solid #ccc',
-  borderRadius: 4,
-  cursor: 'pointer',
-  fontSize: 13,
-};
-const darkBtn: React.CSSProperties = {
-  padding: '8px 14px',
-  background: '#111',
-  color: '#fff',
-  border: 'none',
-  borderRadius: 4,
-  cursor: 'pointer',
-  fontSize: 13,
-};

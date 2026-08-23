@@ -90,6 +90,8 @@ export const PERMISSIONS = {
   'crm.automations.manage': 'Manage post-purchase automations',
 
   'import.run': 'Run the legacy data import (upload, validate, commit)',
+  'integrations.manage':
+    'Connect, sync, and disconnect external platforms (Shopify, WooCommerce, Wix)',
 
   'pos.access': 'Access the POS register',
   'pos.transaction.create': 'Create sales',

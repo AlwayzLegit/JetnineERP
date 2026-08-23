@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '@/lib/api';
 import { Money } from '@/components/money';
+import { Button, PageHeader } from '@/components/ui';
 
 /**
  * Delivery calendar (STORIS cutover Day 3). Week view by default, one
@@ -30,12 +31,12 @@ interface DeliveryRow {
 }
 
 const STATUS_COLOR: Record<string, string> = {
-  scheduled: '#1a5f8a',
-  loaded: '#6a4b8a',
-  out_for_delivery: '#8a6d1a',
-  delivered: '#2c7a4b',
-  failed: '#8c2f2f',
-  cancelled: '#999',
+  scheduled: 'var(--info)',
+  loaded: 'var(--brand)',
+  out_for_delivery: 'var(--warning)',
+  delivered: 'var(--success)',
+  failed: 'var(--danger)',
+  cancelled: 'var(--text-muted)',
 };
 
 function startOfWeek(d: Date): Date {
@@ -108,31 +109,36 @@ export default function DeliveriesPage() {
 
   return (
     <div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
-        <h1 style={{ fontSize: 22, margin: 0 }}>Deliveries</h1>
-        <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
-          <button onClick={() => shiftWeek(-7)} style={navBtn}>
-            ← Prev
-          </button>
-          <button onClick={() => setWeekStart(startOfWeek(new Date()))} style={navBtn}>
-            This week
-          </button>
-          <button onClick={() => shiftWeek(7)} style={navBtn}>
-            Next →
-          </button>
-        </div>
-      </div>
-      <p style={{ fontSize: 12, color: '#888', margin: '0 0 12px' }}>
-        Drag a card to another day to reschedule. Schedule new deliveries from an order&apos;s page.
-        Click a day&apos;s heading for its printable day-sheet.
-      </p>
-      {error && <p style={{ color: '#b00', fontSize: 13 }}>{error}</p>}
+      <PageHeader
+        title="Deliveries"
+        sub={
+          <>
+            Drag a card to another day to reschedule. Schedule new deliveries from an order&apos;s
+            page. Click a day&apos;s heading for its printable day-sheet.
+          </>
+        }
+        actions={
+          <>
+            <Button size="sm" onClick={() => shiftWeek(-7)}>
+              ← Prev
+            </Button>
+            <Button size="sm" onClick={() => setWeekStart(startOfWeek(new Date()))}>
+              This week
+            </Button>
+            <Button size="sm" onClick={() => shiftWeek(7)}>
+              Next →
+            </Button>
+          </>
+        }
+      />
+      {error && <p style={{ color: 'var(--danger)', fontSize: 13 }}>{error}</p>}
 
-      <div style={{ overflowX: 'auto', paddingBottom: 8 }}>
-        <div style={{ display: 'flex', gap: 8, minWidth: 980 }}>
+      <div className="overflow-x-auto pb-2">
+        <div className="flex gap-2 lg:grid lg:grid-cols-7">
           {days.map((d) => {
             const key = fmtDate(d);
             const list = byDay.get(key) ?? [];
+            const isToday = key === today;
             return (
               <div
                 key={key}
@@ -141,11 +147,10 @@ export default function DeliveriesPage() {
                   if (dragId) void reschedule(dragId, key);
                   setDragId(null);
                 }}
+                className="min-w-[160px] flex-1 lg:min-w-0"
                 style={{
-                  flex: 1,
-                  minWidth: 132,
-                  background: key === today ? '#eef4fa' : '#f4f4f4',
-                  borderRadius: 6,
+                  background: isToday ? 'var(--brand-soft)' : 'var(--neutral-soft)',
+                  borderRadius: 'var(--radius)',
                   padding: 8,
                   minHeight: 220,
                 }}
@@ -153,14 +158,17 @@ export default function DeliveriesPage() {
                 <Link
                   href={`/deliveries/day/${key}`}
                   style={{
-                    display: 'block',
-                    fontSize: 12,
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    fontSize: 11,
                     fontWeight: 600,
-                    color: '#333',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.05em',
+                    color: isToday ? 'var(--brand-soft-text)' : 'var(--text-secondary)',
                     textDecoration: 'none',
-                    borderBottom: '2px solid #111',
-                    paddingBottom: 4,
-                    marginBottom: 8,
+                    padding: '2px 4px 8px',
+                    marginBottom: 4,
                   }}
                 >
                   {d.toLocaleDateString(undefined, {
@@ -168,7 +176,7 @@ export default function DeliveriesPage() {
                     month: 'short',
                     day: 'numeric',
                   })}
-                  <span style={{ float: 'right', color: '#666' }}>{list.length || ''}</span>
+                  <span style={{ color: 'var(--text-muted)' }}>{list.length || ''}</span>
                 </Link>
                 {list.map((r) => (
                   <Link
@@ -177,24 +185,22 @@ export default function DeliveriesPage() {
                     draggable={r.status === 'scheduled' || r.status === 'loaded'}
                     onDragStart={() => setDragId(r.id)}
                     data-testid="delivery-card"
+                    className="card card-hover"
                     style={{
                       display: 'block',
-                      background: '#fff',
-                      borderLeft: `4px solid ${STATUS_COLOR[r.status] ?? '#666'}`,
-                      borderRadius: 4,
-                      padding: '6px 8px',
-                      marginBottom: 6,
+                      borderLeft: `4px solid ${STATUS_COLOR[r.status] ?? 'var(--text-muted)'}`,
+                      padding: '8px 10px',
+                      margin: '0 0 6px',
                       textDecoration: 'none',
                       color: 'inherit',
-                      boxShadow: '0 1px 2px rgba(0,0,0,0.06)',
                       fontSize: 12,
                       cursor: 'pointer',
                     }}
                   >
                     <div style={{ fontWeight: 600 }}>{r.orderNumber}</div>
-                    <div style={{ color: '#666' }}>{r.customerName ?? '—'}</div>
+                    <div style={{ color: 'var(--text-secondary)' }}>{r.customerName ?? '—'}</div>
                     {(r.windowStart || r.windowEnd) && (
-                      <div style={{ color: '#666' }}>
+                      <div style={{ color: 'var(--text-secondary)' }}>
                         {r.windowStart?.slice(0, 5)}–{r.windowEnd?.slice(0, 5)}
                       </div>
                     )}
@@ -204,14 +210,14 @@ export default function DeliveriesPage() {
                           fontSize: 10,
                           textTransform: 'uppercase',
                           letterSpacing: '0.04em',
-                          color: STATUS_COLOR[r.status] ?? '#666',
+                          color: STATUS_COLOR[r.status] ?? 'var(--text-muted)',
                           fontWeight: 700,
                         }}
                       >
                         {r.status.replace(/_/g, ' ')}
                       </span>
                       {r.balanceDueCents > 0 && (
-                        <span style={{ float: 'right', color: '#8a6d1a' }}>
+                        <span style={{ float: 'right', color: 'var(--warning)' }}>
                           <Money cents={r.balanceDueCents} /> due
                         </span>
                       )}
@@ -226,12 +232,3 @@ export default function DeliveriesPage() {
     </div>
   );
 }
-
-const navBtn = {
-  padding: '6px 12px',
-  background: 'transparent',
-  border: '1px solid #ccc',
-  borderRadius: 4,
-  cursor: 'pointer',
-  fontSize: 13,
-} as const;

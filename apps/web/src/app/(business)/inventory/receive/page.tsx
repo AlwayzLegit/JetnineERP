@@ -2,7 +2,9 @@
 
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
+import { PackageCheck, Search } from 'lucide-react';
 import { api } from '@/lib/api';
+import { Button, Card, EmptyState, Field, Input, PageHeader, Select } from '@/components/ui';
 
 interface Location {
   id: string;
@@ -134,32 +136,37 @@ export default function ReceivePage() {
       <p style={{ marginBottom: 12 }}>
         <Link href="/inventory">← Inventory</Link>
       </p>
-      <h1 style={{ fontSize: 22, marginBottom: 16 }}>Receive inventory</h1>
+      <PageHeader title="Receive inventory" />
 
-      <section style={card}>
-        <Field label="Location">
-          <select
-            value={locationId}
-            onChange={(e) => setLocationId(e.target.value)}
-            style={fieldStyle}
-          >
-            <option value="">— Pick —</option>
-            {locations.map((l) => (
-              <option key={l.id} value={l.id}>
-                {l.name}
-              </option>
-            ))}
-          </select>
-        </Field>
-        <Field label="Notes">
-          <input value={notes} onChange={(e) => setNotes(e.target.value)} style={fieldStyle} />
-        </Field>
-      </section>
+      <Card style={{ marginBottom: 16 }}>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label="Location">
+            <Select
+              value={locationId}
+              onChange={(e) => setLocationId(e.target.value)}
+              style={{ width: '100%' }}
+            >
+              <option value="">— Pick —</option>
+              {locations.map((l) => (
+                <option key={l.id} value={l.id}>
+                  {l.name}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="Notes">
+            <Input
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              style={{ width: '100%' }}
+            />
+          </Field>
+        </div>
+      </Card>
 
-      <section style={card}>
-        <h2 style={{ fontSize: 16, marginBottom: 8 }}>Add products</h2>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <input
+      <Card title="Add products" style={{ marginBottom: 16 }}>
+        <div className="flex flex-wrap gap-2">
+          <Input
             placeholder="Search by name, SKU, or barcode"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
@@ -169,124 +176,89 @@ export default function ReceivePage() {
                 void searchProducts();
               }
             }}
-            style={{ ...fieldStyle, flex: 1 }}
+            className="min-w-[200px] flex-1"
           />
-          <button onClick={searchProducts} style={primaryBtn}>
+          <Button variant="primary" onClick={searchProducts}>
+            <Search size={14} />
             Search
-          </button>
+          </Button>
         </div>
         {searchResults.length > 0 && (
-          <ul style={{ background: '#fafafa', padding: 8, marginTop: 8, listStyle: 'none' }}>
+          <ul
+            style={{
+              background: 'var(--surface-muted)',
+              border: '1px solid var(--border)',
+              borderRadius: 'var(--radius-sm)',
+              padding: 8,
+              marginTop: 8,
+              marginBottom: 0,
+              listStyle: 'none',
+            }}
+          >
             {searchResults.map((p) => (
               <li key={p.id} style={{ padding: '4px 0', display: 'flex', alignItems: 'center' }}>
                 <span style={{ flex: 1 }}>
-                  <strong>{p.name}</strong> <code style={{ color: '#666' }}>{p.sku ?? '—'}</code>
+                  <strong>{p.name}</strong>{' '}
+                  <code style={{ color: 'var(--text-secondary)' }}>{p.sku ?? '—'}</code>
                 </span>
-                <button onClick={() => addProduct(p.id)} style={linkBtn}>
+                <Button size="sm" variant="secondary" onClick={() => addProduct(p.id)}>
                   Add variants
-                </button>
+                </Button>
               </li>
             ))}
           </ul>
         )}
-      </section>
+      </Card>
 
-      <section style={card}>
-        <h2 style={{ fontSize: 16, marginBottom: 8 }}>Lines</h2>
+      <Card title="Lines" style={{ marginBottom: 16 }}>
         {lines.length === 0 ? (
-          <p style={{ color: '#888', fontSize: 13 }}>No lines yet. Search and add a product.</p>
+          <EmptyState>No lines yet. Search and add a product.</EmptyState>
         ) : (
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-            <thead>
-              <tr style={{ textAlign: 'left', borderBottom: '1px solid #ddd' }}>
-                <Th>Variant</Th>
-                <Th>Quantity</Th>
-                <Th>&nbsp;</Th>
-              </tr>
-            </thead>
-            <tbody>
-              {lines.map((l, i) => (
-                <tr key={l.variantId} style={{ borderBottom: '1px solid #f3f3f3' }}>
-                  <Td>{l.label}</Td>
-                  <Td>
-                    <input
-                      type="number"
-                      min={0}
-                      value={l.quantity}
-                      onChange={(e) => setQty(i, Number(e.target.value))}
-                      style={{ ...fieldStyle, width: 100 }}
-                    />
-                  </Td>
-                  <Td>
-                    <button onClick={() => removeLine(i)} style={linkBtnDanger}>
-                      Remove
-                    </button>
-                  </Td>
+          <div className="overflow-x-auto">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Variant</th>
+                  <th>Quantity</th>
+                  <th>&nbsp;</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {lines.map((l, i) => (
+                  <tr key={l.variantId}>
+                    <td>{l.label}</td>
+                    <td>
+                      <Input
+                        type="number"
+                        min={0}
+                        value={l.quantity}
+                        onChange={(e) => setQty(i, Number(e.target.value))}
+                        style={{ width: 100 }}
+                      />
+                    </td>
+                    <td style={{ textAlign: 'right' }}>
+                      <Button size="sm" variant="danger" onClick={() => removeLine(i)}>
+                        Remove
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
-      </section>
+      </Card>
 
-      {error && <p style={{ color: '#b00' }}>{error}</p>}
+      {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
       {success && (
-        <p data-testid="receive-success" style={{ color: '#080' }}>
+        <p data-testid="receive-success" style={{ color: 'var(--success)' }}>
           {success}
         </p>
       )}
-      <button onClick={commit} disabled={lines.length === 0} style={primaryBtn}>
+      <Button variant="primary" onClick={commit} disabled={lines.length === 0}>
+        <PackageCheck size={14} />
         Commit
-      </button>
+      </Button>
     </div>
   );
-}
-
-const card = {
-  background: '#fff',
-  padding: 16,
-  borderRadius: 6,
-  boxShadow: '0 1px 2px rgba(0,0,0,0.06)',
-  marginBottom: 16,
-};
-const fieldStyle = {
-  width: '100%',
-  padding: '6px 8px',
-  border: '1px solid #ccc',
-  borderRadius: 4,
-  fontSize: 13,
-} as const;
-const primaryBtn = {
-  padding: '8px 14px',
-  background: '#111',
-  color: '#fff',
-  border: 'none',
-  borderRadius: 4,
-  cursor: 'pointer',
-  fontSize: 13,
-} as const;
-const linkBtn = {
-  background: 'none',
-  border: 'none',
-  color: '#06c',
-  textDecoration: 'underline',
-  cursor: 'pointer',
-  fontSize: 13,
-  padding: 0,
-} as const;
-const linkBtnDanger = { ...linkBtn, color: '#b00' } as const;
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12 }}>
-      <span style={{ color: '#555' }}>{label}</span>
-      {children}
-    </label>
-  );
-}
-function Th({ children }: { children: React.ReactNode }) {
-  return <th style={{ padding: '8px 6px', fontWeight: 600 }}>{children}</th>;
-}
-function Td({ children }: { children: React.ReactNode }) {
-  return <td style={{ padding: '8px 6px' }}>{children}</td>;
 }

@@ -1,7 +1,19 @@
 'use client';
 
 import { useEffect, useState, type FormEvent } from 'react';
+import { Plus } from 'lucide-react';
+import { toast } from 'sonner';
 import { api } from '@/lib/api';
+import {
+  Button,
+  Card,
+  EmptyState,
+  Field,
+  Input,
+  LoadingRows,
+  PageHeader,
+  Select,
+} from '@/components/ui';
 
 interface Flat {
   id: string;
@@ -62,7 +74,7 @@ export default function CategoriesPage() {
       });
       await load();
     } catch (err) {
-      alert(err instanceof Error ? err.message : String(err));
+      toast.error(err instanceof Error ? err.message : String(err));
     }
   }
 
@@ -72,45 +84,54 @@ export default function CategoriesPage() {
       await api(`/v1/categories/${node.id}`, { method: 'DELETE' });
       await load();
     } catch (err) {
-      alert(err instanceof Error ? err.message : String(err));
+      toast.error(err instanceof Error ? err.message : String(err));
     }
   }
 
   return (
     <div>
-      <h1 style={{ fontSize: 22, marginBottom: 16 }}>Categories</h1>
+      <PageHeader title="Categories" />
 
-      <form onSubmit={create} style={card}>
-        <h2 style={{ fontSize: 16, marginBottom: 12 }}>Add category</h2>
-        <div style={{ display: 'grid', gridTemplateColumns: '2fr 2fr auto', gap: 12 }}>
-          <Field label="Name">
-            <input name="name" required style={fieldStyle} />
-          </Field>
-          <Field label="Parent (optional)">
-            <select name="parentId" style={fieldStyle} defaultValue="">
-              <option value="">— top level —</option>
-              {flat.map((f) => (
-                <option key={f.id} value={f.id}>
-                  {f.name}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <button type="submit" style={primaryBtn}>
-            Add
-          </button>
-        </div>
-        {error && <p style={{ color: '#b00', fontSize: 13, marginTop: 8 }}>{error}</p>}
-      </form>
+      <Card title="Add category" style={{ marginBottom: 16 }}>
+        <form onSubmit={create}>
+          <div className="grid grid-cols-1 items-end gap-3 sm:grid-cols-[2fr_2fr_auto]">
+            <Field label="Name">
+              <Input name="name" required style={{ width: '100%' }} />
+            </Field>
+            <Field label="Parent (optional)">
+              <Select name="parentId" defaultValue="" style={{ width: '100%' }}>
+                <option value="">— top level —</option>
+                {flat.map((f) => (
+                  <option key={f.id} value={f.id}>
+                    {f.name}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Button type="submit" variant="primary">
+              <Plus size={14} />
+              Add
+            </Button>
+          </div>
+          {error && <p style={{ color: 'var(--danger)', fontSize: 13, marginTop: 8 }}>{error}</p>}
+        </form>
+      </Card>
 
-      {tree && (
-        <ul style={{ background: '#fff', padding: 16, borderRadius: 6, listStyle: 'none' }}>
-          {tree.length === 0 && <li style={{ color: '#888' }}>No categories yet.</li>}
-          {tree.map((root) => (
-            <CategoryNode key={root.id} node={root} onRename={rename} onDelete={remove} />
-          ))}
-        </ul>
-      )}
+      <Card>
+        {tree == null ? (
+          <LoadingRows />
+        ) : tree.length === 0 ? (
+          <EmptyState>
+            No categories yet. Add your first category above to organize products.
+          </EmptyState>
+        ) : (
+          <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
+            {tree.map((root) => (
+              <CategoryNode key={root.id} node={root} onRename={rename} onDelete={remove} />
+            ))}
+          </ul>
+        )}
+      </Card>
     </div>
   );
 }
@@ -126,64 +147,27 @@ function CategoryNode({
 }) {
   return (
     <li style={{ marginLeft: node.depth * 16, padding: '4px 0', fontSize: 13 }}>
-      <strong>{node.name}</strong>{' '}
-      <button onClick={() => onRename(node)} style={linkBtn}>
-        rename
-      </button>{' '}
-      <button onClick={() => onDelete(node)} style={linkBtnDanger}>
-        delete
-      </button>
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+        <strong>{node.name}</strong>
+        <Button size="sm" variant="ghost" onClick={() => onRename(node)}>
+          rename
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          style={{ color: 'var(--danger)' }}
+          onClick={() => onDelete(node)}
+        >
+          delete
+        </Button>
+      </span>
       {node.children.length > 0 && (
-        <ul style={{ listStyle: 'none', paddingLeft: 0 }}>
+        <ul style={{ listStyle: 'none', paddingLeft: 0, margin: 0 }}>
           {node.children.map((c) => (
             <CategoryNode key={c.id} node={c} onRename={onRename} onDelete={onDelete} />
           ))}
         </ul>
       )}
     </li>
-  );
-}
-
-const card = {
-  background: '#fff',
-  padding: 16,
-  borderRadius: 6,
-  boxShadow: '0 1px 2px rgba(0,0,0,0.06)',
-  marginBottom: 16,
-};
-const fieldStyle = {
-  width: '100%',
-  padding: '6px 8px',
-  border: '1px solid #ccc',
-  borderRadius: 4,
-  fontSize: 13,
-} as const;
-const primaryBtn = {
-  padding: '8px 14px',
-  background: '#111',
-  color: '#fff',
-  border: 'none',
-  borderRadius: 4,
-  cursor: 'pointer',
-  alignSelf: 'end',
-  fontSize: 13,
-} as const;
-const linkBtn = {
-  background: 'none',
-  border: 'none',
-  color: '#06c',
-  textDecoration: 'underline',
-  cursor: 'pointer',
-  fontSize: 12,
-  padding: 0,
-} as const;
-const linkBtnDanger = { ...linkBtn, color: '#b00' } as const;
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12 }}>
-      <span style={{ color: '#555' }}>{label}</span>
-      {children}
-    </label>
   );
 }

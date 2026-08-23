@@ -96,6 +96,53 @@ export class ImportService {
     return { ...batch, unmappedRequired };
   }
 
+  /**
+   * Stage rows a platform connector already fetched and normalized —
+   * same batch/row layout as a CSV upload, but the "headers" are the
+   * entity's own field names, so the identity mapping applies and
+   * validate/commit run unchanged. `source` (e.g. 'shopify') is stamped
+   * on the batch and flows into `legacy_refs.source`, keeping each
+   * platform's identity space separate from the STORIS one.
+   */
+  async stageStructured(
+    businessId: string,
+    userId: string | undefined,
+    input: { entity: string; source: string; filename?: string; rows: Record<string, string>[] },
+  ) {
+    const spec = entitySpec(input.entity);
+    if (!spec) throw new BadRequestException(`Unknown entity "${input.entity}"`);
+    if (input.rows.length === 0) throw new BadRequestException('No rows to stage');
+    if (input.rows.length > MAX_ROWS) {
+      throw new BadRequestException(`Too many rows (${input.rows.length})`);
+    }
+    const headers = [...new Set(input.rows.flatMap((r) => Object.keys(r)))];
+    const mapping = defaultMapping(input.entity, headers);
+    const [batch] = await this.db
+      .insert(schema.importBatches)
+      .values({
+        businessId,
+        entity: input.entity,
+        source: input.source,
+        filename: input.filename ?? null,
+        status: 'mapped',
+        mappingJson: { columns: mapping, headers },
+        rowCount: input.rows.length,
+        uploadedByUserId: userId ?? null,
+      })
+      .returning();
+    for (let i = 0; i < input.rows.length; i += 500) {
+      await this.db.insert(schema.importRows).values(
+        input.rows.slice(i, i + 500).map((raw, j) => ({
+          businessId,
+          batchId: batch!.id,
+          rowNumber: i + j + 1,
+          rawJson: raw,
+        })),
+      );
+    }
+    return batch!;
+  }
+
   async setMapping(batchId: string, columns: Record<string, string>) {
     const batch = await this.getBatch(batchId);
     if (batch.status === 'committed') {

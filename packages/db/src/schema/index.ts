@@ -22,6 +22,7 @@ export * from './idempotency';
 export * from './gift-cards';
 export * from './migration';
 export * from './templates';
+export * from './integrations';
 
 // List of tables that carry a `business_id` and need RLS. Kept in sync with
 // the migration script in src/migrations/rls.sql — when you add a new
@@ -70,6 +71,7 @@ export const TENANT_SCOPED_TABLES = [
   'legacy_refs',
   'import_batches',
   'import_rows',
+  'integrations',
   'po_line_allocations',
   'serial_units',
   'payment_plans',

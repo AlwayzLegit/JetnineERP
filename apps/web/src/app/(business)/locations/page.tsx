@@ -1,6 +1,9 @@
 'use client';
 
+import { Plus } from 'lucide-react';
+import { toast } from 'sonner';
 import { useEffect, useState, type FormEvent } from 'react';
+import { Button, Card, EmptyState, Field, Input, LoadingRows, PageHeader } from '@/components/ui';
 import { api } from '@/lib/api';
 
 interface Location {
@@ -56,117 +59,90 @@ export default function LocationsPage() {
       });
       await load();
     } catch (err) {
-      alert(err instanceof Error ? err.message : String(err));
+      toast.error(err instanceof Error ? err.message : String(err));
     }
   }
 
   return (
     <div>
-      <h1 style={{ fontSize: 22, marginBottom: 16 }}>Locations</h1>
-      <form onSubmit={submit} style={card}>
-        <h2 style={{ fontSize: 16, marginBottom: 12 }}>Add location</h2>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
-          <Field label="Name">
-            <input name="name" required style={fieldStyle} />
-          </Field>
-          <Field label="Timezone">
-            <input name="timezone" defaultValue="America/New_York" required style={fieldStyle} />
-          </Field>
-          <Field label="Tax override (bps; blank = inherit)">
-            <input name="taxRateBps" type="number" min={0} style={fieldStyle} />
-          </Field>
-        </div>
-        <div style={{ marginTop: 12 }}>
-          <button type="submit" style={primaryBtn}>
-            Create
-          </button>
-        </div>
-      </form>
-      {error && <p style={{ color: '#b00' }}>{error}</p>}
+      <PageHeader title="Locations" />
+      <Card title="Add location">
+        <form onSubmit={submit}>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <Field label="Name">
+              <Input name="name" required style={{ width: '100%' }} />
+            </Field>
+            <Field label="Timezone">
+              <Input
+                name="timezone"
+                defaultValue="America/New_York"
+                required
+                style={{ width: '100%' }}
+              />
+            </Field>
+            <Field label="Tax override (bps; blank = inherit)">
+              <Input name="taxRateBps" type="number" min={0} style={{ width: '100%' }} />
+            </Field>
+          </div>
+          <div style={{ marginTop: 12 }}>
+            <Button type="submit" variant="primary">
+              <Plus size={14} aria-hidden />
+              Create
+            </Button>
+          </div>
+        </form>
+      </Card>
+      {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
+      {!rows && !error && (
+        <Card>
+          <LoadingRows />
+        </Card>
+      )}
       {rows && (
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-          <thead>
-            <tr style={{ textAlign: 'left', borderBottom: '1px solid #ddd' }}>
-              <Th>Name</Th>
-              <Th>Timezone</Th>
-              <Th>Tax</Th>
-              <Th>Active</Th>
-              <Th>Actions</Th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.length === 0 && (
+        <Card style={{ padding: 0, overflowX: 'auto' }}>
+          <table className="table">
+            <thead>
               <tr>
-                <td colSpan={5} style={{ padding: 16, color: '#888' }}>
-                  No locations yet.
-                </td>
+                <th>Name</th>
+                <th>Timezone</th>
+                <th>Tax</th>
+                <th>Active</th>
+                <th>Actions</th>
               </tr>
-            )}
-            {rows.map((l) => (
-              <tr key={l.id} style={{ borderBottom: '1px solid #f3f3f3' }}>
-                <Td>
-                  <strong>{l.name}</strong>
-                </Td>
-                <Td>{l.timezone}</Td>
-                <Td>{l.taxRateBps != null ? `${(l.taxRateBps / 100).toFixed(2)}%` : 'inherit'}</Td>
-                <Td>{l.isActive ? 'yes' : 'no'}</Td>
-                <Td>
-                  <button onClick={() => toggle(l)} style={linkBtn}>
-                    {l.isActive ? 'Deactivate' : 'Activate'}
-                  </button>
-                </Td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {rows.length === 0 && (
+                <tr>
+                  <td colSpan={5}>
+                    <EmptyState>No locations yet.</EmptyState>
+                  </td>
+                </tr>
+              )}
+              {rows.map((l) => (
+                <tr key={l.id}>
+                  <td>
+                    <strong>{l.name}</strong>
+                  </td>
+                  <td>{l.timezone}</td>
+                  <td>
+                    {l.taxRateBps != null ? `${(l.taxRateBps / 100).toFixed(2)}%` : 'inherit'}
+                  </td>
+                  <td>
+                    <span className={`badge ${l.isActive ? 'badge-success' : 'badge-neutral'}`}>
+                      {l.isActive ? 'yes' : 'no'}
+                    </span>
+                  </td>
+                  <td>
+                    <Button size="sm" variant="ghost" onClick={() => toggle(l)}>
+                      {l.isActive ? 'Deactivate' : 'Activate'}
+                    </Button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Card>
       )}
     </div>
   );
-}
-
-const card = {
-  background: '#fff',
-  padding: 16,
-  borderRadius: 6,
-  boxShadow: '0 1px 2px rgba(0,0,0,0.06)',
-  marginBottom: 16,
-};
-const fieldStyle = {
-  width: '100%',
-  padding: '6px 8px',
-  border: '1px solid #ccc',
-  borderRadius: 4,
-  fontSize: 13,
-} as const;
-const primaryBtn = {
-  padding: '8px 14px',
-  background: '#111',
-  color: '#fff',
-  border: 'none',
-  borderRadius: 4,
-  cursor: 'pointer',
-} as const;
-const linkBtn = {
-  background: 'none',
-  border: 'none',
-  color: '#06c',
-  textDecoration: 'underline',
-  cursor: 'pointer',
-  fontSize: 13,
-  padding: 0,
-} as const;
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12 }}>
-      <span style={{ color: '#555' }}>{label}</span>
-      {children}
-    </label>
-  );
-}
-function Th({ children }: { children: React.ReactNode }) {
-  return <th style={{ padding: '8px 6px', fontWeight: 600 }}>{children}</th>;
-}
-function Td({ children }: { children: React.ReactNode }) {
-  return <td style={{ padding: '8px 6px' }}>{children}</td>;
 }

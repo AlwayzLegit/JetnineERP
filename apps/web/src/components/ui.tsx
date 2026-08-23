@@ -94,7 +94,7 @@ export function Card({
   children: ReactNode;
   className?: string;
   style?: React.CSSProperties;
-} & React.HTMLAttributes<HTMLDivElement>) {
+} & Omit<React.HTMLAttributes<HTMLDivElement>, 'title'>) {
   return (
     <div {...rest} className={cx('card', className)} style={style}>
       {(title || actions) && (
