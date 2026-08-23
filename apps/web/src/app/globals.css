@@ -1,10 +1,35 @@
 /* ============================================================
    LA Mattress ERP — design tokens + base styles
-   The app was built with inline styles; this layer introduces a
-   consistent system without breaking untouched pages. Pages adopt
-   it via the shared components in src/components/ui.tsx or the
-   utility classes below.
+   Tailwind v4 supplies utilities (responsive grids, spacing,
+   etc.); the @theme block below maps our tokens into Tailwind's
+   palette so `bg-brand`, `text-danger`, `border-border` work.
+   The hand-rolled component classes (.btn/.card/.table/...) stay —
+   the shared components in src/components/ui.tsx build on them.
    ============================================================ */
+
+@import 'tailwindcss';
+
+@theme inline {
+  --color-brand: var(--brand);
+  --color-brand-hover: var(--brand-hover);
+  --color-brand-soft: var(--brand-soft);
+  --color-surface: var(--surface);
+  --color-surface-muted: var(--surface-muted);
+  --color-page: var(--bg);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-text: var(--text);
+  --color-secondary: var(--text-secondary);
+  --color-muted: var(--text-muted);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-danger: var(--danger);
+  --color-info: var(--info);
+  --font-sans: var(--font);
+  --font-mono: var(--font-mono);
+  --radius-card: var(--radius);
+  --radius-control: var(--radius-sm);
+}
 
 :root {
   /* Brand */
@@ -365,24 +390,6 @@ code {
   background-size: 800px 100%;
   animation: shimmer 1.4s infinite linear;
   min-height: 14px;
-}
-
-/* ---------- App shell (narrow screens) ---------- */
-
-@media (max-width: 900px) {
-  .app-sidebar {
-    transform: translateX(-100%);
-  }
-  .app-sidebar[data-open] {
-    transform: translateX(0) !important;
-    box-shadow: var(--shadow-lg);
-  }
-  .app-main {
-    margin-left: 0 !important;
-  }
-  .sidebar-toggle {
-    display: inline-flex !important;
-  }
 }
 
 /* ---------- Print ---------- */
