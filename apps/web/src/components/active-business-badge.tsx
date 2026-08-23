@@ -18,16 +18,21 @@ export function ActiveBusinessBadge() {
         alignItems: 'center',
         gap: 8,
         fontSize: 12,
-        background: '#2a2a2a',
+        fontWeight: 600,
+        background: 'var(--neutral-soft)',
+        border: '1px solid var(--border)',
         borderRadius: 999,
         padding: '3px 12px',
-        color: '#ddd',
+        color: 'var(--text-secondary)',
         whiteSpace: 'nowrap',
       }}
       data-testid="active-business"
     >
       {name ?? 'No business selected'}
-      <Link href="/welcome" style={{ color: '#8ab4d8', textDecoration: 'none' }}>
+      <Link
+        href="/welcome"
+        style={{ color: 'var(--brand)', textDecoration: 'none', fontWeight: 500 }}
+      >
         switch
       </Link>
     </span>
