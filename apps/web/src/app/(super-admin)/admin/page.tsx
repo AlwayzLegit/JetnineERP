@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { formatMoney } from '@jetnine/shared';
+import { LoadingRows, PageHeader } from '@/components/ui';
 import { api } from '@/lib/api';
 
 interface Metrics {
@@ -24,21 +25,21 @@ export default function AdminMetricsPage() {
   if (error) {
     return (
       <div>
-        <h1 style={{ fontSize: 22, marginBottom: 12 }}>Platform metrics</h1>
-        <p style={{ color: '#b00' }}>{error}</p>
+        <PageHeader title="Platform metrics" />
+        <p style={{ color: 'var(--danger)' }}>{error}</p>
       </div>
     );
   }
-  if (!metrics) return <p>Loading…</p>;
+  if (!metrics) return <LoadingRows />;
 
   return (
     <div>
-      <h1 style={{ fontSize: 22, marginBottom: 24 }}>Platform metrics</h1>
+      <PageHeader title="Platform metrics" />
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16 }}>
-        <Card label="Total businesses" value={String(metrics.totalBusinesses)} />
-        <Card label="Active businesses" value={String(metrics.activeBusinesses)} />
-        <Card label="Total users" value={String(metrics.totalUsers)} />
-        <Card
+        <StatCard label="Total businesses" value={String(metrics.totalBusinesses)} />
+        <StatCard label="Active businesses" value={String(metrics.activeBusinesses)} />
+        <StatCard label="Total users" value={String(metrics.totalUsers)} />
+        <StatCard
           label="Sales (last 30d)"
           value={`${metrics.salesLast30Days.count} · ${formatMoney(metrics.salesLast30Days.grossCents)}`}
         />
@@ -47,18 +48,13 @@ export default function AdminMetricsPage() {
   );
 }
 
-function Card({ label, value }: { label: string; value: string }) {
+function StatCard({ label, value }: { label: string; value: string }) {
   return (
-    <div
-      style={{
-        background: '#fff',
-        padding: 20,
-        borderRadius: 6,
-        boxShadow: '0 1px 2px rgba(0,0,0,0.06)',
-      }}
-    >
-      <div style={{ fontSize: 12, color: '#666', marginBottom: 6 }}>{label}</div>
-      <div style={{ fontSize: 24, fontWeight: 600 }}>{value}</div>
+    <div className="card" style={{ padding: 20, marginTop: 0 }}>
+      <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 6 }}>{label}</div>
+      <div style={{ fontSize: 24, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>
+        {value}
+      </div>
     </div>
   );
 }

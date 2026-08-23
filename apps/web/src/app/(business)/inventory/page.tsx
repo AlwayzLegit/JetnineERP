@@ -1,8 +1,16 @@
 'use client';
 
-import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
+import {
+  Button,
+  Card,
+  EmptyState,
+  LinkButton,
+  LoadingRows,
+  PageHeader,
+  Select,
+} from '@/components/ui';
 
 interface Location {
   id: string;
@@ -87,30 +95,26 @@ export default function InventoryPage() {
 
   return (
     <div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
-        <h1 style={{ fontSize: 22, margin: 0 }}>Inventory</h1>
-        <Link
-          href="/inventory/receive"
-          style={{
-            marginLeft: 'auto',
-            padding: '8px 14px',
-            background: '#111',
-            color: '#fff',
-            borderRadius: 4,
-            textDecoration: 'none',
-            fontSize: 13,
-          }}
-        >
-          Receive
-        </Link>
-      </div>
+      <PageHeader
+        title="Inventory"
+        actions={
+          <LinkButton href="/inventory/receive" variant="primary">
+            Receive
+          </LinkButton>
+        }
+      />
 
       <div style={{ marginBottom: 16, display: 'flex', gap: 8, alignItems: 'center' }}>
-        <label style={{ fontSize: 13 }}>Location:</label>
-        <select
+        <label
+          htmlFor="inventory-location"
+          style={{ fontSize: 13, color: 'var(--text-secondary)' }}
+        >
+          Location:
+        </label>
+        <Select
+          id="inventory-location"
           value={locationId}
           onChange={(e) => setLocationId(e.target.value)}
-          style={{ padding: '6px 10px', border: '1px solid #ccc', borderRadius: 4, fontSize: 13 }}
         >
           <option value="">— Pick —</option>
           {locations.map((l) => (
@@ -118,73 +122,54 @@ export default function InventoryPage() {
               {l.name}
             </option>
           ))}
-        </select>
+        </Select>
       </div>
 
-      {error && <p style={{ color: '#b00' }}>{error}</p>}
-      {levels && (
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-          <thead>
-            <tr style={{ textAlign: 'left', borderBottom: '1px solid #ddd' }}>
-              <Th>Product</Th>
-              <Th>SKU</Th>
-              <Th>Barcode</Th>
-              <Th>On hand</Th>
-              <Th>Reserved</Th>
-              <Th>Available</Th>
-              <Th>&nbsp;</Th>
-            </tr>
-          </thead>
-          <tbody>
-            {levels.length === 0 && (
+      {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
+      <Card style={{ padding: 0 }}>
+        {levels == null ? (
+          <div style={{ padding: 16 }}>
+            <LoadingRows />
+          </div>
+        ) : levels.length === 0 ? (
+          <EmptyState>No stock at this location yet. Use Receive to add some.</EmptyState>
+        ) : (
+          <table className="table">
+            <thead>
               <tr>
-                <td colSpan={7} style={{ padding: 16, color: '#888' }}>
-                  No stock at this location yet. Use Receive to add some.
-                </td>
+                <th>Product</th>
+                <th>SKU</th>
+                <th>Barcode</th>
+                <th className="num">On hand</th>
+                <th className="num">Reserved</th>
+                <th className="num">Available</th>
+                <th>&nbsp;</th>
               </tr>
-            )}
-            {levels.map((l) => (
-              <tr
-                key={`${l.variantId}-${l.locationId}`}
-                style={{ borderBottom: '1px solid #f3f3f3' }}
-              >
-                <Td>{l.productName}</Td>
-                <Td>
-                  <code>{l.variantSku ?? '—'}</code>
-                </Td>
-                <Td>
-                  <code>{l.variantBarcode ?? '—'}</code>
-                </Td>
-                <Td>{l.onHand}</Td>
-                <Td>{l.reserved}</Td>
-                <Td>{l.available}</Td>
-                <Td>
-                  <button onClick={() => adjust(l)} style={linkBtn}>
-                    Adjust
-                  </button>
-                </Td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
+            </thead>
+            <tbody>
+              {levels.map((l) => (
+                <tr key={`${l.variantId}-${l.locationId}`}>
+                  <td>{l.productName}</td>
+                  <td>
+                    <code>{l.variantSku ?? '—'}</code>
+                  </td>
+                  <td>
+                    <code>{l.variantBarcode ?? '—'}</code>
+                  </td>
+                  <td className="num">{l.onHand}</td>
+                  <td className="num">{l.reserved}</td>
+                  <td className="num">{l.available}</td>
+                  <td style={{ textAlign: 'right' }}>
+                    <Button size="sm" variant="ghost" onClick={() => adjust(l)}>
+                      Adjust
+                    </Button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </Card>
     </div>
   );
-}
-
-const linkBtn = {
-  background: 'none',
-  border: 'none',
-  color: '#06c',
-  textDecoration: 'underline',
-  cursor: 'pointer',
-  fontSize: 13,
-  padding: 0,
-} as const;
-
-function Th({ children }: { children: React.ReactNode }) {
-  return <th style={{ padding: '8px 6px', fontWeight: 600 }}>{children}</th>;
-}
-function Td({ children }: { children: React.ReactNode }) {
-  return <td style={{ padding: '8px 6px' }}>{children}</td>;
 }

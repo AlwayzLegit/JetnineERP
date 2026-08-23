@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '@/lib/api';
 import { Money } from '@/components/money';
+import { PageHeader, LinkButton, LoadingRows } from '@/components/ui';
 
 /**
  * Sales-order pipeline board (STORIS cutover Day 2). One column per live
@@ -87,76 +88,87 @@ export default function OrdersPage() {
 
   return (
     <div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
-        <h1 style={{ fontSize: 22, margin: 0 }}>Orders</h1>
-        <Link
-          href="/orders/new"
-          style={{
-            marginLeft: 'auto',
-            padding: '8px 14px',
-            background: '#111',
-            color: '#fff',
-            borderRadius: 4,
-            textDecoration: 'none',
-            fontSize: 13,
-          }}
-        >
-          Write order
-        </Link>
-      </div>
+      <PageHeader
+        title="Orders"
+        actions={
+          <LinkButton href="/orders/new" variant="primary">
+            Write order
+          </LinkButton>
+        }
+      />
 
-      {error && <p style={{ color: '#b00' }}>{error}</p>}
-      {!orders && !error && <p style={{ color: '#888', fontSize: 13 }}>Loading…</p>}
+      {error && <p style={{ color: 'var(--danger)', fontSize: 13 }}>{error}</p>}
+      {!orders && !error && <LoadingRows rows={4} />}
 
       {orders && (
         <div style={{ overflowX: 'auto', paddingBottom: 8 }}>
           <div style={{ display: 'flex', gap: 12, minWidth: 900 }}>
             {PIPELINE.map((status) => (
-              <div key={status} style={{ flex: 1, minWidth: 170 }}>
+              <div
+                key={status}
+                style={{
+                  flex: 1,
+                  minWidth: 170,
+                  background: 'var(--neutral-soft)',
+                  borderRadius: 'var(--radius)',
+                  padding: 8,
+                }}
+              >
                 <div
                   style={{
-                    fontSize: 12,
+                    fontSize: 11,
                     fontWeight: 600,
                     textTransform: 'uppercase',
-                    letterSpacing: '0.04em',
-                    color: '#666',
-                    padding: '6px 8px',
-                    borderBottom: '2px solid #111',
-                    marginBottom: 8,
+                    letterSpacing: '0.05em',
+                    color: 'var(--text-secondary)',
+                    padding: '4px 6px 8px',
+                    marginBottom: 4,
                     display: 'flex',
                     justifyContent: 'space-between',
+                    alignItems: 'center',
                   }}
                 >
                   <span>{COLUMN_LABEL[status]}</span>
-                  <span data-testid={`pipeline-count-${status}`}>{byStatus[status]!.length}</span>
+                  <span
+                    data-testid={`pipeline-count-${status}`}
+                    style={{
+                      background: 'var(--surface)',
+                      border: '1px solid var(--border)',
+                      borderRadius: 999,
+                      padding: '0 8px',
+                      fontVariantNumeric: 'tabular-nums',
+                      color: 'var(--text-secondary)',
+                    }}
+                  >
+                    {byStatus[status]!.length}
+                  </span>
                 </div>
                 {byStatus[status]!.length === 0 && (
-                  <p style={{ color: '#bbb', fontSize: 12, padding: '4px 8px' }}>—</p>
+                  <p className="muted" style={{ fontSize: 12, padding: '4px 6px', margin: 0 }}>
+                    —
+                  </p>
                 )}
                 {byStatus[status]!.map((o) => (
                   <Link
                     key={o.id}
                     href={`/orders/${o.id}`}
                     data-testid="order-card"
+                    className="card"
                     style={{
                       display: 'block',
-                      background: '#fff',
-                      border: '1px solid #e5e5e5',
-                      borderRadius: 6,
                       padding: '10px 12px',
-                      marginBottom: 8,
+                      margin: '0 0 8px',
                       textDecoration: 'none',
                       color: 'inherit',
-                      boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
                     }}
                   >
                     <div style={{ fontSize: 13, fontWeight: 600 }}>{o.number}</div>
-                    <div style={{ fontSize: 12, color: '#666' }}>
+                    <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
                       {customers[o.customerId] ?? `…${o.customerId.slice(-6)}`}
                     </div>
                     <div style={{ fontSize: 12, marginTop: 4 }}>
                       <Money cents={o.totalCents} />
-                      <span style={{ color: '#999' }}>
+                      <span style={{ color: 'var(--text-muted)' }}>
                         {' · '}
                         {o.fulfillmentType}
                         {o.requestedDate ? ` · ${o.requestedDate}` : ''}
@@ -172,16 +184,13 @@ export default function OrdersPage() {
 
       {cancelled.length > 0 && (
         <details style={{ marginTop: 20, fontSize: 13 }}>
-          <summary style={{ cursor: 'pointer', color: '#666' }}>
+          <summary style={{ cursor: 'pointer', color: 'var(--text-secondary)' }}>
             Cancelled ({cancelled.length})
           </summary>
           <ul style={{ paddingLeft: 18 }}>
             {cancelled.map((o) => (
               <li key={o.id} style={{ margin: '4px 0' }}>
-                <Link href={`/orders/${o.id}`} style={{ color: '#06c' }}>
-                  {o.number}
-                </Link>{' '}
-                — <Money cents={o.totalCents} />
+                <Link href={`/orders/${o.id}`}>{o.number}</Link> — <Money cents={o.totalCents} />
               </li>
             ))}
           </ul>

@@ -2,6 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import { useState, type FormEvent } from 'react';
+import { Button, Card, Field, Input, PageHeader } from '@/components/ui';
 import { api } from '@/lib/api';
 
 export default function NewCustomerPage() {
@@ -35,39 +36,46 @@ export default function NewCustomerPage() {
 
   return (
     <div>
-      <h1 style={{ fontSize: 22, marginBottom: 16 }}>New customer</h1>
+      <PageHeader title="New customer" />
       <form onSubmit={submit} style={{ display: 'grid', gap: 16, maxWidth: 560 }}>
-        <section style={card}>
-          <p style={{ color: '#666', fontSize: 12, marginBottom: 12 }}>
+        <Card>
+          <p style={{ color: 'var(--text-secondary)', fontSize: 12, margin: '0 0 12px' }}>
             At least one of name, email, or phone is required.
           </p>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-            <Field label="First name">
-              <input name="firstName" style={fieldStyle} />
+          <div style={{ display: 'grid', gap: 8 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+              <Field label="First name">
+                <Input name="firstName" style={{ width: '100%' }} />
+              </Field>
+              <Field label="Last name">
+                <Input name="lastName" style={{ width: '100%' }} />
+              </Field>
+            </div>
+            <Field label="Email">
+              <Input name="email" type="email" style={{ width: '100%' }} />
             </Field>
-            <Field label="Last name">
-              <input name="lastName" style={fieldStyle} />
+            <Field label="Phone">
+              <Input name="phone" style={{ width: '100%' }} />
+            </Field>
+            <Field label="Notes">
+              <textarea
+                name="notes"
+                rows={3}
+                className="textarea"
+                style={{ width: '100%', resize: 'vertical' }}
+              />
             </Field>
           </div>
-          <Field label="Email">
-            <input name="email" type="email" style={fieldStyle} />
-          </Field>
-          <Field label="Phone">
-            <input name="phone" style={fieldStyle} />
-          </Field>
-          <Field label="Notes">
-            <textarea name="notes" rows={3} style={{ ...fieldStyle, resize: 'vertical' }} />
-          </Field>
-        </section>
+        </Card>
 
-        {error && <p style={{ color: '#b00' }}>{error}</p>}
+        {error && <p style={{ color: 'var(--danger)', margin: 0 }}>{error}</p>}
         <div style={{ display: 'flex', gap: 8 }}>
-          <button type="submit" disabled={saving} style={primaryBtn}>
+          <Button type="submit" variant="primary" disabled={saving}>
             {saving ? 'Saving…' : 'Create customer'}
-          </button>
-          <button type="button" onClick={() => router.back()} style={linkBtn}>
+          </Button>
+          <Button type="button" variant="secondary" onClick={() => router.back()}>
             Cancel
-          </button>
+          </Button>
         </div>
       </form>
     </div>
@@ -77,47 +85,4 @@ export default function NewCustomerPage() {
 function blankToNull(v: FormDataEntryValue | null): string | null {
   const s = v == null ? '' : String(v).trim();
   return s.length > 0 ? s : null;
-}
-
-const card = {
-  background: '#fff',
-  padding: 16,
-  borderRadius: 6,
-  boxShadow: '0 1px 2px rgba(0,0,0,0.06)',
-  display: 'grid',
-  gap: 8,
-};
-const fieldStyle = {
-  width: '100%',
-  padding: '6px 8px',
-  border: '1px solid #ccc',
-  borderRadius: 4,
-  fontSize: 13,
-} as const;
-const primaryBtn = {
-  padding: '8px 14px',
-  background: '#111',
-  color: '#fff',
-  border: 'none',
-  borderRadius: 4,
-  cursor: 'pointer',
-  fontSize: 13,
-} as const;
-const linkBtn = {
-  padding: '8px 14px',
-  background: 'transparent',
-  color: '#444',
-  border: '1px solid #ccc',
-  borderRadius: 4,
-  cursor: 'pointer',
-  fontSize: 13,
-} as const;
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12 }}>
-      <span style={{ color: '#555' }}>{label}</span>
-      {children}
-    </label>
-  );
 }

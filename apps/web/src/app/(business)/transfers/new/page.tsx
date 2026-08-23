@@ -3,6 +3,7 @@
 import { useRouter } from 'next/navigation';
 import { useEffect, useState, type FormEvent } from 'react';
 import { api } from '@/lib/api';
+import { Button, Card, EmptyState, Field, Input, PageHeader, Select } from '@/components/ui';
 
 interface LocationRow {
   id: string;
@@ -112,46 +113,49 @@ export default function NewTransferPage() {
 
   return (
     <div>
-      <h1 style={{ fontSize: 22, marginBottom: 16 }}>New stock transfer</h1>
+      <PageHeader title="New stock transfer" />
       <form onSubmit={submit} style={{ display: 'grid', gap: 16 }}>
-        <section style={card}>
+        <Card>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
             <Field label="From location">
-              <select
+              <Select
                 value={fromLocationId}
                 onChange={(e) => setFromLocationId(e.target.value)}
-                style={inputStyle}
+                style={{ width: '100%' }}
               >
                 {locations.map((l) => (
                   <option key={l.id} value={l.id}>
                     {l.name}
                   </option>
                 ))}
-              </select>
+              </Select>
             </Field>
             <Field label="To location">
-              <select
+              <Select
                 value={toLocationId}
                 onChange={(e) => setToLocationId(e.target.value)}
-                style={inputStyle}
+                style={{ width: '100%' }}
               >
                 {locations.map((l) => (
                   <option key={l.id} value={l.id}>
                     {l.name}
                   </option>
                 ))}
-              </select>
+              </Select>
             </Field>
           </div>
-          <Field label="Notes">
+          <Field label="Notes" style={{ marginTop: 8 }}>
             <textarea
+              className="textarea"
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
               rows={2}
-              style={{ ...inputStyle, resize: 'vertical', marginTop: 8 }}
+              style={{ width: '100%', resize: 'vertical' }}
             />
           </Field>
-          <label style={{ display: 'flex', gap: 6, fontSize: 13, marginTop: 8 }}>
+          <label
+            style={{ display: 'flex', gap: 6, fontSize: 13, marginTop: 8, alignItems: 'center' }}
+          >
             <input
               type="checkbox"
               checked={shipNow}
@@ -159,12 +163,11 @@ export default function NewTransferPage() {
             />
             Ship immediately (skip the draft step)
           </label>
-        </section>
+        </Card>
 
-        <section style={card}>
-          <h2 style={{ fontSize: 14, margin: 0, marginBottom: 8 }}>Add items</h2>
+        <Card title="Add items">
           <div style={{ display: 'flex', gap: 8 }}>
-            <input
+            <Input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               onKeyDown={(e) => {
@@ -174,11 +177,11 @@ export default function NewTransferPage() {
                 }
               }}
               placeholder="Search by name, SKU, or barcode"
-              style={{ ...inputStyle, flex: 1 }}
+              style={{ flex: 1 }}
             />
-            <button type="button" onClick={searchVariants} style={primaryBtn}>
+            <Button type="button" variant="primary" onClick={searchVariants}>
               Search
-            </button>
+            </Button>
           </div>
           {results.length > 0 && (
             <div style={{ marginTop: 8 }}>
@@ -191,126 +194,76 @@ export default function NewTransferPage() {
                     display: 'block',
                     width: '100%',
                     textAlign: 'left',
-                    padding: 6,
-                    background: '#fff',
-                    border: '1px solid #eee',
-                    borderRadius: 4,
+                    padding: '6px 8px',
+                    background: 'var(--surface)',
+                    border: '1px solid var(--border)',
+                    borderRadius: 'var(--radius-sm)',
                     marginBottom: 4,
                     cursor: 'pointer',
                     fontSize: 13,
+                    fontFamily: 'var(--font)',
+                    color: 'var(--text)',
                   }}
                 >
                   <strong>{r.productName}</strong> {r.variantName && <>— {r.variantName}</>}{' '}
-                  <span style={{ color: '#666' }}>{r.sku ?? '—'}</span>
+                  <span style={{ color: 'var(--text-secondary)' }}>{r.sku ?? '—'}</span>
                 </button>
               ))}
             </div>
           )}
-        </section>
+        </Card>
 
-        <section style={card}>
-          <h2 style={{ fontSize: 14, margin: 0, marginBottom: 12 }}>Lines</h2>
+        <Card title="Lines">
           {lines.length === 0 ? (
-            <p style={{ color: '#888', fontSize: 13 }}>No lines yet.</p>
+            <EmptyState>
+              No lines yet. Search for an item above to add it to the transfer.
+            </EmptyState>
           ) : (
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+            <table className="table">
               <thead>
                 <tr>
-                  <Th>Item</Th>
-                  <Th>Quantity</Th>
-                  <Th>&nbsp;</Th>
+                  <th>Item</th>
+                  <th>Quantity</th>
+                  <th>&nbsp;</th>
                 </tr>
               </thead>
               <tbody>
                 {lines.map((l, i) => (
-                  <tr key={l.variantId} style={{ borderBottom: '1px solid #f3f3f3' }}>
-                    <Td>{l.description}</Td>
-                    <Td>
-                      <input
+                  <tr key={l.variantId}>
+                    <td>{l.description}</td>
+                    <td>
+                      <Input
                         type="number"
                         min={1}
                         value={l.quantity}
                         onChange={(e) => setLine(i, { quantity: Number(e.target.value) })}
-                        style={{ ...inputStyle, width: 80 }}
+                        style={{ width: 80 }}
                       />
-                    </Td>
-                    <Td>
-                      <button type="button" onClick={() => removeLine(i)} style={linkBtnDanger}>
+                    </td>
+                    <td style={{ textAlign: 'right' }}>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="danger"
+                        onClick={() => removeLine(i)}
+                      >
                         Remove
-                      </button>
-                    </Td>
+                      </Button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           )}
-        </section>
+        </Card>
 
-        {error && <p style={{ color: '#b00' }}>{error}</p>}
+        {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
         <div>
-          <button type="submit" disabled={saving} style={primaryBtn}>
+          <Button type="submit" variant="primary" disabled={saving}>
             {saving ? 'Saving…' : shipNow ? 'Create + ship' : 'Create draft'}
-          </button>
+          </Button>
         </div>
       </form>
     </div>
   );
-}
-
-const card = {
-  background: '#fff',
-  padding: 16,
-  borderRadius: 6,
-  boxShadow: '0 1px 2px rgba(0,0,0,0.06)',
-};
-const inputStyle = {
-  padding: '6px 8px',
-  border: '1px solid #ccc',
-  borderRadius: 4,
-  fontSize: 13,
-  width: '100%',
-} as const;
-const primaryBtn = {
-  padding: '8px 14px',
-  background: '#111',
-  color: '#fff',
-  border: 'none',
-  borderRadius: 4,
-  cursor: 'pointer',
-  fontSize: 13,
-} as const;
-const linkBtnDanger = {
-  background: 'none',
-  border: 'none',
-  color: '#b00',
-  textDecoration: 'underline',
-  cursor: 'pointer',
-  fontSize: 12,
-  padding: 0,
-} as const;
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12 }}>
-      <span style={{ color: '#555' }}>{label}</span>
-      {children}
-    </label>
-  );
-}
-function Th({ children }: { children: React.ReactNode }) {
-  return (
-    <th
-      style={{
-        padding: '6px 4px',
-        fontWeight: 600,
-        textAlign: 'left',
-        borderBottom: '1px solid #ddd',
-      }}
-    >
-      {children}
-    </th>
-  );
-}
-function Td({ children }: { children: React.ReactNode }) {
-  return <td style={{ padding: '6px 4px' }}>{children}</td>;
 }

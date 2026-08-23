@@ -3,6 +3,7 @@
 import { useRouter } from 'next/navigation';
 import { useState, type FormEvent } from 'react';
 import { api } from '@/lib/api';
+import { Button, Card, Field, Input, PageHeader } from '@/components/ui';
 
 interface VariantInput {
   sku: string;
@@ -63,23 +64,28 @@ export default function NewProductPage() {
 
   return (
     <div>
-      <h1 style={{ fontSize: 22, marginBottom: 16 }}>New product</h1>
+      <PageHeader title="New product" />
       <form onSubmit={submit} style={{ display: 'grid', gap: 16 }}>
-        <section style={card}>
-          <h2 style={section}>Basics</h2>
-          <Field label="Name">
-            <input name="name" required style={fieldStyle} />
-          </Field>
-          <Field label="SKU (product-level, optional)">
-            <input name="sku" style={fieldStyle} />
-          </Field>
-          <Field label="Description">
-            <textarea name="description" rows={3} style={{ ...fieldStyle, resize: 'vertical' }} />
-          </Field>
-        </section>
+        <Card title="Basics">
+          <div style={{ display: 'grid', gap: 10 }}>
+            <Field label="Name">
+              <Input name="name" required style={{ width: '100%' }} />
+            </Field>
+            <Field label="SKU (product-level, optional)">
+              <Input name="sku" style={{ width: '100%' }} />
+            </Field>
+            <Field label="Description">
+              <textarea
+                className="textarea"
+                name="description"
+                rows={3}
+                style={{ width: '100%', resize: 'vertical' }}
+              />
+            </Field>
+          </div>
+        </Card>
 
-        <section style={card}>
-          <h2 style={section}>Variants</h2>
+        <Card title="Variants">
           {variants.map((v, i) => (
             <div
               key={i}
@@ -92,121 +98,73 @@ export default function NewProductPage() {
               }}
             >
               <Field label="SKU">
-                <input
+                <Input
                   value={v.sku}
                   onChange={(e) => setVariant(i, { sku: e.target.value })}
-                  style={fieldStyle}
+                  style={{ width: '100%' }}
                 />
               </Field>
               <Field label="Name">
-                <input
+                <Input
                   value={v.name}
                   onChange={(e) => setVariant(i, { name: e.target.value })}
-                  style={fieldStyle}
+                  style={{ width: '100%' }}
                 />
               </Field>
               <Field label="Price">
-                <input
+                <Input
                   type="number"
                   step="0.01"
                   min={0}
                   value={v.priceDollars}
                   onChange={(e) => setVariant(i, { priceDollars: e.target.value })}
-                  style={fieldStyle}
+                  style={{ width: '100%' }}
                 />
               </Field>
               <Field label="Cost">
-                <input
+                <Input
                   type="number"
                   step="0.01"
                   min={0}
                   value={v.costDollars}
                   onChange={(e) => setVariant(i, { costDollars: e.target.value })}
-                  style={fieldStyle}
+                  style={{ width: '100%' }}
                 />
               </Field>
               <Field label="Barcode">
-                <input
+                <Input
                   value={v.barcode}
                   onChange={(e) => setVariant(i, { barcode: e.target.value })}
-                  style={fieldStyle}
+                  style={{ width: '100%' }}
                 />
               </Field>
-              <button
+              <Button
                 type="button"
+                variant="ghost"
+                size="sm"
+                style={{ color: 'var(--danger)', marginBottom: 4 }}
                 onClick={() => setVariants((prev) => prev.filter((_, idx) => idx !== i))}
-                style={{
-                  background: 'none',
-                  border: 'none',
-                  color: '#b00',
-                  cursor: 'pointer',
-                  fontSize: 12,
-                  padding: 0,
-                  height: 32,
-                }}
               >
                 Remove
-              </button>
+              </Button>
             </div>
           ))}
-          <button
+          <Button
             type="button"
+            variant="secondary"
             onClick={() => setVariants((prev) => [...prev, { ...blankVariant }])}
-            style={linkBtn}
           >
             + Add variant
-          </button>
-        </section>
+          </Button>
+        </Card>
 
-        {error && <p style={{ color: '#b00' }}>{error}</p>}
+        {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
         <div>
-          <button type="submit" disabled={saving} style={primaryBtn}>
+          <Button type="submit" variant="primary" disabled={saving}>
             {saving ? 'Saving…' : 'Create product'}
-          </button>
+          </Button>
         </div>
       </form>
     </div>
-  );
-}
-
-const card = {
-  background: '#fff',
-  padding: 16,
-  borderRadius: 6,
-  boxShadow: '0 1px 2px rgba(0,0,0,0.06)',
-};
-const section = { fontSize: 16, marginBottom: 12 } as const;
-const fieldStyle = {
-  width: '100%',
-  padding: '6px 8px',
-  border: '1px solid #ccc',
-  borderRadius: 4,
-  fontSize: 13,
-} as const;
-const primaryBtn = {
-  padding: '8px 14px',
-  background: '#111',
-  color: '#fff',
-  border: 'none',
-  borderRadius: 4,
-  cursor: 'pointer',
-  fontSize: 13,
-} as const;
-const linkBtn = {
-  background: 'none',
-  border: '1px dashed #ccc',
-  color: '#444',
-  padding: '8px 14px',
-  borderRadius: 4,
-  cursor: 'pointer',
-  fontSize: 13,
-} as const;
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12 }}>
-      <span style={{ color: '#555' }}>{label}</span>
-      {children}
-    </label>
   );
 }

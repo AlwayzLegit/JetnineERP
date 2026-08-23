@@ -1,8 +1,8 @@
 'use client';
 
-import Link from 'next/link';
 import { useEffect, useState, type FormEvent } from 'react';
 import { CURRENCY_LABELS, SUPPORTED_CURRENCIES } from '@jetnine/shared';
+import { Button, Field, Input, LinkButton, LoadingRows, PageHeader, Select } from '@/components/ui';
 import { api } from '@/lib/api';
 
 interface Settings {
@@ -62,124 +62,67 @@ export default function SettingsPage() {
     }
   }
 
-  if (error && !settings) return <p style={{ color: '#b00' }}>{error}</p>;
-  if (!settings) return <p>Loading…</p>;
+  if (error && !settings) return <p style={{ color: 'var(--danger)' }}>{error}</p>;
+  if (!settings) return <LoadingRows />;
 
   return (
     <div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
-        <h1 style={{ fontSize: 22, margin: 0 }}>Business settings</h1>
-        <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
-          <Link
-            href="/settings/tax-classes"
-            style={{
-              padding: '8px 14px',
-              background: 'transparent',
-              color: '#444',
-              border: '1px solid #ccc',
-              borderRadius: 4,
-              textDecoration: 'none',
-              fontSize: 13,
-            }}
-          >
-            Tax classes
-          </Link>
-          <Link
-            href="/settings/discounts"
-            style={{
-              padding: '8px 14px',
-              background: 'transparent',
-              color: '#444',
-              border: '1px solid #ccc',
-              borderRadius: 4,
-              textDecoration: 'none',
-              fontSize: 13,
-            }}
-          >
-            Discounts
-          </Link>
-          <Link
-            href="/settings/webhooks"
-            style={{
-              padding: '8px 14px',
-              background: 'transparent',
-              color: '#444',
-              border: '1px solid #ccc',
-              borderRadius: 4,
-              textDecoration: 'none',
-              fontSize: 13,
-            }}
-          >
-            Webhooks
-          </Link>
-          <Link
-            href="/settings/api-keys"
-            style={{
-              padding: '8px 14px',
-              background: 'transparent',
-              color: '#444',
-              border: '1px solid #ccc',
-              borderRadius: 4,
-              textDecoration: 'none',
-              fontSize: 13,
-            }}
-          >
-            API keys
-          </Link>
-          <Link
-            href="/settings/import"
-            style={{
-              padding: '8px 14px',
-              background: 'transparent',
-              color: '#444',
-              border: '1px solid #ccc',
-              borderRadius: 4,
-              textDecoration: 'none',
-              fontSize: 13,
-            }}
-          >
-            Data import
-          </Link>
-          <Link
-            href="/settings/billing"
-            style={{
-              padding: '8px 14px',
-              background: '#111',
-              color: '#fff',
-              borderRadius: 4,
-              textDecoration: 'none',
-              fontSize: 13,
-            }}
-          >
-            Billing
-          </Link>
-        </div>
-      </div>
-      <form onSubmit={submit} style={card}>
+      <PageHeader
+        title="Business settings"
+        actions={
+          <>
+            <LinkButton href="/settings/tax-classes" variant="secondary" size="sm">
+              Tax classes
+            </LinkButton>
+            <LinkButton href="/settings/discounts" variant="secondary" size="sm">
+              Discounts
+            </LinkButton>
+            <LinkButton href="/settings/webhooks" variant="secondary" size="sm">
+              Webhooks
+            </LinkButton>
+            <LinkButton href="/settings/api-keys" variant="secondary" size="sm">
+              API keys
+            </LinkButton>
+            <LinkButton href="/settings/import" variant="secondary" size="sm">
+              Data import
+            </LinkButton>
+            <LinkButton href="/settings/billing" variant="primary" size="sm">
+              Billing
+            </LinkButton>
+          </>
+        }
+      />
+      <form onSubmit={submit} className="card" style={{ display: 'grid', gap: 12, maxWidth: 640 }}>
         <Field label="Business name">
-          <input name="name" defaultValue={settings.name} required style={fieldStyle} />
+          <Input name="name" defaultValue={settings.name} required style={{ width: '100%' }} />
         </Field>
         <Field label="Currency">
-          <select name="currencyCode" defaultValue={settings.currencyCode} style={fieldStyle}>
+          <Select
+            name="currencyCode"
+            defaultValue={settings.currencyCode}
+            style={{ width: '100%' }}
+          >
             {SUPPORTED_CURRENCIES.map((code) => (
               <option key={code} value={code}>
                 {code} — {CURRENCY_LABELS[code]}
               </option>
             ))}
-          </select>
-          <span style={{ color: '#888', fontSize: 11, marginTop: 2 }}>
+          </Select>
+          <span
+            style={{ color: 'var(--text-muted)', fontSize: 11, marginTop: 2, display: 'block' }}
+          >
             Switching currency changes how amounts are displayed across the app. Existing balances
             keep their stored minor-unit value; you may want to coordinate the change with your
             bookkeeper.
           </span>
         </Field>
         <Field label="Default tax rate (basis points; 250 = 2.5%)">
-          <input
+          <Input
             name="defaultTaxRateBps"
             type="number"
             min={0}
             defaultValue={settings.defaultTaxRateBps}
-            style={fieldStyle}
+            style={{ width: '100%' }}
           />
         </Field>
         <Field label="Receipt header">
@@ -187,7 +130,8 @@ export default function SettingsPage() {
             name="receiptHeader"
             defaultValue={settings.receiptHeader ?? ''}
             rows={3}
-            style={{ ...fieldStyle, resize: 'vertical' }}
+            className="textarea"
+            style={{ width: '100%', resize: 'vertical' }}
           />
         </Field>
         <Field label="Receipt footer">
@@ -195,54 +139,23 @@ export default function SettingsPage() {
             name="receiptFooter"
             defaultValue={settings.receiptFooter ?? ''}
             rows={3}
-            style={{ ...fieldStyle, resize: 'vertical' }}
+            className="textarea"
+            style={{ width: '100%', resize: 'vertical' }}
           />
         </Field>
-        {error && <p style={{ color: '#b00', fontSize: 13 }}>{error}</p>}
+        {error && <p style={{ color: 'var(--danger)', fontSize: 13, margin: 0 }}>{error}</p>}
         {success && (
-          <p data-testid="settings-success" style={{ color: '#080', fontSize: 13 }}>
+          <p
+            data-testid="settings-success"
+            style={{ color: 'var(--success)', fontSize: 13, margin: 0 }}
+          >
             {success}
           </p>
         )}
-        <button type="submit" disabled={saving} style={primaryBtn}>
+        <Button type="submit" variant="primary" disabled={saving} style={{ width: 'fit-content' }}>
           {saving ? 'Saving…' : 'Save'}
-        </button>
+        </Button>
       </form>
     </div>
-  );
-}
-
-const card = {
-  background: '#fff',
-  padding: 20,
-  borderRadius: 6,
-  boxShadow: '0 1px 2px rgba(0,0,0,0.06)',
-  display: 'grid',
-  gap: 12,
-  maxWidth: 640,
-};
-const fieldStyle = {
-  width: '100%',
-  padding: '8px 10px',
-  border: '1px solid #ccc',
-  borderRadius: 4,
-  fontSize: 13,
-} as const;
-const primaryBtn = {
-  padding: '8px 14px',
-  background: '#111',
-  color: '#fff',
-  border: 'none',
-  borderRadius: 4,
-  cursor: 'pointer',
-  width: 'fit-content',
-} as const;
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12 }}>
-      <span style={{ color: '#555' }}>{label}</span>
-      {children}
-    </label>
   );
 }

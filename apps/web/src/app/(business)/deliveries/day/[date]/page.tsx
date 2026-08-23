@@ -1,9 +1,9 @@
 'use client';
 
-import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { formatMoney } from '@jetnine/shared';
+import { Button, EmptyState, LinkButton, LoadingRows, PageHeader } from '@/components/ui';
 
 /**
  * Driver day-sheet (Day 3): one printable page for one day's route —
@@ -54,57 +54,51 @@ export default function DaySheetPage() {
   return (
     <div style={{ maxWidth: 720 }}>
       <style>{`@media print { header, nav, .no-print { display: none !important; } body { background: #fff !important; } }`}</style>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 4 }}>
-        <h1 style={{ fontSize: 22, margin: 0 }}>Day sheet — {date}</h1>
-        <div className="no-print" style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
-          <button
-            onClick={() => window.print()}
-            style={{
-              padding: '8px 14px',
-              background: '#111',
-              color: '#fff',
-              border: 'none',
-              borderRadius: 4,
-              cursor: 'pointer',
-              fontSize: 13,
-            }}
-          >
-            Print
-          </button>
-          <Link href="/deliveries" style={{ fontSize: 13, color: '#06c', alignSelf: 'center' }}>
-            ← Calendar
-          </Link>
-        </div>
-      </div>
-      <p style={{ fontSize: 12, color: '#666', margin: '0 0 16px' }}>
-        {rows ? `${rows.length} stop${rows.length === 1 ? '' : 's'}` : '…'} · collect amounts are
-        cash/check on delivery; record them on the order when back.
-      </p>
-      {error && <p style={{ color: '#b00', fontSize: 13 }}>{error}</p>}
+      <PageHeader
+        title={`Day sheet — ${date}`}
+        sub={
+          <>
+            {rows ? `${rows.length} stop${rows.length === 1 ? '' : 's'}` : '…'} · collect amounts
+            are cash/check on delivery; record them on the order when back.
+          </>
+        }
+        actions={
+          <span className="no-print" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <Button variant="primary" onClick={() => window.print()}>
+              Print
+            </Button>
+            <LinkButton href="/deliveries" variant="ghost" size="sm">
+              ← Calendar
+            </LinkButton>
+          </span>
+        }
+      />
+      {error && <p style={{ color: 'var(--danger)', fontSize: 13 }}>{error}</p>}
+      {!rows && !error && <LoadingRows rows={3} />}
 
       {rows?.map((r, i) => (
         <div
           key={r.id}
+          className="card"
           style={{
-            border: '1px solid #ddd',
-            borderRadius: 6,
             padding: '12px 16px',
-            marginBottom: 10,
+            margin: '0 0 10px',
             pageBreakInside: 'avoid',
-            background: '#fff',
           }}
         >
           <div style={{ display: 'flex', gap: 10, alignItems: 'baseline' }}>
             <strong style={{ fontSize: 16 }}>#{r.routePosition ?? i + 1}</strong>
             <strong>{r.orderNumber}</strong>
-            <span style={{ color: '#666', fontSize: 13 }}>{r.customerName ?? ''}</span>
+            <span style={{ color: 'var(--text-secondary)', fontSize: 13 }}>
+              {r.customerName ?? ''}
+            </span>
             {(r.windowStart || r.windowEnd) && (
               <span style={{ marginLeft: 'auto', fontSize: 13 }}>
                 {r.windowStart?.slice(0, 5)}–{r.windowEnd?.slice(0, 5)}
               </span>
             )}
           </div>
-          <div style={{ fontSize: 13, margin: '6px 0', color: '#333' }}>
+          <div style={{ fontSize: 13, margin: '6px 0', color: 'var(--text-secondary)' }}>
             {r.addressLine1}
             {r.addressLine2 ? `, ${r.addressLine2}` : ''}
             {r.addressCity
@@ -123,18 +117,20 @@ export default function DaySheetPage() {
             {r.balanceDueCents > 0 ? (
               <strong>COLLECT {formatMoney(r.balanceDueCents)}</strong>
             ) : (
-              <span style={{ color: '#2c7a4b' }}>Paid in full</span>
+              <span style={{ color: 'var(--success)' }}>Paid in full</span>
             )}
-            <span style={{ marginLeft: 'auto', color: '#666' }}>
+            <span style={{ marginLeft: 'auto', color: 'var(--text-secondary)' }}>
               Signature: ______________________
             </span>
           </div>
-          {r.notes && <p style={{ fontSize: 12, color: '#666', margin: '6px 0 0' }}>{r.notes}</p>}
+          {r.notes && (
+            <p style={{ fontSize: 12, color: 'var(--text-secondary)', margin: '6px 0 0' }}>
+              {r.notes}
+            </p>
+          )}
         </div>
       ))}
-      {rows && rows.length === 0 && (
-        <p style={{ color: '#888', fontSize: 13 }}>No deliveries scheduled for this day.</p>
-      )}
+      {rows && rows.length === 0 && <EmptyState>No deliveries scheduled for this day.</EmptyState>}
     </div>
   );
 }

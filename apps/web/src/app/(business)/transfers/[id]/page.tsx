@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { api } from '@/lib/api';
+import { Button, Card, Input, LoadingRows, PageHeader, StatusBadge } from '@/components/ui';
 
 interface TransferLine {
   id: string;
@@ -100,8 +101,8 @@ export default function TransferDetailPage() {
     }
   }
 
-  if (error && !t) return <p style={{ color: '#b00' }}>{error}</p>;
-  if (!t) return <p>Loading…</p>;
+  if (error && !t) return <p style={{ color: 'var(--danger)' }}>{error}</p>;
+  if (!t) return <LoadingRows rows={5} />;
 
   const isDraft = t.status === 'draft';
   const isInTransit = t.status === 'in_transit';
@@ -111,45 +112,48 @@ export default function TransferDetailPage() {
       <p style={{ marginBottom: 12 }}>
         <Link href="/transfers">← All transfers</Link>
       </p>
-      <h1 style={{ fontSize: 22, marginBottom: 4 }}>
-        <code>{t.number}</code>
-      </h1>
-      <p style={{ color: '#666', fontSize: 13, marginBottom: 24 }}>
-        {t.status} · <strong>{t.fromLocationName ?? '—'}</strong> →{' '}
-        <strong>{t.toLocationName ?? '—'}</strong> · {new Date(t.createdAt).toLocaleString()}
-      </p>
+      <PageHeader
+        title={<code>{t.number}</code>}
+        sub={
+          <>
+            <StatusBadge status={t.status} /> · <strong>{t.fromLocationName ?? '—'}</strong> →{' '}
+            <strong>{t.toLocationName ?? '—'}</strong> · {new Date(t.createdAt).toLocaleString()}
+          </>
+        }
+      />
 
-      <div style={card}>
-        <h2 style={section}>Lines</h2>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+      <Card title="Lines" style={{ marginBottom: 16 }}>
+        <table className="table">
           <thead>
-            <tr style={{ textAlign: 'left', borderBottom: '1px solid #ddd' }}>
-              <Th>Item</Th>
-              <Th>Shipped</Th>
-              <Th>Received</Th>
-              {isInTransit && <Th>Receive qty</Th>}
+            <tr>
+              <th>Item</th>
+              <th className="num">Shipped</th>
+              <th className="num">Received</th>
+              {isInTransit && <th>Receive qty</th>}
             </tr>
           </thead>
           <tbody>
             {t.lines.map((l) => {
               const remaining = l.quantityShipped - l.quantityReceived;
               return (
-                <tr key={l.id} style={{ borderBottom: '1px solid #f3f3f3' }}>
-                  <Td>
+                <tr key={l.id}>
+                  <td>
                     {l.productName}
-                    {l.variantName && <span style={{ color: '#666' }}> — {l.variantName}</span>}
+                    {l.variantName && (
+                      <span style={{ color: 'var(--text-secondary)' }}> — {l.variantName}</span>
+                    )}
                     {l.sku && (
-                      <span style={{ color: '#888', fontSize: 11, marginLeft: 6 }}>
+                      <span style={{ color: 'var(--text-muted)', fontSize: 11, marginLeft: 6 }}>
                         <code>{l.sku}</code>
                       </span>
                     )}
-                  </Td>
-                  <Td>{l.quantityShipped}</Td>
-                  <Td>{l.quantityReceived}</Td>
+                  </td>
+                  <td className="num">{l.quantityShipped}</td>
+                  <td className="num">{l.quantityReceived}</td>
                   {isInTransit && (
-                    <Td>
+                    <td>
                       {remaining > 0 ? (
-                        <input
+                        <Input
                           type="number"
                           min={0}
                           max={remaining}
@@ -160,85 +164,46 @@ export default function TransferDetailPage() {
                               [l.id]: Math.max(0, Math.min(remaining, Number(e.target.value) || 0)),
                             }))
                           }
-                          style={{ ...inputStyle, width: 70 }}
+                          style={{ width: 70 }}
                         />
                       ) : (
-                        <span style={{ color: '#888', fontSize: 12 }}>complete</span>
+                        <span className="badge badge-success">complete</span>
                       )}
-                    </Td>
+                    </td>
                   )}
                 </tr>
               );
             })}
           </tbody>
         </table>
-      </div>
+      </Card>
 
       {t.notes && (
-        <div style={card}>
+        <Card style={{ marginBottom: 16 }}>
           <strong style={{ fontSize: 13 }}>Notes:</strong>
-          <p style={{ fontSize: 13, color: '#444' }}>{t.notes}</p>
-        </div>
+          <p style={{ fontSize: 13, color: 'var(--text-secondary)', margin: '4px 0 0' }}>
+            {t.notes}
+          </p>
+        </Card>
       )}
 
       <div style={{ display: 'flex', gap: 8 }}>
         {isDraft && (
           <>
-            <button onClick={ship} disabled={busy} style={primaryBtn}>
+            <Button variant="primary" onClick={ship} disabled={busy}>
               {busy ? 'Shipping…' : 'Ship transfer'}
-            </button>
-            <button onClick={cancel} disabled={busy} style={dangerBtn}>
+            </Button>
+            <Button variant="danger" onClick={cancel} disabled={busy}>
               Cancel
-            </button>
+            </Button>
           </>
         )}
         {isInTransit && (
-          <button onClick={submitReceive} disabled={busy} style={primaryBtn}>
+          <Button variant="primary" onClick={submitReceive} disabled={busy}>
             {busy ? 'Receiving…' : 'Record receipt'}
-          </button>
+          </Button>
         )}
       </div>
     </div>
   );
-}
-
-const card = {
-  background: '#fff',
-  padding: 16,
-  borderRadius: 6,
-  boxShadow: '0 1px 2px rgba(0,0,0,0.06)',
-  marginBottom: 16,
-};
-const section = { fontSize: 16, marginBottom: 12, marginTop: 0 } as const;
-const inputStyle = {
-  padding: '6px 8px',
-  border: '1px solid #ccc',
-  borderRadius: 4,
-  fontSize: 13,
-  width: '100%',
-} as const;
-const primaryBtn = {
-  padding: '8px 14px',
-  background: '#111',
-  color: '#fff',
-  border: 'none',
-  borderRadius: 4,
-  cursor: 'pointer',
-  fontSize: 13,
-} as const;
-const dangerBtn = {
-  padding: '8px 14px',
-  background: 'transparent',
-  color: '#b00',
-  border: '1px solid #b00',
-  borderRadius: 4,
-  cursor: 'pointer',
-  fontSize: 13,
-} as const;
-
-function Th({ children }: { children: React.ReactNode }) {
-  return <th style={{ padding: '8px 6px', fontWeight: 600 }}>{children}</th>;
-}
-function Td({ children }: { children: React.ReactNode }) {
-  return <td style={{ padding: '8px 6px' }}>{children}</td>;
 }

@@ -2,6 +2,15 @@
 
 import Link from 'next/link';
 import { useEffect, useState, type FormEvent } from 'react';
+import {
+  Button,
+  Card,
+  EmptyState,
+  Input,
+  LinkButton,
+  LoadingRows,
+  PageHeader,
+} from '@/components/ui';
 import { api } from '@/lib/api';
 
 interface CustomerRow {
@@ -43,86 +52,80 @@ export default function CustomersPage() {
 
   return (
     <div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
-        <h1 style={{ fontSize: 22, margin: 0 }}>Customers</h1>
-        <Link
-          href="/customers/new"
-          style={{
-            marginLeft: 'auto',
-            padding: '8px 14px',
-            background: '#111',
-            color: '#fff',
-            borderRadius: 4,
-            textDecoration: 'none',
-            fontSize: 13,
-          }}
-        >
-          Add customer
-        </Link>
-      </div>
+      <PageHeader
+        title="Customers"
+        actions={
+          <LinkButton href="/customers/new" variant="primary">
+            Add customer
+          </LinkButton>
+        }
+      />
 
       <form onSubmit={search} style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
-        <input
+        <Input
           name="q"
           placeholder="Search by name, email, or phone"
           value={q}
           onChange={(e) => setQ(e.target.value)}
-          style={{
-            flex: 1,
-            padding: '8px 10px',
-            border: '1px solid #ccc',
-            borderRadius: 4,
-            fontSize: 14,
-          }}
+          style={{ flex: 1 }}
         />
-        <button type="submit" style={primaryBtn}>
+        <Button type="submit" variant="primary">
           Search
-        </button>
-        <button
+        </Button>
+        <Button
           type="button"
+          variant="ghost"
           onClick={() => {
             setQ('');
             void load('');
           }}
-          style={linkBtn}
         >
           Clear
-        </button>
+        </Button>
       </form>
 
-      {error && <p style={{ color: '#b00' }}>{error}</p>}
+      {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
+      {!rows && !error && (
+        <Card>
+          <LoadingRows />
+        </Card>
+      )}
       {rows && (
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-          <thead>
-            <tr style={{ textAlign: 'left', borderBottom: '1px solid #ddd' }}>
-              <Th>Name</Th>
-              <Th>Email</Th>
-              <Th>Phone</Th>
-              <Th>&nbsp;</Th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.length === 0 && (
+        <Card style={{ padding: 0, overflowX: 'auto' }}>
+          <table className="table">
+            <thead>
               <tr>
-                <td colSpan={4} style={{ padding: 16, color: '#888' }}>
-                  No customers match{q ? ` "${q}"` : ' yet'}.
-                </td>
+                <th>Name</th>
+                <th>Email</th>
+                <th>Phone</th>
+                <th>&nbsp;</th>
               </tr>
-            )}
-            {rows.map((c) => (
-              <tr key={c.id} style={{ borderBottom: '1px solid #f3f3f3' }}>
-                <Td>
-                  <strong>{displayName(c) || <em style={{ color: '#888' }}>—</em>}</strong>
-                </Td>
-                <Td>{c.email ?? '—'}</Td>
-                <Td>{c.phone ?? '—'}</Td>
-                <Td>
-                  <Link href={`/customers/${c.id}`}>Open</Link>
-                </Td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {rows.length === 0 && (
+                <tr>
+                  <td colSpan={4}>
+                    <EmptyState>No customers match{q ? ` "${q}"` : ' yet'}.</EmptyState>
+                  </td>
+                </tr>
+              )}
+              {rows.map((c) => (
+                <tr key={c.id}>
+                  <td>
+                    <strong>
+                      {displayName(c) || <em style={{ color: 'var(--text-muted)' }}>—</em>}
+                    </strong>
+                  </td>
+                  <td>{c.email ?? '—'}</td>
+                  <td>{c.phone ?? '—'}</td>
+                  <td style={{ textAlign: 'right' }}>
+                    <Link href={`/customers/${c.id}`}>Open</Link>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Card>
       )}
     </div>
   );
@@ -130,30 +133,4 @@ export default function CustomersPage() {
 
 function displayName(c: CustomerRow): string {
   return [c.firstName, c.lastName].filter(Boolean).join(' ');
-}
-
-const primaryBtn = {
-  padding: '8px 14px',
-  background: '#111',
-  color: '#fff',
-  border: 'none',
-  borderRadius: 4,
-  cursor: 'pointer',
-  fontSize: 13,
-} as const;
-const linkBtn = {
-  padding: '8px 14px',
-  background: 'transparent',
-  color: '#444',
-  border: '1px solid #ccc',
-  borderRadius: 4,
-  cursor: 'pointer',
-  fontSize: 13,
-} as const;
-
-function Th({ children }: { children: React.ReactNode }) {
-  return <th style={{ padding: '8px 6px', fontWeight: 600 }}>{children}</th>;
-}
-function Td({ children }: { children: React.ReactNode }) {
-  return <td style={{ padding: '8px 6px' }}>{children}</td>;
 }

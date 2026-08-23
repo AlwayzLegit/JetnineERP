@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { formatMoney } from '@jetnine/shared';
 import { api } from '@/lib/api';
+import { Button, Card, Input, LinkButton, LoadingRows, Select, StatusBadge } from '@/components/ui';
 
 /**
  * Service ticket detail (G6): the working view of one repair — charges
@@ -58,15 +59,6 @@ const NEXT_STATUSES: Record<string, string[]> = {
   awaiting_parts: ['in_service', 'intake', 'cancelled'],
   in_service: ['ready', 'awaiting_parts', 'cancelled'],
   ready: ['in_service'],
-};
-
-const STATUS_COLORS: Record<string, string> = {
-  intake: '#8a6d1a',
-  awaiting_parts: '#8a4b1a',
-  in_service: '#1a5f8a',
-  ready: '#2c7a4b',
-  completed: '#2c7a4b',
-  cancelled: '#8c2f2f',
 };
 
 export default function ServiceTicketPage() {
@@ -126,75 +118,64 @@ export default function ServiceTicketPage() {
 
   if (error && !ticket) {
     return (
-      <p style={{ color: '#b00' }}>
+      <p style={{ color: 'var(--danger)' }}>
         {error} — <Link href="/service">back to the board</Link>
       </p>
     );
   }
-  if (!ticket) return <p style={{ color: '#888', fontSize: 13 }}>Loading…</p>;
+  if (!ticket) return <LoadingRows rows={4} />;
 
   const live = !ticket.completedAt && ticket.status !== 'cancelled';
 
   return (
     <div>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 4 }}>
-        <h1 style={{ fontSize: 22, margin: 0 }} data-testid="ticket-number">
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 4 }}>
+        <h1 className="page-title" style={{ margin: 0 }} data-testid="ticket-number">
           {ticket.number}
         </h1>
-        <span
-          data-testid="ticket-status"
-          style={{
-            fontSize: 12,
-            fontWeight: 600,
-            textTransform: 'uppercase',
-            letterSpacing: '0.05em',
-            color: '#fff',
-            background: STATUS_COLORS[ticket.status] ?? '#666',
-            borderRadius: 999,
-            padding: '2px 10px',
-          }}
-        >
-          {ticket.status.replace('_', ' ')}
+        <span data-testid="ticket-status" style={{ display: 'inline-flex' }}>
+          <StatusBadge status={ticket.status} />
         </span>
-        {ticket.warranty && (
-          <span style={{ fontSize: 12, color: '#8a6d1a', fontWeight: 700 }}>WARRANTY</span>
-        )}
-        <button onClick={() => window.print()} style={{ ...ghostBtn, marginLeft: 'auto' }}>
+        {ticket.warranty && <span className="badge badge-warning">WARRANTY</span>}
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => window.print()}
+          style={{ marginLeft: 'auto' }}
+        >
           Print
-        </button>
-        <Link href="/service" style={{ fontSize: 13, color: '#06c' }}>
+        </Button>
+        <LinkButton href="/service" variant="ghost" size="sm">
           ← Board
-        </Link>
+        </LinkButton>
       </div>
-      <p style={{ fontSize: 13, color: '#666', margin: '0 0 16px' }}>
+      <p style={{ fontSize: 13, color: 'var(--text-secondary)', margin: '0 0 16px' }}>
         {ticket.customerName} · opened {new Date(ticket.createdAt).toLocaleString()}
         {ticket.serial ? ` · serial ${ticket.serial}` : ''}
       </p>
-      {error && <p style={{ color: '#b00', fontSize: 13 }}>{error}</p>}
+      {error && <p style={{ color: 'var(--danger)', fontSize: 13 }}>{error}</p>}
 
       <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 16 }}>
         <div>
-          <div style={card}>
-            <h3 style={section}>Item & issue</h3>
+          <Card title="Item & issue" style={{ marginBottom: 16 }}>
             <p style={{ fontSize: 13, margin: '0 0 4px' }}>
               <strong>{ticket.itemDescription ?? 'Item'}</strong>
             </p>
-            <p style={{ fontSize: 13, color: '#444', margin: 0 }}>{ticket.issue}</p>
-          </div>
+            <p style={{ fontSize: 13, color: 'var(--text-secondary)', margin: 0 }}>
+              {ticket.issue}
+            </p>
+          </Card>
 
-          <div style={card}>
-            <h3 style={section}>Charges</h3>
+          <Card title="Charges" style={{ marginBottom: 16 }}>
             {ticket.lines.length > 0 && (
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+              <table className="table">
                 <tbody>
                   {ticket.lines.map((l) => (
-                    <tr key={l.id} style={{ borderBottom: '1px solid #f3f3f3' }}>
-                      <td style={{ padding: '6px 4px' }}>{l.description}</td>
-                      <td style={{ padding: '6px 4px', color: '#888' }}>{l.kind}</td>
-                      <td style={{ padding: '6px 4px' }}>×{l.quantity}</td>
-                      <td style={{ padding: '6px 4px', textAlign: 'right' }}>
-                        {formatMoney(l.totalCents)}
-                      </td>
+                    <tr key={l.id}>
+                      <td>{l.description}</td>
+                      <td style={{ color: 'var(--text-muted)' }}>{l.kind}</td>
+                      <td>×{l.quantity}</td>
+                      <td className="num">{formatMoney(l.totalCents)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -203,15 +184,24 @@ export default function ServiceTicketPage() {
             {live && (
               <>
                 <div style={{ marginTop: 10, position: 'relative' }}>
-                  <input
+                  <Input
                     value={partQ}
                     onChange={(e) => void searchParts(e.target.value)}
                     placeholder="Add part from stock — search SKU or name…"
-                    style={input}
+                    style={{ width: '100%' }}
                     data-testid="part-search"
                   />
                   {partHits.length > 0 && (
-                    <div style={{ border: '1px solid #ddd', borderRadius: 4, marginTop: 2 }}>
+                    <div
+                      style={{
+                        border: '1px solid var(--border)',
+                        borderRadius: 'var(--radius-sm)',
+                        marginTop: 4,
+                        background: 'var(--surface)',
+                        boxShadow: 'var(--shadow-md)',
+                        overflow: 'hidden',
+                      }}
+                    >
                       {partHits.slice(0, 6).map((p) => (
                         <button
                           key={p.variantId}
@@ -229,24 +219,25 @@ export default function ServiceTicketPage() {
                   )}
                 </div>
                 <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-                  <input
+                  <Input
                     value={laborDesc}
                     onChange={(e) => setLaborDesc(e.target.value)}
                     placeholder="Labor description"
-                    style={{ ...input, flex: 2 }}
+                    style={{ flex: 2 }}
                     data-testid="labor-desc"
                   />
-                  <input
+                  <Input
                     type="number"
                     step="0.01"
                     min={0}
                     value={laborPrice}
                     onChange={(e) => setLaborPrice(e.target.value)}
                     placeholder="0.00"
-                    style={{ ...input, flex: 1 }}
+                    style={{ flex: 1, minWidth: 0 }}
                     data-testid="labor-price"
                   />
-                  <button
+                  <Button
+                    variant="primary"
                     onClick={() => {
                       const cents = Math.round(Number(laborPrice || '0') * 100);
                       if (!laborDesc.trim()) return;
@@ -259,21 +250,19 @@ export default function ServiceTicketPage() {
                       });
                     }}
                     disabled={busy || !laborDesc.trim()}
-                    style={darkBtn}
                     data-testid="add-labor"
                   >
                     Add labor
-                  </button>
+                  </Button>
                 </div>
               </>
             )}
-          </div>
+          </Card>
 
-          <div style={card}>
-            <h3 style={section}>Notes</h3>
+          <Card title="Notes" style={{ marginBottom: 16 }}>
             {ticket.notes.map((n) => (
               <p key={n.id} style={{ fontSize: 13, margin: '0 0 6px' }}>
-                <span style={{ color: '#888', fontSize: 12 }}>
+                <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>
                   {new Date(n.createdAt).toLocaleString()}
                 </span>{' '}
                 — {n.body}
@@ -281,31 +270,29 @@ export default function ServiceTicketPage() {
             ))}
             {live && (
               <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-                <input
+                <Input
                   value={noteBody}
                   onChange={(e) => setNoteBody(e.target.value)}
                   placeholder="Add a note…"
-                  style={{ ...input, flex: 1 }}
+                  style={{ flex: 1 }}
                   data-testid="note-body"
                 />
-                <button
+                <Button
                   onClick={() => {
                     if (!noteBody.trim()) return;
                     void act('/notes', { body: noteBody.trim() }).then(() => setNoteBody(''));
                   }}
                   disabled={busy || !noteBody.trim()}
-                  style={ghostBtn}
                 >
                   Add
-                </button>
+                </Button>
               </div>
             )}
-          </div>
+          </Card>
         </div>
 
         <div>
-          <div style={card}>
-            <h3 style={section}>Money</h3>
+          <Card title="Money" style={{ marginBottom: 16 }}>
             <RowLine label="Total" value={ticket.totalCents} />
             <RowLine label="Paid" value={ticket.paidCents} />
             <div data-testid="ticket-balance">
@@ -313,28 +300,29 @@ export default function ServiceTicketPage() {
             </div>
             {live && ticket.balanceDueCents > 0 && (
               <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
-                <input
+                <Input
                   type="number"
                   step="0.01"
                   min={0}
                   value={payAmount}
                   onChange={(e) => setPayAmount(e.target.value)}
                   placeholder={(ticket.balanceDueCents / 100).toFixed(2)}
-                  style={{ ...input, width: 90 }}
+                  style={{ width: 90 }}
                   data-testid="ticket-pay-amount"
                 />
-                <select
+                <Select
                   value={payMethod}
                   onChange={(e) => setPayMethod(e.target.value)}
-                  style={{ ...input, width: 110 }}
+                  style={{ width: 110 }}
                 >
                   {['cash', 'card', 'external_card', 'check', 'financing'].map((m) => (
                     <option key={m} value={m}>
                       {m.replace('_', ' ')}
                     </option>
                   ))}
-                </select>
-                <button
+                </Select>
+                <Button
+                  variant="primary"
                   onClick={() => {
                     const cents = Math.round(Number(payAmount) * 100);
                     if (!Number.isFinite(cents) || cents <= 0) return;
@@ -343,52 +331,50 @@ export default function ServiceTicketPage() {
                     );
                   }}
                   disabled={busy}
-                  style={darkBtn}
                   data-testid="ticket-take-payment"
                 >
                   Collect
-                </button>
+                </Button>
               </div>
             )}
-          </div>
+          </Card>
 
-          <div style={card}>
-            <h3 style={section}>Actions</h3>
+          <Card title="Actions" style={{ marginBottom: 16 }}>
             {live ? (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                 {(NEXT_STATUSES[ticket.status] ?? []).map((s) => (
-                  <button
+                  <Button
                     key={s}
+                    variant={s === 'cancelled' ? 'danger' : 'secondary'}
                     onClick={() => void act('/status', { status: s })}
                     disabled={busy}
-                    style={s === 'cancelled' ? dangerBtn : ghostBtn}
                     data-testid={`status-${s}`}
                   >
                     {s === 'cancelled' ? 'Cancel ticket' : `Mark ${s.replace('_', ' ')}`}
-                  </button>
+                  </Button>
                 ))}
                 {ticket.status === 'ready' && (
-                  <button
+                  <Button
+                    variant="primary"
                     onClick={() => void act('/complete')}
                     disabled={busy || ticket.balanceDueCents > 0}
-                    style={darkBtn}
                     data-testid="complete-ticket"
                     title={
                       ticket.balanceDueCents > 0 ? 'Collect the balance first' : 'Hand it back'
                     }
                   >
                     Complete — picked up
-                  </button>
+                  </Button>
                 )}
               </div>
             ) : (
-              <p style={{ fontSize: 13, color: '#888', margin: 0 }}>
+              <p className="muted" style={{ fontSize: 13, margin: 0 }}>
                 {ticket.completedAt
                   ? `Completed ${new Date(ticket.completedAt).toLocaleString()}`
                   : 'Cancelled'}
               </p>
             )}
-          </div>
+          </Card>
         </div>
       </div>
     </div>
@@ -404,6 +390,7 @@ function RowLine({ label, value, bold }: { label: string; value: number; bold?: 
         fontSize: 13,
         fontWeight: bold ? 700 : 400,
         marginBottom: 4,
+        fontVariantNumeric: 'tabular-nums',
       }}
     >
       <span>{label}</span>
@@ -412,50 +399,14 @@ function RowLine({ label, value, bold }: { label: string; value: number; bold?: 
   );
 }
 
-const card: React.CSSProperties = {
-  border: '1px solid #e2e2e2',
-  borderRadius: 8,
-  padding: 16,
-  marginBottom: 16,
-  background: '#fff',
-};
-const section: React.CSSProperties = { fontSize: 14, marginBottom: 8, marginTop: 0 };
-const input: React.CSSProperties = {
-  padding: '6px 10px',
-  border: '1px solid #ccc',
-  borderRadius: 4,
-  fontSize: 13,
-  boxSizing: 'border-box',
-};
-const darkBtn: React.CSSProperties = {
-  padding: '8px 14px',
-  background: '#111',
-  color: '#fff',
-  border: 'none',
-  borderRadius: 4,
-  cursor: 'pointer',
-  fontSize: 13,
-};
-const ghostBtn: React.CSSProperties = {
-  padding: '8px 14px',
-  background: 'transparent',
-  color: '#444',
-  border: '1px solid #ccc',
-  borderRadius: 4,
-  cursor: 'pointer',
-  fontSize: 13,
-};
-const dangerBtn: React.CSSProperties = {
-  ...ghostBtn,
-  color: '#8c2f2f',
-};
 const hitBtn: React.CSSProperties = {
   display: 'block',
   width: '100%',
   textAlign: 'left',
-  padding: '6px 10px',
+  padding: '7px 10px',
   border: 'none',
   background: 'none',
   cursor: 'pointer',
   fontSize: 13,
+  color: 'var(--text)',
 };

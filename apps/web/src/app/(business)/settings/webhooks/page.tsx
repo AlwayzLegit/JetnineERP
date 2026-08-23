@@ -2,6 +2,16 @@
 
 import Link from 'next/link';
 import { useEffect, useState, type FormEvent } from 'react';
+import {
+  Button,
+  Card,
+  EmptyState,
+  Field,
+  Input,
+  LoadingRows,
+  PageHeader,
+  StatusBadge,
+} from '@/components/ui';
 import { api } from '@/lib/api';
 
 interface Endpoint {
@@ -126,36 +136,39 @@ export default function WebhooksPage() {
 
   return (
     <div>
-      <p style={{ marginBottom: 12 }}>
+      <p style={{ margin: '0 0 12px' }}>
         <Link href="/settings">← Settings</Link>
       </p>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
-        <h1 style={{ fontSize: 22, margin: 0 }}>Outbound webhooks</h1>
-        <button
-          onClick={() => setCreating((v) => !v)}
-          style={{ marginLeft: 'auto', ...primaryBtn }}
-        >
-          {creating ? 'Cancel' : '+ New endpoint'}
-        </button>
-      </div>
+      <PageHeader
+        title="Outbound webhooks"
+        sub={
+          <>
+            LA Mattress ERP will POST a JSON body to your URL whenever a subscribed event fires.
+            Verify the <code>X-Jetnine-Signature</code> header (Stripe-style{' '}
+            <code>t=&lt;unix&gt;,v1=&lt;hmacsha256(t.body)&gt;</code>) using the secret shown once
+            at create time.
+          </>
+        }
+        actions={
+          <Button
+            variant={creating ? 'secondary' : 'primary'}
+            onClick={() => setCreating((v) => !v)}
+          >
+            {creating ? 'Cancel' : '+ New endpoint'}
+          </Button>
+        }
+      />
 
-      <p style={{ color: '#666', fontSize: 13, marginBottom: 16 }}>
-        LA Mattress ERP will POST a JSON body to your URL whenever a subscribed event fires. Verify
-        the <code>X-Jetnine-Signature</code> header (Stripe-style{' '}
-        <code>t=&lt;unix&gt;,v1=&lt;hmacsha256(t.body)&gt;</code>) using the secret shown once at
-        create time.
-      </p>
-
-      {error && <p style={{ color: '#b00' }}>{error}</p>}
+      {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
 
       {newSecret && (
         <div
           style={{
-            background: '#fff8e1',
-            border: '1px solid #f0a000',
-            color: '#5a3500',
+            background: 'var(--warning-soft)',
+            border: '1px solid var(--warning)',
+            color: 'var(--warning-soft-text)',
             padding: 12,
-            borderRadius: 6,
+            borderRadius: 'var(--radius)',
             marginBottom: 16,
             fontSize: 13,
           }}
@@ -167,268 +180,225 @@ export default function WebhooksPage() {
               whiteSpace: 'pre-wrap',
               wordBreak: 'break-all',
               fontSize: 12,
+              fontFamily: 'var(--font-mono)',
             }}
           >
             {newSecret.secret}
           </pre>
-          <button onClick={() => setNewSecret(null)} style={{ ...linkBtn, fontSize: 12 }}>
+          <Button size="sm" variant="secondary" onClick={() => setNewSecret(null)}>
             Got it
-          </button>
+          </Button>
         </div>
       )}
 
       {creating && (
-        <form onSubmit={create} style={{ ...card, display: 'grid', gap: 8, maxWidth: 720 }}>
-          <Field label="URL *">
-            <input
-              name="url"
-              type="url"
-              placeholder="https://example.com/webhooks/la-mattress-erp"
-              required
-              style={inputStyle}
-            />
-          </Field>
-          <Field label="Description (optional)">
-            <input name="description" style={inputStyle} />
-          </Field>
-          <fieldset style={{ border: 'none', padding: 0, margin: 0 }}>
-            <legend style={{ fontSize: 12, color: '#555', marginBottom: 4 }}>
-              Subscribe to events *
-            </legend>
-            <label
-              style={{
-                display: 'flex',
-                gap: 6,
-                fontSize: 13,
-                fontWeight: 600,
-                marginBottom: 6,
-              }}
-            >
-              <input type="checkbox" name="events" value="*" />
-              All events (wildcard, including future types)
-            </label>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4 }}>
-              {eventTypes.map((t) => (
-                <label key={t} style={{ display: 'flex', gap: 6, fontSize: 13 }}>
-                  <input type="checkbox" name="events" value={t} />
-                  <code>{t}</code>
-                </label>
-              ))}
-            </div>
-          </fieldset>
-          <button type="submit" style={primaryBtn}>
-            Create endpoint
-          </button>
-        </form>
+        <Card style={{ maxWidth: 720, marginBottom: 16 }}>
+          <form onSubmit={create} style={{ display: 'grid', gap: 8 }}>
+            <Field label="URL *">
+              <Input
+                name="url"
+                type="url"
+                placeholder="https://example.com/webhooks/la-mattress-erp"
+                required
+                style={{ width: '100%' }}
+              />
+            </Field>
+            <Field label="Description (optional)">
+              <Input name="description" style={{ width: '100%' }} />
+            </Field>
+            <fieldset style={{ border: 'none', padding: 0, margin: 0 }}>
+              <legend className="field-label">Subscribe to events *</legend>
+              <label
+                style={{
+                  display: 'flex',
+                  gap: 6,
+                  fontSize: 13,
+                  fontWeight: 600,
+                  marginBottom: 6,
+                  alignItems: 'center',
+                }}
+              >
+                <input
+                  type="checkbox"
+                  name="events"
+                  value="*"
+                  style={{ accentColor: 'var(--brand)' }}
+                />
+                All events (wildcard, including future types)
+              </label>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4 }}>
+                {eventTypes.map((t) => (
+                  <label
+                    key={t}
+                    style={{ display: 'flex', gap: 6, fontSize: 13, alignItems: 'center' }}
+                  >
+                    <input
+                      type="checkbox"
+                      name="events"
+                      value={t}
+                      style={{ accentColor: 'var(--brand)' }}
+                    />
+                    <code>{t}</code>
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+            <Button type="submit" variant="primary" style={{ width: 'fit-content' }}>
+              Create endpoint
+            </Button>
+          </form>
+        </Card>
       )}
 
-      <div style={card}>
+      <Card>
         {rows == null ? (
-          <p style={{ color: '#888' }}>Loading…</p>
+          <LoadingRows />
         ) : rows.length === 0 ? (
-          <p style={{ color: '#888' }}>No webhook endpoints yet.</p>
+          <EmptyState>No webhook endpoints yet.</EmptyState>
         ) : (
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-            <thead>
-              <tr style={{ textAlign: 'left', borderBottom: '1px solid #ddd' }}>
-                <Th>URL</Th>
-                <Th>Events</Th>
-                <Th>Health</Th>
-                <Th>&nbsp;</Th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => (
-                <tr key={r.id} style={{ borderBottom: '1px solid #f3f3f3' }}>
-                  <Td>
-                    <code style={{ wordBreak: 'break-all' }}>{r.url}</code>
-                    {r.description && (
-                      <div style={{ color: '#666', fontSize: 12 }}>{r.description}</div>
-                    )}
-                  </Td>
-                  <Td>
-                    {r.events.map((e) => (
-                      <code
-                        key={e}
-                        style={{
-                          fontSize: 11,
-                          background: '#f4f4f4',
-                          padding: '1px 4px',
-                          borderRadius: 3,
-                          marginRight: 3,
-                        }}
-                      >
-                        {e}
-                      </code>
-                    ))}
-                  </Td>
-                  <Td>
-                    <div style={{ fontSize: 12 }}>
-                      {r.isActive ? (
-                        <span style={{ color: '#070' }}>active</span>
-                      ) : (
-                        <span style={{ color: '#888' }}>paused</span>
-                      )}
-                      {r.consecutiveFailures > 0 && (
-                        <span style={{ color: '#b00', marginLeft: 6 }}>
-                          {r.consecutiveFailures} consecutive failure(s)
-                        </span>
-                      )}
-                    </div>
-                    <div style={{ color: '#666', fontSize: 11 }}>
-                      {r.totalDeliveries} delivered ·{' '}
-                      {r.lastSuccessAt
-                        ? `ok ${new Date(r.lastSuccessAt).toLocaleString()}`
-                        : 'no success yet'}
-                    </div>
-                  </Td>
-                  <Td>
-                    <button onClick={() => testFire(r)} style={linkBtn}>
-                      Test
-                    </button>{' '}
-                    <button onClick={() => loadDeliveries(r.id)} style={linkBtn}>
-                      History
-                    </button>{' '}
-                    <button onClick={() => toggleActive(r)} style={linkBtn}>
-                      {r.isActive ? 'Pause' : 'Enable'}
-                    </button>{' '}
-                    <button onClick={() => destroy(r)} style={linkBtnDanger}>
-                      Delete
-                    </button>
-                  </Td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
-
-      {openEndpointId && (
-        <div style={card}>
-          <div style={{ display: 'flex', alignItems: 'center', marginBottom: 8 }}>
-            <h2 style={{ fontSize: 16, margin: 0 }}>Recent deliveries</h2>
-            <button
-              onClick={() => setOpenEndpointId(null)}
-              style={{ ...linkBtn, marginLeft: 'auto' }}
-            >
-              Close
-            </button>
-          </div>
-          {deliveries.length === 0 ? (
-            <p style={{ color: '#888', fontSize: 13 }}>No deliveries yet.</p>
-          ) : (
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+          <div style={{ overflowX: 'auto' }}>
+            <table className="table">
               <thead>
-                <tr style={{ textAlign: 'left', borderBottom: '1px solid #ddd' }}>
-                  <Th>Time</Th>
-                  <Th>Event</Th>
-                  <Th>Status</Th>
-                  <Th>Response</Th>
+                <tr>
+                  <th>URL</th>
+                  <th>Events</th>
+                  <th>Health</th>
+                  <th>&nbsp;</th>
                 </tr>
               </thead>
               <tbody>
-                {deliveries.map((d) => (
-                  <tr key={d.id} style={{ borderBottom: '1px solid #f3f3f3' }}>
-                    <Td>{new Date(d.createdAt).toLocaleString()}</Td>
-                    <Td>
-                      <code>{d.eventType}</code>
-                    </Td>
-                    <Td>
-                      <span
-                        style={{
-                          color: d.status === 'succeeded' ? '#070' : '#b00',
-                          fontWeight: 600,
-                        }}
-                      >
-                        {d.status}
-                      </span>
-                      {d.responseStatus != null && (
-                        <span style={{ color: '#666' }}> ({d.responseStatus})</span>
+                {rows.map((r) => (
+                  <tr key={r.id} style={{ verticalAlign: 'top' }}>
+                    <td>
+                      <code style={{ wordBreak: 'break-all' }}>{r.url}</code>
+                      {r.description && (
+                        <div style={{ color: 'var(--text-secondary)', fontSize: 12 }}>
+                          {r.description}
+                        </div>
                       )}
-                    </Td>
-                    <Td>
-                      {d.errorMessage ? (
-                        <code style={{ color: '#b00', fontSize: 11 }}>{d.errorMessage}</code>
-                      ) : d.responseBody ? (
+                    </td>
+                    <td>
+                      {r.events.map((e) => (
                         <code
+                          key={e}
                           style={{
                             fontSize: 11,
-                            display: 'block',
-                            maxHeight: 60,
-                            overflow: 'auto',
-                            wordBreak: 'break-all',
+                            background: 'var(--neutral-soft)',
+                            padding: '1px 4px',
+                            borderRadius: 3,
+                            marginRight: 3,
                           }}
                         >
-                          {d.responseBody.slice(0, 200)}
+                          {e}
                         </code>
-                      ) : (
-                        '—'
-                      )}
-                    </Td>
+                      ))}
+                    </td>
+                    <td>
+                      <div style={{ fontSize: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <StatusBadge status={r.isActive ? 'active' : 'paused'} />
+                        {r.consecutiveFailures > 0 && (
+                          <span style={{ color: 'var(--danger)' }}>
+                            {r.consecutiveFailures} consecutive failure(s)
+                          </span>
+                        )}
+                      </div>
+                      <div style={{ color: 'var(--text-muted)', fontSize: 11, marginTop: 2 }}>
+                        {r.totalDeliveries} delivered ·{' '}
+                        {r.lastSuccessAt
+                          ? `ok ${new Date(r.lastSuccessAt).toLocaleString()}`
+                          : 'no success yet'}
+                      </div>
+                    </td>
+                    <td>
+                      <span style={{ display: 'inline-flex', gap: 6, flexWrap: 'wrap' }}>
+                        <Button size="sm" variant="ghost" onClick={() => testFire(r)}>
+                          Test
+                        </Button>
+                        <Button size="sm" variant="ghost" onClick={() => loadDeliveries(r.id)}>
+                          History
+                        </Button>
+                        <Button size="sm" variant="ghost" onClick={() => toggleActive(r)}>
+                          {r.isActive ? 'Pause' : 'Enable'}
+                        </Button>
+                        <Button size="sm" variant="danger" onClick={() => destroy(r)}>
+                          Delete
+                        </Button>
+                      </span>
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
+          </div>
+        )}
+      </Card>
+
+      {openEndpointId && (
+        <Card
+          title="Recent deliveries"
+          actions={
+            <Button size="sm" variant="ghost" onClick={() => setOpenEndpointId(null)}>
+              Close
+            </Button>
+          }
+        >
+          {deliveries.length === 0 ? (
+            <EmptyState>No deliveries yet.</EmptyState>
+          ) : (
+            <div style={{ overflowX: 'auto' }}>
+              <table className="table" style={{ fontSize: 12 }}>
+                <thead>
+                  <tr>
+                    <th>Time</th>
+                    <th>Event</th>
+                    <th>Status</th>
+                    <th>Response</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {deliveries.map((d) => (
+                    <tr key={d.id} style={{ verticalAlign: 'top' }}>
+                      <td style={{ whiteSpace: 'nowrap' }}>
+                        {new Date(d.createdAt).toLocaleString()}
+                      </td>
+                      <td>
+                        <code>{d.eventType}</code>
+                      </td>
+                      <td>
+                        <StatusBadge status={d.status} />
+                        {d.responseStatus != null && (
+                          <span style={{ color: 'var(--text-muted)' }}> ({d.responseStatus})</span>
+                        )}
+                      </td>
+                      <td>
+                        {d.errorMessage ? (
+                          <code style={{ color: 'var(--danger)', fontSize: 11 }}>
+                            {d.errorMessage}
+                          </code>
+                        ) : d.responseBody ? (
+                          <code
+                            style={{
+                              fontSize: 11,
+                              display: 'block',
+                              maxHeight: 60,
+                              overflow: 'auto',
+                              wordBreak: 'break-all',
+                            }}
+                          >
+                            {d.responseBody.slice(0, 200)}
+                          </code>
+                        ) : (
+                          '—'
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
-        </div>
+        </Card>
       )}
     </div>
-  );
-}
-
-const card = {
-  background: '#fff',
-  padding: 16,
-  borderRadius: 6,
-  boxShadow: '0 1px 2px rgba(0,0,0,0.06)',
-  marginBottom: 16,
-};
-const inputStyle = {
-  padding: '6px 8px',
-  border: '1px solid #ccc',
-  borderRadius: 4,
-  fontSize: 13,
-  width: '100%',
-} as const;
-const primaryBtn = {
-  padding: '6px 12px',
-  background: '#111',
-  color: '#fff',
-  border: 'none',
-  borderRadius: 4,
-  cursor: 'pointer',
-  fontSize: 13,
-} as const;
-const linkBtn = {
-  background: 'none',
-  border: 'none',
-  color: '#444',
-  textDecoration: 'underline',
-  cursor: 'pointer',
-  fontSize: 12,
-  padding: 0,
-} as const;
-const linkBtnDanger = {
-  background: 'none',
-  border: 'none',
-  color: '#b00',
-  textDecoration: 'underline',
-  cursor: 'pointer',
-  fontSize: 12,
-  padding: 0,
-} as const;
-
-function Th({ children }: { children: React.ReactNode }) {
-  return <th style={{ padding: '8px 6px', fontWeight: 600 }}>{children}</th>;
-}
-function Td({ children }: { children: React.ReactNode }) {
-  return <td style={{ padding: '8px 6px', verticalAlign: 'top' }}>{children}</td>;
-}
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12 }}>
-      <span style={{ color: '#555' }}>{label}</span>
-      {children}
-    </label>
   );
 }

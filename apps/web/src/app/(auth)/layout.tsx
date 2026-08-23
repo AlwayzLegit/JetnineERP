@@ -12,25 +12,28 @@ export default function AuthLayout({ children }: { children: ReactNode }) {
       style={{
         minHeight: '100vh',
         display: 'flex',
+        flexDirection: 'column',
         alignItems: 'center',
         justifyContent: 'center',
-        background: '#f7f7f7',
-        fontFamily: 'system-ui, sans-serif',
+        background: 'var(--bg)',
         padding: '48px 16px',
       }}
     >
-      <div
-        style={{
-          maxWidth: 420,
-          width: '100%',
-          background: '#fff',
-          padding: '32px',
-          borderRadius: 8,
-          boxShadow: '0 1px 3px rgba(0,0,0,0.08)',
-        }}
-      >
-        <h1 style={{ fontSize: 22, marginBottom: 8 }}>LA Mattress ERP</h1>
-        {children}
+      <div style={{ maxWidth: 400, width: '100%' }}>
+        <h1
+          style={{
+            fontSize: 20,
+            fontWeight: 700,
+            margin: '0 0 16px',
+            textAlign: 'center',
+            color: 'var(--text)',
+          }}
+        >
+          LA Mattress ERP
+        </h1>
+        <div className="card" style={{ padding: 24 }}>
+          {children}
+        </div>
       </div>
     </main>
   );

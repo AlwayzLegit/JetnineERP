@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState, type FormEvent } from 'react';
 import { CURRENCY_LABELS, SUPPORTED_CURRENCIES, type CurrencyCode } from '@jetnine/shared';
+import { Button, Field, Input, Select, Skeleton } from '@/components/ui';
 import { api } from '@/lib/api';
 
 interface MembershipSummary {
@@ -86,7 +87,11 @@ export default function WelcomePage() {
   if (memberships == null && !error) {
     return (
       <Wrapper>
-        <p>Loading…</p>
+        <div style={{ display: 'grid', gap: 10 }}>
+          <Skeleton style={{ height: 28, width: 220 }} />
+          <Skeleton style={{ height: 48 }} />
+          <Skeleton style={{ height: 48 }} />
+        </div>
       </Wrapper>
     );
   }
@@ -101,13 +106,16 @@ export default function WelcomePage() {
             <button
               key={m.businessId}
               onClick={() => void pick(m.businessId)}
-              style={{
-                ...rowBtn,
-                textAlign: 'left',
+              style={rowBtn}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.borderColor = 'var(--brand)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.borderColor = 'var(--border-strong)';
               }}
             >
               <strong>{m.businessName}</strong>
-              <div style={{ color: '#666', fontSize: 12 }}>
+              <div style={{ color: 'var(--text-muted)', fontSize: 12 }}>
                 <code>{m.businessSlug}</code> · {m.roleName}
               </div>
             </button>
@@ -115,21 +123,7 @@ export default function WelcomePage() {
         </div>
         <p style={{ marginTop: 24, fontSize: 13 }}>
           Need a new one?{' '}
-          <button
-            onClick={() => setMemberships([])}
-            style={{
-              background: 'none',
-              border: 'none',
-              padding: 0,
-              color: '#0050b3',
-              textDecoration: 'underline',
-              cursor: 'pointer',
-              fontSize: 13,
-            }}
-          >
-            Create a new business
-          </button>
-          .
+          <LinkishButton onClick={() => setMemberships([])}>Create a new business</LinkishButton>.
         </p>
       </Wrapper>
     );
@@ -141,22 +135,22 @@ export default function WelcomePage() {
       <h1 style={h1}>Welcome to LA Mattress ERP</h1>
       <p style={muted}>Set up your business in under a minute. You can change everything later.</p>
 
-      {error && <p style={{ color: '#b00', fontSize: 13 }}>{error}</p>}
+      {error && <p style={{ color: 'var(--danger)', fontSize: 13 }}>{error}</p>}
 
-      <form onSubmit={createBusiness} style={card}>
+      <form onSubmit={createBusiness} className="card" style={{ display: 'grid', gap: 12 }}>
         <Field label="Business name *">
-          <input
+          <Input
             name="name"
             required
             placeholder="Acme Coffee"
-            style={input}
+            style={{ width: '100%' }}
             onChange={(e) => {
               if (!slugTouched) setSlug(slugify(e.target.value));
             }}
           />
         </Field>
         <Field label="URL slug *">
-          <input
+          <Input
             name="slug"
             required
             value={slug}
@@ -166,57 +160,55 @@ export default function WelcomePage() {
             }}
             onBlur={(e) => setSlug(slugify(e.target.value))}
             placeholder="acme-coffee"
-            style={input}
+            style={{ width: '100%' }}
           />
           <span style={hint}>
             Follows the name automatically — lowercase letters, numbers, hyphens.
           </span>
         </Field>
         <Field label="Currency">
-          <select name="currencyCode" defaultValue="USD" style={input}>
+          <Select name="currencyCode" defaultValue="USD" style={{ width: '100%' }}>
             {SUPPORTED_CURRENCIES.map((c: CurrencyCode) => (
               <option key={c} value={c}>
                 {c} — {CURRENCY_LABELS[c]}
               </option>
             ))}
-          </select>
+          </Select>
         </Field>
         <Field label="Default tax rate (%)">
-          <input name="taxRate" type="number" step="0.01" min={0} defaultValue="0" style={input} />
+          <Input
+            name="taxRate"
+            type="number"
+            step="0.01"
+            min={0}
+            defaultValue="0"
+            style={{ width: '100%' }}
+          />
           <span style={hint}>
             You can override per-product (tax classes) or per-location later. Leave 0 if your
             jurisdiction is tax-exempt.
           </span>
         </Field>
-        <button type="submit" disabled={creating} style={primaryBtn}>
+        <Button
+          type="submit"
+          variant="primary"
+          disabled={creating}
+          style={{ width: 'fit-content' }}
+        >
           {creating ? 'Creating…' : 'Create business'}
-        </button>
+        </Button>
       </form>
 
       {memberships && memberships.length > 0 && (
         <p style={{ marginTop: 16, fontSize: 13 }}>
-          <button
-            onClick={() => setMemberships(memberships)}
-            style={{
-              background: 'none',
-              border: 'none',
-              padding: 0,
-              color: '#0050b3',
-              textDecoration: 'underline',
-              cursor: 'pointer',
-              fontSize: 13,
-            }}
-          >
+          <LinkishButton onClick={() => setMemberships(memberships)}>
             ← Back to picker
-          </button>
+          </LinkishButton>
         </p>
       )}
 
-      <p style={{ marginTop: 24, fontSize: 12, color: '#888' }}>
-        Already received an invite link?{' '}
-        <Link href="/accept-invite" style={{ color: '#0050b3' }}>
-          Accept invite
-        </Link>
+      <p style={{ marginTop: 24, fontSize: 12, color: 'var(--text-muted)' }}>
+        Already received an invite link? <Link href="/accept-invite">Accept invite</Link>
       </p>
     </Wrapper>
   );
@@ -229,7 +221,6 @@ function Wrapper({ children }: { children: React.ReactNode }) {
         maxWidth: 520,
         margin: '64px auto',
         padding: '0 16px',
-        fontFamily: 'system-ui, sans-serif',
       }}
     >
       {children}
@@ -237,52 +228,42 @@ function Wrapper({ children }: { children: React.ReactNode }) {
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function LinkishButton({ onClick, children }: { onClick: () => void; children: React.ReactNode }) {
   return (
-    <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 13 }}>
-      <span style={{ color: '#444' }}>{label}</span>
+    <button
+      onClick={onClick}
+      style={{
+        background: 'none',
+        border: 'none',
+        padding: 0,
+        color: 'var(--brand)',
+        textDecoration: 'underline',
+        cursor: 'pointer',
+        fontSize: 13,
+        fontFamily: 'inherit',
+      }}
+    >
       {children}
-    </label>
+    </button>
   );
 }
 
-const h1 = { fontSize: 24, marginBottom: 8 } as const;
-const muted = { color: '#666', fontSize: 14, marginBottom: 16 } as const;
-const card = {
-  background: '#fff',
-  padding: 20,
-  borderRadius: 6,
-  boxShadow: '0 1px 2px rgba(0,0,0,0.06)',
-  display: 'grid',
-  gap: 12,
-} as const;
-const input = {
-  padding: '8px 10px',
-  border: '1px solid #ccc',
-  borderRadius: 4,
-  fontSize: 14,
-  width: '100%',
-  boxSizing: 'border-box' as const,
-} as const;
-const primaryBtn = {
-  padding: '10px 16px',
-  background: '#111',
-  color: '#fff',
-  border: 'none',
-  borderRadius: 4,
-  cursor: 'pointer',
-  fontSize: 14,
-  width: 'fit-content',
-} as const;
+const h1 = { fontSize: 24, margin: '0 0 8px' } as const;
+const muted = { color: 'var(--text-secondary)', fontSize: 14, margin: '0 0 16px' } as const;
 const rowBtn = {
   padding: '12px 16px',
-  background: '#fff',
-  border: '1px solid #ddd',
-  borderRadius: 6,
+  background: 'var(--surface)',
+  border: '1px solid var(--border-strong)',
+  borderRadius: 'var(--radius)',
+  boxShadow: 'var(--shadow-sm)',
   cursor: 'pointer',
   fontSize: 14,
+  fontFamily: 'inherit',
+  color: 'var(--text)',
+  textAlign: 'left' as const,
+  transition: 'border-color 0.12s ease',
 } as const;
-const hint = { color: '#888', fontSize: 11, marginTop: 2 } as const;
+const hint = { color: 'var(--text-muted)', fontSize: 11, marginTop: 2, display: 'block' } as const;
 
 /**
  * Whatever a person types becomes a valid slug instead of a 400 from the

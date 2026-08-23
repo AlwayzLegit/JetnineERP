@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
+import { Button, Card, LoadingRows, PageHeader } from '@/components/ui';
 import { api } from '@/lib/api';
 
 interface StripeStatus {
@@ -32,7 +33,7 @@ interface Subscription {
 
 export default function BillingPage() {
   return (
-    <Suspense fallback={<p>Loading…</p>}>
+    <Suspense fallback={<LoadingRows />}>
       <BillingPageInner />
     </Suspense>
   );
@@ -106,19 +107,19 @@ function BillingPageInner() {
 
   return (
     <div>
-      <p style={{ marginBottom: 12 }}>
+      <p style={{ margin: '0 0 12px' }}>
         <Link href="/settings">← Settings</Link>
       </p>
-      <h1 style={{ fontSize: 22, marginBottom: 16 }}>Billing</h1>
+      <PageHeader title="Billing" />
 
       {banner && (
         <div
           style={{
-            background: banner.kind === 'ok' ? '#e6f5e9' : '#fdecea',
-            border: `1px solid ${banner.kind === 'ok' ? '#3a8a4d' : '#b00'}`,
-            color: banner.kind === 'ok' ? '#1f5c2e' : '#7a0c0c',
+            background: banner.kind === 'ok' ? 'var(--success-soft)' : 'var(--danger-soft)',
+            border: `1px solid ${banner.kind === 'ok' ? 'var(--success)' : 'var(--danger)'}`,
+            color: banner.kind === 'ok' ? 'var(--success-soft-text)' : 'var(--danger-soft-text)',
             padding: 12,
-            borderRadius: 6,
+            borderRadius: 'var(--radius)',
             marginBottom: 16,
             fontSize: 13,
           }}
@@ -127,16 +128,16 @@ function BillingPageInner() {
         </div>
       )}
 
-      {error && <p style={{ color: '#b00' }}>{error}</p>}
+      {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
 
       {sub?.readOnly && (
         <div
           style={{
-            background: '#fff3e0',
-            border: '1px solid #f0a000',
-            color: '#7a4a00',
+            background: 'var(--warning-soft)',
+            border: '1px solid var(--warning)',
+            color: 'var(--warning-soft-text)',
             padding: 12,
-            borderRadius: 6,
+            borderRadius: 'var(--radius)',
             marginBottom: 16,
             fontSize: 13,
           }}
@@ -147,9 +148,8 @@ function BillingPageInner() {
         </div>
       )}
 
-      <div style={card}>
-        <h2 style={section}>Stripe</h2>
-        <p style={{ color: '#666', fontSize: 13, marginBottom: 12 }}>
+      <Card title="Stripe">
+        <p style={{ color: 'var(--text-secondary)', fontSize: 13, margin: '0 0 12px' }}>
           Connect your Stripe account so card payments at the POS go straight to your bank. Money
           never touches LA Mattress ERP — we only orchestrate the charge on your behalf.
         </p>
@@ -157,11 +157,11 @@ function BillingPageInner() {
         {stripe?.stubMode && (
           <p
             style={{
-              color: '#7a4a00',
+              color: 'var(--warning-soft-text)',
               fontSize: 12,
-              background: '#fff8e1',
+              background: 'var(--warning-soft)',
               padding: 8,
-              borderRadius: 4,
+              borderRadius: 'var(--radius-sm)',
               marginBottom: 12,
             }}
           >
@@ -181,22 +181,21 @@ function BillingPageInner() {
             <Row label="Charges enabled" value={stripe.chargesEnabled ? 'yes' : 'no'} />
             <Row label="Payouts enabled" value={stripe.payoutsEnabled ? 'yes' : 'no'} />
             <div style={{ marginTop: 12 }}>
-              <button onClick={disconnect} disabled={busy} style={dangerBtn}>
+              <Button variant="danger" onClick={disconnect} disabled={busy}>
                 Disconnect Stripe
-              </button>
+              </Button>
             </div>
           </>
         ) : (
-          <button onClick={connect} disabled={busy} style={primaryBtn}>
+          <Button variant="primary" onClick={connect} disabled={busy}>
             {busy ? 'Redirecting…' : 'Connect Stripe'}
-          </button>
+          </Button>
         )}
-      </div>
+      </Card>
 
       {sub && (
-        <div style={card}>
-          <h2 style={section}>Subscription</h2>
-          <p style={{ color: '#666', fontSize: 12, marginBottom: 12 }}>
+        <Card title="Subscription">
+          <p style={{ color: 'var(--text-secondary)', fontSize: 12, margin: '0 0 12px' }}>
             Track your subscription state. Self-serve plan changes are paused while we transition
             the platform billing model — your super admin will set the plan for now.
           </p>
@@ -206,38 +205,11 @@ function BillingPageInner() {
           {sub.trialEndsAt && (
             <Row label="Trial ends" value={new Date(sub.trialEndsAt).toLocaleString()} />
           )}
-        </div>
+        </Card>
       )}
     </div>
   );
 }
-
-const card = {
-  background: '#fff',
-  padding: 16,
-  borderRadius: 6,
-  boxShadow: '0 1px 2px rgba(0,0,0,0.06)',
-  marginBottom: 16,
-};
-const section = { fontSize: 16, marginBottom: 12, marginTop: 0 } as const;
-const primaryBtn = {
-  padding: '8px 14px',
-  background: '#111',
-  color: '#fff',
-  border: 'none',
-  borderRadius: 4,
-  cursor: 'pointer',
-  fontSize: 13,
-} as const;
-const dangerBtn = {
-  padding: '8px 14px',
-  background: 'transparent',
-  color: '#b00',
-  border: '1px solid #b00',
-  borderRadius: 4,
-  cursor: 'pointer',
-  fontSize: 13,
-} as const;
 
 function Row({ label, value }: { label: string; value: string }) {
   return (
@@ -249,7 +221,7 @@ function Row({ label, value }: { label: string; value: string }) {
         marginBottom: 4,
       }}
     >
-      <span style={{ color: '#666' }}>{label}</span>
+      <span style={{ color: 'var(--text-secondary)' }}>{label}</span>
       <span>
         <strong>{value}</strong>
       </span>

@@ -6,6 +6,7 @@ import { useParams } from 'next/navigation';
 import { api } from '@/lib/api';
 import { Money } from '@/components/money';
 import { PrintableReceipt, type ReceiptBusiness } from '@/components/printable-receipt';
+import { Button, Field, Input, LoadingRows, StatusBadge } from '@/components/ui';
 
 interface SaleLine {
   id: string;
@@ -106,8 +107,8 @@ export default function SaleDetailPage() {
     }
   }
 
-  if (error) return <p style={{ color: '#b00' }}>{error}</p>;
-  if (!sale) return <p>Loading…</p>;
+  if (error) return <p style={{ color: 'var(--danger)' }}>{error}</p>;
+  if (!sale) return <LoadingRows rows={4} />;
 
   const refundable = sale.status === 'completed' || sale.status === 'partially_refunded';
 
@@ -116,28 +117,18 @@ export default function SaleDetailPage() {
       <p style={{ marginBottom: 12 }}>
         <Link href="/sales">← All sales</Link>
       </p>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 4 }}>
-        <h1 style={{ fontSize: 22, margin: 0 }}>
+      <div className="page-header" style={{ marginBottom: 4 }}>
+        <h1 className="page-title" style={{ fontSize: 22 }}>
           <code>{sale.number}</code>
         </h1>
-        <button
-          type="button"
-          onClick={() => window.print()}
-          style={{
-            marginLeft: 'auto',
-            padding: '6px 12px',
-            background: '#111',
-            color: '#fff',
-            border: 'none',
-            borderRadius: 4,
-            cursor: 'pointer',
-            fontSize: 13,
-          }}
-        >
-          Print receipt
-        </button>
+        <StatusBadge status={sale.status} />
+        <div style={{ marginLeft: 'auto' }}>
+          <Button variant="primary" size="sm" onClick={() => window.print()}>
+            Print receipt
+          </Button>
+        </div>
       </div>
-      <p style={{ color: '#666', fontSize: 13, marginBottom: 24 }}>
+      <p className="page-sub" style={{ margin: '0 0 24px' }}>
         {sale.status} · {new Date(sale.completedAt ?? sale.createdAt).toLocaleString()}
       </p>
       <PrintableReceipt
@@ -159,40 +150,41 @@ export default function SaleDetailPage() {
         business={business}
       />
 
-      <div style={card}>
-        <h2 style={section}>Lines</h2>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+      <div className="card">
+        <h2 className="card-title">Lines</h2>
+        <table className="table">
           <thead>
-            <tr style={{ textAlign: 'left', borderBottom: '1px solid #ddd' }}>
-              <Th>Item</Th>
-              <Th>Sold</Th>
-              <Th>Refunded</Th>
-              <Th>Unit</Th>
-              <Th>Total</Th>
-              {refundable && <Th>Refund qty</Th>}
+            <tr>
+              <th>Item</th>
+              <th className="num">Sold</th>
+              <th className="num">Refunded</th>
+              <th className="num">Unit</th>
+              <th className="num">Total</th>
+              {refundable && <th>Refund qty</th>}
             </tr>
           </thead>
           <tbody>
             {sale.lines.map((l) => {
               const remaining = l.quantity - l.refundedQuantity;
               return (
-                <tr key={l.id} style={{ borderBottom: '1px solid #f3f3f3' }}>
-                  <Td>{l.description}</Td>
-                  <Td>{l.quantity}</Td>
-                  <Td>{l.refundedQuantity}</Td>
-                  <Td>
+                <tr key={l.id}>
+                  <td>{l.description}</td>
+                  <td className="num">{l.quantity}</td>
+                  <td className="num">{l.refundedQuantity}</td>
+                  <td className="num">
                     <Money cents={l.unitPriceCents} />
-                  </Td>
-                  <Td>
+                  </td>
+                  <td className="num">
                     <Money cents={l.totalCents} />
-                  </Td>
+                  </td>
                   {refundable && (
-                    <Td>
+                    <td>
                       {remaining > 0 ? (
                         <input
                           type="number"
                           min={0}
                           max={remaining}
+                          className="input"
                           value={refundQty[l.id] ?? 0}
                           onChange={(e) =>
                             setRefundQty((prev) => ({
@@ -200,18 +192,14 @@ export default function SaleDetailPage() {
                               [l.id]: Math.max(0, Math.min(remaining, Number(e.target.value) || 0)),
                             }))
                           }
-                          style={{
-                            width: 60,
-                            padding: '4px 6px',
-                            border: '1px solid #ccc',
-                            borderRadius: 4,
-                            fontSize: 13,
-                          }}
+                          style={{ width: 64, padding: '5px 6px' }}
                         />
                       ) : (
-                        <span style={{ color: '#888', fontSize: 12 }}>fully refunded</span>
+                        <span className="muted" style={{ fontSize: 12 }}>
+                          fully refunded
+                        </span>
                       )}
-                    </Td>
+                    </td>
                   )}
                 </tr>
               );
@@ -220,24 +208,24 @@ export default function SaleDetailPage() {
         </table>
       </div>
 
-      <div style={card}>
-        <h2 style={section}>Totals</h2>
+      <div className="card">
+        <h2 className="card-title">Totals</h2>
         <Row label="Subtotal" cents={sale.subtotalCents} />
         {sale.discountCents > 0 && <Row label="Discount" cents={-sale.discountCents} />}
         <Row label="Tax" cents={sale.taxCents} />
         <Row label="Total" cents={sale.totalCents} bold />
       </div>
 
-      <div style={card}>
-        <h2 style={section}>Payments</h2>
+      <div className="card">
+        <h2 className="card-title">Payments</h2>
         {sale.payments.map((p) => (
           <Row key={p.id} label={`${p.method.toUpperCase()} (${p.status})`} cents={p.amountCents} />
         ))}
       </div>
 
       {sale.refunds.length > 0 && (
-        <div style={card}>
-          <h2 style={section}>Refunds</h2>
+        <div className="card">
+          <h2 className="card-title">Refunds</h2>
           {sale.refunds.map((r) => (
             <div
               key={r.id}
@@ -245,57 +233,42 @@ export default function SaleDetailPage() {
                 fontSize: 13,
                 paddingBottom: 6,
                 marginBottom: 6,
-                borderBottom: '1px solid #f3f3f3',
+                borderBottom: '1px solid var(--border)',
               }}
             >
               {new Date(r.createdAt).toLocaleString()} —{' '}
               <strong>
                 <Money cents={r.amountCents} />
               </strong>
-              {r.reason && <span style={{ color: '#666' }}> · {r.reason}</span>}
+              {r.reason && <span style={{ color: 'var(--text-secondary)' }}> · {r.reason}</span>}
             </div>
           ))}
         </div>
       )}
 
       {refundable && (
-        <div style={card}>
-          <h2 style={section}>New refund</h2>
-          <p style={{ color: '#666', fontSize: 12, marginBottom: 8 }}>
+        <div className="card">
+          <h2 className="card-title">New refund</h2>
+          <p style={{ color: 'var(--text-secondary)', fontSize: 12, marginBottom: 8 }}>
             Set a quantity in the table above for the lines you want to refund. Inventory is
             restored automatically.
           </p>
-          <label style={{ display: 'block', fontSize: 12, marginBottom: 6 }}>
-            <span style={{ color: '#555' }}>Reason (optional)</span>
-            <input
+          <Field label="Reason (optional)" style={{ marginBottom: 12 }}>
+            <Input
               value={reason}
               onChange={(e) => setReason(e.target.value)}
-              style={{
-                display: 'block',
-                width: '100%',
-                padding: '6px 8px',
-                border: '1px solid #ccc',
-                borderRadius: 4,
-                fontSize: 13,
-                marginTop: 4,
-              }}
+              style={{ display: 'block', width: '100%' }}
             />
-          </label>
-          <button onClick={submitRefund} disabled={busy} style={primaryBtn}>
+          </Field>
+          <Button variant="primary" onClick={submitRefund} disabled={busy}>
             {busy ? 'Processing…' : 'Process refund'}
-          </button>
+          </Button>
         </div>
       )}
     </div>
   );
 }
 
-function Th({ children }: { children: React.ReactNode }) {
-  return <th style={{ padding: '8px 6px', fontWeight: 600 }}>{children}</th>;
-}
-function Td({ children }: { children: React.ReactNode }) {
-  return <td style={{ padding: '8px 6px' }}>{children}</td>;
-}
 function Row({ label, cents, bold }: { label: string; cents: number; bold?: boolean }) {
   return (
     <div
@@ -304,6 +277,7 @@ function Row({ label, cents, bold }: { label: string; cents: number; bold?: bool
         justifyContent: 'space-between',
         fontSize: 13,
         fontWeight: bold ? 700 : 400,
+        fontVariantNumeric: 'tabular-nums',
         marginBottom: 4,
       }}
     >
@@ -314,21 +288,3 @@ function Row({ label, cents, bold }: { label: string; cents: number; bold?: bool
     </div>
   );
 }
-
-const card = {
-  background: '#fff',
-  padding: 16,
-  borderRadius: 6,
-  boxShadow: '0 1px 2px rgba(0,0,0,0.06)',
-  marginBottom: 16,
-};
-const section = { fontSize: 16, marginBottom: 12, marginTop: 0 } as const;
-const primaryBtn = {
-  padding: '8px 14px',
-  background: '#111',
-  color: '#fff',
-  border: 'none',
-  borderRadius: 4,
-  cursor: 'pointer',
-  fontSize: 13,
-} as const;

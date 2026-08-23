@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, type FormEvent } from 'react';
+import { Button, Card, EmptyState, Field, Input, LoadingRows, PageHeader } from '@/components/ui';
 import { useSession } from '@/lib/auth-client';
 
 interface AuditLogRow {
@@ -63,87 +64,88 @@ export default function AuditLogPage() {
   if (session.isPending)
     return (
       <Wrapper>
-        <p>Loading…</p>
+        <LoadingRows />
       </Wrapper>
     );
   if (!session.data)
     return (
       <Wrapper>
-        <p>Sign in required.</p>
+        <p style={{ color: 'var(--text-secondary)' }}>Sign in required.</p>
       </Wrapper>
     );
 
   return (
     <Wrapper>
-      <h1 style={{ fontSize: 22, marginBottom: 16 }}>Audit log</h1>
+      <PageHeader title="Audit log" />
       <FilterForm filters={filters} onChange={setFilters} onSubmit={(next) => fetchRows(next)} />
       {error && (
-        <p data-testid="audit-error" style={{ color: '#b00' }}>
+        <p data-testid="audit-error" style={{ color: 'var(--danger)' }}>
           {error}
         </p>
       )}
-      {loading && <p>Loading…</p>}
+      {loading && !rows && <LoadingRows />}
       {rows && (
-        <table
-          data-testid="audit-table"
-          style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}
-        >
-          <thead>
-            <tr style={{ textAlign: 'left', borderBottom: '1px solid #ddd' }}>
-              <Th>When</Th>
-              <Th>Actor</Th>
-              <Th>Action</Th>
-              <Th>Target</Th>
-              <Th>Diff</Th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.length === 0 && (
+        <Card style={{ padding: 0, overflowX: 'auto' }}>
+          <table data-testid="audit-table" className="table">
+            <thead>
               <tr>
-                <td colSpan={5} style={{ padding: 16, color: '#888' }}>
-                  No audit log entries match these filters.
-                </td>
+                <th>When</th>
+                <th>Actor</th>
+                <th>Action</th>
+                <th>Target</th>
+                <th>Diff</th>
               </tr>
-            )}
-            {rows.map((r) => (
-              <tr key={r.id} style={{ borderBottom: '1px solid #f3f3f3', verticalAlign: 'top' }}>
-                <Td>{new Date(r.createdAt).toLocaleString()}</Td>
-                <Td>{r.actorEmail ?? <em>system</em>}</Td>
-                <Td>
-                  <code>{r.action}</code>
-                </Td>
-                <Td>
-                  {r.targetType ? (
-                    <span>
-                      {r.targetType}
-                      {r.targetId ? `:${r.targetId.slice(0, 8)}…` : ''}
-                    </span>
-                  ) : (
-                    <em style={{ color: '#888' }}>—</em>
-                  )}
-                </Td>
-                <Td>
-                  {r.changesJson ? (
-                    <pre
-                      style={{
-                        margin: 0,
-                        whiteSpace: 'pre-wrap',
-                        fontSize: 12,
-                        background: '#fafafa',
-                        padding: 6,
-                        borderRadius: 4,
-                      }}
-                    >
-                      {JSON.stringify(r.changesJson, null, 2)}
-                    </pre>
-                  ) : (
-                    <em style={{ color: '#888' }}>—</em>
-                  )}
-                </Td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {rows.length === 0 && (
+                <tr>
+                  <td colSpan={5}>
+                    <EmptyState>No audit log entries match these filters.</EmptyState>
+                  </td>
+                </tr>
+              )}
+              {rows.map((r) => (
+                <tr key={r.id} style={{ verticalAlign: 'top' }}>
+                  <td style={{ whiteSpace: 'nowrap' }}>{new Date(r.createdAt).toLocaleString()}</td>
+                  <td>{r.actorEmail ?? <em>system</em>}</td>
+                  <td>
+                    <code>{r.action}</code>
+                  </td>
+                  <td>
+                    {r.targetType ? (
+                      <span>
+                        {r.targetType}
+                        {r.targetId ? `:${r.targetId.slice(0, 8)}…` : ''}
+                      </span>
+                    ) : (
+                      <em style={{ color: 'var(--text-muted)' }}>—</em>
+                    )}
+                  </td>
+                  <td>
+                    {r.changesJson ? (
+                      <pre
+                        style={{
+                          margin: 0,
+                          whiteSpace: 'pre-wrap',
+                          fontSize: 12,
+                          fontFamily: 'var(--font-mono)',
+                          background: 'var(--surface-muted)',
+                          border: '1px solid var(--border)',
+                          padding: 6,
+                          borderRadius: 'var(--radius-sm)',
+                        }}
+                      >
+                        {JSON.stringify(r.changesJson, null, 2)}
+                      </pre>
+                    ) : (
+                      <em style={{ color: 'var(--text-muted)' }}>—</em>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Card>
       )}
     </Wrapper>
   );
@@ -174,82 +176,48 @@ function FilterForm({
       }}
     >
       <Field label="Action">
-        <input
+        <Input
           name="action"
           value={filters.action}
           onChange={(e) => onChange({ ...filters, action: e.target.value })}
           placeholder="product.variant.price.update"
-          style={fieldStyle}
+          style={{ width: '100%' }}
         />
       </Field>
       <Field label="Actor user id">
-        <input
+        <Input
           name="actorUserId"
           value={filters.actorUserId}
           onChange={(e) => onChange({ ...filters, actorUserId: e.target.value })}
           placeholder="uuid"
-          style={fieldStyle}
+          style={{ width: '100%' }}
         />
       </Field>
       <Field label="Since">
-        <input
+        <Input
           name="since"
           type="datetime-local"
           value={filters.since}
           onChange={(e) => onChange({ ...filters, since: e.target.value })}
-          style={fieldStyle}
+          style={{ width: '100%' }}
         />
       </Field>
       <Field label="Until">
-        <input
+        <Input
           name="until"
           type="datetime-local"
           value={filters.until}
           onChange={(e) => onChange({ ...filters, until: e.target.value })}
-          style={fieldStyle}
+          style={{ width: '100%' }}
         />
       </Field>
-      <button
-        type="submit"
-        style={{
-          padding: '8px 14px',
-          background: '#111',
-          color: '#fff',
-          border: 'none',
-          borderRadius: 4,
-          cursor: 'pointer',
-          height: 32,
-        }}
-      >
+      <Button type="submit" variant="primary">
         Apply
-      </button>
+      </Button>
     </form>
   );
 }
 
-const fieldStyle = {
-  width: '100%',
-  padding: '6px 8px',
-  border: '1px solid #ccc',
-  borderRadius: 4,
-  fontSize: 13,
-} as const;
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12 }}>
-      <span style={{ color: '#555' }}>{label}</span>
-      {children}
-    </label>
-  );
-}
-
-function Th({ children }: { children: React.ReactNode }) {
-  return <th style={{ padding: '8px 6px', fontWeight: 600 }}>{children}</th>;
-}
-function Td({ children }: { children: React.ReactNode }) {
-  return <td style={{ padding: '8px 6px' }}>{children}</td>;
-}
 function Wrapper({ children }: { children: React.ReactNode }) {
   return (
     <main
@@ -257,7 +225,6 @@ function Wrapper({ children }: { children: React.ReactNode }) {
         maxWidth: 1100,
         margin: '48px auto',
         padding: '0 16px',
-        fontFamily: 'system-ui, sans-serif',
       }}
     >
       {children}

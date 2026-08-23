@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import { Money } from '@/components/money';
+import { EmptyState, LinkButton, LoadingRows, PageHeader, StatusBadge } from '@/components/ui';
 
 interface GiftCard {
   id: string;
@@ -32,69 +33,60 @@ export default function GiftCardsPage() {
 
   return (
     <div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
-        <h1 style={{ fontSize: 22, margin: 0 }}>Gift cards</h1>
-        <Link
-          href="/gift-cards/new"
-          style={{
-            marginLeft: 'auto',
-            padding: '8px 14px',
-            background: '#111',
-            color: '#fff',
-            borderRadius: 4,
-            textDecoration: 'none',
-            fontSize: 13,
-          }}
-        >
-          + Issue new
-        </Link>
-      </div>
-      {error && <p style={{ color: '#b00' }}>{error}</p>}
+      <PageHeader
+        title="Gift cards"
+        actions={
+          <LinkButton href="/gift-cards/new" variant="primary">
+            + Issue new
+          </LinkButton>
+        }
+      />
+      {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
+      {!rows && !error && (
+        <div className="card">
+          <LoadingRows />
+        </div>
+      )}
       {rows && (
-        <div
-          style={{
-            background: '#fff',
-            padding: 16,
-            borderRadius: 6,
-            boxShadow: '0 1px 2px rgba(0,0,0,0.06)',
-          }}
-        >
+        <div className="card">
           {rows.length === 0 ? (
-            <p style={{ color: '#888' }}>No gift cards issued yet.</p>
+            <EmptyState>
+              No gift cards issued yet. Use “+ Issue new” to create the first one.
+            </EmptyState>
           ) : (
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+            <table className="table">
               <thead>
-                <tr style={{ textAlign: 'left', borderBottom: '1px solid #ddd' }}>
-                  <Th>Code</Th>
-                  <Th>Balance</Th>
-                  <Th>Issued for</Th>
-                  <Th>Status</Th>
-                  <Th>Issued</Th>
-                  <Th>Expires</Th>
-                  <Th>&nbsp;</Th>
+                <tr>
+                  <th>Code</th>
+                  <th className="num">Balance</th>
+                  <th>Issued for</th>
+                  <th>Status</th>
+                  <th>Issued</th>
+                  <th>Expires</th>
+                  <th>&nbsp;</th>
                 </tr>
               </thead>
               <tbody>
                 {rows.map((g) => (
-                  <tr key={g.id} style={{ borderBottom: '1px solid #f3f3f3' }}>
-                    <Td>
+                  <tr key={g.id}>
+                    <td>
                       <code>{g.code}</code>
-                    </Td>
-                    <Td>
+                    </td>
+                    <td className="num">
                       <Money cents={g.currentBalanceCents} />
-                      <div style={{ color: '#888', fontSize: 11 }}>
+                      <div className="muted" style={{ fontSize: 11 }}>
                         of <Money cents={g.initialBalanceCents} />
                       </div>
-                    </Td>
-                    <Td>—</Td>
-                    <Td>
-                      <Badge status={g.status} />
-                    </Td>
-                    <Td>{new Date(g.createdAt).toLocaleDateString()}</Td>
-                    <Td>{g.expiresAt ? new Date(g.expiresAt).toLocaleDateString() : '—'}</Td>
-                    <Td>
+                    </td>
+                    <td>—</td>
+                    <td>
+                      <StatusBadge status={g.status} />
+                    </td>
+                    <td>{new Date(g.createdAt).toLocaleDateString()}</td>
+                    <td>{g.expiresAt ? new Date(g.expiresAt).toLocaleDateString() : '—'}</td>
+                    <td>
                       <Link href={`/gift-cards/${g.id}`}>Open</Link>
-                    </Td>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -104,28 +96,4 @@ export default function GiftCardsPage() {
       )}
     </div>
   );
-}
-
-function Badge({ status }: { status: string }) {
-  const color =
-    status === 'active'
-      ? '#070'
-      : status === 'redeemed'
-        ? '#666'
-        : status === 'cancelled'
-          ? '#b00'
-          : '#a60';
-  return (
-    <span
-      style={{ background: '#f4f4f4', color, padding: '2px 6px', borderRadius: 3, fontSize: 12 }}
-    >
-      {status}
-    </span>
-  );
-}
-function Th({ children }: { children: React.ReactNode }) {
-  return <th style={{ padding: '8px 6px', fontWeight: 600 }}>{children}</th>;
-}
-function Td({ children }: { children: React.ReactNode }) {
-  return <td style={{ padding: '8px 6px', verticalAlign: 'top' }}>{children}</td>;
 }

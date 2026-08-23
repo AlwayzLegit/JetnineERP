@@ -2,6 +2,16 @@
 
 import Link from 'next/link';
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import {
+  Button,
+  Card,
+  EmptyState,
+  Field,
+  Input,
+  LoadingRows,
+  PageHeader,
+  Select,
+} from '@/components/ui';
 import { api } from '@/lib/api';
 
 interface KeyRow {
@@ -88,42 +98,46 @@ export default function ApiKeysPage() {
 
   return (
     <div>
-      <p style={{ marginBottom: 12 }}>
+      <p style={{ margin: '0 0 12px' }}>
         <Link href="/settings">← Settings</Link>
       </p>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
-        <h1 style={{ fontSize: 22, margin: 0 }}>API keys</h1>
-        <button
-          onClick={() => setCreating((v) => !v)}
-          style={{ marginLeft: 'auto', ...primaryBtn }}
-        >
-          {creating ? 'Cancel' : '+ New API key'}
-        </button>
-      </div>
+      <PageHeader
+        title="API keys"
+        sub={
+          <>
+            Send the key as <code>Authorization: Bearer &lt;key&gt;</code>. The key implies the
+            business — no <code>X-Business-Id</code> header required. Scopes are checked against the
+            platform permission catalog: a key with <code>sales.view</code> can read the sales API
+            but not write.{' '}
+            <a
+              href={`${process.env.NEXT_PUBLIC_API_URL ?? ''}/v1/docs`}
+              target="_blank"
+              rel="noreferrer"
+            >
+              API reference →
+            </a>
+          </>
+        }
+        actions={
+          <Button
+            variant={creating ? 'secondary' : 'primary'}
+            onClick={() => setCreating((v) => !v)}
+          >
+            {creating ? 'Cancel' : '+ New API key'}
+          </Button>
+        }
+      />
 
-      <p style={{ color: '#666', fontSize: 13, marginBottom: 16 }}>
-        Send the key as <code>Authorization: Bearer &lt;key&gt;</code>. The key implies the business
-        — no <code>X-Business-Id</code> header required. Scopes are checked against the platform
-        permission catalog: a key with <code>sales.view</code> can read the sales API but not write.{' '}
-        <a
-          href={`${process.env.NEXT_PUBLIC_API_URL ?? ''}/v1/docs`}
-          target="_blank"
-          rel="noreferrer"
-        >
-          API reference →
-        </a>
-      </p>
-
-      {error && <p style={{ color: '#b00' }}>{error}</p>}
+      {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
 
       {newKey && (
         <div
           style={{
-            background: '#fff8e1',
-            border: '1px solid #f0a000',
-            color: '#5a3500',
+            background: 'var(--warning-soft)',
+            border: '1px solid var(--warning)',
+            color: 'var(--warning-soft-text)',
             padding: 12,
-            borderRadius: 6,
+            borderRadius: 'var(--radius)',
             marginBottom: 16,
             fontSize: 13,
           }}
@@ -135,189 +149,156 @@ export default function ApiKeysPage() {
               whiteSpace: 'pre-wrap',
               wordBreak: 'break-all',
               fontSize: 12,
+              fontFamily: 'var(--font-mono)',
             }}
           >
             {newKey.key}
           </pre>
-          <button onClick={() => setNewKey(null)} style={{ ...linkBtn, fontSize: 12 }}>
+          <Button size="sm" variant="secondary" onClick={() => setNewKey(null)}>
             Got it
-          </button>
+          </Button>
         </div>
       )}
 
       {creating && (
-        <form onSubmit={create} style={{ ...card, display: 'grid', gap: 8, maxWidth: 720 }}>
-          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 8 }}>
-            <Field label="Name *">
-              <input name="name" required placeholder="Read-only integration" style={inputStyle} />
+        <Card style={{ maxWidth: 720, marginBottom: 16 }}>
+          <form onSubmit={create} style={{ display: 'grid', gap: 8 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 8 }}>
+              <Field label="Name *">
+                <Input
+                  name="name"
+                  required
+                  placeholder="Read-only integration"
+                  style={{ width: '100%' }}
+                />
+              </Field>
+              <Field label="Mode">
+                <Select name="livemode" defaultValue="test" style={{ width: '100%' }}>
+                  <option value="test">Test (recommended)</option>
+                  <option value="live">Live</option>
+                </Select>
+              </Field>
+            </div>
+            <Field label="Notes (optional)">
+              <Input name="notes" style={{ width: '100%' }} />
             </Field>
-            <Field label="Mode">
-              <select name="livemode" defaultValue="test" style={inputStyle}>
-                <option value="test">Test (recommended)</option>
-                <option value="live">Live</option>
-              </select>
+            <Field label="Scopes *">
+              <Input
+                type="search"
+                placeholder="Filter… e.g. sales, inventory"
+                value={filter}
+                onChange={(e) => setFilter(e.target.value)}
+                style={{ width: '100%' }}
+              />
             </Field>
-          </div>
-          <Field label="Notes (optional)">
-            <input name="notes" style={inputStyle} />
-          </Field>
-          <Field label="Scopes *">
-            <input
-              type="search"
-              placeholder="Filter… e.g. sales, inventory"
-              value={filter}
-              onChange={(e) => setFilter(e.target.value)}
-              style={inputStyle}
-            />
-          </Field>
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: '1fr 1fr',
-              gap: 4,
-              maxHeight: 240,
-              overflow: 'auto',
-              border: '1px solid #eee',
-              padding: 8,
-              borderRadius: 4,
-            }}
-          >
-            {visibleScopes.map((s) => (
-              <label key={s} style={{ display: 'flex', gap: 6, fontSize: 13 }}>
-                <input type="checkbox" name="scopes" value={s} />
-                <code>{s}</code>
-              </label>
-            ))}
-          </div>
-          <button type="submit" style={primaryBtn}>
-            Create key
-          </button>
-        </form>
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: '1fr 1fr',
+                gap: 4,
+                maxHeight: 240,
+                overflow: 'auto',
+                border: '1px solid var(--border)',
+                padding: 8,
+                borderRadius: 'var(--radius-sm)',
+              }}
+            >
+              {visibleScopes.map((s) => (
+                <label
+                  key={s}
+                  style={{ display: 'flex', gap: 6, fontSize: 13, alignItems: 'center' }}
+                >
+                  <input
+                    type="checkbox"
+                    name="scopes"
+                    value={s}
+                    style={{ accentColor: 'var(--brand)' }}
+                  />
+                  <code>{s}</code>
+                </label>
+              ))}
+            </div>
+            <Button type="submit" variant="primary" style={{ width: 'fit-content' }}>
+              Create key
+            </Button>
+          </form>
+        </Card>
       )}
 
-      <div style={card}>
+      <Card>
         {rows == null ? (
-          <p style={{ color: '#888' }}>Loading…</p>
+          <LoadingRows />
         ) : rows.length === 0 ? (
-          <p style={{ color: '#888' }}>No API keys yet.</p>
+          <EmptyState>No API keys yet.</EmptyState>
         ) : (
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-            <thead>
-              <tr style={{ textAlign: 'left', borderBottom: '1px solid #ddd' }}>
-                <Th>Name</Th>
-                <Th>Prefix</Th>
-                <Th>Scopes</Th>
-                <Th>Last used</Th>
-                <Th>&nbsp;</Th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => (
-                <tr key={r.id} style={{ borderBottom: '1px solid #f3f3f3' }}>
-                  <Td>
-                    <strong>{r.name}</strong>
-                    {r.revokedAt && (
-                      <span style={{ color: '#b00', marginLeft: 6, fontSize: 12 }}>revoked</span>
-                    )}
-                    {r.notes && <div style={{ color: '#666', fontSize: 12 }}>{r.notes}</div>}
-                  </Td>
-                  <Td>
-                    <code style={{ fontSize: 11 }}>{r.keyPrefix}…</code>
-                    <div style={{ color: '#888', fontSize: 11 }}>{r.livemode}</div>
-                  </Td>
-                  <Td>
-                    {r.scopes.map((s) => (
-                      <code
-                        key={s}
-                        style={{
-                          fontSize: 11,
-                          background: '#f4f4f4',
-                          padding: '1px 4px',
-                          borderRadius: 3,
-                          marginRight: 3,
-                        }}
-                      >
-                        {s}
-                      </code>
-                    ))}
-                  </Td>
-                  <Td>
-                    {r.lastUsedAt ? (
-                      new Date(r.lastUsedAt).toLocaleString()
-                    ) : (
-                      <span style={{ color: '#888' }}>never</span>
-                    )}
-                  </Td>
-                  <Td>
-                    {!r.revokedAt && (
-                      <button onClick={() => revoke(r)} style={linkBtnDanger}>
-                        Revoke
-                      </button>
-                    )}
-                  </Td>
+          <div style={{ overflowX: 'auto' }}>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Prefix</th>
+                  <th>Scopes</th>
+                  <th>Last used</th>
+                  <th>&nbsp;</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr key={r.id} style={{ verticalAlign: 'top' }}>
+                    <td>
+                      <strong>{r.name}</strong>
+                      {r.revokedAt && (
+                        <span className="badge badge-danger" style={{ marginLeft: 6 }}>
+                          revoked
+                        </span>
+                      )}
+                      {r.notes && (
+                        <div style={{ color: 'var(--text-secondary)', fontSize: 12 }}>
+                          {r.notes}
+                        </div>
+                      )}
+                    </td>
+                    <td>
+                      <code style={{ fontSize: 11 }}>{r.keyPrefix}…</code>
+                      <div style={{ color: 'var(--text-muted)', fontSize: 11 }}>{r.livemode}</div>
+                    </td>
+                    <td>
+                      {r.scopes.map((s) => (
+                        <code
+                          key={s}
+                          style={{
+                            fontSize: 11,
+                            background: 'var(--neutral-soft)',
+                            padding: '1px 4px',
+                            borderRadius: 3,
+                            marginRight: 3,
+                          }}
+                        >
+                          {s}
+                        </code>
+                      ))}
+                    </td>
+                    <td>
+                      {r.lastUsedAt ? (
+                        new Date(r.lastUsedAt).toLocaleString()
+                      ) : (
+                        <span style={{ color: 'var(--text-muted)' }}>never</span>
+                      )}
+                    </td>
+                    <td>
+                      {!r.revokedAt && (
+                        <Button size="sm" variant="danger" onClick={() => revoke(r)}>
+                          Revoke
+                        </Button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
-      </div>
+      </Card>
     </div>
-  );
-}
-
-const card = {
-  background: '#fff',
-  padding: 16,
-  borderRadius: 6,
-  boxShadow: '0 1px 2px rgba(0,0,0,0.06)',
-  marginBottom: 16,
-};
-const inputStyle = {
-  padding: '6px 8px',
-  border: '1px solid #ccc',
-  borderRadius: 4,
-  fontSize: 13,
-  width: '100%',
-} as const;
-const primaryBtn = {
-  padding: '6px 12px',
-  background: '#111',
-  color: '#fff',
-  border: 'none',
-  borderRadius: 4,
-  cursor: 'pointer',
-  fontSize: 13,
-} as const;
-const linkBtn = {
-  background: 'none',
-  border: 'none',
-  color: '#444',
-  textDecoration: 'underline',
-  cursor: 'pointer',
-  fontSize: 12,
-  padding: 0,
-} as const;
-const linkBtnDanger = {
-  background: 'none',
-  border: 'none',
-  color: '#b00',
-  textDecoration: 'underline',
-  cursor: 'pointer',
-  fontSize: 12,
-  padding: 0,
-} as const;
-
-function Th({ children }: { children: React.ReactNode }) {
-  return <th style={{ padding: '8px 6px', fontWeight: 600 }}>{children}</th>;
-}
-function Td({ children }: { children: React.ReactNode }) {
-  return <td style={{ padding: '8px 6px', verticalAlign: 'top' }}>{children}</td>;
-}
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12 }}>
-      <span style={{ color: '#555' }}>{label}</span>
-      {children}
-    </label>
   );
 }

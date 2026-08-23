@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { Button, Card, Field, Input, LoadingRows, PageHeader } from '@/components/ui';
 import { api, apiUrl } from '@/lib/api';
 import { Money } from '@/components/money';
 
@@ -98,40 +99,31 @@ export default function ReportsPage() {
 
   return (
     <div>
-      <h1 style={{ fontSize: 22, marginBottom: 16 }}>Reports</h1>
-      {error && <p style={{ color: '#b00' }}>{error}</p>}
+      <PageHeader title="Reports" />
+      {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
 
-      <div style={card}>
-        <h2 style={section}>Daily sales</h2>
+      <Card title="Daily sales">
         <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
           <Field label="From">
-            <input
-              type="date"
-              value={start}
-              onChange={(e) => setStart(e.target.value)}
-              style={inputStyle}
-            />
+            <Input type="date" value={start} onChange={(e) => setStart(e.target.value)} />
           </Field>
           <Field label="To">
-            <input
-              type="date"
-              value={end}
-              onChange={(e) => setEnd(e.target.value)}
-              style={inputStyle}
-            />
+            <Input type="date" value={end} onChange={(e) => setEnd(e.target.value)} />
           </Field>
-          <button
+          <Button
+            variant="primary"
             onClick={() => {
               void loadDaily();
               void loadProducts();
             }}
-            style={{ ...primaryBtn, alignSelf: 'flex-end' }}
+            style={{ alignSelf: 'flex-end' }}
           >
             Refresh
-          </button>
+          </Button>
           <a
+            className="btn btn-secondary"
             href={`${apiUrl}/v1/reports/sales/daily?start=${start}&end=${end}&format=csv`}
-            style={{ ...linkBtn, alignSelf: 'flex-end', textDecoration: 'none' }}
+            style={{ alignSelf: 'flex-end' }}
           >
             Download CSV
           </a>
@@ -140,267 +132,227 @@ export default function ReportsPage() {
         {daily ? (
           <>
             <h3 style={subhead}>By day</h3>
-            <table style={table}>
-              <thead>
-                <tr>
-                  <Th>Day</Th>
-                  <Th>Sales</Th>
-                  <Th>Subtotal</Th>
-                  <Th>Discount</Th>
-                  <Th>Tax</Th>
-                  <Th>Total</Th>
-                </tr>
-              </thead>
-              <tbody>
-                {daily.byDay.length === 0 && <Empty colSpan={6} />}
-                {daily.byDay.map((d) => (
-                  <tr key={d.day}>
-                    <Td>{d.day}</Td>
-                    <Td>{d.saleCount}</Td>
-                    <Td>
-                      <Money cents={d.subtotalCents} />
-                    </Td>
-                    <Td>
-                      <Money cents={d.discountCents} />
-                    </Td>
-                    <Td>
-                      <Money cents={d.taxCents} />
-                    </Td>
-                    <Td>
-                      <strong>
-                        <Money cents={d.totalCents} />
-                      </strong>
-                    </Td>
+            <div style={{ overflowX: 'auto' }}>
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Day</th>
+                    <th className="num">Sales</th>
+                    <th className="num">Subtotal</th>
+                    <th className="num">Discount</th>
+                    <th className="num">Tax</th>
+                    <th className="num">Total</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {daily.byDay.length === 0 && <Empty colSpan={6} />}
+                  {daily.byDay.map((d) => (
+                    <tr key={d.day}>
+                      <td>{d.day}</td>
+                      <td className="num">{d.saleCount}</td>
+                      <td className="num">
+                        <Money cents={d.subtotalCents} />
+                      </td>
+                      <td className="num">
+                        <Money cents={d.discountCents} />
+                      </td>
+                      <td className="num">
+                        <Money cents={d.taxCents} />
+                      </td>
+                      <td className="num">
+                        <strong>
+                          <Money cents={d.totalCents} />
+                        </strong>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
 
             <h3 style={subhead}>By associate</h3>
-            <table style={table}>
-              <thead>
-                <tr>
-                  <Th>Associate</Th>
-                  <Th>Sales</Th>
-                  <Th>Total</Th>
-                </tr>
-              </thead>
-              <tbody>
-                {daily.byAssociate.length === 0 && <Empty colSpan={3} />}
-                {daily.byAssociate.map((a) => (
-                  <tr key={a.associateUserId ?? 'none'}>
-                    <Td>{a.associateEmail ?? '(deleted)'}</Td>
-                    <Td>{a.saleCount}</Td>
-                    <Td>
-                      <Money cents={a.totalCents} />
-                    </Td>
+            <div style={{ overflowX: 'auto' }}>
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Associate</th>
+                    <th className="num">Sales</th>
+                    <th className="num">Total</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {daily.byAssociate.length === 0 && <Empty colSpan={3} />}
+                  {daily.byAssociate.map((a) => (
+                    <tr key={a.associateUserId ?? 'none'}>
+                      <td>{a.associateEmail ?? '(deleted)'}</td>
+                      <td className="num">{a.saleCount}</td>
+                      <td className="num">
+                        <Money cents={a.totalCents} />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
 
             <h3 style={subhead}>By payment method</h3>
-            <table style={table}>
-              <thead>
-                <tr>
-                  <Th>Method</Th>
-                  <Th>Count</Th>
-                  <Th>Amount</Th>
-                </tr>
-              </thead>
-              <tbody>
-                {daily.byPaymentMethod.length === 0 && <Empty colSpan={3} />}
-                {daily.byPaymentMethod.map((p) => (
-                  <tr key={p.method}>
-                    <Td>{p.method}</Td>
-                    <Td>{p.count}</Td>
-                    <Td>
-                      <Money cents={p.amountCents} />
-                    </Td>
+            <div style={{ overflowX: 'auto' }}>
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Method</th>
+                    <th className="num">Count</th>
+                    <th className="num">Amount</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {daily.byPaymentMethod.length === 0 && <Empty colSpan={3} />}
+                  {daily.byPaymentMethod.map((p) => (
+                    <tr key={p.method}>
+                      <td>{p.method}</td>
+                      <td className="num">{p.count}</td>
+                      <td className="num">
+                        <Money cents={p.amountCents} />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </>
         ) : (
-          <p style={{ color: '#888', fontSize: 13 }}>Loading…</p>
+          <LoadingRows />
         )}
-      </div>
+      </Card>
 
-      <div style={card}>
-        <h2 style={section}>Sales by product</h2>
+      <Card title="Sales by product">
         <a
+          className="btn btn-secondary btn-sm"
           href={`${apiUrl}/v1/reports/sales/by-product?start=${start}&end=${end}&format=csv`}
-          style={{ ...linkBtn, textDecoration: 'none', display: 'inline-block', marginBottom: 12 }}
+          style={{ display: 'inline-flex', marginBottom: 12 }}
         >
           Download CSV
         </a>
         {products ? (
-          <table style={table}>
-            <thead>
-              <tr>
-                <Th>Product</Th>
-                <Th>Variant</Th>
-                <Th>SKU</Th>
-                <Th>Qty</Th>
-                <Th>Revenue</Th>
-                {products[0]?.marginCents != null && <Th>Margin</Th>}
-              </tr>
-            </thead>
-            <tbody>
-              {products.length === 0 && <Empty colSpan={6} />}
-              {products.map((p) => (
-                <tr key={p.variantId}>
-                  <Td>{p.productName}</Td>
-                  <Td>{p.variantName ?? '—'}</Td>
-                  <Td>
-                    <code>{p.sku ?? '—'}</code>
-                  </Td>
-                  <Td>{p.quantity}</Td>
-                  <Td>
-                    <Money cents={p.revenueCents} />
-                  </Td>
-                  {p.marginCents != null && (
-                    <Td>
-                      <Money cents={p.marginCents ?? 0} />
-                    </Td>
-                  )}
+          <div style={{ overflowX: 'auto' }}>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Product</th>
+                  <th>Variant</th>
+                  <th>SKU</th>
+                  <th className="num">Qty</th>
+                  <th className="num">Revenue</th>
+                  {products[0]?.marginCents != null && <th className="num">Margin</th>}
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {products.length === 0 && <Empty colSpan={6} />}
+                {products.map((p) => (
+                  <tr key={p.variantId}>
+                    <td>{p.productName}</td>
+                    <td>{p.variantName ?? '—'}</td>
+                    <td>
+                      <code>{p.sku ?? '—'}</code>
+                    </td>
+                    <td className="num">{p.quantity}</td>
+                    <td className="num">
+                      <Money cents={p.revenueCents} />
+                    </td>
+                    {p.marginCents != null && (
+                      <td className="num">
+                        <Money cents={p.marginCents ?? 0} />
+                      </td>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         ) : (
-          <p style={{ color: '#888', fontSize: 13 }}>Loading…</p>
+          <LoadingRows />
         )}
-      </div>
+      </Card>
 
-      <div style={card}>
-        <h2 style={section}>Inventory on hand</h2>
+      <Card title="Inventory on hand">
         <div style={{ display: 'flex', gap: 8, marginBottom: 12, alignItems: 'flex-end' }}>
           <Field label="Show items with available ≤">
-            <input
+            <Input
               type="number"
               min={0}
               value={lowStock}
               onChange={(e) => setLowStock(e.target.value)}
               placeholder="(blank = all)"
-              style={inputStyle}
             />
           </Field>
-          <button onClick={loadInv} style={primaryBtn}>
+          <Button variant="primary" onClick={loadInv}>
             Refresh
-          </button>
+          </Button>
           <a
+            className="btn btn-secondary"
             href={`${apiUrl}/v1/reports/inventory/on-hand${lowStock ? `?lowStock=${encodeURIComponent(lowStock)}&format=csv` : '?format=csv'}`}
-            style={{ ...linkBtn, textDecoration: 'none' }}
           >
             Download CSV
           </a>
         </div>
         {inv ? (
-          <table style={table}>
-            <thead>
-              <tr>
-                <Th>Product</Th>
-                <Th>SKU</Th>
-                <Th>On hand</Th>
-                <Th>Reserved</Th>
-                <Th>Available</Th>
-              </tr>
-            </thead>
-            <tbody>
-              {inv.length === 0 && <Empty colSpan={5} />}
-              {inv.map((r) => (
-                <tr key={r.variantId}>
-                  <Td>
-                    {r.productName}
-                    {r.variantName && <span style={{ color: '#666' }}> — {r.variantName}</span>}
-                  </Td>
-                  <Td>
-                    <code>{r.sku ?? '—'}</code>
-                  </Td>
-                  <Td>{r.onHand}</Td>
-                  <Td>{r.reserved}</Td>
-                  <Td>
-                    <strong>{r.available}</strong>
-                  </Td>
+          <div style={{ overflowX: 'auto' }}>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Product</th>
+                  <th>SKU</th>
+                  <th className="num">On hand</th>
+                  <th className="num">Reserved</th>
+                  <th className="num">Available</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {inv.length === 0 && <Empty colSpan={5} />}
+                {inv.map((r) => (
+                  <tr key={r.variantId}>
+                    <td>
+                      {r.productName}
+                      {r.variantName && (
+                        <span style={{ color: 'var(--text-secondary)' }}> — {r.variantName}</span>
+                      )}
+                    </td>
+                    <td>
+                      <code>{r.sku ?? '—'}</code>
+                    </td>
+                    <td className="num">{r.onHand}</td>
+                    <td className="num">{r.reserved}</td>
+                    <td className="num">
+                      <strong>{r.available}</strong>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         ) : (
-          <p style={{ color: '#888', fontSize: 13 }}>Loading…</p>
+          <LoadingRows />
         )}
-      </div>
+      </Card>
     </div>
   );
 }
 
-const card = {
-  background: '#fff',
-  padding: 16,
-  borderRadius: 6,
-  boxShadow: '0 1px 2px rgba(0,0,0,0.06)',
-  marginBottom: 16,
-};
-const section = { fontSize: 16, marginBottom: 12, marginTop: 0 } as const;
-const subhead = { fontSize: 13, color: '#444', marginTop: 12, marginBottom: 6 } as const;
-const inputStyle = {
-  padding: '6px 8px',
-  border: '1px solid #ccc',
-  borderRadius: 4,
+const subhead = {
   fontSize: 13,
+  fontWeight: 600,
+  color: 'var(--text-secondary)',
+  marginTop: 16,
+  marginBottom: 6,
 } as const;
-const primaryBtn = {
-  padding: '8px 14px',
-  background: '#111',
-  color: '#fff',
-  border: 'none',
-  borderRadius: 4,
-  cursor: 'pointer',
-  fontSize: 13,
-} as const;
-const linkBtn = {
-  padding: '8px 14px',
-  background: 'transparent',
-  color: '#444',
-  border: '1px solid #ccc',
-  borderRadius: 4,
-  cursor: 'pointer',
-  fontSize: 13,
-} as const;
-const table = { width: '100%', borderCollapse: 'collapse' as const, fontSize: 13 };
 
-function Th({ children }: { children: React.ReactNode }) {
-  return (
-    <th
-      style={{
-        padding: '6px 4px',
-        fontWeight: 600,
-        textAlign: 'left',
-        borderBottom: '1px solid #ddd',
-      }}
-    >
-      {children}
-    </th>
-  );
-}
-function Td({ children }: { children: React.ReactNode }) {
-  return <td style={{ padding: '6px 4px', borderBottom: '1px solid #f3f3f3' }}>{children}</td>;
-}
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12 }}>
-      <span style={{ color: '#555' }}>{label}</span>
-      {children}
-    </label>
-  );
-}
 function Empty({ colSpan }: { colSpan: number }) {
   return (
     <tr>
-      <td colSpan={colSpan} style={{ padding: 16, color: '#888', textAlign: 'center' }}>
-        No data.
+      <td colSpan={colSpan}>
+        <div className="empty-state" style={{ padding: '16px' }}>
+          No data.
+        </div>
       </td>
     </tr>
   );
