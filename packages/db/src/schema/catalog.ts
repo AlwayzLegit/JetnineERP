@@ -51,6 +51,7 @@ export const products = pgTable(
      * uses this class's `rate_bps` regardless of location.
      */
     taxClassId: uuid('tax_class_id').references(() => taxClasses.id, { onDelete: 'set null' }),
+    serialTracked: boolean('serial_tracked').notNull().default(false),
     isActive: boolean('is_active').notNull().default(true),
     // Generated tsvector (set by the migration via GENERATED ALWAYS AS).
     // Drizzle's pg-core doesn't model generated columns directly, so the

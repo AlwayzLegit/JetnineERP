@@ -29,6 +29,9 @@ export default function SuperAdminLayout({ children }: { children: ReactNode }) 
           <Link href="/admin/businesses" style={{ color: '#ccc' }}>
             Businesses
           </Link>
+          <Link href="/admin/templates" style={{ color: '#ccc' }}>
+            Templates
+          </Link>
         </nav>
       </header>
       <main style={{ maxWidth: 1100, margin: '0 auto', padding: '32px 24px' }}>{children}</main>

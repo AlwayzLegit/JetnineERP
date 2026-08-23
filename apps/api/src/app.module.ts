@@ -24,7 +24,13 @@ import { IdempotencyModule } from './idempotency/idempotency.module';
 import { InventoryModule } from './inventory/inventory.module';
 import { OnboardingModule } from './onboarding/onboarding.module';
 import { OpenApiModule } from './openapi/openapi.module';
+import { DeliveriesModule } from './deliveries/deliveries.module';
 import { OrdersModule } from './orders/orders.module';
+import { CrmModule } from './crm/crm.module';
+import { ImportModule } from './import/import.module';
+import { MoneyModule } from './money/money.module';
+import { ServiceOrdersModule } from './service-orders/service-orders.module';
+import { SpecialOrdersModule } from './special-orders/special-orders.module';
 import { PurchasingModule } from './purchasing/purchasing.module';
 import { RedisModule } from './redis/redis.module';
 import { ReportsModule } from './reports/reports.module';
@@ -84,6 +90,12 @@ import { WebhooksModule } from './webhooks/webhooks.module';
     TransfersModule,
     SalesModule,
     OrdersModule,
+    DeliveriesModule,
+    SpecialOrdersModule,
+    MoneyModule,
+    ServiceOrdersModule,
+    CrmModule,
+    ImportModule,
     CashModule,
     ReportsModule,
     BillingModule,

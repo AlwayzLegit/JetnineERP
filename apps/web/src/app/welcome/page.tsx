@@ -29,6 +29,8 @@ export default function WelcomePage() {
   const [memberships, setMemberships] = useState<MembershipSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [slug, setSlug] = useState('');
+  const [slugTouched, setSlugTouched] = useState(false);
 
   useEffect(() => {
     void (async () => {
@@ -63,7 +65,7 @@ export default function WelcomePage() {
         method: 'POST',
         body: JSON.stringify({
           name: String(data.get('name') ?? ''),
-          slug: String(data.get('slug') ?? ''),
+          slug: slugify(String(data.get('slug') ?? '') || String(data.get('name') ?? '')),
           currencyCode: String(data.get('currencyCode') ?? 'USD'),
           defaultTaxRateBps: Math.round(Number(data.get('taxRate') ?? 0) * 100),
         }),
@@ -143,17 +145,32 @@ export default function WelcomePage() {
 
       <form onSubmit={createBusiness} style={card}>
         <Field label="Business name *">
-          <input name="name" required placeholder="Acme Coffee" style={input} />
+          <input
+            name="name"
+            required
+            placeholder="Acme Coffee"
+            style={input}
+            onChange={(e) => {
+              if (!slugTouched) setSlug(slugify(e.target.value));
+            }}
+          />
         </Field>
         <Field label="URL slug *">
           <input
             name="slug"
             required
-            pattern="[a-z0-9](?:[a-z0-9-]*[a-z0-9])?"
+            value={slug}
+            onChange={(e) => {
+              setSlugTouched(true);
+              setSlug(slugify(e.target.value, { keepTrailingHyphen: true }));
+            }}
+            onBlur={(e) => setSlug(slugify(e.target.value))}
             placeholder="acme-coffee"
             style={input}
           />
-          <span style={hint}>Lowercase letters, numbers, hyphens. Used as a stable id.</span>
+          <span style={hint}>
+            Follows the name automatically — lowercase letters, numbers, hyphens.
+          </span>
         </Field>
         <Field label="Currency">
           <select name="currencyCode" defaultValue="USD" style={input}>
@@ -266,3 +283,19 @@ const rowBtn = {
   fontSize: 14,
 } as const;
 const hint = { color: '#888', fontSize: 11, marginTop: 2 } as const;
+
+/**
+ * Whatever a person types becomes a valid slug instead of a 400 from the
+ * API: lowercase, spaces and punctuation collapse to single hyphens, no
+ * leading/trailing hyphen. `keepTrailingHyphen` leaves a trailing hyphen
+ * alone mid-typing so "la-" doesn't snap back to "la" between keystrokes.
+ */
+function slugify(raw: string, opts?: { keepTrailingHyphen?: boolean }): string {
+  let out = raw
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/-{2,}/g, '-')
+    .replace(/^-+/, '');
+  if (!opts?.keepTrailingHyphen) out = out.replace(/-+$/, '');
+  return out.slice(0, 64);
+}

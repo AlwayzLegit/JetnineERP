@@ -52,6 +52,8 @@ interface UpdateProductBody {
   categoryId?: string | null;
   taxClassId?: string | null;
   isActive?: boolean;
+  /** G7: variants of a serial-tracked product carry serial_units rows. */
+  serialTracked?: boolean;
 }
 
 interface VariantOut {
@@ -313,6 +315,11 @@ export class CatalogProductsController {
       update.taxClassId = body.taxClassId;
       before.taxClassId = existing.taxClassId;
       after.taxClassId = body.taxClassId;
+    }
+    if (body.serialTracked !== undefined && body.serialTracked !== existing.serialTracked) {
+      update.serialTracked = body.serialTracked;
+      before.serialTracked = existing.serialTracked;
+      after.serialTracked = body.serialTracked;
     }
     if (body.isActive !== undefined && body.isActive !== existing.isActive) {
       update.isActive = body.isActive;

@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import type { ReactNode } from 'react';
 import { ImpersonationBanner } from '@/components/impersonation-banner';
+import { ActiveBusinessBadge } from '@/components/active-business-badge';
 import { BusinessSettingsProvider } from '@/lib/business-settings';
 
 // Every (business) page calls per-tenant client hooks (the
@@ -26,13 +27,26 @@ export default function BusinessLayout({ children }: { children: ReactNode }) {
             gap: 24,
           }}
         >
-          <strong style={{ fontSize: 16 }}>LA Mattress ERP — Back office</strong>
-          <nav style={{ display: 'flex', gap: 16, fontSize: 13 }}>
+          <strong style={{ fontSize: 16, whiteSpace: 'nowrap' }}>LA Mattress ERP</strong>
+          <ActiveBusinessBadge />
+          <nav style={{ display: 'flex', gap: 16, fontSize: 13, flexWrap: 'wrap' }}>
             <Link href="/dashboard" style={{ color: '#ccc' }}>
               Dashboard
             </Link>
             <Link href="/pos" style={{ color: '#ccc' }}>
               POS
+            </Link>
+            <Link href="/orders" style={{ color: '#ccc' }}>
+              Orders
+            </Link>
+            <Link href="/deliveries" style={{ color: '#ccc' }}>
+              Deliveries
+            </Link>
+            <Link href="/service" style={{ color: '#ccc' }}>
+              Service
+            </Link>
+            <Link href="/special-orders" style={{ color: '#ccc' }}>
+              Special orders
             </Link>
             <Link href="/sales" style={{ color: '#ccc' }}>
               Sales

@@ -25,6 +25,7 @@ import {
   clampLimit as clampPageLimit,
 } from '../common/pagination';
 import { DRIZZLE } from '../database/database.module';
+import { CommissionsService } from '../money/commissions.service';
 import { GiftCardsService } from '../gift-cards/gift-cards.service';
 import { StripeService } from '../stripe/stripe.service';
 import { RequirePermission, TenantScoped } from '../tenancy/decorators';
@@ -43,7 +44,11 @@ interface LookupRow {
 }
 
 interface PaymentInput {
-  method?: 'cash' | 'card' | 'gift_card';
+  method?: 'cash' | 'card' | 'gift_card' | 'financing' | 'external_card' | 'check';
+  /** For 'financing': which provider approved it (Synchrony, Acima, …). */
+  financingProvider?: string;
+  /** For 'financing': the provider's approval/application reference. */
+  financingRef?: string;
   amountCents?: number;
   /** For 'card', the (test) processor reference; optional. */
   processorRef?: string;
@@ -157,6 +162,7 @@ export class SalesController {
     @Inject(StripeService) private readonly stripe: StripeService,
     @Inject(GiftCardsService) private readonly giftCards: GiftCardsService,
     @Inject(WebhookDispatcher) private readonly webhooks: WebhookDispatcher,
+    @Inject(CommissionsService) private readonly commissions: CommissionsService,
   ) {}
 
   /**
@@ -574,8 +580,12 @@ export class SalesController {
       );
     }
     for (const p of body.payments) {
-      if (p.method !== 'cash' && p.method !== 'card' && p.method !== 'gift_card') {
-        throw new BadRequestException("payments[].method must be 'cash', 'card', or 'gift_card'");
+      const METHODS = ['cash', 'card', 'gift_card', 'financing', 'external_card', 'check'];
+      if (!METHODS.includes(p.method ?? '')) {
+        throw new BadRequestException(`payments[].method must be one of: ${METHODS.join(', ')}`);
+      }
+      if (p.method === 'financing' && !p.financingProvider) {
+        throw new BadRequestException('financing payments need financingProvider');
       }
       if (
         typeof p.amountCents !== 'number' ||
@@ -753,6 +763,8 @@ export class SalesController {
                   ? 'gift_card'
                   : null,
             processorRef: gcId ?? charge?.paymentIntentId ?? p.processorRef ?? null,
+            financingProvider: p.method === 'financing' ? (p.financingProvider ?? null) : null,
+            financingRef: p.method === 'financing' ? (p.financingRef ?? null) : null,
             status: 'succeeded',
           };
         }),
@@ -826,6 +838,13 @@ export class SalesController {
     // Fire-and-forget outbound webhook. We capture the businessId
     // up-front because the request-scoped tenant context will be
     // gone by the time the dispatcher runs.
+    // Commission accrues the moment the sale completes (G5); imported
+    // sales never accrue (D8) — the service enforces both.
+    await this.commissions.accrueForSale(this.db, {
+      businessId: tenant.businessId!,
+      saleId: sale.id,
+    });
+
     void this.webhooks.fire({
       businessId: tenant.businessId!,
       eventType: 'sale.created',
@@ -1079,6 +1098,15 @@ export class SalesController {
         lineCount: validated.length,
         reason: body.reason ?? null,
       },
+    });
+
+    // Negative commission entries proportional to the refunded fraction
+    // (G5) — the salesperson's period nets out what the store gave back.
+    await this.commissions.reverseForRefund(this.db, {
+      businessId: tenant.businessId!,
+      saleId: id,
+      refundedCents: amountCents,
+      saleTotalCents: sale.totalCents,
     });
 
     void this.webhooks.fire({

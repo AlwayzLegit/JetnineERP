@@ -6,12 +6,15 @@ import { api } from './api';
 
 interface BusinessSettingsValue {
   currency: CurrencyCode;
+  /** Active business display name; null until loaded or when none selected. */
+  businessName: string | null;
   /** True until the first fetch resolves; lets components fall back gracefully. */
   loaded: boolean;
 }
 
 const Ctx = createContext<BusinessSettingsValue>({
   currency: 'USD',
+  businessName: null,
   loaded: false,
 });
 
@@ -25,20 +28,26 @@ const Ctx = createContext<BusinessSettingsValue>({
  * this is a presentational concern, not an auth gate).
  */
 export function BusinessSettingsProvider({ children }: { children: ReactNode }) {
-  const [value, setValue] = useState<BusinessSettingsValue>({ currency: 'USD', loaded: false });
+  const [value, setValue] = useState<BusinessSettingsValue>({
+    currency: 'USD',
+    businessName: null,
+    loaded: false,
+  });
 
   useEffect(() => {
     void (async () => {
       try {
-        const settings = await api<{ currencyCode: string }>('/v1/business/settings');
+        const settings = await api<{ currencyCode: string; name?: string }>(
+          '/v1/business/settings',
+        );
         const code = settings.currencyCode?.toUpperCase();
         const currency = code && isSupportedCurrency(code) ? code : 'USD';
-        setValue({ currency, loaded: true });
+        setValue({ currency, businessName: settings.name ?? null, loaded: true });
       } catch {
         // Mark loaded even on failure so we stop showing the
         // initial "USD fallback" indefinitely; the user just sees
         // USD until they hit settings and pick something else.
-        setValue({ currency: 'USD', loaded: true });
+        setValue({ currency: 'USD', businessName: null, loaded: true });
       }
     })();
   }, []);
@@ -48,4 +57,8 @@ export function BusinessSettingsProvider({ children }: { children: ReactNode }) 
 
 export function useBusinessCurrency(): CurrencyCode {
   return useContext(Ctx).currency;
+}
+
+export function useBusinessName(): string | null {
+  return useContext(Ctx).businessName;
 }

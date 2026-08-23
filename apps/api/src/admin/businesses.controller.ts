@@ -20,6 +20,7 @@ import { DRIZZLE } from '../database/database.module';
 import { CurrentUser, type CurrentUserPayload } from '../auth/current-user.decorator';
 import { SuperAdminOnly, TenantScoped } from '../tenancy/decorators';
 import { InvitationService } from '../business/invitation.service';
+import { TemplatesService, type TemplateSnapshot } from './templates.service';
 
 const VALID_STATUSES = new Set(['active', 'suspended', 'trial', 'cancelled']);
 const SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
@@ -42,6 +43,8 @@ interface CreateBusinessBody {
   ownerEmail?: string;
   ownerName?: string;
   plan?: string;
+  /** Optional: stamp a business template onto the new business. */
+  templateId?: string;
 }
 
 @SuperAdminOnly()
@@ -52,6 +55,7 @@ export class AdminBusinessesController {
     @Inject(DRIZZLE) private readonly db: PostgresJsDatabase,
     @Inject(AuditService) private readonly audit: AuditService,
     @Inject(InvitationService) private readonly invitations: InvitationService,
+    @Inject(TemplatesService) private readonly templates: TemplatesService,
   ) {}
 
   @Get()
@@ -181,6 +185,18 @@ export class AdminBusinessesController {
     }
     const ownerRoleId = roleIdByName.get('Owner');
     if (!ownerRoleId) throw new UnprocessableEntityException('Owner role missing after seed');
+
+    // 2b. Create-from-template (platform layer): stamp the chosen
+    // template's config on top of the system seed.
+    if (body.templateId) {
+      const [tpl] = await this.db
+        .select()
+        .from(schema.businessTemplates)
+        .where(eq(schema.businessTemplates.id, body.templateId))
+        .limit(1);
+      if (!tpl) throw new BadRequestException('templateId does not exist');
+      await this.templates.applyTemplate(biz.id, tpl.snapshotJson as TemplateSnapshot);
+    }
 
     // 3. Invite the owner via the shared service (creates user, opens
     // membership, mints token, sends email).

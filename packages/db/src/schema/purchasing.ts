@@ -111,3 +111,34 @@ export const purchaseOrderLines = pgTable(
     variantIdx: index('purchase_order_lines_variant_id_idx').on(t.variantId),
   }),
 );
+
+/**
+ * The bridge between a customer's special-order line and the PO line
+ * that buys it (STORIS cutover G3). Receiving against the PO line walks
+ * these allocations: 'ordered' units become 'received', the customer's
+ * order line reserves the just-arrived stock, and the store emails
+ * "your item is in".
+ */
+export const poLineAllocations = pgTable(
+  'po_line_allocations',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    businessId: uuid('business_id')
+      .notNull()
+      .references(() => businesses.id, { onDelete: 'cascade' }),
+    poLineId: uuid('po_line_id')
+      .notNull()
+      .references(() => purchaseOrderLines.id, { onDelete: 'cascade' }),
+    orderLineId: uuid('order_line_id').notNull(),
+    quantity: integer('quantity').notNull(),
+    /** 'ordered' | 'received' | 'cancelled' */
+    status: text('status').notNull().default('ordered'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    businessIdx: index('po_line_allocations_business_id_idx').on(t.businessId),
+    poLineIdx: index('po_line_allocations_po_line_id_idx').on(t.poLineId),
+    orderLineIdx: index('po_line_allocations_order_line_id_idx').on(t.orderLineId),
+  }),
+);

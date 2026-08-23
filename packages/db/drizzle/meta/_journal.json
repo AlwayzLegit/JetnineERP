@@ -134,6 +134,41 @@
       "when": 1787381630538,
       "tag": "0018_storis_order_spine",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1787505251072,
+      "tag": "0019_special_orders_serials",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1787505877851,
+      "tag": "0020_money_plans_commissions",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1787506134778,
+      "tag": "0021_sales_imported_at",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1787506510185,
+      "tag": "0022_service_crm",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1787508350849,
+      "tag": "0023_business_templates",
+      "breakpoints": true
     }
   ]
 }

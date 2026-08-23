@@ -7,6 +7,8 @@ import { AcceptInviteController } from './accept-invite.controller';
 import { AdminBusinessesController } from './businesses.controller';
 import { ImpersonateController } from './impersonate.controller';
 import { AdminMetricsController } from './metrics.controller';
+import { AdminTemplatesController } from './templates.controller';
+import { TemplatesService } from './templates.service';
 
 @Module({
   imports: [AuthModule, TenancyModule, AuditModule, EmailModule],
@@ -15,6 +17,8 @@ import { AdminMetricsController } from './metrics.controller';
     ImpersonateController,
     AdminMetricsController,
     AcceptInviteController,
+    AdminTemplatesController,
   ],
+  providers: [TemplatesService],
 })
 export class AdminModule {}

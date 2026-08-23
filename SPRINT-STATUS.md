@@ -35,54 +35,134 @@ suite writes an order, takes a deposit, and asserts `inventory_levels.reserved` 
 
 ## Day 2 — Order writer
 
-- [ ] **Build:** `(business)/orders` — pipeline board (quote→open→partially_fulfilled→fulfilled→completed), order writer screen (share cart components with POS), order detail with payments + timeline
-- [ ] **Build:** POS: "Save as order / take deposit" flow
-- [ ] **Build:** Committed-stock visibility in inventory views
+- [x] **Build:** `(business)/orders` — pipeline board (quote→open→partially*fulfilled→fulfilled→completed), order writer screen (share cart components with POS), order detail with payments + timeline
+      — \_2026-08-22: board + writer + detail under `(business)/orders/`; CustomerPicker
+      extracted to `components/customer-picker.tsx` and shared with POS; audit-logs API
+      gained targetType/targetId filters to feed the order timeline.*
+- [x] **Build:** POS: "Save as order / take deposit" flow
+      — _2026-08-22: SaveAsOrderDialog on the register — confirms the order (committing
+      stock) and posts the deposit as an order payment in one step._
+- [x] **Build:** Committed-stock visibility in inventory views
+      — _2026-08-22: already satisfied — inventory levels API + page carried
+      on-hand/reserved/available since Phase 2; Day 1 reservations feed `reserved`.
+      Verified in `e2e/orders.spec.ts`._
 - [ ] **Ops:** Chase exports; write the STORIS daily-routine script (becomes the QA script)
 
 _Acceptance: write an order with deposit end-to-end in the browser; committed qty visible._
+**✅ met** — `apps/web/e2e/orders.spec.ts`: writer → confirm → cash deposit →
+reserved=1/available=99 in inventory → order on the board; plus the POS
+save-as-order path with the suggested 25% deposit. 2 e2e tests green.
 
 ## Day 3 — Delivery & fulfillment
 
-- [ ] **Build:** `deliveries` module + calendar UI (week/day), drag-to-schedule, driver day-sheet (print)
-- [ ] **Build:** Fulfillment flow: decrement stock, serial pick (stub until Day 4), collect balance, order receipt print; completion requires balance = 0 or `orders.complete_with_balance`
-- [ ] **Build:** Reports union `sales` + `orders` (revenue, drawer picks up order payments)
-      — ⚠️ carried from Day 1: `cash-shifts.controller.ts` and `reports.controller.ts` both
-      `innerJoin(sales, sales.id = payments.sale_id)`, so order payments are silently
-      **excluded** from the drawer and the tender mix today. Nothing is broken, but the
-      drawer will not balance against order deposits until this lands.
+- [x] **Build:** `deliveries` module + calendar UI (week/day), drag-to-schedule, driver day-sheet (print)
+      — _2026-08-23: `apps/api/src/deliveries/` + `(business)/deliveries` (week board with
+      drag-to-reschedule, delivery page with driver verbs, printable day-sheet at
+      `/deliveries/day/[date]`)._
+- [x] **Build:** Fulfillment flow: decrement stock, serial pick (stub until Day 4), collect balance, order receipt print; completion requires balance = 0 or `orders.complete_with_balance`
+      — _2026-08-23: `planFulfillment`/`applyFulfillment` (`order_fulfill` movements,
+      negative delta, reservation consumed), pickup path `POST /orders/:id/fulfill`,
+      `POST /orders/:id/complete` gated on balance/permission. Serial pick + receipt
+      print carried to the serials slice._
+- [x] **Build:** Reports union `sales` + `orders` (revenue, drawer picks up order payments)
+      — _2026-08-23: shift close and the daily report count order deposits/balances by the
+      payment's own timestamp (imported excluded per D8); tender mix merges both;
+      `orderPaymentsByDay` added to the daily report. Int test proves a mid-shift deposit
+      lands in `expectedCashCents`._
 - [ ] **Ops:** First export files land — joint sanity read; freeze SKU/category cleanup decisions
 
 _Acceptance: schedule → deliver → collect balance → order completed; day's drawer includes deposits._
+**✅ met** — `deliveries.int.spec.ts` (12 tests) walks the whole cycle API-side including the
+drawer; `e2e/orders.spec.ts` drives it in the browser: schedule from the order page →
+calendar card → delivered → fulfilled → collect → completed.
 
 ## Day 4 — Special orders & serials
 
-- [ ] **Build:** `po_line_allocations`; to-order queue; generate/link POs by vendor; receiving auto-allocates, marks lines arrived, emails customer (Resend)
-- [ ] **Build:** `serial_units` + `products.serial_tracked`; serial picker in fulfillment
+- [x] **Build:** `po_line_allocations`; to-order queue; generate/link POs by vendor; receiving auto-allocates, marks lines arrived, emails customer (Resend)
+      — _2026-08-23: migration `0019_special_orders_serials`; `special-orders` module
+      (queue API + UI at `(business)/special-orders`, generate-PO with cost fallback);
+      PO receive walks allocations, reserves arrived units for the waiting customer,
+      splits partial receipts, and sends the arrival email (memory transport until a
+      Resend key is configured; imported orders stay silent per D8)._
+- [x] **Build:** `serial_units` + `products.serial_tracked`; serial picker in fulfillment
+      — _2026-08-23: register at the dock (`POST /v1/serials/register`), pick per line
+      (`POST /v1/serials/assign/:orderLineId`, over-pick guarded), fulfillment marks
+      committed serials sold with the customer stamped. API-level for now; picker UI
+      rides with the UI overhaul._
 - [ ] **Ops:** Verify sample POs/special orders against STORIS screens
 
 _Acceptance: sell not-in-stock item → PO generated → receive → arrival email → deliverable._
+**✅ met** — `special-orders.int.spec.ts` (5 tests): special-order line reserves nothing →
+queue shows it with the customer → generate-PO allocates all units at recorded cost →
+receive commits stock to the customer (on-hand 2 / reserved 2) and the captured arrival
+email names the order → serials register/assign/sold with customer stamped.
 
 ## Day 5 — Money features
 
-- [ ] **Build:** Financing tender (`method='financing'`, provider + ref) in POS + order payments
-- [ ] **Build:** `payment_plans` + installments; pay-installment flow; nightly overdue job + reminder emails; overdue report
-- [ ] **Build:** Commissions: plans, membership assignment, accrual at completion, refund reversal, report with approve/mark-paid
+- [x] **Build:** Financing tender (`method='financing'`, provider + ref) in POS + order payments
+      — _2026-08-23: POS tender set widened to financing/external_card/check with
+      provider+ref recorded on the payment row; order payments carried these since Day 1._
+- [x] **Build:** `payment_plans` + installments; pay-installment flow; nightly overdue job + reminder emails; overdue report
+      — _2026-08-23: migration `0020_money_plans_commissions`; plans generate installments
+      that sum to the balance exactly (remainder on the last); paying one posts an order
+      payment `kind='installment'` so drawer/balance math just works; overdue sweep
+      (`POST /v1/payment-plans/run-overdue`, idempotent, reminder emails) + overdue
+      report. Nightly scheduling wired in the deploy-hardening slice._
+- [x] **Build:** Commissions (plans, accrual at sale/order completion, refund reversal, report, approve/mark-paid)
+      — _2026-08-23: `commission_plans` (percent_of_sale | percent_of_margin, bps) assigned
+      per membership; accrual at POS-sale completion and order completion (split via
+      `split_bps`); refunds write proportional negative entries; period report
+      (view_own vs view_all) + approve→paid payroll actions. Imported docs never accrue
+      (D8; `sales.imported_at` added in 0021)._
 - [ ] **Ops:** Provide real commission rules + financing provider list; validate 5 historical examples
 
 _Acceptance: layaway order pays off across installments; commission entries match hand math._
 
 ## Day 6 — Service & CRM
 
-- [ ] **Build:** Service orders: intake form, status board, ticket detail + charges + notes, complete; ticket print
-- [ ] **Build:** CRM: `customer_notes`, tags, customer timeline page (merged feed)
-- [ ] **Build:** Receivables/AR report + customer statement print
+- [x] **Build:** Service orders: intake form, status board, ticket detail + charges + notes, complete; ticket print
+      — _2026-08-23 (API-level): migration `0022_service_crm` — `service_orders`
+      (SV-YYYY-NNNNNN, warranty flag, imported_at/legacy_number for D7/D8),
+      `service_order_lines` (part-from-variant or free-text labor; warranty prices
+      lines at 0), `service_order_notes`. `payments.service_order_id` added and the
+      one-tender CHECK widened to `num_nonnulls(sale_id, order_id, service_order_id) = 1`
+      (D2 holds: one payments table behind every tender). Lifecycle
+      intake ↔ awaiting_parts ↔ in_service → ready → completed with auto status notes,
+      customer "ready for pickup" email at ready, over-collect guard, complete requires
+      zero balance, attached serial units walk in_service → sold. 8-test int spec
+      (`jetnine_service` DB) green; UI pages ride the QA/design pass with the other screens._
+- [x] **Build:** CRM: `customer_notes`, tags, customer timeline page (merged feed)
+      — _2026-08-23: notes CRUD, tags (unique per business, attach/detach), and
+      `GET /v1/customers/:id/timeline` — a read-model merge of sales, orders,
+      deliveries, order payments, service tickets, and notes, newest first. No event
+      table; the documents are the history._
+- [x] **Build:** Receivables/AR report + customer statement print
+      — _2026-08-23: `GET /v1/reports/ar` (permission `reports.financial.view`) —
+      confirmed+ orders with balance due, aged 0-30/31-60/61-90/90+ by order date,
+      rolled up per customer. Statement print rides the UI pass._
 - [ ] **Ops:** Walk the service workflow; list any STORIS report not yet covered
 
 ## Day 7 — Migration rehearsal #1
 
-- [ ] **Build:** Import pipeline: upload → staging → mapping config → validation report → commit via `legacy_refs` upserts → recon report (gates 1–5, plan §7)
+- [x] **Build:** Import pipeline: upload → staging → mapping config → validation report → commit via `legacy_refs` upserts → recon report (gates 1–5, plan §7)
+      — _2026-08-23: `/v1/import/*` — 7 entity importers (customers, vendors,
+      products+variants+categories, inventory on-hand w/ audit movements, open-order
+      headers + deposit payments, order lines, closed-sales history), STORIS-shaped
+      auto-mapping (editable per batch), RFC-4180 CSV parser, money/date/bool coercion,
+      validation report (missing FKs, bad money, dup legacy ids, unknown SKUs — first
+      200 rows + message rollup), commit as `legacy_refs` upserts (D7 — every re-run
+      updates in place; inventory re-runs write no ledger noise), everything imported
+      flagged `imported_at` (D8). Recon gates 1–4 computed source-vs-DB to the cent at
+      `GET /v1/import/recon`; gate 5 stays human. Wizard UI at
+      `(business)/settings/import` (upload → map → validate → commit → recon panel).
+      9-test int spec (`jetnine_import` DB) wired into CI; JSON body limit raised to
+      25 MB for CSV upload._
 - [ ] **Build:** Full rehearsal import into throwaway `migration-rehearsal` tenant
+      — _2026-08-23: the synthetic rehearsal (fixtures shaped like STORIS report-writer
+      exports) runs end-to-end in `apps/api/test/import.int.spec.ts` with all recon
+      gates matching. The real rehearsal is blocked on the actual STORIS export files
+      (Ops, flagged) — once delivered, create the `migration-rehearsal` tenant and walk
+      the wizard top-to-bottom; **do not commit the export files to the repo**._
 - [ ] **Ops:** Review recon report line-by-line vs STORIS reports; log every mismatch
 
 ## Day 8 — Rehearsal #2 + platform layer

@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { loadStripe, type Stripe as StripeJs } from '@stripe/stripe-js';
 import { CardElement, Elements, useElements, useStripe } from '@stripe/react-stripe-js';
@@ -17,6 +18,7 @@ import {
 } from '@/lib/offline';
 import { useOnlineStatus } from '@/lib/use-online-status';
 import { Money } from '@/components/money';
+import { CustomerPicker, type CustomerRow } from '@/components/customer-picker';
 import { PrintableReceipt, type ReceiptBusiness } from '@/components/printable-receipt';
 
 interface LookupRow {
@@ -34,13 +36,6 @@ interface CartLine {
   quantity: number;
   unitPriceCents: number;
   lineDiscountCents: number;
-}
-interface CustomerRow {
-  id: string;
-  firstName: string | null;
-  lastName: string | null;
-  email: string | null;
-  phone: string | null;
 }
 interface LocationRow {
   id: string;
@@ -73,6 +68,7 @@ interface SaleResp {
 }
 
 export default function PosPage() {
+  const router = useRouter();
   const [locations, setLocations] = useState<LocationRow[]>([]);
   const [locationId, setLocationId] = useState<string>('');
   const [taxRateBps, setTaxRateBps] = useState<number>(0);
@@ -83,6 +79,7 @@ export default function PosPage() {
   const [scan, setScan] = useState('');
   const [results, setResults] = useState<LookupRow[]>([]);
   const [showCustomerPicker, setShowCustomerPicker] = useState(false);
+  const [showOrderDialog, setShowOrderDialog] = useState(false);
   const [phase, setPhase] = useState<'cart' | 'pay' | 'done'>('cart');
   const [completedSale, setCompletedSale] = useState<SaleResp | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -618,6 +615,14 @@ export default function PosPage() {
             >
               Pay {formatMoney(totals.totalCents)}
             </button>
+            <button
+              onClick={() => setShowOrderDialog(true)}
+              disabled={cart.length === 0}
+              style={linkBtn}
+              data-testid="save-as-order"
+            >
+              Save as order / take deposit…
+            </button>
             <button onClick={reset} style={linkBtn}>
               Clear cart
             </button>
@@ -632,6 +637,47 @@ export default function PosPage() {
             setShowCustomerPicker(false);
           }}
           onCancel={() => setShowCustomerPicker(false)}
+        />
+      )}
+      {showOrderDialog && (
+        <SaveAsOrderDialog
+          totalCents={totals.totalCents}
+          customer={customer}
+          onAttachCustomer={() => {
+            setShowOrderDialog(false);
+            setShowCustomerPicker(true);
+          }}
+          onCancel={() => setShowOrderDialog(false)}
+          onSave={async (opts) => {
+            const order = await api<{ id: string }>('/v1/orders', {
+              method: 'POST',
+              body: JSON.stringify({
+                locationId,
+                customerId: customer!.id,
+                lines: cart.map((l) => ({
+                  variantId: l.variantId,
+                  quantity: l.quantity,
+                  unitPriceCents: l.unitPriceCents,
+                  lineDiscountCents: l.lineDiscountCents || undefined,
+                })),
+                orderDiscountCents: parseDollars(orderDiscount) || undefined,
+                fulfillmentType: opts.fulfillmentType,
+                requestedDate: opts.requestedDate || null,
+                confirm: true,
+              }),
+            });
+            if (opts.depositCents > 0) {
+              await api(`/v1/orders/${order.id}/payments`, {
+                method: 'POST',
+                body: JSON.stringify({
+                  method: opts.depositMethod,
+                  amountCents: opts.depositCents,
+                  kind: 'deposit',
+                }),
+              });
+            }
+            router.push(`/orders/${order.id}`);
+          }}
         />
       )}
     </div>
@@ -1186,128 +1232,149 @@ function Receipt({
   );
 }
 
-function CustomerPicker({
-  onPick,
+/**
+ * "Save as order / take deposit" (STORIS cutover Day 2). Turns the
+ * register's cart into a confirmed sales order — the everyday flow for
+ * a mattress sale: write it now, deliver later, take money down today.
+ * Confirming commits stock immediately; the deposit posts as an order
+ * payment, so the drawer math picks it up when Day 3's report union
+ * lands.
+ */
+function SaveAsOrderDialog({
+  totalCents,
+  customer,
+  onAttachCustomer,
   onCancel,
+  onSave,
 }: {
-  onPick: (c: CustomerRow) => void;
+  totalCents: number;
+  customer: CustomerRow | null;
+  onAttachCustomer: () => void;
   onCancel: () => void;
+  onSave: (opts: {
+    fulfillmentType: 'delivery' | 'pickup';
+    requestedDate: string;
+    depositCents: number;
+    depositMethod: 'cash' | 'external_card' | 'check';
+  }) => Promise<void>;
 }) {
-  const [q, setQ] = useState('');
-  const [rows, setRows] = useState<CustomerRow[]>([]);
-  const [creating, setCreating] = useState(false);
+  const suggested = Math.ceil((totalCents * 2500) / 10000);
+  const [fulfillmentType, setFulfillmentType] = useState<'delivery' | 'pickup'>('delivery');
+  const [requestedDate, setRequestedDate] = useState('');
+  const [deposit, setDeposit] = useState(centsToInputString(suggested));
+  const [depositMethod, setDepositMethod] = useState<'cash' | 'external_card' | 'check'>('cash');
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function search() {
-    try {
-      const res = await api<{ data: CustomerRow[]; nextCursor: string | null }>(
-        `/v1/customers?q=${encodeURIComponent(q)}`,
-      );
-      setRows(res.data);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    }
-  }
-  useEffect(() => {
-    void search();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  async function createNew(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault();
+  async function save() {
     setError(null);
+    setBusy(true);
     try {
-      const data = new FormData(e.currentTarget);
-      const created = await api<CustomerRow>('/v1/customers', {
-        method: 'POST',
-        body: JSON.stringify({
-          firstName: data.get('firstName') || null,
-          lastName: data.get('lastName') || null,
-          email: data.get('email') || null,
-          phone: data.get('phone') || null,
-        }),
+      await onSave({
+        fulfillmentType,
+        requestedDate,
+        depositCents: parseDollars(deposit),
+        depositMethod,
       });
-      onPick(created);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+      setBusy(false);
     }
   }
 
   return (
     <div style={modalBackdrop}>
-      <div style={{ ...modal, maxWidth: 480 }}>
-        <h2 style={{ fontSize: 18, marginBottom: 12 }}>Attach customer</h2>
-        {creating ? (
-          <form onSubmit={createNew} style={{ display: 'grid', gap: 8 }}>
+      <div style={{ ...modal, maxWidth: 420 }}>
+        <h2 style={{ fontSize: 18, marginBottom: 4 }}>Save as order</h2>
+        <p style={{ fontSize: 13, color: '#666', marginTop: 0 }}>
+          Order total {formatMoney(totalCents)}. Confirming commits stock now; the balance is
+          collected at fulfillment.
+        </p>
+        {!customer ? (
+          <div>
+            <p style={{ fontSize: 13, color: '#8a6d1a' }}>
+              An order needs a customer attached first.
+            </p>
+            <button
+              onClick={onAttachCustomer}
+              style={primaryBtn}
+              data-testid="order-attach-customer"
+            >
+              Attach customer
+            </button>{' '}
+            <button onClick={onCancel} style={linkBtn}>
+              Back
+            </button>
+          </div>
+        ) : (
+          <div style={{ display: 'grid', gap: 10 }}>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-              <input name="firstName" placeholder="First name" style={fieldStyle} />
-              <input name="lastName" placeholder="Last name" style={fieldStyle} />
+              <Field label="Fulfillment">
+                <select
+                  value={fulfillmentType}
+                  onChange={(e) => setFulfillmentType(e.target.value as 'delivery' | 'pickup')}
+                  style={fieldStyle}
+                >
+                  <option value="delivery">Delivery</option>
+                  <option value="pickup">Pickup</option>
+                </select>
+              </Field>
+              <Field label="Promised date">
+                <input
+                  type="date"
+                  value={requestedDate}
+                  onChange={(e) => setRequestedDate(e.target.value)}
+                  style={fieldStyle}
+                />
+              </Field>
             </div>
-            <input name="email" type="email" placeholder="Email" style={fieldStyle} />
-            <input name="phone" placeholder="Phone" style={fieldStyle} />
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+              <Field label="Deposit today ($)">
+                <input
+                  type="number"
+                  step="0.01"
+                  min={0}
+                  value={deposit}
+                  onChange={(e) => setDeposit(e.target.value)}
+                  style={fieldStyle}
+                  data-testid="order-deposit"
+                />
+              </Field>
+              <Field label="Deposit method">
+                <select
+                  value={depositMethod}
+                  onChange={(e) =>
+                    setDepositMethod(e.target.value as 'cash' | 'external_card' | 'check')
+                  }
+                  style={fieldStyle}
+                >
+                  <option value="cash">Cash</option>
+                  <option value="external_card">Card (external terminal)</option>
+                  <option value="check">Check</option>
+                </select>
+              </Field>
+            </div>
+            <p style={{ fontSize: 11, color: '#888', margin: 0 }}>
+              Suggested deposit: {formatMoney(suggested)} (25% down). Set 0 to hold the order
+              without money — it still commits stock.
+            </p>
             {error && <p style={{ color: '#b00', fontSize: 12, margin: 0 }}>{error}</p>}
             <div style={{ display: 'flex', gap: 8 }}>
-              <button type="submit" style={primaryBtn}>
-                Create & attach
+              <button
+                onClick={() => void save()}
+                disabled={busy}
+                style={primaryBtn}
+                data-testid="order-save-confirm"
+              >
+                {parseDollars(deposit) > 0
+                  ? `Save order & take ${formatMoney(parseDollars(deposit))}`
+                  : 'Save order'}
               </button>
-              <button type="button" onClick={() => setCreating(false)} style={linkBtn}>
+              <button onClick={onCancel} disabled={busy} style={linkBtn}>
                 Back
               </button>
             </div>
-          </form>
-        ) : (
-          <>
-            <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-              <input
-                value={q}
-                onChange={(e) => setQ(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') void search();
-                }}
-                placeholder="Search by name, email, or phone"
-                style={{ ...fieldStyle, flex: 1 }}
-              />
-              <button onClick={search} style={linkBtn}>
-                Search
-              </button>
-            </div>
-            <div style={{ maxHeight: 240, overflow: 'auto' }}>
-              {rows.length === 0 && (
-                <p style={{ color: '#888', fontSize: 13, margin: 0 }}>No matches.</p>
-              )}
-              {rows.map((c) => (
-                <button
-                  key={c.id}
-                  onClick={() => onPick(c)}
-                  style={{
-                    display: 'block',
-                    width: '100%',
-                    textAlign: 'left',
-                    padding: 8,
-                    background: '#fff',
-                    border: '1px solid #eee',
-                    borderRadius: 4,
-                    marginBottom: 4,
-                    cursor: 'pointer',
-                    fontSize: 13,
-                  }}
-                >
-                  <strong>
-                    {[c.firstName, c.lastName].filter(Boolean).join(' ') || '(no name)'}
-                  </strong>{' '}
-                  <span style={{ color: '#666' }}>{c.email ?? c.phone ?? ''}</span>
-                </button>
-              ))}
-            </div>
-            <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
-              <button onClick={() => setCreating(true)} style={linkBtn}>
-                + New customer
-              </button>
-              <button onClick={onCancel} style={linkBtn}>
-                Cancel
-              </button>
-            </div>
-          </>
+          </div>
         )}
       </div>
     </div>
