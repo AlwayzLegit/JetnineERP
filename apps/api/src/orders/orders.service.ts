@@ -404,6 +404,28 @@ export class OrdersService {
           },
         });
 
+      // Serial hand-off (G7): whatever serials were picked for this line
+      // leave with the goods. Customer stamped for "whose mattress is
+      // this?" lookups later.
+      const [orderRow] = await db
+        .select({ customerId: schema.orders.customerId })
+        .from(schema.orders)
+        .where(eq(schema.orders.id, args.orderId))
+        .limit(1);
+      await db
+        .update(schema.serialUnits)
+        .set({
+          status: 'sold',
+          customerId: orderRow?.customerId ?? null,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(schema.serialUnits.orderLineId, step.orderLineId),
+            eq(schema.serialUnits.status, 'committed'),
+          ),
+        );
+
       await db.insert(schema.inventoryMovements).values({
         businessId: args.businessId,
         variantId: step.variantId,

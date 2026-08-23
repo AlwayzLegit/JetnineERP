@@ -109,7 +109,9 @@ DECLARE
     'gift_card_transactions',
     'legacy_refs',
     'import_batches',
-    'import_rows'
+    'import_rows',
+    'po_line_allocations',
+    'serial_units'
   ];
 BEGIN
   FOREACH t IN ARRAY tenant_tables LOOP

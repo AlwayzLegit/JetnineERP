@@ -67,4 +67,6 @@ export const TENANT_SCOPED_TABLES = [
   'legacy_refs',
   'import_batches',
   'import_rows',
+  'po_line_allocations',
+  'serial_units',
 ] as const;

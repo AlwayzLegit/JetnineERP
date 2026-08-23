@@ -78,11 +78,24 @@ calendar card → delivered → fulfilled → collect → completed.
 
 ## Day 4 — Special orders & serials
 
-- [ ] **Build:** `po_line_allocations`; to-order queue; generate/link POs by vendor; receiving auto-allocates, marks lines arrived, emails customer (Resend)
-- [ ] **Build:** `serial_units` + `products.serial_tracked`; serial picker in fulfillment
+- [x] **Build:** `po_line_allocations`; to-order queue; generate/link POs by vendor; receiving auto-allocates, marks lines arrived, emails customer (Resend)
+      — _2026-08-23: migration `0019_special_orders_serials`; `special-orders` module
+      (queue API + UI at `(business)/special-orders`, generate-PO with cost fallback);
+      PO receive walks allocations, reserves arrived units for the waiting customer,
+      splits partial receipts, and sends the arrival email (memory transport until a
+      Resend key is configured; imported orders stay silent per D8)._
+- [x] **Build:** `serial_units` + `products.serial_tracked`; serial picker in fulfillment
+      — _2026-08-23: register at the dock (`POST /v1/serials/register`), pick per line
+      (`POST /v1/serials/assign/:orderLineId`, over-pick guarded), fulfillment marks
+      committed serials sold with the customer stamped. API-level for now; picker UI
+      rides with the UI overhaul._
 - [ ] **Ops:** Verify sample POs/special orders against STORIS screens
 
 _Acceptance: sell not-in-stock item → PO generated → receive → arrival email → deliverable._
+**✅ met** — `special-orders.int.spec.ts` (5 tests): special-order line reserves nothing →
+queue shows it with the customer → generate-PO allocates all units at recorded cost →
+receive commits stock to the customer (on-hand 2 / reserved 2) and the captured arrival
+email names the order → serials register/assign/sold with customer stamped.
 
 ## Day 5 — Money features
 

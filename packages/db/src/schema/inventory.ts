@@ -61,3 +61,42 @@ export const inventoryMovements = pgTable(
     referenceIdx: index('inventory_movements_reference_idx').on(t.referenceType, t.referenceId),
   }),
 );
+
+/**
+ * Individually-tracked units (STORIS cutover G7, lean). A serial exists
+ * once per physical unit; its status walks in_stock → committed (picked
+ * for an order line) → sold (fulfilled), with in_service/returned for
+ * the service loop. Only variants of serial-tracked products get rows.
+ */
+export const serialUnits = pgTable(
+  'serial_units',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    businessId: uuid('business_id')
+      .notNull()
+      .references(() => businesses.id, { onDelete: 'cascade' }),
+    variantId: uuid('variant_id')
+      .notNull()
+      .references(() => productVariants.id, { onDelete: 'cascade' }),
+    locationId: uuid('location_id')
+      .notNull()
+      .references(() => locations.id, { onDelete: 'restrict' }),
+    serial: text('serial').notNull(),
+    /** 'in_stock' | 'committed' | 'sold' | 'in_service' | 'returned' */
+    status: text('status').notNull().default('in_stock'),
+    orderLineId: uuid('order_line_id'),
+    customerId: uuid('customer_id'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    businessSerialUnique: uniqueIndex('serial_units_business_variant_serial_uniq').on(
+      t.businessId,
+      t.variantId,
+      t.serial,
+    ),
+    businessIdx: index('serial_units_business_id_idx').on(t.businessId),
+    variantIdx: index('serial_units_variant_id_idx').on(t.variantId, t.locationId, t.status),
+    orderLineIdx: index('serial_units_order_line_id_idx').on(t.orderLineId),
+  }),
+);
