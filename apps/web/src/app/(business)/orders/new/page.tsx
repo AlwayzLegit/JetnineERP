@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
+import { CheckCircle2, FileText } from 'lucide-react';
 import { formatMoney } from '@jetnine/shared';
 import { api } from '@/lib/api';
 import { Money } from '@/components/money';
@@ -213,8 +214,8 @@ export default function OrderWriterPage() {
     <div>
       <PageHeader title="Write order" />
 
-      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 16 }}>
-        <div>
+      <div className="grid gap-4 lg:grid-cols-[2fr_1fr]">
+        <div className="min-w-0">
           <form onSubmit={handleScanSubmit} style={{ marginBottom: 12 }}>
             <input
               ref={scanRef}
@@ -245,83 +246,87 @@ export default function OrderWriterPage() {
                 No lines yet. Scan or search to add items.
               </p>
             ) : (
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>Item</th>
-                    <th>Type</th>
-                    <th>Qty</th>
-                    <th>Price</th>
-                    <th>Disc $</th>
-                    <th className="num">Line</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {cart.map((l) => {
-                    const lineTotal = l.quantity * l.unitPriceCents - l.lineDiscountCents;
-                    return (
-                      <tr key={l.variantId}>
-                        <td>{l.description}</td>
-                        <td>
-                          <Select
-                            value={l.lineType}
-                            onChange={(e) =>
-                              patchLine(l.variantId, {
-                                lineType: e.target.value as CartLine['lineType'],
-                              })
-                            }
-                            style={{ width: 130, padding: '4px 8px' }}
-                          >
-                            <option value="stock">stock</option>
-                            <option value="special_order">special order</option>
-                          </Select>
-                        </td>
-                        <td>
-                          <Input
-                            type="number"
-                            min={0}
-                            value={l.quantity}
-                            onChange={(e) => {
-                              const qty = Number(e.target.value);
-                              if (qty <= 0) {
-                                setCart((prev) => prev.filter((x) => x.variantId !== l.variantId));
-                              } else {
-                                patchLine(l.variantId, { quantity: qty });
+              <div className="overflow-x-auto">
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Item</th>
+                      <th>Type</th>
+                      <th>Qty</th>
+                      <th>Price</th>
+                      <th>Disc $</th>
+                      <th className="num">Line</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {cart.map((l) => {
+                      const lineTotal = l.quantity * l.unitPriceCents - l.lineDiscountCents;
+                      return (
+                        <tr key={l.variantId}>
+                          <td>{l.description}</td>
+                          <td>
+                            <Select
+                              value={l.lineType}
+                              onChange={(e) =>
+                                patchLine(l.variantId, {
+                                  lineType: e.target.value as CartLine['lineType'],
+                                })
                               }
-                            }}
-                            style={{ width: 60, padding: '4px 8px' }}
-                          />
-                        </td>
-                        <td>
-                          <Money cents={l.unitPriceCents} />
-                        </td>
-                        <td>
-                          <Input
-                            type="number"
-                            step="0.01"
-                            min={0}
-                            placeholder="0.00"
-                            onBlur={(e) =>
-                              patchLine(l.variantId, {
-                                lineDiscountCents: parseDollars(e.target.value),
-                              })
-                            }
-                            style={{ width: 70, padding: '4px 8px' }}
-                          />
-                        </td>
-                        <td className="num">
-                          <Money cents={lineTotal} />
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+                              style={{ width: 130, padding: '4px 8px' }}
+                            >
+                              <option value="stock">stock</option>
+                              <option value="special_order">special order</option>
+                            </Select>
+                          </td>
+                          <td>
+                            <Input
+                              type="number"
+                              min={0}
+                              value={l.quantity}
+                              onChange={(e) => {
+                                const qty = Number(e.target.value);
+                                if (qty <= 0) {
+                                  setCart((prev) =>
+                                    prev.filter((x) => x.variantId !== l.variantId),
+                                  );
+                                } else {
+                                  patchLine(l.variantId, { quantity: qty });
+                                }
+                              }}
+                              style={{ width: 60, padding: '4px 8px' }}
+                            />
+                          </td>
+                          <td>
+                            <Money cents={l.unitPriceCents} />
+                          </td>
+                          <td>
+                            <Input
+                              type="number"
+                              step="0.01"
+                              min={0}
+                              placeholder="0.00"
+                              onBlur={(e) =>
+                                patchLine(l.variantId, {
+                                  lineDiscountCents: parseDollars(e.target.value),
+                                })
+                              }
+                              style={{ width: 70, padding: '4px 8px' }}
+                            />
+                          </td>
+                          <td className="num">
+                            <Money cents={lineTotal} />
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
             )}
           </Card>
 
           <Card title="Fulfillment" style={{ marginBottom: 16 }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
+            <div className="grid gap-2 sm:grid-cols-3">
               <Field label="Location">
                 <Select
                   value={locationId}
@@ -359,9 +364,7 @@ export default function OrderWriterPage() {
               </Field>
             </div>
             {fulfillmentType === 'delivery' && (
-              <div
-                style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 8 }}
-              >
+              <div className="mt-2 grid gap-2 sm:grid-cols-2">
                 <Field label="Address line 1">
                   <Input
                     value={address.line1}
@@ -420,7 +423,7 @@ export default function OrderWriterPage() {
           </Card>
         </div>
 
-        <div>
+        <div className="min-w-0">
           <Card title="Customer" style={{ marginBottom: 16 }}>
             {customer ? (
               <p style={{ fontSize: 13, margin: 0 }} data-testid="order-customer">
@@ -499,6 +502,7 @@ export default function OrderWriterPage() {
               style={{ padding: '14px', fontSize: 16 }}
               data-testid="confirm-order"
             >
+              <CheckCircle2 size={16} aria-hidden />
               Confirm order {formatMoney(totals.totalCents)}
             </Button>
             <Button
@@ -506,6 +510,7 @@ export default function OrderWriterPage() {
               disabled={busy || cart.length === 0}
               data-testid="save-quote"
             >
+              <FileText size={14} aria-hidden />
               Save as quote (no stock held)
             </Button>
           </div>

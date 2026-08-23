@@ -47,52 +47,32 @@ export function AuthForm({
 
   return (
     <form onSubmit={handle}>
-      <h2 style={{ fontSize: 18, marginBottom: 16 }}>{title}</h2>
+      <h2 className="mb-4 text-lg font-semibold">{title}</h2>
       {fields.map((f) => (
-        <label key={f.name} style={{ display: 'block', marginBottom: 12 }}>
-          <span style={{ display: 'block', marginBottom: 4, fontSize: 13 }}>{f.label}</span>
+        <label key={f.name} className="mb-3 block">
+          <span className="field-label">{f.label}</span>
           <input
             name={f.name}
             type={f.type ?? 'text'}
             required={f.required ?? true}
-            style={{
-              width: '100%',
-              padding: '8px 10px',
-              border: '1px solid #ccc',
-              borderRadius: 4,
-              fontSize: 14,
-            }}
+            className="input w-full"
           />
         </label>
       ))}
       {error && (
-        <p data-testid="auth-error" style={{ color: '#b00', marginBottom: 12, fontSize: 13 }}>
+        <p data-testid="auth-error" className="mb-3 text-[13px] text-danger">
           {error}
         </p>
       )}
       {success && (
-        <p data-testid="auth-success" style={{ color: '#080', marginBottom: 12, fontSize: 13 }}>
+        <p data-testid="auth-success" className="mb-3 text-[13px] text-success">
           {success}
         </p>
       )}
-      <button
-        type="submit"
-        disabled={submitting}
-        style={{
-          width: '100%',
-          padding: '10px 14px',
-          background: '#111',
-          color: '#fff',
-          border: 'none',
-          borderRadius: 4,
-          fontSize: 14,
-          cursor: submitting ? 'not-allowed' : 'pointer',
-          opacity: submitting ? 0.7 : 1,
-        }}
-      >
+      <button type="submit" disabled={submitting} className="btn btn-primary w-full">
         {submitting ? 'Working…' : submitLabel}
       </button>
-      {footer && <div style={{ marginTop: 16, fontSize: 13 }}>{footer}</div>}
+      {footer && <div className="mt-4 text-[13px]">{footer}</div>}
     </form>
   );
 }

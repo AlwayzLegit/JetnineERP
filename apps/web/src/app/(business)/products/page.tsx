@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { useEffect, useState, type FormEvent } from 'react';
+import { Plus } from 'lucide-react';
 import { api } from '@/lib/api';
 import {
   Button,
@@ -73,18 +74,19 @@ export default function ProductsPage() {
         title="Products"
         actions={
           <LinkButton href="/products/new" variant="primary">
+            <Plus size={14} />
             Create product
           </LinkButton>
         }
       />
 
-      <form onSubmit={search} style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+      <form onSubmit={search} className="mb-4 flex flex-wrap gap-2">
         <Input
           name="q"
           placeholder="Search by name, SKU, or barcode"
           value={q}
           onChange={(e) => setQ(e.target.value)}
-          style={{ flex: 1 }}
+          className="min-w-[200px] flex-1"
         />
         <Button type="submit" variant="primary">
           Search
@@ -112,36 +114,38 @@ export default function ProductsPage() {
             No products match{q ? ` "${q}"` : ' yet'}. Create a product or import a CSV below.
           </EmptyState>
         ) : (
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>SKU</th>
-                <th>Active</th>
-                <th>&nbsp;</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((p) => (
-                <tr key={p.id}>
-                  <td>
-                    <strong>{p.name}</strong>
-                  </td>
-                  <td>
-                    <code>{p.sku ?? '—'}</code>
-                  </td>
-                  <td>
-                    <span className={`badge ${p.isActive ? 'badge-success' : 'badge-neutral'}`}>
-                      {p.isActive ? 'yes' : 'no'}
-                    </span>
-                  </td>
-                  <td style={{ textAlign: 'right' }}>
-                    <Link href={`/products/${p.id}`}>Open</Link>
-                  </td>
+          <div className="overflow-x-auto">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>SKU</th>
+                  <th>Active</th>
+                  <th>&nbsp;</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {rows.map((p) => (
+                  <tr key={p.id}>
+                    <td>
+                      <strong>{p.name}</strong>
+                    </td>
+                    <td>
+                      <code>{p.sku ?? '—'}</code>
+                    </td>
+                    <td>
+                      <span className={`badge ${p.isActive ? 'badge-success' : 'badge-neutral'}`}>
+                        {p.isActive ? 'yes' : 'no'}
+                      </span>
+                    </td>
+                    <td style={{ textAlign: 'right' }}>
+                      <Link href={`/products/${p.id}`}>Open</Link>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </Card>
 
@@ -158,7 +162,7 @@ export default function ProductsPage() {
             rows={8}
             style={{ width: '100%', fontFamily: 'var(--font-mono)', fontSize: 12 }}
           />
-          <div style={{ marginTop: 8, display: 'flex', gap: 8 }}>
+          <div style={{ marginTop: 8 }} className="flex flex-wrap gap-2">
             <Button variant="primary" onClick={() => importCsv('preview')} disabled={csvBusy}>
               Preview
             </Button>

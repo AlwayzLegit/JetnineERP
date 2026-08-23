@@ -2,6 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import { useEffect, useState, type FormEvent } from 'react';
+import { Plus, Search } from 'lucide-react';
 import { api } from '@/lib/api';
 import { Button, Card, EmptyState, Field, Input, PageHeader, Select } from '@/components/ui';
 
@@ -116,7 +117,7 @@ export default function NewTransferPage() {
       <PageHeader title="New stock transfer" />
       <form onSubmit={submit} style={{ display: 'grid', gap: 16 }}>
         <Card>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+          <div className="grid gap-3 sm:grid-cols-2">
             <Field label="From location">
               <Select
                 value={fromLocationId}
@@ -166,7 +167,7 @@ export default function NewTransferPage() {
         </Card>
 
         <Card title="Add items">
-          <div style={{ display: 'flex', gap: 8 }}>
+          <div className="flex flex-wrap gap-2">
             <Input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
@@ -177,9 +178,10 @@ export default function NewTransferPage() {
                 }
               }}
               placeholder="Search by name, SKU, or barcode"
-              style={{ flex: 1 }}
+              className="min-w-[200px] flex-1"
             />
             <Button type="button" variant="primary" onClick={searchVariants}>
+              <Search size={14} />
               Search
             </Button>
           </div>
@@ -219,47 +221,50 @@ export default function NewTransferPage() {
               No lines yet. Search for an item above to add it to the transfer.
             </EmptyState>
           ) : (
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Item</th>
-                  <th>Quantity</th>
-                  <th>&nbsp;</th>
-                </tr>
-              </thead>
-              <tbody>
-                {lines.map((l, i) => (
-                  <tr key={l.variantId}>
-                    <td>{l.description}</td>
-                    <td>
-                      <Input
-                        type="number"
-                        min={1}
-                        value={l.quantity}
-                        onChange={(e) => setLine(i, { quantity: Number(e.target.value) })}
-                        style={{ width: 80 }}
-                      />
-                    </td>
-                    <td style={{ textAlign: 'right' }}>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="danger"
-                        onClick={() => removeLine(i)}
-                      >
-                        Remove
-                      </Button>
-                    </td>
+            <div className="overflow-x-auto">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Item</th>
+                    <th>Quantity</th>
+                    <th>&nbsp;</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {lines.map((l, i) => (
+                    <tr key={l.variantId}>
+                      <td>{l.description}</td>
+                      <td>
+                        <Input
+                          type="number"
+                          min={1}
+                          value={l.quantity}
+                          onChange={(e) => setLine(i, { quantity: Number(e.target.value) })}
+                          style={{ width: 80 }}
+                        />
+                      </td>
+                      <td style={{ textAlign: 'right' }}>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="danger"
+                          onClick={() => removeLine(i)}
+                        >
+                          Remove
+                        </Button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
         </Card>
 
         {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
         <div>
           <Button type="submit" variant="primary" disabled={saving}>
+            <Plus size={14} />
             {saving ? 'Saving…' : shipNow ? 'Create + ship' : 'Create draft'}
           </Button>
         </div>

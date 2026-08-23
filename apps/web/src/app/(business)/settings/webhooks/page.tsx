@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { toast } from 'sonner';
 import { useEffect, useState, type FormEvent } from 'react';
 import {
   Button,
@@ -94,7 +95,7 @@ export default function WebhooksPage() {
       });
       void load();
     } catch (err) {
-      alert(err instanceof Error ? err.message : String(err));
+      toast.error(err instanceof Error ? err.message : String(err));
     }
   }
 
@@ -104,7 +105,7 @@ export default function WebhooksPage() {
       await api(`/v1/business/webhooks/${row.id}`, { method: 'DELETE' });
       void load();
     } catch (err) {
-      alert(err instanceof Error ? err.message : String(err));
+      toast.error(err instanceof Error ? err.message : String(err));
     }
   }
 
@@ -113,15 +114,15 @@ export default function WebhooksPage() {
       const res = await api<{ status: string }>(`/v1/business/webhooks/${row.id}/test`, {
         method: 'POST',
       });
-      alert(
-        res.status === 'succeeded'
-          ? 'Test event delivered (HTTP 2xx).'
-          : `Test event failed: ${res.status}. Inspect deliveries below.`,
-      );
+      if (res.status === 'succeeded') {
+        toast.success('Test event delivered (HTTP 2xx).');
+      } else {
+        toast.error(`Test event failed: ${res.status}. Inspect deliveries below.`);
+      }
       if (openEndpointId === row.id) void loadDeliveries(row.id);
       void load();
     } catch (err) {
-      alert(err instanceof Error ? err.message : String(err));
+      toast.error(err instanceof Error ? err.message : String(err));
     }
   }
 
@@ -130,7 +131,7 @@ export default function WebhooksPage() {
       setDeliveries(await api<Delivery[]>(`/v1/business/webhooks/${id}/deliveries`));
       setOpenEndpointId(id);
     } catch (err) {
-      alert(err instanceof Error ? err.message : String(err));
+      toast.error(err instanceof Error ? err.message : String(err));
     }
   }
 
@@ -226,7 +227,7 @@ export default function WebhooksPage() {
                 />
                 All events (wildcard, including future types)
               </label>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4 }}>
+              <div className="grid gap-1 sm:grid-cols-2">
                 {eventTypes.map((t) => (
                   <label
                     key={t}

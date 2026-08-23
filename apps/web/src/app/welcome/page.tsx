@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { Building2 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState, type FormEvent } from 'react';
 import { CURRENCY_LABELS, SUPPORTED_CURRENCIES, type CurrencyCode } from '@jetnine/shared';
@@ -195,6 +196,7 @@ export default function WelcomePage() {
           disabled={creating}
           style={{ width: 'fit-content' }}
         >
+          <Building2 size={14} aria-hidden />
           {creating ? 'Creating…' : 'Create business'}
         </Button>
       </form>
@@ -215,17 +217,7 @@ export default function WelcomePage() {
 }
 
 function Wrapper({ children }: { children: React.ReactNode }) {
-  return (
-    <main
-      style={{
-        maxWidth: 520,
-        margin: '64px auto',
-        padding: '0 16px',
-      }}
-    >
-      {children}
-    </main>
-  );
+  return <main className="mx-auto max-w-[520px] px-4 py-8 sm:py-16">{children}</main>;
 }
 
 function LinkishButton({ onClick, children }: { onClick: () => void; children: React.ReactNode }) {

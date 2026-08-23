@@ -167,13 +167,7 @@ function FilterForm({
   return (
     <form
       onSubmit={handle}
-      style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(4, 1fr) auto',
-        gap: 12,
-        marginBottom: 24,
-        alignItems: 'end',
-      }}
+      className="mb-6 grid items-end gap-3 sm:grid-cols-2 lg:grid-cols-[repeat(4,1fr)_auto]"
     >
       <Field label="Action">
         <Input
@@ -211,7 +205,7 @@ function FilterForm({
           style={{ width: '100%' }}
         />
       </Field>
-      <Button type="submit" variant="primary">
+      <Button type="submit" variant="primary" className="w-fit">
         Apply
       </Button>
     </form>

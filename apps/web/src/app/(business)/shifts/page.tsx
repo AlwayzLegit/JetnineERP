@@ -83,7 +83,7 @@ export default function ShiftsPage() {
 
       <div className="card">
         <h2 className="card-title">Open new shift</h2>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+        <div className="grid gap-2 sm:flex sm:flex-wrap sm:items-end">
           <Field label="Location">
             <Select value={openLocationId} onChange={(e) => setOpenLocationId(e.target.value)}>
               {locations.map((l) => (
@@ -105,7 +105,12 @@ export default function ShiftsPage() {
           <Field label="Notes">
             <Input value={openNotes} onChange={(e) => setOpenNotes(e.target.value)} />
           </Field>
-          <Button variant="primary" onClick={openShift} disabled={opening || !floatStr}>
+          <Button
+            variant="primary"
+            onClick={openShift}
+            disabled={opening || !floatStr}
+            className="min-h-11 w-fit"
+          >
             {opening ? 'Opening…' : 'Open shift'}
           </Button>
         </div>
@@ -118,44 +123,46 @@ export default function ShiftsPage() {
         ) : rows.length === 0 ? (
           <EmptyState>No shifts yet. Open one above to start tracking the drawer.</EmptyState>
         ) : (
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Opened</th>
-                <th>Location</th>
-                <th className="num">Float</th>
-                <th>Status</th>
-                <th className="num">Variance</th>
-                <th>&nbsp;</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => (
-                <tr key={r.id}>
-                  <td>{new Date(r.openedAt).toLocaleString()}</td>
-                  <td>{r.locationName ?? '—'}</td>
-                  <td className="num">
-                    <Money cents={r.openingFloatCents} />
-                  </td>
-                  <td>
-                    {r.closedAt ? (
-                      <span style={{ color: 'var(--text-secondary)' }}>
-                        Closed {new Date(r.closedAt).toLocaleString()}
-                      </span>
-                    ) : (
-                      <strong style={{ color: 'var(--success)' }}>Open</strong>
-                    )}
-                  </td>
-                  <td className="num">
-                    {r.varianceCents == null ? '—' : <Money cents={r.varianceCents} />}
-                  </td>
-                  <td>
-                    <Link href={`/shifts/${r.id}`}>Open</Link>
-                  </td>
+          <div className="overflow-x-auto">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Opened</th>
+                  <th>Location</th>
+                  <th className="num">Float</th>
+                  <th>Status</th>
+                  <th className="num">Variance</th>
+                  <th>&nbsp;</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr key={r.id}>
+                    <td>{new Date(r.openedAt).toLocaleString()}</td>
+                    <td>{r.locationName ?? '—'}</td>
+                    <td className="num">
+                      <Money cents={r.openingFloatCents} />
+                    </td>
+                    <td>
+                      {r.closedAt ? (
+                        <span style={{ color: 'var(--text-secondary)' }}>
+                          Closed {new Date(r.closedAt).toLocaleString()}
+                        </span>
+                      ) : (
+                        <strong style={{ color: 'var(--success)' }}>Open</strong>
+                      )}
+                    </td>
+                    <td className="num">
+                      {r.varianceCents == null ? '—' : <Money cents={r.varianceCents} />}
+                    </td>
+                    <td>
+                      <Link href={`/shifts/${r.id}`}>Open</Link>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
     </div>

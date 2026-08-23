@@ -1,5 +1,7 @@
 'use client';
 
+import { Plus } from 'lucide-react';
+import { toast } from 'sonner';
 import { useEffect, useState, type FormEvent } from 'react';
 import { Button, Card, EmptyState, Field, Input, LoadingRows, PageHeader } from '@/components/ui';
 import { api } from '@/lib/api';
@@ -57,7 +59,7 @@ export default function LocationsPage() {
       });
       await load();
     } catch (err) {
-      alert(err instanceof Error ? err.message : String(err));
+      toast.error(err instanceof Error ? err.message : String(err));
     }
   }
 
@@ -66,7 +68,7 @@ export default function LocationsPage() {
       <PageHeader title="Locations" />
       <Card title="Add location">
         <form onSubmit={submit}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             <Field label="Name">
               <Input name="name" required style={{ width: '100%' }} />
             </Field>
@@ -84,6 +86,7 @@ export default function LocationsPage() {
           </div>
           <div style={{ marginTop: 12 }}>
             <Button type="submit" variant="primary">
+              <Plus size={14} aria-hidden />
               Create
             </Button>
           </div>

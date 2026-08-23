@@ -35,7 +35,7 @@ export default function AdminMetricsPage() {
   return (
     <div>
       <PageHeader title="Platform metrics" />
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16 }}>
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard label="Total businesses" value={String(metrics.totalBusinesses)} />
         <StatCard label="Active businesses" value={String(metrics.activeBusinesses)} />
         <StatCard label="Total users" value={String(metrics.totalUsers)} />

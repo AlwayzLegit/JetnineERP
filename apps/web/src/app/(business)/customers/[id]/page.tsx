@@ -1,6 +1,8 @@
 'use client';
 
 import Link from 'next/link';
+import { Save, Trash2 } from 'lucide-react';
+import { toast } from 'sonner';
 import { useEffect, useState, type FormEvent } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { Button, Card, EmptyState, Field, Input, LoadingRows, StatusBadge } from '@/components/ui';
@@ -81,7 +83,7 @@ export default function CustomerDetailPage() {
       await api(`/v1/customers/${id}`, { method: 'DELETE' });
       router.push('/customers');
     } catch (err) {
-      alert(err instanceof Error ? err.message : String(err));
+      toast.error(err instanceof Error ? err.message : String(err));
     }
   }
 
@@ -104,7 +106,7 @@ export default function CustomerDetailPage() {
 
       <Card title="Details">
         <form onSubmit={save} style={{ display: 'grid', gap: 8, maxWidth: 560 }}>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+          <div className="grid gap-2 sm:grid-cols-2">
             <Field label="First name">
               <Input name="firstName" defaultValue={c.firstName ?? ''} style={{ width: '100%' }} />
             </Field>
@@ -134,11 +136,13 @@ export default function CustomerDetailPage() {
           </Field>
           {error && <p style={{ color: 'var(--danger)', margin: 0 }}>{error}</p>}
           {saved && <p style={{ color: 'var(--success)', margin: 0, fontSize: 13 }}>Saved.</p>}
-          <div style={{ display: 'flex', gap: 8 }}>
+          <div className="flex flex-wrap gap-2">
             <Button type="submit" variant="primary" disabled={saving}>
+              <Save size={14} aria-hidden />
               {saving ? 'Saving…' : 'Save changes'}
             </Button>
             <Button type="button" variant="danger" onClick={destroy}>
+              <Trash2 size={14} aria-hidden />
               Delete customer
             </Button>
           </div>

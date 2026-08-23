@@ -56,38 +56,40 @@ export default function PurchaseOrdersPage() {
         ) : rows.length === 0 ? (
           <EmptyState>No purchase orders yet. Create a PO to restock from a vendor.</EmptyState>
         ) : (
-          <table className="table">
-            <thead>
-              <tr>
-                <th>PO</th>
-                <th>Vendor</th>
-                <th>Status</th>
-                <th className="num">Subtotal</th>
-                <th>Created</th>
-                <th>&nbsp;</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((p) => (
-                <tr key={p.id}>
-                  <td>
-                    <code>{p.number}</code>
-                  </td>
-                  <td>{p.vendorName ?? '—'}</td>
-                  <td>
-                    <StatusBadge status={p.status} />
-                  </td>
-                  <td className="num">
-                    <Money cents={p.subtotalCents} />
-                  </td>
-                  <td>{new Date(p.createdAt).toLocaleDateString()}</td>
-                  <td style={{ textAlign: 'right' }}>
-                    <Link href={`/purchase-orders/${p.id}`}>Open</Link>
-                  </td>
+          <div className="overflow-x-auto">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>PO</th>
+                  <th>Vendor</th>
+                  <th>Status</th>
+                  <th className="num">Subtotal</th>
+                  <th>Created</th>
+                  <th>&nbsp;</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {rows.map((p) => (
+                  <tr key={p.id}>
+                    <td>
+                      <code>{p.number}</code>
+                    </td>
+                    <td>{p.vendorName ?? '—'}</td>
+                    <td>
+                      <StatusBadge status={p.status} />
+                    </td>
+                    <td className="num">
+                      <Money cents={p.subtotalCents} />
+                    </td>
+                    <td>{new Date(p.createdAt).toLocaleDateString()}</td>
+                    <td style={{ textAlign: 'right' }}>
+                      <Link href={`/purchase-orders/${p.id}`}>Open</Link>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </Card>
     </div>

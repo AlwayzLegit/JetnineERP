@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { toast } from 'sonner';
 import { useEffect, useState, type FormEvent } from 'react';
 import {
   Button,
@@ -90,7 +91,7 @@ export default function DiscountsPage() {
       });
       void load();
     } catch (err) {
-      alert(err instanceof Error ? err.message : String(err));
+      toast.error(err instanceof Error ? err.message : String(err));
     }
   }
 
@@ -104,7 +105,7 @@ export default function DiscountsPage() {
       await api(`/v1/business/discount-codes/${row.id}`, { method: 'DELETE' });
       void load();
     } catch (err) {
-      alert(err instanceof Error ? err.message : String(err));
+      toast.error(err instanceof Error ? err.message : String(err));
     }
   }
 
@@ -131,7 +132,7 @@ export default function DiscountsPage() {
       {creating && (
         <Card style={{ maxWidth: 720, marginBottom: 16 }}>
           <form onSubmit={create} style={{ display: 'grid', gap: 8 }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+            <div className="grid gap-2 sm:grid-cols-2">
               <Field label="Code *">
                 <Input
                   name="code"
@@ -164,7 +165,7 @@ export default function DiscountsPage() {
             <Field label="Description (optional)">
               <Input name="description" style={{ width: '100%' }} />
             </Field>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+            <div className="grid gap-2 sm:grid-cols-2">
               <Field label="Starts (optional)">
                 <Input name="startsAt" type="datetime-local" style={{ width: '100%' }} />
               </Field>
@@ -172,7 +173,7 @@ export default function DiscountsPage() {
                 <Input name="endsAt" type="datetime-local" style={{ width: '100%' }} />
               </Field>
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
               <Field label="Total uses (optional)">
                 <Input name="usageLimit" type="number" min={1} style={{ width: '100%' }} />
               </Field>

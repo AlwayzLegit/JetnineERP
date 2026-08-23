@@ -96,7 +96,7 @@ export default function GiftCardDetailPage() {
         <StatusBadge status={card.status} />
       </div>
 
-      <div className="card" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+      <div className="card grid gap-4 sm:grid-cols-2">
         <div>
           <div className="field-label">Current balance</div>
           <div style={{ fontSize: 24, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>
@@ -119,7 +119,7 @@ export default function GiftCardDetailPage() {
       {card.status !== 'cancelled' && (
         <div className="card">
           <h2 className="card-title">Adjust balance</h2>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <div className="flex flex-wrap items-center gap-2">
             <Input
               type="text"
               inputMode="decimal"
@@ -150,40 +150,42 @@ export default function GiftCardDetailPage() {
         {card.transactions.length === 0 ? (
           <EmptyState>No activity yet. Redemptions and adjustments will show up here.</EmptyState>
         ) : (
-          <table className="table">
-            <thead>
-              <tr>
-                <th>When</th>
-                <th>Kind</th>
-                <th className="num">Amount</th>
-                <th className="num">Balance after</th>
-                <th>Reference</th>
-              </tr>
-            </thead>
-            <tbody>
-              {card.transactions.map((t) => (
-                <tr key={t.id}>
-                  <td>{new Date(t.createdAt).toLocaleString()}</td>
-                  <td>{t.kind}</td>
-                  <td className="num">
-                    <Money cents={t.amountCents} />
-                  </td>
-                  <td className="num">
-                    <Money cents={t.balanceAfterCents} />
-                  </td>
-                  <td>
-                    {t.saleId ? (
-                      <Link href={`/sales/${t.saleId}`}>sale</Link>
-                    ) : t.refundId ? (
-                      <em>refund</em>
-                    ) : (
-                      <span className="muted">—</span>
-                    )}
-                  </td>
+          <div className="overflow-x-auto">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>When</th>
+                  <th>Kind</th>
+                  <th className="num">Amount</th>
+                  <th className="num">Balance after</th>
+                  <th>Reference</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {card.transactions.map((t) => (
+                  <tr key={t.id}>
+                    <td>{new Date(t.createdAt).toLocaleString()}</td>
+                    <td>{t.kind}</td>
+                    <td className="num">
+                      <Money cents={t.amountCents} />
+                    </td>
+                    <td className="num">
+                      <Money cents={t.balanceAfterCents} />
+                    </td>
+                    <td>
+                      {t.saleId ? (
+                        <Link href={`/sales/${t.saleId}`}>sale</Link>
+                      ) : t.refundId ? (
+                        <em>refund</em>
+                      ) : (
+                        <span className="muted">—</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
     </div>

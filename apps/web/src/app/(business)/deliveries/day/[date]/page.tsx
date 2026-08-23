@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
+import { Printer } from 'lucide-react';
 import { formatMoney } from '@jetnine/shared';
 import { Button, EmptyState, LinkButton, LoadingRows, PageHeader } from '@/components/ui';
 
@@ -63,8 +64,12 @@ export default function DaySheetPage() {
           </>
         }
         actions={
-          <span className="no-print" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <span
+            className="no-print"
+            style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}
+          >
             <Button variant="primary" onClick={() => window.print()}>
+              <Printer size={14} aria-hidden />
               Print
             </Button>
             <LinkButton href="/deliveries" variant="ghost" size="sm">
@@ -86,7 +91,7 @@ export default function DaySheetPage() {
             pageBreakInside: 'avoid',
           }}
         >
-          <div style={{ display: 'flex', gap: 10, alignItems: 'baseline' }}>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'baseline', flexWrap: 'wrap' }}>
             <strong style={{ fontSize: 16 }}>#{r.routePosition ?? i + 1}</strong>
             <strong>{r.orderNumber}</strong>
             <span style={{ color: 'var(--text-secondary)', fontSize: 13 }}>

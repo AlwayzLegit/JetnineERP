@@ -10,6 +10,7 @@ import {
   syncAll,
 } from '@/lib/offline';
 import { useOnlineStatus } from '@/lib/use-online-status';
+import { RefreshCw } from 'lucide-react';
 import { Money } from '@/components/money';
 import { Button, EmptyState, LoadingRows, PageHeader } from '@/components/ui';
 
@@ -105,9 +106,10 @@ export default function PendingSalesPage() {
             variant="primary"
             onClick={() => void syncNow()}
             disabled={!online || busy}
+            className="min-h-11 inline-flex items-center gap-1.5"
             title={!online ? 'You are offline' : ''}
           >
-            {busy ? 'Syncing…' : 'Sync now'}
+            <RefreshCw size={14} /> {busy ? 'Syncing…' : 'Sync now'}
           </Button>
         }
       />
@@ -128,54 +130,58 @@ export default function PendingSalesPage() {
         </div>
       ) : (
         <div className="card">
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Queued</th>
-                <th className="num">Lines</th>
-                <th className="num">Total</th>
-                <th className="num">Attempts</th>
-                <th>Last error</th>
-                <th>&nbsp;</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => {
-                const body = r.body as {
-                  payments?: { amountCents?: number }[];
-                  lines?: {
-                    quantity?: number;
-                    unitPriceCents?: number;
-                    lineDiscountCents?: number;
-                  }[];
-                };
-                const lineCount = body.lines?.length ?? 0;
-                const total = (body.payments ?? []).reduce((s, p) => s + (p.amountCents ?? 0), 0);
-                return (
-                  <tr key={r.id}>
-                    <td>{new Date(r.enqueuedAt).toLocaleString()}</td>
-                    <td className="num">{lineCount}</td>
-                    <td className="num">
-                      <Money cents={total} />
-                    </td>
-                    <td className="num">{r.attempts}</td>
-                    <td>
-                      {r.lastError ? (
-                        <span style={{ color: 'var(--danger)', fontSize: 12 }}>{r.lastError}</span>
-                      ) : (
-                        <span className="muted">—</span>
-                      )}
-                    </td>
-                    <td>
-                      <Button variant="danger" size="sm" onClick={() => void discard(r.id)}>
-                        Discard
-                      </Button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+          <div className="overflow-x-auto">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Queued</th>
+                  <th className="num">Lines</th>
+                  <th className="num">Total</th>
+                  <th className="num">Attempts</th>
+                  <th>Last error</th>
+                  <th>&nbsp;</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r) => {
+                  const body = r.body as {
+                    payments?: { amountCents?: number }[];
+                    lines?: {
+                      quantity?: number;
+                      unitPriceCents?: number;
+                      lineDiscountCents?: number;
+                    }[];
+                  };
+                  const lineCount = body.lines?.length ?? 0;
+                  const total = (body.payments ?? []).reduce((s, p) => s + (p.amountCents ?? 0), 0);
+                  return (
+                    <tr key={r.id}>
+                      <td>{new Date(r.enqueuedAt).toLocaleString()}</td>
+                      <td className="num">{lineCount}</td>
+                      <td className="num">
+                        <Money cents={total} />
+                      </td>
+                      <td className="num">{r.attempts}</td>
+                      <td>
+                        {r.lastError ? (
+                          <span style={{ color: 'var(--danger)', fontSize: 12 }}>
+                            {r.lastError}
+                          </span>
+                        ) : (
+                          <span className="muted">—</span>
+                        )}
+                      </td>
+                      <td>
+                        <Button variant="danger" size="sm" onClick={() => void discard(r.id)}>
+                          Discard
+                        </Button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
       <p className="muted" style={{ fontSize: 12, marginTop: 16 }}>

@@ -1,5 +1,7 @@
 'use client';
 
+import { UserPlus } from 'lucide-react';
+import { toast } from 'sonner';
 import { useEffect, useState, type FormEvent } from 'react';
 import {
   Button,
@@ -88,7 +90,7 @@ export default function MembersPage() {
       await api(`/v1/business/members/${membershipId}/disable`, { method: 'POST' });
       await load();
     } catch (err) {
-      alert(err instanceof Error ? err.message : String(err));
+      toast.error(err instanceof Error ? err.message : String(err));
     }
   }
 
@@ -100,7 +102,7 @@ export default function MembersPage() {
       });
       await load();
     } catch (err) {
-      alert(err instanceof Error ? err.message : String(err));
+      toast.error(err instanceof Error ? err.message : String(err));
     }
   }
 
@@ -109,7 +111,7 @@ export default function MembersPage() {
       await api(`/v1/business/members/${membershipId}/resend-invite`, { method: 'POST' });
       setSuccess('Invitation re-sent.');
     } catch (err) {
-      alert(err instanceof Error ? err.message : String(err));
+      toast.error(err instanceof Error ? err.message : String(err));
     }
   }
 
@@ -118,14 +120,7 @@ export default function MembersPage() {
       <PageHeader title="Members" />
       <Card title="Invite member">
         <form onSubmit={invite}>
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(3, 1fr) auto',
-              gap: 12,
-              alignItems: 'end',
-            }}
-          >
+          <div className="grid items-end gap-3 sm:grid-cols-2 lg:grid-cols-[repeat(3,1fr)_auto]">
             <Field label="Email">
               <Input name="email" type="email" required style={{ width: '100%' }} />
             </Field>
@@ -143,7 +138,8 @@ export default function MembersPage() {
                 ))}
               </Select>
             </Field>
-            <Button type="submit" variant="primary">
+            <Button type="submit" variant="primary" className="w-fit">
+              <UserPlus size={14} aria-hidden />
               Invite
             </Button>
           </div>

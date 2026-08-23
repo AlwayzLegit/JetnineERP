@@ -1,5 +1,6 @@
 'use client';
 
+import { Save } from 'lucide-react';
 import { useEffect, useState, type FormEvent } from 'react';
 import { CURRENCY_LABELS, SUPPORTED_CURRENCIES } from '@jetnine/shared';
 import { Button, Field, Input, LinkButton, LoadingRows, PageHeader, Select } from '@/components/ui';
@@ -70,7 +71,7 @@ export default function SettingsPage() {
       <PageHeader
         title="Business settings"
         actions={
-          <>
+          <span className="flex flex-wrap items-center justify-end gap-2">
             <LinkButton href="/settings/tax-classes" variant="secondary" size="sm">
               Tax classes
             </LinkButton>
@@ -89,10 +90,10 @@ export default function SettingsPage() {
             <LinkButton href="/settings/billing" variant="primary" size="sm">
               Billing
             </LinkButton>
-          </>
+          </span>
         }
       />
-      <form onSubmit={submit} className="card" style={{ display: 'grid', gap: 12, maxWidth: 640 }}>
+      <form onSubmit={submit} className="card grid max-w-[640px] gap-3 sm:grid-cols-2">
         <Field label="Business name">
           <Input name="name" defaultValue={settings.name} required style={{ width: '100%' }} />
         </Field>
@@ -116,7 +117,7 @@ export default function SettingsPage() {
             bookkeeper.
           </span>
         </Field>
-        <Field label="Default tax rate (basis points; 250 = 2.5%)">
+        <Field label="Default tax rate (basis points; 250 = 2.5%)" className="sm:col-span-2">
           <Input
             name="defaultTaxRateBps"
             type="number"
@@ -143,16 +144,28 @@ export default function SettingsPage() {
             style={{ width: '100%', resize: 'vertical' }}
           />
         </Field>
-        {error && <p style={{ color: 'var(--danger)', fontSize: 13, margin: 0 }}>{error}</p>}
+        {error && (
+          <p className="sm:col-span-2" style={{ color: 'var(--danger)', fontSize: 13, margin: 0 }}>
+            {error}
+          </p>
+        )}
         {success && (
           <p
             data-testid="settings-success"
+            className="sm:col-span-2"
             style={{ color: 'var(--success)', fontSize: 13, margin: 0 }}
           >
             {success}
           </p>
         )}
-        <Button type="submit" variant="primary" disabled={saving} style={{ width: 'fit-content' }}>
+        <Button
+          type="submit"
+          variant="primary"
+          disabled={saving}
+          className="sm:col-span-2"
+          style={{ width: 'fit-content' }}
+        >
+          <Save size={14} aria-hidden />
           {saving ? 'Saving…' : 'Save'}
         </Button>
       </form>

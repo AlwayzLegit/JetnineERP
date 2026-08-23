@@ -54,36 +54,38 @@ export default function SalesPage() {
           {rows.length === 0 ? (
             <EmptyState>No sales yet. Ring one up at the register to see it here.</EmptyState>
           ) : (
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Sale</th>
-                  <th>Status</th>
-                  <th className="num">Total</th>
-                  <th>Date</th>
-                  <th>&nbsp;</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((s) => (
-                  <tr key={s.id}>
-                    <td>
-                      <code>{s.number}</code>
-                    </td>
-                    <td>
-                      <StatusBadge status={s.status} />
-                    </td>
-                    <td className="num">
-                      <Money cents={s.totalCents} />
-                    </td>
-                    <td>{new Date(s.completedAt ?? s.createdAt).toLocaleString()}</td>
-                    <td>
-                      <Link href={`/sales/${s.id}`}>Open</Link>
-                    </td>
+            <div className="overflow-x-auto">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Sale</th>
+                    <th>Status</th>
+                    <th className="num">Total</th>
+                    <th>Date</th>
+                    <th>&nbsp;</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {rows.map((s) => (
+                    <tr key={s.id}>
+                      <td>
+                        <code>{s.number}</code>
+                      </td>
+                      <td>
+                        <StatusBadge status={s.status} />
+                      </td>
+                      <td className="num">
+                        <Money cents={s.totalCents} />
+                      </td>
+                      <td>{new Date(s.completedAt ?? s.createdAt).toLocaleString()}</td>
+                      <td>
+                        <Link href={`/sales/${s.id}`}>Open</Link>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
         </div>
       )}

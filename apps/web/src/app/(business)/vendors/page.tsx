@@ -2,6 +2,8 @@
 
 import Link from 'next/link';
 import { useEffect, useState, type FormEvent } from 'react';
+import { Plus } from 'lucide-react';
+import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import {
   Button,
@@ -71,7 +73,7 @@ export default function VendorsPage() {
       await api(`/v1/vendors/${id}`, { method: 'DELETE' });
       void load();
     } catch (err) {
-      alert(err instanceof Error ? err.message : String(err));
+      toast.error(err instanceof Error ? err.message : String(err));
     }
   }
 
@@ -97,7 +99,7 @@ export default function VendorsPage() {
             <Field label="Name *">
               <Input name="name" required style={{ width: '100%' }} />
             </Field>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+            <div className="grid gap-3 sm:grid-cols-2">
               <Field label="Contact name">
                 <Input name="contactName" style={{ width: '100%' }} />
               </Field>
@@ -118,6 +120,7 @@ export default function VendorsPage() {
             </Field>
             <div>
               <Button type="submit" variant="primary">
+                <Plus size={14} />
                 Create vendor
               </Button>
             </div>
@@ -133,38 +136,40 @@ export default function VendorsPage() {
         ) : rows.length === 0 ? (
           <EmptyState>No vendors yet. Add a vendor to start placing purchase orders.</EmptyState>
         ) : (
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>Contact</th>
-                <th>Email</th>
-                <th>Phone</th>
-                <th>Status</th>
-                <th>&nbsp;</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((v) => (
-                <tr key={v.id}>
-                  <td>
-                    <strong>{v.name}</strong>
-                  </td>
-                  <td>{v.contactName ?? '—'}</td>
-                  <td>{v.email ?? '—'}</td>
-                  <td>{v.phone ?? '—'}</td>
-                  <td>
-                    <StatusBadge status={v.isActive ? 'active' : 'inactive'} />
-                  </td>
-                  <td style={{ textAlign: 'right' }}>
-                    <Button size="sm" variant="danger" onClick={() => destroy(v.id)}>
-                      Delete
-                    </Button>
-                  </td>
+          <div className="overflow-x-auto">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Contact</th>
+                  <th>Email</th>
+                  <th>Phone</th>
+                  <th>Status</th>
+                  <th>&nbsp;</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {rows.map((v) => (
+                  <tr key={v.id}>
+                    <td>
+                      <strong>{v.name}</strong>
+                    </td>
+                    <td>{v.contactName ?? '—'}</td>
+                    <td>{v.email ?? '—'}</td>
+                    <td>{v.phone ?? '—'}</td>
+                    <td>
+                      <StatusBadge status={v.isActive ? 'active' : 'inactive'} />
+                    </td>
+                    <td style={{ textAlign: 'right' }}>
+                      <Button size="sm" variant="danger" onClick={() => destroy(v.id)}>
+                        Delete
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </Card>
 

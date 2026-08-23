@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
+import { CheckCircle2, CreditCard, Truck } from 'lucide-react';
 import { formatMoney } from '@jetnine/shared';
 import { api } from '@/lib/api';
 import { Money } from '@/components/money';
@@ -178,7 +179,15 @@ export default function OrderDetailPage() {
 
   return (
     <div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 4 }}>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 12,
+          marginBottom: 4,
+          flexWrap: 'wrap',
+        }}
+      >
         <h1 className="page-title" data-testid="order-number" style={{ margin: 0 }}>
           {order.number}
         </h1>
@@ -200,41 +209,43 @@ export default function OrderDetailPage() {
         {new Date(order.createdAt).toLocaleString()}
       </p>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 16 }}>
-        <div>
+      <div className="grid gap-4 lg:grid-cols-[2fr_1fr]">
+        <div className="min-w-0">
           <Card title="Lines" style={{ marginBottom: 16 }}>
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Item</th>
-                  <th>Type</th>
-                  <th>Qty</th>
-                  <th>Reserved</th>
-                  <th>Fulfilled</th>
-                  <th className="num">Total</th>
-                </tr>
-              </thead>
-              <tbody>
-                {order.lines.map((l) => (
-                  <tr key={l.id}>
-                    <td>{l.description}</td>
-                    <td>
-                      {l.lineType === 'special_order' ? (
-                        <span style={{ color: 'var(--warning)' }}>special order</span>
-                      ) : (
-                        'stock'
-                      )}
-                    </td>
-                    <td>{l.quantity}</td>
-                    <td>{l.qtyReserved}</td>
-                    <td>{l.qtyFulfilled}</td>
-                    <td className="num">
-                      <Money cents={l.totalCents} />
-                    </td>
+            <div className="overflow-x-auto">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Item</th>
+                    <th>Type</th>
+                    <th>Qty</th>
+                    <th>Reserved</th>
+                    <th>Fulfilled</th>
+                    <th className="num">Total</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {order.lines.map((l) => (
+                    <tr key={l.id}>
+                      <td>{l.description}</td>
+                      <td>
+                        {l.lineType === 'special_order' ? (
+                          <span style={{ color: 'var(--warning)' }}>special order</span>
+                        ) : (
+                          'stock'
+                        )}
+                      </td>
+                      <td>{l.quantity}</td>
+                      <td>{l.qtyReserved}</td>
+                      <td>{l.qtyFulfilled}</td>
+                      <td className="num">
+                        <Money cents={l.totalCents} />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </Card>
 
           <Card title="Payments" style={{ marginBottom: 16 }}>
@@ -243,32 +254,34 @@ export default function OrderDetailPage() {
                 No money taken yet.
               </p>
             ) : (
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>When</th>
-                    <th>Kind</th>
-                    <th>Method</th>
-                    <th>Status</th>
-                    <th className="num">Amount</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {order.payments.map((p) => (
-                    <tr key={p.id}>
-                      <td>{new Date(p.createdAt).toLocaleString()}</td>
-                      <td>{p.kind}</td>
-                      <td>{p.method}</td>
-                      <td>
-                        <StatusBadge status={p.status} />
-                      </td>
-                      <td className="num">
-                        <Money cents={p.amountCents} />
-                      </td>
+              <div className="overflow-x-auto">
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>When</th>
+                      <th>Kind</th>
+                      <th>Method</th>
+                      <th>Status</th>
+                      <th className="num">Amount</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {order.payments.map((p) => (
+                      <tr key={p.id}>
+                        <td>{new Date(p.createdAt).toLocaleString()}</td>
+                        <td>{p.kind}</td>
+                        <td>{p.method}</td>
+                        <td>
+                          <StatusBadge status={p.status} />
+                        </td>
+                        <td className="num">
+                          <Money cents={p.amountCents} />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             )}
             {live && (
               <div
@@ -311,6 +324,7 @@ export default function OrderDetailPage() {
                   disabled={busy}
                   data-testid="take-payment"
                 >
+                  <CreditCard size={14} aria-hidden />
                   {order.paidCents === 0 ? 'Take deposit' : 'Take payment'}
                 </Button>
                 {depositOutstanding > 0 && (
@@ -382,6 +396,7 @@ export default function OrderDetailPage() {
                       disabled={busy}
                       data-testid="schedule-delivery"
                     >
+                      <Truck size={14} aria-hidden />
                       Schedule delivery
                     </Button>
                   </>
@@ -419,7 +434,7 @@ export default function OrderDetailPage() {
           </Card>
         </div>
 
-        <div>
+        <div className="min-w-0">
           <Card title="Customer" style={{ marginBottom: 16 }}>
             {customer ? (
               <p style={{ fontSize: 13, margin: 0 }}>
@@ -502,6 +517,7 @@ export default function OrderDetailPage() {
                       : 'Close the book on this order'
                   }
                 >
+                  <CheckCircle2 size={14} aria-hidden />
                   Complete order
                 </Button>
               )}
@@ -686,44 +702,46 @@ function PaymentPlanCard(props: {
           <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '0 0 8px' }}>
             {plan.frequency} plan · <span data-testid="plan-status">{plan.status}</span>
           </p>
-          <table className="table">
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>Due</th>
-                <th>Status</th>
-                <th className="num">Amount</th>
-                <th className="num"> </th>
-              </tr>
-            </thead>
-            <tbody>
-              {plan.installments.map((i) => (
-                <tr key={i.seq}>
-                  <td>{i.seq}</td>
-                  <td>{i.dueDate}</td>
-                  <td>
-                    <StatusBadge status={i.status} />
-                  </td>
-                  <td className="num">
-                    <Money cents={i.amountCents} />
-                  </td>
-                  <td className="num">
-                    {i.status !== 'paid' && plan.status === 'active' && (
-                      <Button
-                        variant="primary"
-                        size="sm"
-                        onClick={() => void pay(i.seq)}
-                        disabled={busy}
-                        data-testid={`pay-installment-${i.seq}`}
-                      >
-                        Pay cash
-                      </Button>
-                    )}
-                  </td>
+          <div className="overflow-x-auto">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Due</th>
+                  <th>Status</th>
+                  <th className="num">Amount</th>
+                  <th className="num"> </th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {plan.installments.map((i) => (
+                  <tr key={i.seq}>
+                    <td>{i.seq}</td>
+                    <td>{i.dueDate}</td>
+                    <td>
+                      <StatusBadge status={i.status} />
+                    </td>
+                    <td className="num">
+                      <Money cents={i.amountCents} />
+                    </td>
+                    <td className="num">
+                      {i.status !== 'paid' && plan.status === 'active' && (
+                        <Button
+                          variant="primary"
+                          size="sm"
+                          onClick={() => void pay(i.seq)}
+                          disabled={busy}
+                          data-testid={`pay-installment-${i.seq}`}
+                        >
+                          Pay cash
+                        </Button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </>
       )}
     </Card>

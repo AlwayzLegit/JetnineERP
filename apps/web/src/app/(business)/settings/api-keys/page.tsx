@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { toast } from 'sonner';
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import {
   Button,
@@ -87,7 +88,7 @@ export default function ApiKeysPage() {
       await api(`/v1/business/api-keys/${row.id}`, { method: 'DELETE' });
       void load();
     } catch (err) {
-      alert(err instanceof Error ? err.message : String(err));
+      toast.error(err instanceof Error ? err.message : String(err));
     }
   }
 
@@ -163,7 +164,7 @@ export default function ApiKeysPage() {
       {creating && (
         <Card style={{ maxWidth: 720, marginBottom: 16 }}>
           <form onSubmit={create} style={{ display: 'grid', gap: 8 }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 8 }}>
+            <div className="grid gap-2 sm:grid-cols-[2fr_1fr]">
               <Field label="Name *">
                 <Input
                   name="name"
@@ -192,10 +193,8 @@ export default function ApiKeysPage() {
               />
             </Field>
             <div
+              className="grid gap-1 sm:grid-cols-2"
               style={{
-                display: 'grid',
-                gridTemplateColumns: '1fr 1fr',
-                gap: 4,
                 maxHeight: 240,
                 overflow: 'auto',
                 border: '1px solid var(--border)',

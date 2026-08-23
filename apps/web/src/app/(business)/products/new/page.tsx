@@ -2,6 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import { useState, type FormEvent } from 'react';
+import { Plus } from 'lucide-react';
 import { api } from '@/lib/api';
 import { Button, Card, Field, Input, PageHeader } from '@/components/ui';
 
@@ -89,13 +90,7 @@ export default function NewProductPage() {
           {variants.map((v, i) => (
             <div
               key={i}
-              style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(5, 1fr) auto',
-                gap: 8,
-                marginBottom: 8,
-                alignItems: 'end',
-              }}
+              className="mb-2 grid grid-cols-1 items-end gap-2 sm:grid-cols-2 lg:grid-cols-[repeat(5,minmax(0,1fr))_auto]"
             >
               <Field label="SKU">
                 <Input
@@ -161,6 +156,7 @@ export default function NewProductPage() {
         {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
         <div>
           <Button type="submit" variant="primary" disabled={saving}>
+            <Plus size={14} />
             {saving ? 'Saving…' : 'Create product'}
           </Button>
         </div>

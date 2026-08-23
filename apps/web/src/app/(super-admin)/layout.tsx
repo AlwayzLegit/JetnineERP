@@ -19,20 +19,17 @@ export default function SuperAdminLayout({ children }: { children: ReactNode }) 
     <div style={{ minHeight: '100vh', background: 'var(--bg)' }}>
       <ImpersonationBanner />
       <header
+        className="flex flex-wrap items-center gap-x-6 gap-y-2 px-4 py-3 sm:px-6"
         style={{
           background: 'var(--surface)',
           borderBottom: '1px solid var(--border)',
           color: 'var(--text)',
-          padding: '12px 24px',
-          display: 'flex',
-          alignItems: 'center',
-          gap: 24,
         }}
       >
         <strong style={{ fontSize: 15 }}>
           LA Mattress ERP — <span style={{ color: 'var(--brand)' }}>Super admin</span>
         </strong>
-        <nav style={{ display: 'flex', gap: 16 }}>
+        <nav className="flex flex-wrap gap-4">
           <Link href="/admin" style={navLink}>
             Metrics
           </Link>
@@ -44,7 +41,7 @@ export default function SuperAdminLayout({ children }: { children: ReactNode }) 
           </Link>
         </nav>
       </header>
-      <main style={{ maxWidth: 1100, margin: '0 auto', padding: '32px 24px' }}>{children}</main>
+      <main className="mx-auto max-w-[1100px] px-4 py-6 sm:px-6 sm:py-8">{children}</main>
     </div>
   );
 }

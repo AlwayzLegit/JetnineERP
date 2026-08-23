@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
+import { CheckCircle2, Printer } from 'lucide-react';
 import { formatMoney } from '@jetnine/shared';
 import { api } from '@/lib/api';
 import { Button, Card, Input, LinkButton, LoadingRows, Select, StatusBadge } from '@/components/ui';
@@ -129,7 +130,15 @@ export default function ServiceTicketPage() {
 
   return (
     <div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 4 }}>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 12,
+          marginBottom: 4,
+          flexWrap: 'wrap',
+        }}
+      >
         <h1 className="page-title" style={{ margin: 0 }} data-testid="ticket-number">
           {ticket.number}
         </h1>
@@ -143,6 +152,7 @@ export default function ServiceTicketPage() {
           onClick={() => window.print()}
           style={{ marginLeft: 'auto' }}
         >
+          <Printer size={14} aria-hidden />
           Print
         </Button>
         <LinkButton href="/service" variant="ghost" size="sm">
@@ -155,8 +165,8 @@ export default function ServiceTicketPage() {
       </p>
       {error && <p style={{ color: 'var(--danger)', fontSize: 13 }}>{error}</p>}
 
-      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 16 }}>
-        <div>
+      <div className="grid gap-4 lg:grid-cols-[2fr_1fr]">
+        <div className="min-w-0">
           <Card title="Item & issue" style={{ marginBottom: 16 }}>
             <p style={{ fontSize: 13, margin: '0 0 4px' }}>
               <strong>{ticket.itemDescription ?? 'Item'}</strong>
@@ -168,18 +178,20 @@ export default function ServiceTicketPage() {
 
           <Card title="Charges" style={{ marginBottom: 16 }}>
             {ticket.lines.length > 0 && (
-              <table className="table">
-                <tbody>
-                  {ticket.lines.map((l) => (
-                    <tr key={l.id}>
-                      <td>{l.description}</td>
-                      <td style={{ color: 'var(--text-muted)' }}>{l.kind}</td>
-                      <td>×{l.quantity}</td>
-                      <td className="num">{formatMoney(l.totalCents)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <div className="overflow-x-auto">
+                <table className="table">
+                  <tbody>
+                    {ticket.lines.map((l) => (
+                      <tr key={l.id}>
+                        <td>{l.description}</td>
+                        <td style={{ color: 'var(--text-muted)' }}>{l.kind}</td>
+                        <td>×{l.quantity}</td>
+                        <td className="num">{formatMoney(l.totalCents)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             )}
             {live && (
               <>
@@ -218,7 +230,7 @@ export default function ServiceTicketPage() {
                     </div>
                   )}
                 </div>
-                <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
                   <Input
                     value={laborDesc}
                     onChange={(e) => setLaborDesc(e.target.value)}
@@ -291,7 +303,7 @@ export default function ServiceTicketPage() {
           </Card>
         </div>
 
-        <div>
+        <div className="min-w-0">
           <Card title="Money" style={{ marginBottom: 16 }}>
             <RowLine label="Total" value={ticket.totalCents} />
             <RowLine label="Paid" value={ticket.paidCents} />
@@ -363,6 +375,7 @@ export default function ServiceTicketPage() {
                       ticket.balanceDueCents > 0 ? 'Collect the balance first' : 'Hand it back'
                     }
                   >
+                    <CheckCircle2 size={14} aria-hidden />
                     Complete — picked up
                   </Button>
                 )}

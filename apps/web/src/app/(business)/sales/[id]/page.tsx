@@ -3,6 +3,8 @@
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
+import { Printer, RotateCcw } from 'lucide-react';
+import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import { Money } from '@/components/money';
 import { PrintableReceipt, type ReceiptBusiness } from '@/components/printable-receipt';
@@ -88,7 +90,7 @@ export default function SaleDetailPage() {
       .filter(([, q]) => q > 0)
       .map(([saleLineId, quantity]) => ({ saleLineId, quantity }));
     if (lines.length === 0) {
-      alert('Select at least one line and a quantity to refund.');
+      toast.error('Select at least one line and a quantity to refund.');
       return;
     }
     setBusy(true);
@@ -99,9 +101,10 @@ export default function SaleDetailPage() {
       });
       setRefundQty({});
       setReason('');
+      toast.success('Refund processed.');
       void load();
     } catch (err) {
-      alert(err instanceof Error ? err.message : String(err));
+      toast.error(err instanceof Error ? err.message : String(err));
     } finally {
       setBusy(false);
     }
@@ -123,8 +126,13 @@ export default function SaleDetailPage() {
         </h1>
         <StatusBadge status={sale.status} />
         <div style={{ marginLeft: 'auto' }}>
-          <Button variant="primary" size="sm" onClick={() => window.print()}>
-            Print receipt
+          <Button
+            variant="primary"
+            size="sm"
+            className="inline-flex items-center gap-1.5"
+            onClick={() => window.print()}
+          >
+            <Printer size={14} /> Print receipt
           </Button>
         </div>
       </div>
@@ -152,60 +160,65 @@ export default function SaleDetailPage() {
 
       <div className="card">
         <h2 className="card-title">Lines</h2>
-        <table className="table">
-          <thead>
-            <tr>
-              <th>Item</th>
-              <th className="num">Sold</th>
-              <th className="num">Refunded</th>
-              <th className="num">Unit</th>
-              <th className="num">Total</th>
-              {refundable && <th>Refund qty</th>}
-            </tr>
-          </thead>
-          <tbody>
-            {sale.lines.map((l) => {
-              const remaining = l.quantity - l.refundedQuantity;
-              return (
-                <tr key={l.id}>
-                  <td>{l.description}</td>
-                  <td className="num">{l.quantity}</td>
-                  <td className="num">{l.refundedQuantity}</td>
-                  <td className="num">
-                    <Money cents={l.unitPriceCents} />
-                  </td>
-                  <td className="num">
-                    <Money cents={l.totalCents} />
-                  </td>
-                  {refundable && (
-                    <td>
-                      {remaining > 0 ? (
-                        <input
-                          type="number"
-                          min={0}
-                          max={remaining}
-                          className="input"
-                          value={refundQty[l.id] ?? 0}
-                          onChange={(e) =>
-                            setRefundQty((prev) => ({
-                              ...prev,
-                              [l.id]: Math.max(0, Math.min(remaining, Number(e.target.value) || 0)),
-                            }))
-                          }
-                          style={{ width: 64, padding: '5px 6px' }}
-                        />
-                      ) : (
-                        <span className="muted" style={{ fontSize: 12 }}>
-                          fully refunded
-                        </span>
-                      )}
+        <div className="overflow-x-auto">
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Item</th>
+                <th className="num">Sold</th>
+                <th className="num">Refunded</th>
+                <th className="num">Unit</th>
+                <th className="num">Total</th>
+                {refundable && <th>Refund qty</th>}
+              </tr>
+            </thead>
+            <tbody>
+              {sale.lines.map((l) => {
+                const remaining = l.quantity - l.refundedQuantity;
+                return (
+                  <tr key={l.id}>
+                    <td>{l.description}</td>
+                    <td className="num">{l.quantity}</td>
+                    <td className="num">{l.refundedQuantity}</td>
+                    <td className="num">
+                      <Money cents={l.unitPriceCents} />
                     </td>
-                  )}
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+                    <td className="num">
+                      <Money cents={l.totalCents} />
+                    </td>
+                    {refundable && (
+                      <td>
+                        {remaining > 0 ? (
+                          <input
+                            type="number"
+                            min={0}
+                            max={remaining}
+                            className="input"
+                            value={refundQty[l.id] ?? 0}
+                            onChange={(e) =>
+                              setRefundQty((prev) => ({
+                                ...prev,
+                                [l.id]: Math.max(
+                                  0,
+                                  Math.min(remaining, Number(e.target.value) || 0),
+                                ),
+                              }))
+                            }
+                            style={{ width: 64, padding: '5px 6px' }}
+                          />
+                        ) : (
+                          <span className="muted" style={{ fontSize: 12 }}>
+                            fully refunded
+                          </span>
+                        )}
+                      </td>
+                    )}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       <div className="card">
@@ -260,8 +273,13 @@ export default function SaleDetailPage() {
               style={{ display: 'block', width: '100%' }}
             />
           </Field>
-          <Button variant="primary" onClick={submitRefund} disabled={busy}>
-            {busy ? 'Processing…' : 'Process refund'}
+          <Button
+            variant="primary"
+            onClick={submitRefund}
+            disabled={busy}
+            className="min-h-11 inline-flex items-center gap-1.5"
+          >
+            <RotateCcw size={14} /> {busy ? 'Processing…' : 'Process refund'}
           </Button>
         </div>
       )}

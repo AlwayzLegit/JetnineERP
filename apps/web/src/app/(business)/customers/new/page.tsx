@@ -1,6 +1,7 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
+import { UserPlus } from 'lucide-react';
 import { useState, type FormEvent } from 'react';
 import { Button, Card, Field, Input, PageHeader } from '@/components/ui';
 import { api } from '@/lib/api';
@@ -43,7 +44,7 @@ export default function NewCustomerPage() {
             At least one of name, email, or phone is required.
           </p>
           <div style={{ display: 'grid', gap: 8 }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+            <div className="grid gap-2 sm:grid-cols-2">
               <Field label="First name">
                 <Input name="firstName" style={{ width: '100%' }} />
               </Field>
@@ -69,8 +70,9 @@ export default function NewCustomerPage() {
         </Card>
 
         {error && <p style={{ color: 'var(--danger)', margin: 0 }}>{error}</p>}
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div className="flex flex-wrap gap-2">
           <Button type="submit" variant="primary" disabled={saving}>
+            <UserPlus size={14} aria-hidden />
             {saving ? 'Saving…' : 'Create customer'}
           </Button>
           <Button type="button" variant="secondary" onClick={() => router.back()}>

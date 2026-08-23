@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { toast } from 'sonner';
 import { useEffect, useState, type FormEvent } from 'react';
 import { Button, Card, EmptyState, Field, Input, LoadingRows, PageHeader } from '@/components/ui';
 import { api } from '@/lib/api';
@@ -81,7 +82,7 @@ export default function TaxClassesPage() {
       setEditing(null);
       void load();
     } catch (err) {
-      alert(err instanceof Error ? err.message : String(err));
+      toast.error(err instanceof Error ? err.message : String(err));
     }
   }
 
@@ -95,7 +96,7 @@ export default function TaxClassesPage() {
       await api(`/v1/business/tax-classes/${row.id}`, { method: 'DELETE' });
       void load();
     } catch (err) {
-      alert(err instanceof Error ? err.message : String(err));
+      toast.error(err instanceof Error ? err.message : String(err));
     }
   }
 
@@ -332,50 +333,52 @@ function OverridesPanel({ taxClass, locations }: { taxClass: TaxClass; locations
         Leave blank to use the fallback. Empty input + Save removes the override.
       </p>
       {error && <p style={{ color: 'var(--danger)', fontSize: 12 }}>{error}</p>}
-      <table className="table">
-        <thead>
-          <tr>
-            <th>Location</th>
-            <th>Rate (%)</th>
-            <th>Source</th>
-            <th />
-          </tr>
-        </thead>
-        <tbody>
-          {locations.map((l) => {
-            const ov = overrides.get(l.id);
-            return (
-              <tr key={l.id}>
-                <td>{l.name}</td>
-                <td>
-                  <Input
-                    type="number"
-                    step="0.01"
-                    min={0}
-                    placeholder={(taxClass.rateBps / 100).toFixed(2)}
-                    value={drafts[l.id] ?? ''}
-                    onChange={(e) => setDrafts((prev) => ({ ...prev, [l.id]: e.target.value }))}
-                    style={{ width: 90 }}
-                  />
-                </td>
-                <td style={{ color: 'var(--text-secondary)', fontSize: 12 }}>
-                  {ov ? 'override' : 'class fallback'}
-                </td>
-                <td>
-                  <Button
-                    size="sm"
-                    variant="primary"
-                    onClick={() => void saveRate(l.id)}
-                    disabled={busy === l.id}
-                  >
-                    {busy === l.id ? '…' : 'Save'}
-                  </Button>
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+      <div className="overflow-x-auto">
+        <table className="table">
+          <thead>
+            <tr>
+              <th>Location</th>
+              <th>Rate (%)</th>
+              <th>Source</th>
+              <th />
+            </tr>
+          </thead>
+          <tbody>
+            {locations.map((l) => {
+              const ov = overrides.get(l.id);
+              return (
+                <tr key={l.id}>
+                  <td>{l.name}</td>
+                  <td>
+                    <Input
+                      type="number"
+                      step="0.01"
+                      min={0}
+                      placeholder={(taxClass.rateBps / 100).toFixed(2)}
+                      value={drafts[l.id] ?? ''}
+                      onChange={(e) => setDrafts((prev) => ({ ...prev, [l.id]: e.target.value }))}
+                      style={{ width: 90 }}
+                    />
+                  </td>
+                  <td style={{ color: 'var(--text-secondary)', fontSize: 12 }}>
+                    {ov ? 'override' : 'class fallback'}
+                  </td>
+                  <td>
+                    <Button
+                      size="sm"
+                      variant="primary"
+                      onClick={() => void saveRate(l.id)}
+                      disabled={busy === l.id}
+                    >
+                      {busy === l.id ? '…' : 'Save'}
+                    </Button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
+import { FileText } from 'lucide-react';
 import { api } from '@/lib/api';
 import { Button, Card, EmptyState, LoadingRows, PageHeader, Select } from '@/components/ui';
 
@@ -92,7 +93,7 @@ export default function SpecialOrdersPage() {
         title="Special orders to buy"
         sub="Receiving the PO later commits the arrived units to these customers automatically and emails them that their item is in."
         actions={
-          <>
+          <span className="flex flex-wrap items-center gap-2">
             <Select value={vendorId} onChange={(e) => setVendorId(e.target.value)}>
               {vendors.length === 0 && <option value="">No vendors yet</option>}
               {vendors.map((v) => (
@@ -107,9 +108,10 @@ export default function SpecialOrdersPage() {
               disabled={busy || !vendorId || selected.length === 0}
               data-testid="generate-po"
             >
+              <FileText size={14} aria-hidden />
               Generate PO ({selected.length})
             </Button>
-          </>
+          </span>
         }
       />
       {error && <p style={{ color: 'var(--danger)', fontSize: 13 }}>{error}</p>}

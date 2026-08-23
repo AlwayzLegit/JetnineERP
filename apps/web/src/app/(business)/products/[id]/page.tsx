@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
+import { toast } from 'sonner';
 import { centsToInputString } from '@jetnine/shared';
 import { api } from '@/lib/api';
 import { Money } from '@/components/money';
@@ -74,7 +75,7 @@ export default function ProductDetailPage() {
       });
       void load();
     } catch (err) {
-      alert(err instanceof Error ? err.message : String(err));
+      toast.error(err instanceof Error ? err.message : String(err));
     }
   }
 
@@ -87,7 +88,7 @@ export default function ProductDetailPage() {
       });
       void load();
     } catch (err) {
-      alert(err instanceof Error ? err.message : String(err));
+      toast.error(err instanceof Error ? err.message : String(err));
     }
   }
 
@@ -97,7 +98,7 @@ export default function ProductDetailPage() {
       await api(`/v1/products/variants/${variantId}`, { method: 'DELETE' });
       void load();
     } catch (err) {
-      alert(err instanceof Error ? err.message : String(err));
+      toast.error(err instanceof Error ? err.message : String(err));
     }
   }
 
@@ -121,7 +122,7 @@ export default function ProductDetailPage() {
       });
       void load();
     } catch (err) {
-      alert(err instanceof Error ? err.message : String(err));
+      toast.error(err instanceof Error ? err.message : String(err));
     }
   }
 
@@ -131,7 +132,7 @@ export default function ProductDetailPage() {
       await api(`/v1/products/images/${imageId}`, { method: 'DELETE' });
       void load();
     } catch (err) {
-      alert(err instanceof Error ? err.message : String(err));
+      toast.error(err instanceof Error ? err.message : String(err));
     }
   }
 
@@ -173,58 +174,60 @@ export default function ProductDetailPage() {
       )}
 
       <Card title="Variants" style={{ marginBottom: 16 }}>
-        <table className="table">
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>SKU</th>
-              <th>Barcode</th>
-              <th>Price</th>
-              <th>Cost</th>
-              <th>&nbsp;</th>
-            </tr>
-          </thead>
-          <tbody>
-            {p.variants.map((v) => (
-              <tr key={v.id}>
-                <td>{v.name ?? '—'}</td>
-                <td>
-                  <code>{v.sku ?? '—'}</code>
-                </td>
-                <td>
-                  <code>{v.barcode ?? '—'}</code>
-                </td>
-                <td>
-                  <Input
-                    defaultValue={centsToInputString(v.priceCents)}
-                    type="number"
-                    step="0.01"
-                    onBlur={(e) => {
-                      if (e.target.value !== centsToInputString(v.priceCents)) {
-                        void setVariantPrice(v.id, e.target.value);
-                      }
-                    }}
-                    style={{ width: 90 }}
-                  />
-                </td>
-                <td>
-                  {v.costCents != null ? (
-                    <Money cents={v.costCents} />
-                  ) : (
-                    <em className="muted">hidden</em>
-                  )}
-                </td>
-                <td style={{ textAlign: 'right' }}>
-                  {v.isActive && (
-                    <Button size="sm" variant="danger" onClick={() => deactivateVariant(v.id)}>
-                      Deactivate
-                    </Button>
-                  )}
-                </td>
+        <div className="overflow-x-auto">
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>SKU</th>
+                <th>Barcode</th>
+                <th>Price</th>
+                <th>Cost</th>
+                <th>&nbsp;</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {p.variants.map((v) => (
+                <tr key={v.id}>
+                  <td>{v.name ?? '—'}</td>
+                  <td>
+                    <code>{v.sku ?? '—'}</code>
+                  </td>
+                  <td>
+                    <code>{v.barcode ?? '—'}</code>
+                  </td>
+                  <td>
+                    <Input
+                      defaultValue={centsToInputString(v.priceCents)}
+                      type="number"
+                      step="0.01"
+                      onBlur={(e) => {
+                        if (e.target.value !== centsToInputString(v.priceCents)) {
+                          void setVariantPrice(v.id, e.target.value);
+                        }
+                      }}
+                      style={{ width: 90 }}
+                    />
+                  </td>
+                  <td>
+                    {v.costCents != null ? (
+                      <Money cents={v.costCents} />
+                    ) : (
+                      <em className="muted">hidden</em>
+                    )}
+                  </td>
+                  <td style={{ textAlign: 'right' }}>
+                    {v.isActive && (
+                      <Button size="sm" variant="danger" onClick={() => deactivateVariant(v.id)}>
+                        Deactivate
+                      </Button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </Card>
 
       <Card title="Images">

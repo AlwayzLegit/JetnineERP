@@ -58,36 +58,38 @@ export default function TransfersPage() {
             No transfers yet. Create a transfer to move stock between locations.
           </EmptyState>
         ) : (
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Transfer</th>
-                <th>From</th>
-                <th>To</th>
-                <th>Status</th>
-                <th>Created</th>
-                <th>&nbsp;</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((t) => (
-                <tr key={t.id}>
-                  <td>
-                    <code>{t.number}</code>
-                  </td>
-                  <td>{t.fromLocationName ?? '—'}</td>
-                  <td>{t.toLocationName ?? '—'}</td>
-                  <td>
-                    <StatusBadge status={t.status} />
-                  </td>
-                  <td>{new Date(t.createdAt).toLocaleDateString()}</td>
-                  <td style={{ textAlign: 'right' }}>
-                    <Link href={`/transfers/${t.id}`}>Open</Link>
-                  </td>
+          <div className="overflow-x-auto">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Transfer</th>
+                  <th>From</th>
+                  <th>To</th>
+                  <th>Status</th>
+                  <th>Created</th>
+                  <th>&nbsp;</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {rows.map((t) => (
+                  <tr key={t.id}>
+                    <td>
+                      <code>{t.number}</code>
+                    </td>
+                    <td>{t.fromLocationName ?? '—'}</td>
+                    <td>{t.toLocationName ?? '—'}</td>
+                    <td>
+                      <StatusBadge status={t.status} />
+                    </td>
+                    <td>{new Date(t.createdAt).toLocaleDateString()}</td>
+                    <td style={{ textAlign: 'right' }}>
+                      <Link href={`/transfers/${t.id}`}>Open</Link>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </Card>
     </div>

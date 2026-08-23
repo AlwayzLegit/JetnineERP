@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { Search, UserPlus } from 'lucide-react';
 import { useEffect, useState, type FormEvent } from 'react';
 import {
   Button,
@@ -56,20 +57,22 @@ export default function CustomersPage() {
         title="Customers"
         actions={
           <LinkButton href="/customers/new" variant="primary">
+            <UserPlus size={14} aria-hidden />
             Add customer
           </LinkButton>
         }
       />
 
-      <form onSubmit={search} style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+      <form onSubmit={search} className="mb-4 flex flex-wrap gap-2">
         <Input
           name="q"
           placeholder="Search by name, email, or phone"
           value={q}
           onChange={(e) => setQ(e.target.value)}
-          style={{ flex: 1 }}
+          className="min-w-[200px] flex-1"
         />
         <Button type="submit" variant="primary">
+          <Search size={14} aria-hidden />
           Search
         </Button>
         <Button

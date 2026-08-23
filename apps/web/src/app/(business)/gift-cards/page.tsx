@@ -54,43 +54,45 @@ export default function GiftCardsPage() {
               No gift cards issued yet. Use “+ Issue new” to create the first one.
             </EmptyState>
           ) : (
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Code</th>
-                  <th className="num">Balance</th>
-                  <th>Issued for</th>
-                  <th>Status</th>
-                  <th>Issued</th>
-                  <th>Expires</th>
-                  <th>&nbsp;</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((g) => (
-                  <tr key={g.id}>
-                    <td>
-                      <code>{g.code}</code>
-                    </td>
-                    <td className="num">
-                      <Money cents={g.currentBalanceCents} />
-                      <div className="muted" style={{ fontSize: 11 }}>
-                        of <Money cents={g.initialBalanceCents} />
-                      </div>
-                    </td>
-                    <td>—</td>
-                    <td>
-                      <StatusBadge status={g.status} />
-                    </td>
-                    <td>{new Date(g.createdAt).toLocaleDateString()}</td>
-                    <td>{g.expiresAt ? new Date(g.expiresAt).toLocaleDateString() : '—'}</td>
-                    <td>
-                      <Link href={`/gift-cards/${g.id}`}>Open</Link>
-                    </td>
+            <div className="overflow-x-auto">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Code</th>
+                    <th className="num">Balance</th>
+                    <th>Issued for</th>
+                    <th>Status</th>
+                    <th>Issued</th>
+                    <th>Expires</th>
+                    <th>&nbsp;</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {rows.map((g) => (
+                    <tr key={g.id}>
+                      <td>
+                        <code>{g.code}</code>
+                      </td>
+                      <td className="num">
+                        <Money cents={g.currentBalanceCents} />
+                        <div className="muted" style={{ fontSize: 11 }}>
+                          of <Money cents={g.initialBalanceCents} />
+                        </div>
+                      </td>
+                      <td>—</td>
+                      <td>
+                        <StatusBadge status={g.status} />
+                      </td>
+                      <td>{new Date(g.createdAt).toLocaleDateString()}</td>
+                      <td>{g.expiresAt ? new Date(g.expiresAt).toLocaleDateString() : '—'}</td>
+                      <td>
+                        <Link href={`/gift-cards/${g.id}`}>Open</Link>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
         </div>
       )}

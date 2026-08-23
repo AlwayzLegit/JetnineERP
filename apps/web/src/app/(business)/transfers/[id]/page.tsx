@@ -3,6 +3,8 @@
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
+import { PackageCheck, Truck } from 'lucide-react';
+import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import { Button, Card, Input, LoadingRows, PageHeader, StatusBadge } from '@/components/ui';
 
@@ -58,7 +60,7 @@ export default function TransferDetailPage() {
       });
       void load();
     } catch (err) {
-      alert(err instanceof Error ? err.message : String(err));
+      toast.error(err instanceof Error ? err.message : String(err));
     } finally {
       setBusy(false);
     }
@@ -70,7 +72,7 @@ export default function TransferDetailPage() {
       .filter(([, q]) => q > 0)
       .map(([lineId, quantity]) => ({ lineId, quantity }));
     if (lines.length === 0) {
-      alert('Enter a quantity on at least one line.');
+      toast.error('Enter a quantity on at least one line.');
       return;
     }
     setBusy(true);
@@ -82,7 +84,7 @@ export default function TransferDetailPage() {
       setRecvQty({});
       void load();
     } catch (err) {
-      alert(err instanceof Error ? err.message : String(err));
+      toast.error(err instanceof Error ? err.message : String(err));
     } finally {
       setBusy(false);
     }
@@ -95,7 +97,7 @@ export default function TransferDetailPage() {
       await api(`/v1/stock-transfers/${id}/cancel`, { method: 'POST' });
       void load();
     } catch (err) {
-      alert(err instanceof Error ? err.message : String(err));
+      toast.error(err instanceof Error ? err.message : String(err));
     } finally {
       setBusy(false);
     }
@@ -123,59 +125,64 @@ export default function TransferDetailPage() {
       />
 
       <Card title="Lines" style={{ marginBottom: 16 }}>
-        <table className="table">
-          <thead>
-            <tr>
-              <th>Item</th>
-              <th className="num">Shipped</th>
-              <th className="num">Received</th>
-              {isInTransit && <th>Receive qty</th>}
-            </tr>
-          </thead>
-          <tbody>
-            {t.lines.map((l) => {
-              const remaining = l.quantityShipped - l.quantityReceived;
-              return (
-                <tr key={l.id}>
-                  <td>
-                    {l.productName}
-                    {l.variantName && (
-                      <span style={{ color: 'var(--text-secondary)' }}> — {l.variantName}</span>
-                    )}
-                    {l.sku && (
-                      <span style={{ color: 'var(--text-muted)', fontSize: 11, marginLeft: 6 }}>
-                        <code>{l.sku}</code>
-                      </span>
-                    )}
-                  </td>
-                  <td className="num">{l.quantityShipped}</td>
-                  <td className="num">{l.quantityReceived}</td>
-                  {isInTransit && (
+        <div className="overflow-x-auto">
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Item</th>
+                <th className="num">Shipped</th>
+                <th className="num">Received</th>
+                {isInTransit && <th>Receive qty</th>}
+              </tr>
+            </thead>
+            <tbody>
+              {t.lines.map((l) => {
+                const remaining = l.quantityShipped - l.quantityReceived;
+                return (
+                  <tr key={l.id}>
                     <td>
-                      {remaining > 0 ? (
-                        <Input
-                          type="number"
-                          min={0}
-                          max={remaining}
-                          value={recvQty[l.id] ?? 0}
-                          onChange={(e) =>
-                            setRecvQty((prev) => ({
-                              ...prev,
-                              [l.id]: Math.max(0, Math.min(remaining, Number(e.target.value) || 0)),
-                            }))
-                          }
-                          style={{ width: 70 }}
-                        />
-                      ) : (
-                        <span className="badge badge-success">complete</span>
+                      {l.productName}
+                      {l.variantName && (
+                        <span style={{ color: 'var(--text-secondary)' }}> — {l.variantName}</span>
+                      )}
+                      {l.sku && (
+                        <span style={{ color: 'var(--text-muted)', fontSize: 11, marginLeft: 6 }}>
+                          <code>{l.sku}</code>
+                        </span>
                       )}
                     </td>
-                  )}
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+                    <td className="num">{l.quantityShipped}</td>
+                    <td className="num">{l.quantityReceived}</td>
+                    {isInTransit && (
+                      <td>
+                        {remaining > 0 ? (
+                          <Input
+                            type="number"
+                            min={0}
+                            max={remaining}
+                            value={recvQty[l.id] ?? 0}
+                            onChange={(e) =>
+                              setRecvQty((prev) => ({
+                                ...prev,
+                                [l.id]: Math.max(
+                                  0,
+                                  Math.min(remaining, Number(e.target.value) || 0),
+                                ),
+                              }))
+                            }
+                            style={{ width: 70 }}
+                          />
+                        ) : (
+                          <span className="badge badge-success">complete</span>
+                        )}
+                      </td>
+                    )}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       </Card>
 
       {t.notes && (
@@ -187,10 +194,11 @@ export default function TransferDetailPage() {
         </Card>
       )}
 
-      <div style={{ display: 'flex', gap: 8 }}>
+      <div className="flex flex-wrap gap-2">
         {isDraft && (
           <>
             <Button variant="primary" onClick={ship} disabled={busy}>
+              <Truck size={14} />
               {busy ? 'Shipping…' : 'Ship transfer'}
             </Button>
             <Button variant="danger" onClick={cancel} disabled={busy}>
@@ -200,6 +208,7 @@ export default function TransferDetailPage() {
         )}
         {isInTransit && (
           <Button variant="primary" onClick={submitReceive} disabled={busy}>
+            <PackageCheck size={14} />
             {busy ? 'Receiving…' : 'Record receipt'}
           </Button>
         )}

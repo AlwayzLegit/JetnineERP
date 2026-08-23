@@ -1,6 +1,8 @@
 'use client';
 
 import { useEffect, useState, type FormEvent } from 'react';
+import { Plus } from 'lucide-react';
+import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import {
   Button,
@@ -72,7 +74,7 @@ export default function CategoriesPage() {
       });
       await load();
     } catch (err) {
-      alert(err instanceof Error ? err.message : String(err));
+      toast.error(err instanceof Error ? err.message : String(err));
     }
   }
 
@@ -82,7 +84,7 @@ export default function CategoriesPage() {
       await api(`/v1/categories/${node.id}`, { method: 'DELETE' });
       await load();
     } catch (err) {
-      alert(err instanceof Error ? err.message : String(err));
+      toast.error(err instanceof Error ? err.message : String(err));
     }
   }
 
@@ -92,14 +94,7 @@ export default function CategoriesPage() {
 
       <Card title="Add category" style={{ marginBottom: 16 }}>
         <form onSubmit={create}>
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: '2fr 2fr auto',
-              gap: 12,
-              alignItems: 'end',
-            }}
-          >
+          <div className="grid grid-cols-1 items-end gap-3 sm:grid-cols-[2fr_2fr_auto]">
             <Field label="Name">
               <Input name="name" required style={{ width: '100%' }} />
             </Field>
@@ -114,6 +109,7 @@ export default function CategoriesPage() {
               </Select>
             </Field>
             <Button type="submit" variant="primary">
+              <Plus size={14} />
               Add
             </Button>
           </div>

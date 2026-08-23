@@ -1,5 +1,6 @@
 'use client';
 
+import { Upload } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { Button, Card, PageHeader, StatusBadge } from '@/components/ui';
 import { api } from '@/lib/api';
@@ -165,7 +166,7 @@ export default function ImportWizardPage() {
       />
       {error && <p style={{ color: 'var(--danger)', fontSize: 13 }}>{error}</p>}
 
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 16 }}>
+      <div className="mb-4 flex flex-wrap gap-2">
         {entities.map((e, i) => (
           <Button
             key={e.entity}
@@ -180,9 +181,10 @@ export default function ImportWizardPage() {
       </div>
 
       <Card>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        <div className="flex flex-wrap items-center gap-3">
           <strong style={{ fontSize: 14 }}>{spec?.label ?? entity}</strong>
           <label className="btn btn-secondary btn-sm" style={{ cursor: 'pointer' }}>
+            <Upload size={13} aria-hidden />
             {busy ? 'Working…' : 'Upload CSV'}
             <input
               type="file"
@@ -243,11 +245,11 @@ export default function ImportWizardPage() {
 
       {active && spec && (
         <Card data-testid="batch-panel">
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
+          <div className="mb-2 flex flex-wrap items-center gap-3">
             <strong style={{ fontSize: 14 }}>
               {active.filename ?? 'Batch'} — {active.status}
             </strong>
-            <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+            <div className="ml-auto flex flex-wrap gap-2">
               <Button
                 variant="primary"
                 onClick={() => void run('validate')}
@@ -270,7 +272,7 @@ export default function ImportWizardPage() {
           <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '0 0 8px' }}>
             Column mapping
           </p>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
             {spec.fields.map((f) => (
               <label key={f.name} style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
                 {f.name}

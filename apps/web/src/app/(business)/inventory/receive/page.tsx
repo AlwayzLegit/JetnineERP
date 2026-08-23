@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
+import { PackageCheck, Search } from 'lucide-react';
 import { api } from '@/lib/api';
 import { Button, Card, EmptyState, Field, Input, PageHeader, Select } from '@/components/ui';
 
@@ -138,7 +139,7 @@ export default function ReceivePage() {
       <PageHeader title="Receive inventory" />
 
       <Card style={{ marginBottom: 16 }}>
-        <div style={{ display: 'grid', gap: 10 }}>
+        <div className="grid gap-3 sm:grid-cols-2">
           <Field label="Location">
             <Select
               value={locationId}
@@ -164,7 +165,7 @@ export default function ReceivePage() {
       </Card>
 
       <Card title="Add products" style={{ marginBottom: 16 }}>
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div className="flex flex-wrap gap-2">
           <Input
             placeholder="Search by name, SKU, or barcode"
             value={search}
@@ -175,9 +176,10 @@ export default function ReceivePage() {
                 void searchProducts();
               }
             }}
-            style={{ flex: 1 }}
+            className="min-w-[200px] flex-1"
           />
           <Button variant="primary" onClick={searchProducts}>
+            <Search size={14} />
             Search
           </Button>
         </div>
@@ -212,36 +214,38 @@ export default function ReceivePage() {
         {lines.length === 0 ? (
           <EmptyState>No lines yet. Search and add a product.</EmptyState>
         ) : (
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Variant</th>
-                <th>Quantity</th>
-                <th>&nbsp;</th>
-              </tr>
-            </thead>
-            <tbody>
-              {lines.map((l, i) => (
-                <tr key={l.variantId}>
-                  <td>{l.label}</td>
-                  <td>
-                    <Input
-                      type="number"
-                      min={0}
-                      value={l.quantity}
-                      onChange={(e) => setQty(i, Number(e.target.value))}
-                      style={{ width: 100 }}
-                    />
-                  </td>
-                  <td style={{ textAlign: 'right' }}>
-                    <Button size="sm" variant="danger" onClick={() => removeLine(i)}>
-                      Remove
-                    </Button>
-                  </td>
+          <div className="overflow-x-auto">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Variant</th>
+                  <th>Quantity</th>
+                  <th>&nbsp;</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {lines.map((l, i) => (
+                  <tr key={l.variantId}>
+                    <td>{l.label}</td>
+                    <td>
+                      <Input
+                        type="number"
+                        min={0}
+                        value={l.quantity}
+                        onChange={(e) => setQty(i, Number(e.target.value))}
+                        style={{ width: 100 }}
+                      />
+                    </td>
+                    <td style={{ textAlign: 'right' }}>
+                      <Button size="sm" variant="danger" onClick={() => removeLine(i)}>
+                        Remove
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </Card>
 
@@ -252,6 +256,7 @@ export default function ReceivePage() {
         </p>
       )}
       <Button variant="primary" onClick={commit} disabled={lines.length === 0}>
+        <PackageCheck size={14} />
         Commit
       </Button>
     </div>

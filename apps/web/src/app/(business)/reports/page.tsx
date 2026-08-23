@@ -1,5 +1,6 @@
 'use client';
 
+import { Download, RefreshCw } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Button, Card, Field, Input, LoadingRows, PageHeader } from '@/components/ui';
 import { api, apiUrl } from '@/lib/api';
@@ -118,6 +119,7 @@ export default function ReportsPage() {
             }}
             style={{ alignSelf: 'flex-end' }}
           >
+            <RefreshCw size={14} aria-hidden />
             Refresh
           </Button>
           <a
@@ -125,6 +127,7 @@ export default function ReportsPage() {
             href={`${apiUrl}/v1/reports/sales/daily?start=${start}&end=${end}&format=csv`}
             style={{ alignSelf: 'flex-end' }}
           >
+            <Download size={14} aria-hidden />
             Download CSV
           </a>
         </div>
@@ -231,6 +234,7 @@ export default function ReportsPage() {
           href={`${apiUrl}/v1/reports/sales/by-product?start=${start}&end=${end}&format=csv`}
           style={{ display: 'inline-flex', marginBottom: 12 }}
         >
+          <Download size={13} aria-hidden />
           Download CSV
         </a>
         {products ? (
@@ -275,7 +279,7 @@ export default function ReportsPage() {
       </Card>
 
       <Card title="Inventory on hand">
-        <div style={{ display: 'flex', gap: 8, marginBottom: 12, alignItems: 'flex-end' }}>
+        <div className="mb-3 flex flex-wrap items-end gap-2">
           <Field label="Show items with available ≤">
             <Input
               type="number"
@@ -286,12 +290,14 @@ export default function ReportsPage() {
             />
           </Field>
           <Button variant="primary" onClick={loadInv}>
+            <RefreshCw size={14} aria-hidden />
             Refresh
           </Button>
           <a
             className="btn btn-secondary"
             href={`${apiUrl}/v1/reports/inventory/on-hand${lowStock ? `?lowStock=${encodeURIComponent(lowStock)}&format=csv` : '?format=csv'}`}
           >
+            <Download size={14} aria-hidden />
             Download CSV
           </a>
         </div>

@@ -1,5 +1,6 @@
 'use client';
 
+import { Camera } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Button, Card, EmptyState, Input, PageHeader, Select } from '@/components/ui';
 import { api } from '@/lib/api';
@@ -116,7 +117,7 @@ export default function TemplatesPage() {
       {message && <p style={{ color: 'var(--success)', fontSize: 13 }}>{message}</p>}
 
       <Card title="Save a business as a template" style={{ marginBottom: 16 }}>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <div className="flex flex-wrap items-center gap-2">
           <Select value={sourceId} onChange={(e) => setSourceId(e.target.value)}>
             {businesses.map((b) => (
               <option key={b.id} value={b.id}>
@@ -153,6 +154,7 @@ export default function TemplatesPage() {
             disabled={busy || !name.trim() || !sourceId}
             data-testid="snapshot-template"
           >
+            <Camera size={14} aria-hidden />
             Snapshot
           </Button>
         </div>

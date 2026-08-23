@@ -1,6 +1,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { PackageCheck } from 'lucide-react';
+import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import {
   Button,
@@ -70,7 +72,7 @@ export default function InventoryPage() {
     if (!deltaStr) return;
     const delta = Number(deltaStr);
     if (!Number.isInteger(delta) || delta === 0) {
-      alert('delta must be a non-zero integer');
+      toast.error('delta must be a non-zero integer');
       return;
     }
     const reason = prompt(`Reason (${ADJUST_REASONS.join(', ')}):`, 'count_correction');
@@ -89,7 +91,7 @@ export default function InventoryPage() {
       });
       await loadLevels(locationId);
     } catch (err) {
-      alert(err instanceof Error ? err.message : String(err));
+      toast.error(err instanceof Error ? err.message : String(err));
     }
   }
 
@@ -99,12 +101,13 @@ export default function InventoryPage() {
         title="Inventory"
         actions={
           <LinkButton href="/inventory/receive" variant="primary">
+            <PackageCheck size={14} />
             Receive
           </LinkButton>
         }
       />
 
-      <div style={{ marginBottom: 16, display: 'flex', gap: 8, alignItems: 'center' }}>
+      <div className="mb-4 flex flex-wrap items-center gap-2">
         <label
           htmlFor="inventory-location"
           style={{ fontSize: 13, color: 'var(--text-secondary)' }}
@@ -134,40 +137,42 @@ export default function InventoryPage() {
         ) : levels.length === 0 ? (
           <EmptyState>No stock at this location yet. Use Receive to add some.</EmptyState>
         ) : (
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Product</th>
-                <th>SKU</th>
-                <th>Barcode</th>
-                <th className="num">On hand</th>
-                <th className="num">Reserved</th>
-                <th className="num">Available</th>
-                <th>&nbsp;</th>
-              </tr>
-            </thead>
-            <tbody>
-              {levels.map((l) => (
-                <tr key={`${l.variantId}-${l.locationId}`}>
-                  <td>{l.productName}</td>
-                  <td>
-                    <code>{l.variantSku ?? '—'}</code>
-                  </td>
-                  <td>
-                    <code>{l.variantBarcode ?? '—'}</code>
-                  </td>
-                  <td className="num">{l.onHand}</td>
-                  <td className="num">{l.reserved}</td>
-                  <td className="num">{l.available}</td>
-                  <td style={{ textAlign: 'right' }}>
-                    <Button size="sm" variant="ghost" onClick={() => adjust(l)}>
-                      Adjust
-                    </Button>
-                  </td>
+          <div className="overflow-x-auto">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Product</th>
+                  <th>SKU</th>
+                  <th>Barcode</th>
+                  <th className="num">On hand</th>
+                  <th className="num">Reserved</th>
+                  <th className="num">Available</th>
+                  <th>&nbsp;</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {levels.map((l) => (
+                  <tr key={`${l.variantId}-${l.locationId}`}>
+                    <td>{l.productName}</td>
+                    <td>
+                      <code>{l.variantSku ?? '—'}</code>
+                    </td>
+                    <td>
+                      <code>{l.variantBarcode ?? '—'}</code>
+                    </td>
+                    <td className="num">{l.onHand}</td>
+                    <td className="num">{l.reserved}</td>
+                    <td className="num">{l.available}</td>
+                    <td style={{ textAlign: 'right' }}>
+                      <Button size="sm" variant="ghost" onClick={() => adjust(l)}>
+                        Adjust
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </Card>
     </div>

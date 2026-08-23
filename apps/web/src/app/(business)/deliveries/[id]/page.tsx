@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
+import { PackageCheck } from 'lucide-react';
 import { api } from '@/lib/api';
 import { Money } from '@/components/money';
 import { Button, Card, LinkButton, LoadingRows, StatusBadge } from '@/components/ui';
@@ -77,7 +78,15 @@ export default function DeliveryDetailPage() {
 
   return (
     <div style={{ maxWidth: 640 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 4 }}>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 12,
+          marginBottom: 4,
+          flexWrap: 'wrap',
+        }}
+      >
         <h1 className="page-title" style={{ margin: 0 }}>
           Delivery — {d.orderNumber}
         </h1>
@@ -160,6 +169,7 @@ export default function DeliveryDetailPage() {
             style={{ padding: '10px 14px' }}
             data-testid="mark-delivered"
           >
+            <PackageCheck size={16} aria-hidden />
             Delivered — hand over the goods
           </Button>
           <Button

@@ -1,5 +1,6 @@
 'use client';
 
+import { toast } from 'sonner';
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { Button, Card, LoadingRows, PageHeader } from '@/components/ui';
 import { api } from '@/lib/api';
@@ -53,7 +54,7 @@ export default function RolesPage() {
       });
       await load();
     } catch (err) {
-      alert(err instanceof Error ? err.message : String(err));
+      toast.error(err instanceof Error ? err.message : String(err));
     }
   }
 
@@ -63,7 +64,7 @@ export default function RolesPage() {
       await api(`/v1/business/roles/${role.id}`, { method: 'DELETE' });
       await load();
     } catch (err) {
-      alert(err instanceof Error ? err.message : String(err));
+      toast.error(err instanceof Error ? err.message : String(err));
     }
   }
 
@@ -76,7 +77,7 @@ export default function RolesPage() {
       setEditing(null);
       await load();
     } catch (err) {
-      alert(err instanceof Error ? err.message : String(err));
+      toast.error(err instanceof Error ? err.message : String(err));
     }
   }
 
@@ -154,7 +155,7 @@ function PermissionList({
     [catalog, permissions],
   );
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, marginTop: 8 }}>
+    <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
       {Array.from(grouped.entries()).map(([prefix, entries]) => (
         <div key={prefix} style={groupBox}>
           <div style={groupHeading}>{prefix}</div>
@@ -204,15 +205,7 @@ function PermissionsEditor({
 
   const grouped = useMemo(() => groupCatalog(catalog, selected), [catalog, selected]);
   return (
-    <form
-      onSubmit={handle}
-      style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(3, 1fr)',
-        gap: 8,
-        marginTop: 8,
-      }}
-    >
+    <form onSubmit={handle} className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
       {Array.from(grouped.entries()).map(([prefix, entries]) => (
         <div key={prefix} style={groupBox}>
           <div style={groupHeading}>{prefix}</div>

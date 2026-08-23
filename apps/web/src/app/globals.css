@@ -39,7 +39,7 @@
   --brand-soft-text: #3730a3;
 
   /* Neutrals */
-  --bg: #f6f7f9;
+  --bg: #f5f8fa; /* airy, blue-tinted canvas — HubSpot-style */
   --surface: #ffffff;
   --surface-muted: #f9fafb;
   --border: #e5e7eb;
@@ -65,20 +65,20 @@
   --neutral-soft-text: #374151;
 
   /* Elevation */
-  --shadow-sm: 0 1px 2px rgb(16 24 40 / 0.05);
-  --shadow-md: 0 4px 12px rgb(16 24 40 / 0.08);
+  --shadow-sm: 0 1px 3px rgb(23 43 77 / 0.06), 0 1px 2px rgb(23 43 77 / 0.04);
+  --shadow-md: 0 6px 16px rgb(23 43 77 / 0.1);
   --shadow-lg: 0 12px 32px rgb(16 24 40 / 0.14);
 
   /* Shape + type */
-  --radius: 10px;
-  --radius-sm: 6px;
+  --radius: 12px;
+  --radius-sm: 8px;
   --font:
     'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
   --font-mono: ui-monospace, 'SF Mono', 'Cascadia Code', Menlo, Consolas, monospace;
 
   /* Shell */
   --sidebar-width: 232px;
-  --sidebar-bg: #111827;
+  --sidebar-bg: #1b2540; /* deep navy — HubSpot-style chrome */
   --sidebar-text: #9ca3af;
   --sidebar-text-active: #ffffff;
   --sidebar-active-bg: rgb(255 255 255 / 0.08);
@@ -255,6 +255,20 @@ code {
   margin-top: 16px;
 }
 
+/* Trello-style interactive card: lifts on hover. Applied to board
+   tickets, list rows rendered as cards, and other clickable cards. */
+.card-hover {
+  transition:
+    box-shadow 0.15s ease,
+    transform 0.15s ease,
+    border-color 0.15s ease;
+}
+.card-hover:hover {
+  box-shadow: var(--shadow-md);
+  transform: translateY(-1px);
+  border-color: var(--border-strong);
+}
+
 .card-title {
   font-size: 14px;
   font-weight: 600;
@@ -278,7 +292,15 @@ code {
   color: var(--text-muted);
   padding: 8px 10px;
   border-bottom: 1px solid var(--border);
+  background: var(--surface-muted);
   white-space: nowrap;
+}
+
+.table th:first-child {
+  border-top-left-radius: 8px;
+}
+.table th:last-child {
+  border-top-right-radius: 8px;
 }
 
 .table td {
@@ -292,7 +314,7 @@ code {
 }
 
 .table tbody tr:hover {
-  background: var(--surface-muted);
+  background: var(--brand-soft);
 }
 
 .table .num {
@@ -368,9 +390,40 @@ code {
 
 .empty-state {
   text-align: center;
-  padding: 40px 16px;
+  padding: 48px 16px;
   color: var(--text-muted);
   font-size: 13px;
+  background: var(--surface-muted);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-sm);
+}
+
+/* HubSpot-style pill tabs / filter chips. Active tab gets .pill-active. */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    background 0.12s ease,
+    color 0.12s ease,
+    border-color 0.12s ease;
+}
+.pill:hover {
+  border-color: var(--brand);
+  color: var(--brand);
+}
+.pill-active {
+  background: var(--brand);
+  border-color: var(--brand);
+  color: #fff;
 }
 
 /* ---------- Skeletons ---------- */

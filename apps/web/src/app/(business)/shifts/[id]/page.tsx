@@ -126,6 +126,7 @@ export default function ShiftDetailPage() {
               variant="primary"
               onClick={closeShift}
               disabled={busy || !countedStr}
+              className="min-h-11"
               style={{ marginTop: 8, width: 'fit-content' }}
             >
               {busy ? 'Closing…' : 'Close shift'}

@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { LogOut } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { Button, Card, Skeleton } from '@/components/ui';
@@ -103,6 +104,7 @@ export default function DashboardClient() {
           window.location.href = '/login';
         }}
       >
+        <LogOut size={14} aria-hidden />
         Sign out
       </Button>
     </Wrapper>
@@ -175,15 +177,5 @@ function ChecklistCard({ checklist }: { checklist: Checklist }) {
 }
 
 function Wrapper({ children }: { children: React.ReactNode }) {
-  return (
-    <main
-      style={{
-        maxWidth: 720,
-        margin: '64px auto',
-        padding: '0 16px',
-      }}
-    >
-      {children}
-    </main>
-  );
+  return <main className="mx-auto max-w-[720px] px-4 py-8 sm:py-16">{children}</main>;
 }

@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { loadStripe, type Stripe as StripeJs } from '@stripe/stripe-js';
 import { CardElement, Elements, useElements, useStripe } from '@stripe/react-stripe-js';
+import { Plus, Printer } from 'lucide-react';
 import { centsToInputString, formatMoney } from '@jetnine/shared';
 import { api, apiUrl } from '@/lib/api';
 import {
@@ -411,7 +412,7 @@ export default function PosPage() {
         <h1 className="page-title" style={{ fontSize: 22 }}>
           Register
         </h1>
-        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
+        <div className="ml-auto flex flex-wrap items-center gap-1.5">
           <label className="field-label" style={{ margin: 0 }}>
             Location:
           </label>
@@ -432,7 +433,7 @@ export default function PosPage() {
         </div>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 16 }}>
+      <div className="grid gap-4 lg:grid-cols-[2fr_1fr]">
         <div>
           <form onSubmit={handleScanSubmit} style={{ marginBottom: 12 }}>
             <input
@@ -464,55 +465,57 @@ export default function PosPage() {
                 Cart is empty. Scan a barcode or type to search.
               </div>
             ) : (
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>Item</th>
-                    <th>Qty</th>
-                    <th>Price</th>
-                    <th>Disc</th>
-                    <th className="num">Line</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {cart.map((l) => {
-                    const lineTotal = l.quantity * l.unitPriceCents - l.lineDiscountCents;
-                    return (
-                      <tr key={l.variantId}>
-                        <td>{l.description}</td>
-                        <td>
-                          <Input
-                            type="number"
-                            min={0}
-                            value={l.quantity}
-                            onChange={(e) => setQty(l.variantId, Number(e.target.value))}
-                            style={qtyInput}
-                          />
-                        </td>
-                        <td>
-                          <Money cents={l.unitPriceCents} />
-                        </td>
-                        <td>
-                          <Input
-                            type="number"
-                            step="0.01"
-                            min={0}
-                            placeholder="0.00"
-                            defaultValue={
-                              l.lineDiscountCents ? centsToInputString(l.lineDiscountCents) : ''
-                            }
-                            onBlur={(e) => setLineDiscount(l.variantId, e.target.value)}
-                            style={{ ...qtyInput, width: 72 }}
-                          />
-                        </td>
-                        <td className="num">
-                          <Money cents={lineTotal} />
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+              <div className="overflow-x-auto">
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Item</th>
+                      <th>Qty</th>
+                      <th>Price</th>
+                      <th>Disc</th>
+                      <th className="num">Line</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {cart.map((l) => {
+                      const lineTotal = l.quantity * l.unitPriceCents - l.lineDiscountCents;
+                      return (
+                        <tr key={l.variantId}>
+                          <td>{l.description}</td>
+                          <td>
+                            <Input
+                              type="number"
+                              min={0}
+                              value={l.quantity}
+                              onChange={(e) => setQty(l.variantId, Number(e.target.value))}
+                              style={qtyInput}
+                            />
+                          </td>
+                          <td>
+                            <Money cents={l.unitPriceCents} />
+                          </td>
+                          <td>
+                            <Input
+                              type="number"
+                              step="0.01"
+                              min={0}
+                              placeholder="0.00"
+                              defaultValue={
+                                l.lineDiscountCents ? centsToInputString(l.lineDiscountCents) : ''
+                              }
+                              onBlur={(e) => setLineDiscount(l.variantId, e.target.value)}
+                              style={{ ...qtyInput, width: 72 }}
+                            />
+                          </td>
+                          <td className="num">
+                            <Money cents={lineTotal} />
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
             )}
           </div>
         </div>
@@ -585,6 +588,7 @@ export default function PosPage() {
               variant="primary"
               onClick={() => setPhase('pay')}
               disabled={cart.length === 0}
+              className="min-h-11"
               style={{ padding: 14, fontSize: 16 }}
             >
               Pay {formatMoney(totals.totalCents)}
@@ -592,11 +596,12 @@ export default function PosPage() {
             <Button
               onClick={() => setShowOrderDialog(true)}
               disabled={cart.length === 0}
+              className="min-h-11"
               data-testid="save-as-order"
             >
               Save as order / take deposit…
             </Button>
-            <Button variant="ghost" onClick={reset}>
+            <Button variant="ghost" onClick={reset} className="min-h-11">
               Clear cart
             </Button>
           </div>
@@ -775,6 +780,7 @@ function GiftCardTender({
           variant="primary"
           onClick={() => void lookupAndApply()}
           disabled={busy || !code.trim() || remainingDue <= 0}
+          className="min-h-11"
         >
           {busy ? '…' : 'Apply'}
         </Button>
@@ -931,16 +937,19 @@ function ManualPaymentForm({
         </div>
       </div>
       {error && <p style={{ color: 'var(--danger)', fontSize: 13 }}>{error}</p>}
-      <div style={{ marginTop: 16, display: 'flex', gap: 8 }}>
+      <div className="mt-4 flex flex-wrap gap-2">
         <Button
           variant="primary"
           onClick={submit}
           disabled={!ready || busy}
+          className="min-h-11"
           style={{ padding: 14, fontSize: 16, flex: 1 }}
         >
           {busy ? 'Processing…' : 'Confirm payment'}
         </Button>
-        <Button onClick={onCancel}>Back to cart</Button>
+        <Button onClick={onCancel} className="min-h-11">
+          Back to cart
+        </Button>
       </div>
     </div>
   );
@@ -1081,16 +1090,19 @@ function StripePaymentForm({
       {(error || cardError) && (
         <p style={{ color: 'var(--danger)', fontSize: 13 }}>{cardError ?? error}</p>
       )}
-      <div style={{ marginTop: 16, display: 'flex', gap: 8 }}>
+      <div className="mt-4 flex flex-wrap gap-2">
         <Button
           variant="primary"
           onClick={submit}
           disabled={busy}
+          className="min-h-11"
           style={{ padding: 14, fontSize: 16, flex: 1 }}
         >
           {busy ? 'Processing…' : `Charge ${formatMoney(cardCents)}`}
         </Button>
-        <Button onClick={onCancel}>Back to cart</Button>
+        <Button onClick={onCancel} className="min-h-11">
+          Back to cart
+        </Button>
       </div>
     </div>
   );
@@ -1141,71 +1153,78 @@ function Receipt({
             {[customer.firstName, customer.lastName].filter(Boolean).join(' ')}
           </p>
         )}
-        <table className="table">
-          <tbody>
-            {sale.lines.map((l) => (
-              <tr key={l.id}>
-                <td>
-                  {l.description} <span className="muted">×{l.quantity}</span>
-                </td>
-                <td className="num">
-                  <Money cents={l.totalCents} />
-                </td>
-              </tr>
-            ))}
-          </tbody>
-          <tfoot>
-            <tr>
-              <td>Subtotal</td>
-              <td className="num">
-                <Money cents={sale.subtotalCents} />
-              </td>
-            </tr>
-            {sale.discountCents > 0 && (
+        <div className="overflow-x-auto">
+          <table className="table">
+            <tbody>
+              {sale.lines.map((l) => (
+                <tr key={l.id}>
+                  <td>
+                    {l.description} <span className="muted">×{l.quantity}</span>
+                  </td>
+                  <td className="num">
+                    <Money cents={l.totalCents} />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
               <tr>
-                <td>Discount</td>
+                <td>Subtotal</td>
                 <td className="num">
-                  <Money cents={-sale.discountCents} />
+                  <Money cents={sale.subtotalCents} />
                 </td>
               </tr>
-            )}
-            <tr>
-              <td>Tax</td>
-              <td className="num">
-                <Money cents={sale.taxCents} />
-              </td>
-            </tr>
-            <tr style={{ fontWeight: 700 }}>
-              <td>Total</td>
-              <td className="num">
-                <Money cents={sale.totalCents} />
-              </td>
-            </tr>
-            {sale.payments.map((p, i) => (
-              <tr key={i} style={{ color: 'var(--text-secondary)' }}>
-                <td>
-                  {p.method === 'cash' ? 'Cash' : p.method === 'gift_card' ? 'Gift card' : 'Card'}
-                </td>
+              {sale.discountCents > 0 && (
+                <tr>
+                  <td>Discount</td>
+                  <td className="num">
+                    <Money cents={-sale.discountCents} />
+                  </td>
+                </tr>
+              )}
+              <tr>
+                <td>Tax</td>
                 <td className="num">
-                  <Money cents={p.amountCents} />
+                  <Money cents={sale.taxCents} />
                 </td>
               </tr>
-            ))}
-          </tfoot>
-        </table>
+              <tr style={{ fontWeight: 700 }}>
+                <td>Total</td>
+                <td className="num">
+                  <Money cents={sale.totalCents} />
+                </td>
+              </tr>
+              {sale.payments.map((p, i) => (
+                <tr key={i} style={{ color: 'var(--text-secondary)' }}>
+                  <td>
+                    {p.method === 'cash' ? 'Cash' : p.method === 'gift_card' ? 'Gift card' : 'Card'}
+                  </td>
+                  <td className="num">
+                    <Money cents={p.amountCents} />
+                  </td>
+                </tr>
+              ))}
+            </tfoot>
+          </table>
+        </div>
       </div>
-      <div style={{ marginTop: 16, display: 'flex', gap: 8 }}>
+      <div className="mt-4 flex flex-wrap gap-2">
         <Button
           variant="primary"
           onClick={() => window.print()}
           disabled={isQueued}
+          className="min-h-11 inline-flex items-center gap-1.5"
           title={isQueued ? 'Sale is still queued; print after it syncs' : ''}
         >
-          Print receipt
+          <Printer size={14} /> Print receipt
         </Button>
         {!isQueued && <LinkButton href={`/sales/${sale.id}`}>Open sale</LinkButton>}
-        <Button variant="ghost" onClick={onNew}>
-          New sale
+        <Button
+          variant="ghost"
+          onClick={onNew}
+          className="min-h-11 inline-flex items-center gap-1.5"
+        >
+          <Plus size={14} /> New sale
         </Button>
       </div>
     </div>
@@ -1275,7 +1294,7 @@ function SaveAsOrderDialog({
             <p style={{ fontSize: 13, color: 'var(--warning-soft-text)' }}>
               An order needs a customer attached first.
             </p>
-            <div style={{ display: 'flex', gap: 8 }}>
+            <div className="flex flex-wrap gap-2">
               <Button
                 variant="primary"
                 onClick={onAttachCustomer}
@@ -1290,7 +1309,7 @@ function SaveAsOrderDialog({
           </div>
         ) : (
           <div style={{ display: 'grid', gap: 10 }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+            <div className="grid gap-2 sm:grid-cols-2">
               <Field label="Fulfillment">
                 <Select
                   value={fulfillmentType}
@@ -1310,7 +1329,7 @@ function SaveAsOrderDialog({
                 />
               </Field>
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+            <div className="grid gap-2 sm:grid-cols-2">
               <Field label="Deposit today ($)">
                 <Input
                   type="number"
@@ -1341,7 +1360,7 @@ function SaveAsOrderDialog({
               without money — it still commits stock.
             </p>
             {error && <p style={{ color: 'var(--danger)', fontSize: 12, margin: 0 }}>{error}</p>}
-            <div style={{ display: 'flex', gap: 8 }}>
+            <div className="flex flex-wrap gap-2">
               <Button
                 variant="primary"
                 onClick={() => void save()}

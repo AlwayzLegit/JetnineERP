@@ -1,6 +1,8 @@
 'use client';
 
 import Link from 'next/link';
+import { Building2 } from 'lucide-react';
+import { toast } from 'sonner';
 import { useEffect, useState, type FormEvent } from 'react';
 import {
   Button,
@@ -119,14 +121,7 @@ function CreateBusinessForm({ onCreated }: { onCreated: () => void }) {
   return (
     <Card title="Create business">
       <form onSubmit={submit}>
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(4, 1fr)',
-            gap: 12,
-            alignItems: 'end',
-          }}
-        >
+        <div className="grid items-end gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <Field label="Name">
             <Input name="name" required style={{ width: '100%' }} />
           </Field>
@@ -158,6 +153,7 @@ function CreateBusinessForm({ onCreated }: { onCreated: () => void }) {
         )}
         <div style={{ marginTop: 12 }}>
           <Button type="submit" variant="primary" disabled={submitting}>
+            <Building2 size={14} aria-hidden />
             {submitting ? 'Working…' : 'Create + invite owner'}
           </Button>
         </div>
@@ -181,7 +177,7 @@ function BusinessRow({
       });
       onChanged();
     } catch (err) {
-      alert(err instanceof Error ? err.message : String(err));
+      toast.error(err instanceof Error ? err.message : String(err));
     }
   }
 

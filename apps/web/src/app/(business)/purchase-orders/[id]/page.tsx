@@ -3,6 +3,8 @@
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
+import { PackageCheck } from 'lucide-react';
+import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import { Money } from '@/components/money';
 import { Button, Card, Field, Input, LoadingRows, PageHeader, StatusBadge } from '@/components/ui';
@@ -61,7 +63,7 @@ export default function PurchaseOrderDetailPage() {
       .filter(([, q]) => q > 0)
       .map(([lineId, quantity]) => ({ lineId, quantity }));
     if (lines.length === 0) {
-      alert('Enter a quantity on at least one line.');
+      toast.error('Enter a quantity on at least one line.');
       return;
     }
     setBusy(true);
@@ -74,7 +76,7 @@ export default function PurchaseOrderDetailPage() {
       setRecvNotes('');
       void load();
     } catch (err) {
-      alert(err instanceof Error ? err.message : String(err));
+      toast.error(err instanceof Error ? err.message : String(err));
     } finally {
       setBusy(false);
     }
@@ -87,7 +89,7 @@ export default function PurchaseOrderDetailPage() {
       await api(`/v1/purchase-orders/${id}/cancel`, { method: 'POST' });
       void load();
     } catch (err) {
-      alert(err instanceof Error ? err.message : String(err));
+      toast.error(err instanceof Error ? err.message : String(err));
     } finally {
       setBusy(false);
     }
@@ -116,67 +118,72 @@ export default function PurchaseOrderDetailPage() {
       />
 
       <Card title="Lines" style={{ marginBottom: 16 }}>
-        <table className="table">
-          <thead>
-            <tr>
-              <th>Item</th>
-              <th className="num">Ordered</th>
-              <th className="num">Received</th>
-              <th className="num">Unit cost</th>
-              <th className="num">Line total</th>
-              {receivable && <th>Receive qty</th>}
-            </tr>
-          </thead>
-          <tbody>
-            {po.lines.map((l) => {
-              const remaining = l.quantityOrdered - l.quantityReceived;
-              return (
-                <tr key={l.id}>
-                  <td>
-                    {l.productName}
-                    {l.variantName && (
-                      <span style={{ color: 'var(--text-secondary)' }}> — {l.variantName}</span>
-                    )}
-                    {l.sku && (
-                      <span style={{ color: 'var(--text-muted)', fontSize: 11, marginLeft: 6 }}>
-                        <code>{l.sku}</code>
-                      </span>
-                    )}
-                  </td>
-                  <td className="num">{l.quantityOrdered}</td>
-                  <td className="num">{l.quantityReceived}</td>
-                  <td className="num">
-                    <Money cents={l.unitCostCents} />
-                  </td>
-                  <td className="num">
-                    <Money cents={l.lineTotalCents} />
-                  </td>
-                  {receivable && (
+        <div className="overflow-x-auto">
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Item</th>
+                <th className="num">Ordered</th>
+                <th className="num">Received</th>
+                <th className="num">Unit cost</th>
+                <th className="num">Line total</th>
+                {receivable && <th>Receive qty</th>}
+              </tr>
+            </thead>
+            <tbody>
+              {po.lines.map((l) => {
+                const remaining = l.quantityOrdered - l.quantityReceived;
+                return (
+                  <tr key={l.id}>
                     <td>
-                      {remaining > 0 ? (
-                        <Input
-                          type="number"
-                          min={0}
-                          max={remaining}
-                          value={recvQty[l.id] ?? 0}
-                          onChange={(e) =>
-                            setRecvQty((prev) => ({
-                              ...prev,
-                              [l.id]: Math.max(0, Math.min(remaining, Number(e.target.value) || 0)),
-                            }))
-                          }
-                          style={{ width: 70 }}
-                        />
-                      ) : (
-                        <span className="badge badge-success">complete</span>
+                      {l.productName}
+                      {l.variantName && (
+                        <span style={{ color: 'var(--text-secondary)' }}> — {l.variantName}</span>
+                      )}
+                      {l.sku && (
+                        <span style={{ color: 'var(--text-muted)', fontSize: 11, marginLeft: 6 }}>
+                          <code>{l.sku}</code>
+                        </span>
                       )}
                     </td>
-                  )}
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+                    <td className="num">{l.quantityOrdered}</td>
+                    <td className="num">{l.quantityReceived}</td>
+                    <td className="num">
+                      <Money cents={l.unitCostCents} />
+                    </td>
+                    <td className="num">
+                      <Money cents={l.lineTotalCents} />
+                    </td>
+                    {receivable && (
+                      <td>
+                        {remaining > 0 ? (
+                          <Input
+                            type="number"
+                            min={0}
+                            max={remaining}
+                            value={recvQty[l.id] ?? 0}
+                            onChange={(e) =>
+                              setRecvQty((prev) => ({
+                                ...prev,
+                                [l.id]: Math.max(
+                                  0,
+                                  Math.min(remaining, Number(e.target.value) || 0),
+                                ),
+                              }))
+                            }
+                            style={{ width: 70 }}
+                          />
+                        ) : (
+                          <span className="badge badge-success">complete</span>
+                        )}
+                      </td>
+                    )}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       </Card>
 
       <Card style={{ marginBottom: 16 }}>
@@ -203,8 +210,9 @@ export default function PurchaseOrderDetailPage() {
               style={{ width: '100%' }}
             />
           </Field>
-          <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+          <div style={{ marginTop: 12 }} className="flex flex-wrap gap-2">
             <Button variant="primary" onClick={submitReceive} disabled={busy}>
+              <PackageCheck size={14} />
               {busy ? 'Receiving…' : 'Record receipt'}
             </Button>
             {cancellable && (

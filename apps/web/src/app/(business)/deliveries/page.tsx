@@ -133,8 +133,8 @@ export default function DeliveriesPage() {
       />
       {error && <p style={{ color: 'var(--danger)', fontSize: 13 }}>{error}</p>}
 
-      <div style={{ overflowX: 'auto', paddingBottom: 8 }}>
-        <div style={{ display: 'flex', gap: 8, minWidth: 980 }}>
+      <div className="overflow-x-auto pb-2">
+        <div className="flex gap-2 lg:grid lg:grid-cols-7">
           {days.map((d) => {
             const key = fmtDate(d);
             const list = byDay.get(key) ?? [];
@@ -147,9 +147,8 @@ export default function DeliveriesPage() {
                   if (dragId) void reschedule(dragId, key);
                   setDragId(null);
                 }}
+                className="min-w-[160px] flex-1 lg:min-w-0"
                 style={{
-                  flex: 1,
-                  minWidth: 132,
                   background: isToday ? 'var(--brand-soft)' : 'var(--neutral-soft)',
                   borderRadius: 'var(--radius)',
                   padding: 8,
@@ -186,7 +185,7 @@ export default function DeliveriesPage() {
                     draggable={r.status === 'scheduled' || r.status === 'loaded'}
                     onDragStart={() => setDragId(r.id)}
                     data-testid="delivery-card"
-                    className="card"
+                    className="card card-hover"
                     style={{
                       display: 'block',
                       borderLeft: `4px solid ${STATUS_COLOR[r.status] ?? 'var(--text-muted)'}`,

@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { toast } from 'sonner';
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { Button, Card, Input, LoadingRows, StatusBadge } from '@/components/ui';
@@ -61,7 +62,7 @@ export default function BusinessDetailPage() {
       });
       window.location.href = '/dashboard';
     } catch (err) {
-      alert(err instanceof Error ? err.message : String(err));
+      toast.error(err instanceof Error ? err.message : String(err));
     }
   }
 
@@ -139,13 +140,13 @@ function DirectImpersonate({ onSubmit }: { onSubmit: (userId: string) => void })
         e.preventDefault();
         if (userId) onSubmit(userId);
       }}
-      style={{ marginTop: 12, display: 'flex', gap: 8, alignItems: 'center' }}
+      className="mt-3 flex flex-wrap items-center gap-2"
     >
       <Input
         value={userId}
         onChange={(e) => setUserId(e.target.value)}
         placeholder="user uuid to impersonate"
-        style={{ flex: 1 }}
+        className="min-w-[200px] flex-1"
       />
       <Button type="submit" variant="primary" size="sm">
         Impersonate

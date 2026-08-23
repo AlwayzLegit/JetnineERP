@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
+import { PenLine } from 'lucide-react';
 import { api } from '@/lib/api';
 import { Money } from '@/components/money';
 import { PageHeader, LinkButton, LoadingRows } from '@/components/ui';
@@ -92,6 +93,7 @@ export default function OrdersPage() {
         title="Orders"
         actions={
           <LinkButton href="/orders/new" variant="primary">
+            <PenLine size={14} aria-hidden />
             Write order
           </LinkButton>
         }
@@ -101,14 +103,13 @@ export default function OrdersPage() {
       {!orders && !error && <LoadingRows rows={4} />}
 
       {orders && (
-        <div style={{ overflowX: 'auto', paddingBottom: 8 }}>
-          <div style={{ display: 'flex', gap: 12, minWidth: 900 }}>
+        <div className="overflow-x-auto pb-2">
+          <div className="flex gap-3 lg:grid lg:grid-cols-5">
             {PIPELINE.map((status) => (
               <div
                 key={status}
+                className="min-w-[240px] flex-1 lg:min-w-0"
                 style={{
-                  flex: 1,
-                  minWidth: 170,
                   background: 'var(--neutral-soft)',
                   borderRadius: 'var(--radius)',
                   padding: 8,
@@ -153,7 +154,7 @@ export default function OrdersPage() {
                     key={o.id}
                     href={`/orders/${o.id}`}
                     data-testid="order-card"
-                    className="card"
+                    className="card card-hover"
                     style={{
                       display: 'block',
                       padding: '10px 12px',

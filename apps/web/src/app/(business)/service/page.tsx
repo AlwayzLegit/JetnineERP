@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { Plus, X } from 'lucide-react';
 import { formatMoney } from '@jetnine/shared';
 import { api } from '@/lib/api';
 import { Button, Card, Field, Input, LoadingRows, PageHeader, Select } from '@/components/ui';
@@ -126,6 +127,7 @@ export default function ServiceBoardPage() {
             onClick={() => setShowIntake((v) => !v)}
             data-testid="new-ticket"
           >
+            {showIntake ? <X size={14} aria-hidden /> : <Plus size={14} aria-hidden />}
             {showIntake ? 'Close intake' : '+ New ticket'}
           </Button>
         }
@@ -134,7 +136,7 @@ export default function ServiceBoardPage() {
 
       {showIntake && (
         <Card title="Intake" style={{ marginBottom: 16 }} data-testid="intake-form">
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+          <div className="grid gap-2 sm:grid-cols-2">
             <Field label="Location">
               <Select
                 value={locationId}
@@ -238,7 +240,15 @@ export default function ServiceBoardPage() {
               />
             </Field>
           </div>
-          <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginTop: 12 }}>
+          <div
+            style={{
+              display: 'flex',
+              gap: 12,
+              alignItems: 'center',
+              marginTop: 12,
+              flexWrap: 'wrap',
+            }}
+          >
             <label style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
               <input
                 type="checkbox"
@@ -263,89 +273,96 @@ export default function ServiceBoardPage() {
       {!tickets && !error && <LoadingRows rows={4} />}
 
       {tickets && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
-          {COLUMNS.map((col) => {
-            const rows = tickets.filter((t) => t.status === col.key);
-            return (
-              <div
-                key={col.key}
-                style={{
-                  background: 'var(--neutral-soft)',
-                  borderRadius: 'var(--radius)',
-                  padding: 8,
-                }}
-              >
-                <p
+        <div className="overflow-x-auto pb-2">
+          <div className="flex gap-3 lg:grid lg:grid-cols-4">
+            {COLUMNS.map((col) => {
+              const rows = tickets.filter((t) => t.status === col.key);
+              return (
+                <div
+                  key={col.key}
+                  className="min-w-[240px] flex-1 lg:min-w-0"
                   style={{
-                    fontSize: 11,
-                    fontWeight: 600,
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.05em',
-                    color: 'var(--text-secondary)',
-                    margin: '0 0 8px',
-                    padding: '2px 4px',
+                    background: 'var(--neutral-soft)',
+                    borderRadius: 'var(--radius)',
+                    padding: 8,
                   }}
                 >
-                  {col.label} ({rows.length})
-                </p>
-                {rows.map((t) => (
-                  <Link
-                    key={t.id}
-                    href={`/service/${t.id}`}
-                    className="card"
+                  <p
                     style={{
-                      display: 'block',
-                      padding: 10,
+                      fontSize: 11,
+                      fontWeight: 600,
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.05em',
+                      color: 'var(--text-secondary)',
                       margin: '0 0 8px',
-                      textDecoration: 'none',
-                      color: 'inherit',
+                      padding: '2px 4px',
                     }}
-                    data-testid={`ticket-${t.number}`}
                   >
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
-                      <strong>{t.number}</strong>
-                      {t.warranty && <span className="badge badge-warning">WARRANTY</span>}
-                    </div>
-                    <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-                      {t.customerName}
-                    </div>
-                    <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
-                      {t.itemDescription ?? t.issue}
-                    </div>
-                    {t.balanceDueCents > 0 && (
-                      <div style={{ fontSize: 12, color: 'var(--danger)', marginTop: 2 }}>
-                        due {formatMoney(t.balanceDueCents)}
-                      </div>
-                    )}
-                  </Link>
-                ))}
-                {rows.length === 0 && (
-                  <p className="muted" style={{ fontSize: 12, padding: '2px 4px', margin: 0 }}>
-                    —
+                    {col.label} ({rows.length})
                   </p>
-                )}
-              </div>
-            );
-          })}
+                  {rows.map((t) => (
+                    <Link
+                      key={t.id}
+                      href={`/service/${t.id}`}
+                      className="card card-hover"
+                      style={{
+                        display: 'block',
+                        padding: 10,
+                        margin: '0 0 8px',
+                        textDecoration: 'none',
+                        color: 'inherit',
+                      }}
+                      data-testid={`ticket-${t.number}`}
+                    >
+                      <div
+                        style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}
+                      >
+                        <strong>{t.number}</strong>
+                        {t.warranty && <span className="badge badge-warning">WARRANTY</span>}
+                      </div>
+                      <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                        {t.customerName}
+                      </div>
+                      <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
+                        {t.itemDescription ?? t.issue}
+                      </div>
+                      {t.balanceDueCents > 0 && (
+                        <div style={{ fontSize: 12, color: 'var(--danger)', marginTop: 2 }}>
+                          due {formatMoney(t.balanceDueCents)}
+                        </div>
+                      )}
+                    </Link>
+                  ))}
+                  {rows.length === 0 && (
+                    <p className="muted" style={{ fontSize: 12, padding: '2px 4px', margin: 0 }}>
+                      —
+                    </p>
+                  )}
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
 
       {completed.length > 0 && (
         <Card title="Recently completed" style={{ marginTop: 20 }}>
-          <table className="table">
-            <tbody>
-              {completed.map((t) => (
-                <tr key={t.id}>
-                  <td>
-                    <Link href={`/service/${t.id}`}>{t.number}</Link>
-                  </td>
-                  <td>{t.customerName}</td>
-                  <td>{t.itemDescription ?? t.issue}</td>
-                  <td className="num">{formatMoney(t.totalCents)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div className="overflow-x-auto">
+            <table className="table">
+              <tbody>
+                {completed.map((t) => (
+                  <tr key={t.id}>
+                    <td>
+                      <Link href={`/service/${t.id}`}>{t.number}</Link>
+                    </td>
+                    <td>{t.customerName}</td>
+                    <td>{t.itemDescription ?? t.issue}</td>
+                    <td className="num">{formatMoney(t.totalCents)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </Card>
       )}
     </div>

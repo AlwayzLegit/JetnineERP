@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { toast } from 'sonner';
 import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Button, Card, LoadingRows, PageHeader } from '@/components/ui';
@@ -82,7 +83,7 @@ function BillingPageInner() {
       const res = await api<{ url: string }>('/v1/business/stripe/connect-url');
       window.location.href = res.url;
     } catch (err) {
-      alert(err instanceof Error ? err.message : String(err));
+      toast.error(err instanceof Error ? err.message : String(err));
       setBusy(false);
     }
   }
@@ -99,7 +100,7 @@ function BillingPageInner() {
       await api('/v1/business/stripe/disconnect', { method: 'POST' });
       void load();
     } catch (err) {
-      alert(err instanceof Error ? err.message : String(err));
+      toast.error(err instanceof Error ? err.message : String(err));
     } finally {
       setBusy(false);
     }
