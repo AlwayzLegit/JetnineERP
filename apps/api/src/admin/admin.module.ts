@@ -8,6 +8,7 @@ import { AdminBusinessesController } from './businesses.controller';
 import { ImpersonateController } from './impersonate.controller';
 import { AdminMetricsController } from './metrics.controller';
 import { AdminTemplatesController } from './templates.controller';
+import { SuperAdminBootstrapService } from './super-admin-bootstrap.service';
 import { TemplatesService } from './templates.service';
 
 @Module({
@@ -19,6 +20,6 @@ import { TemplatesService } from './templates.service';
     AcceptInviteController,
     AdminTemplatesController,
   ],
-  providers: [TemplatesService],
+  providers: [TemplatesService, SuperAdminBootstrapService],
 })
 export class AdminModule {}
