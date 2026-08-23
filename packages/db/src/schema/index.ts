@@ -21,6 +21,7 @@ export * from './api-keys';
 export * from './idempotency';
 export * from './gift-cards';
 export * from './migration';
+export * from './templates';
 
 // List of tables that carry a `business_id` and need RLS. Kept in sync with
 // the migration script in src/migrations/rls.sql — when you add a new

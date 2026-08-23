@@ -18,6 +18,7 @@ import type { INestApplication } from '@nestjs/common';
 import { schema } from '@jetnine/db';
 import { SYSTEM_ROLES } from '@jetnine/shared';
 import { AppModule } from '../src/app.module';
+import { OverdueSchedulerService } from '../src/money/overdue-scheduler.service';
 
 const TEST_DB_URL =
   process.env.MONEY_TEST_DATABASE_URL ??
@@ -370,6 +371,30 @@ describe('G4 — layaway plans', () => {
       .query({ to: 'lay.away@example.test' });
     expect(mail.status).toBe(200);
     expect(mail.body.subject).toMatch(/reminder/i);
+  });
+
+  it('the nightly scheduler runs the same sweep cross-tenant and is idempotent', async () => {
+    // Backdate installment 3 too, then run the sweep the way the nightly
+    // timer does — through the scheduler service on the root connection.
+    const sql = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    const db = drizzle(sql);
+    try {
+      await db
+        .update(schema.paymentPlanInstallments)
+        .set({ dueDate: '2026-01-02' })
+        .where(eq(schema.paymentPlanInstallments.seq, 3));
+    } finally {
+      await sql.end({ timeout: 5 });
+    }
+    const scheduler = app.get(OverdueSchedulerService);
+    const first = await scheduler.runSweep();
+    expect(first.marked).toBe(1);
+    expect(first.reminded).toBe(1);
+    expect(first.businesses).toBe(1);
+    // Second pass: nothing newly due, nothing re-mailed.
+    const second = await scheduler.runSweep();
+    expect(second.marked).toBe(0);
+    expect(second.reminded).toBe(0);
   });
 
   it('paying out the plan completes it; completing the order splits commission 60/40', async () => {

@@ -162,6 +162,13 @@
       "when": 1787506510185,
       "tag": "0022_service_crm",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1787508350849,
+      "tag": "0023_business_templates",
+      "breakpoints": true
     }
   ]
 }
