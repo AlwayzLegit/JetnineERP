@@ -26,8 +26,12 @@ import { WebhookDispatcher } from '../webhooks/webhook-dispatcher.service';
 import {
   balanceDueCents,
   defaultDepositCents,
+  deriveFulfillmentStatus,
   isLiveOrderStatus,
   paidCents,
+  planFulfillment,
+  remainingFulfillment,
+  type FulfillmentRequest,
   type OrderStatus,
 } from './order-math';
 import { OrdersService } from './orders.service';
@@ -781,6 +785,149 @@ export class OrdersController {
    * refunded or moved first, and silently orphaning it would leave the
    * drawer out of balance.
    */
+  /**
+   * Pickup fulfillment: the customer takes the goods over the counter, no
+   * truck involved. Same stock semantics as a delivered delivery. Omitted
+   * lines → everything still owed.
+   */
+  @Post('orders/:id/fulfill')
+  @RequirePermission('deliveries.complete')
+  async fulfill(
+    @CurrentTenant() tenant: RequestTenantContext,
+    @CurrentUser() actor: CurrentUserPayload,
+    @Param('id') id: string,
+    @Body() body: { lines?: { orderLineId?: string; quantity?: number }[] },
+  ): Promise<OrderDetail> {
+    const [order] = await this.db
+      .select()
+      .from(schema.orders)
+      .where(eq(schema.orders.id, id))
+      .limit(1);
+    if (!order) throw new NotFoundException('Order not found');
+    if (order.status === 'quote') {
+      throw new BadRequestException('Confirm the order before fulfilling it');
+    }
+    if (order.completedAt || order.cancelledAt) {
+      throw new BadRequestException('This order is closed');
+    }
+
+    const lines = await this.db
+      .select({
+        id: schema.orderLines.id,
+        variantId: schema.orderLines.variantId,
+        quantity: schema.orderLines.quantity,
+        qtyReserved: schema.orderLines.qtyReserved,
+        qtyFulfilled: schema.orderLines.qtyFulfilled,
+      })
+      .from(schema.orderLines)
+      .where(eq(schema.orderLines.orderId, id));
+
+    const requests: FulfillmentRequest[] =
+      body.lines && body.lines.length > 0
+        ? body.lines.map((l) => ({
+            orderLineId: String(l.orderLineId ?? ''),
+            quantity: Number(l.quantity ?? 0),
+          }))
+        : remainingFulfillment(lines);
+    if (requests.length === 0) throw new BadRequestException('Nothing left to fulfill');
+    const plan = planFulfillment(lines, requests);
+    if (plan.errors.length > 0) throw new BadRequestException(plan.errors.join('; '));
+
+    await this.orders.applyFulfillment(this.db, {
+      businessId: tenant.businessId!,
+      orderId: id,
+      locationId: order.locationId,
+      actorUserId: actor?.id ?? null,
+      steps: plan.steps,
+    });
+    const after = await this.db
+      .select({
+        quantity: schema.orderLines.quantity,
+        qtyFulfilled: schema.orderLines.qtyFulfilled,
+      })
+      .from(schema.orderLines)
+      .where(eq(schema.orderLines.orderId, id));
+    await this.db
+      .update(schema.orders)
+      .set({ status: deriveFulfillmentStatus(after), updatedAt: new Date() })
+      .where(eq(schema.orders.id, id));
+
+    await this.audit.log({
+      action: 'order.fulfill',
+      targetType: 'order',
+      targetId: id,
+      after: { units: plan.steps.reduce((s, x) => s + x.quantity, 0), mode: 'pickup' },
+    });
+    return this.loadDetail(id);
+  }
+
+  /**
+   * Close the book on an order. Requires every unit fulfilled, and the
+   * money in — a balance due needs either zero or the explicit
+   * `orders.complete_with_balance` permission (AR, G8). Whatever tiny
+   * reservation residue remains (a cancelled line's units, a shortfall
+   * that never arrived) is released so the stock ledger ends clean.
+   */
+  @Post('orders/:id/complete')
+  @RequirePermission('orders.deposit.take')
+  async complete(
+    @CurrentTenant() tenant: RequestTenantContext,
+    @CurrentUser() actor: CurrentUserPayload,
+    @Param('id') id: string,
+    @Body() body: { allowBalance?: boolean },
+  ): Promise<OrderDetail> {
+    const [order] = await this.db
+      .select()
+      .from(schema.orders)
+      .where(eq(schema.orders.id, id))
+      .limit(1);
+    if (!order) throw new NotFoundException('Order not found');
+    if (order.completedAt) throw new BadRequestException('Order is already completed');
+    if (order.cancelledAt) throw new BadRequestException('A cancelled order cannot be completed');
+    if (order.status !== 'fulfilled') {
+      throw new BadRequestException('Deliver or hand over every unit before completing the order');
+    }
+
+    const payments = await this.db
+      .select({ amountCents: schema.payments.amountCents, status: schema.payments.status })
+      .from(schema.payments)
+      .where(eq(schema.payments.orderId, id));
+    const due = balanceDueCents(order.totalCents, payments);
+    if (due > 0) {
+      if (!body.allowBalance) {
+        throw new BadRequestException(
+          `Balance due is ${due} cents — collect it, or complete with balance explicitly`,
+        );
+      }
+      if (!tenant.permissions.has('orders.complete_with_balance')) {
+        throw new ForbiddenException('You are not allowed to complete an order with a balance due');
+      }
+    }
+
+    // End clean: any reservation left (shortfall units that never shipped)
+    // goes back to the pool.
+    await this.orders.releaseOrder(this.db, {
+      businessId: tenant.businessId!,
+      orderId: id,
+      locationId: order.locationId,
+      actorUserId: actor?.id ?? null,
+    });
+    await this.db
+      .update(schema.orders)
+      .set({ status: 'completed', completedAt: new Date(), updatedAt: new Date() })
+      .where(eq(schema.orders.id, id));
+
+    await this.audit.log({
+      action: 'order.complete',
+      targetType: 'order',
+      targetId: id,
+      after: { balanceDueCents: due, withBalance: due > 0 },
+    });
+    const detail = await this.loadDetail(id);
+    this.fireOrderEvent('order.completed', tenant.businessId!, detail);
+    return detail;
+  }
+
   @Post('orders/:id/cancel')
   @RequirePermission('orders.cancel')
   async cancel(
@@ -1057,7 +1204,7 @@ export class OrdersController {
    * customer's integrations with events that already happened.
    */
   private fireOrderEvent(
-    eventType: 'order.created' | 'order.payment_received' | 'order.cancelled',
+    eventType: 'order.created' | 'order.payment_received' | 'order.cancelled' | 'order.completed',
     businessId: string,
     order: OrderDetail,
     extra?: Record<string, unknown>,

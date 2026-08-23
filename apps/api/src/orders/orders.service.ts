@@ -7,6 +7,7 @@ import { computeTotals } from '../sales/totals';
 import {
   planReleases,
   planReservations,
+  type FulfillmentStep,
   type Release,
   type Reservation,
   type Shortfall,
@@ -353,5 +354,67 @@ export class OrdersService {
     return `SO-${year}-${Math.floor(Math.random() * 1_000_000)
       .toString()
       .padStart(6, '0')}`;
+  }
+
+  /**
+   * The units leave the building: on-hand drops by the full quantity, the
+   * reservation those units were holding is consumed (never below zero),
+   * the line's qty_fulfilled rises, and an `order_fulfill` movement with a
+   * real negative delta records the stock change — the one movement in the
+   * order lifecycle where goods actually move (D3).
+   */
+  async applyFulfillment(
+    db: PostgresJsDatabase,
+    args: {
+      businessId: string;
+      orderId: string;
+      locationId: string;
+      actorUserId: string | null;
+      steps: readonly FulfillmentStep[];
+      referenceType?: string;
+      referenceId?: string;
+    },
+  ): Promise<void> {
+    for (const step of args.steps) {
+      await db
+        .update(schema.orderLines)
+        .set({
+          qtyFulfilled: sql`${schema.orderLines.qtyFulfilled} + ${step.quantity}`,
+          qtyReserved: sql`GREATEST(0, ${schema.orderLines.qtyReserved} - ${step.fromReserved})`,
+        })
+        .where(eq(schema.orderLines.id, step.orderLineId));
+
+      if (!step.variantId) continue; // free-text line: no stock to move
+
+      await db
+        .insert(schema.inventoryLevels)
+        .values({
+          businessId: args.businessId,
+          variantId: step.variantId,
+          locationId: args.locationId,
+          onHand: -step.quantity,
+          reserved: 0,
+        })
+        .onConflictDoUpdate({
+          target: [schema.inventoryLevels.variantId, schema.inventoryLevels.locationId],
+          set: {
+            onHand: sql`${schema.inventoryLevels.onHand} - ${step.quantity}`,
+            reserved: sql`GREATEST(0, ${schema.inventoryLevels.reserved} - ${step.fromReserved})`,
+            updatedAt: new Date(),
+          },
+        });
+
+      await db.insert(schema.inventoryMovements).values({
+        businessId: args.businessId,
+        variantId: step.variantId,
+        locationId: args.locationId,
+        delta: -step.quantity,
+        reason: 'order_fulfill',
+        referenceType: args.referenceType ?? 'order',
+        referenceId: args.referenceId ?? args.orderId,
+        actorUserId: args.actorUserId,
+        notes: `fulfilled ${step.quantity}`,
+      });
+    }
   }
 }

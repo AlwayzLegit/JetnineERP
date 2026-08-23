@@ -1,0 +1,607 @@
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Get,
+  Inject,
+  NotFoundException,
+  Param,
+  Patch,
+  Post,
+  Query,
+} from '@nestjs/common';
+import { and, asc, eq, gte, inArray, lte } from 'drizzle-orm';
+import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
+import { schema } from '@jetnine/db';
+import { AuditService } from '../audit/audit.service';
+import { CurrentTenant, CurrentUser } from '../auth/current-user.decorator';
+import type { CurrentUserPayload } from '../auth/current-user.decorator';
+import { DRIZZLE } from '../database/database.module';
+import { OrdersService } from '../orders/orders.service';
+import {
+  deriveFulfillmentStatus,
+  planFulfillment,
+  remainingFulfillment,
+  type FulfillmentRequest,
+} from '../orders/order-math';
+import { RequirePermission, TenantScoped } from '../tenancy/decorators';
+import type { RequestTenantContext } from '../tenancy/request-context';
+import { WebhookDispatcher } from '../webhooks/webhook-dispatcher.service';
+
+const DELIVERY_STATUSES = [
+  'scheduled',
+  'loaded',
+  'out_for_delivery',
+  'delivered',
+  'failed',
+  'cancelled',
+] as const;
+type DeliveryStatus = (typeof DELIVERY_STATUSES)[number];
+
+/** Statuses a delivery can still be edited/rescheduled in. */
+const EDITABLE: DeliveryStatus[] = ['scheduled', 'loaded'];
+/** Legal en-route transitions the status endpoint accepts. */
+const TRANSITIONS: Record<string, DeliveryStatus[]> = {
+  scheduled: ['loaded', 'out_for_delivery'],
+  loaded: ['out_for_delivery', 'scheduled'],
+  out_for_delivery: ['loaded'],
+};
+
+interface ScheduleDeliveryBody {
+  scheduledDate?: string;
+  windowStart?: string | null;
+  windowEnd?: string | null;
+  driverMembershipId?: string | null;
+  notes?: string | null;
+  /** Omitted → everything still owed on the order rides on this delivery. */
+  lines?: { orderLineId?: string; quantity?: number }[];
+}
+
+interface UpdateDeliveryBody {
+  scheduledDate?: string;
+  windowStart?: string | null;
+  windowEnd?: string | null;
+  driverMembershipId?: string | null;
+  routePosition?: number | null;
+  notes?: string | null;
+}
+
+interface CompleteDeliveryBody {
+  /** true → the truck came back with the goods; nothing moves. */
+  failed?: boolean;
+  notes?: string | null;
+}
+
+interface DeliveryRow {
+  id: string;
+  orderId: string;
+  locationId: string;
+  scheduledDate: string;
+  windowStart: string | null;
+  windowEnd: string | null;
+  status: string;
+  driverMembershipId: string | null;
+  routePosition: number | null;
+  notes: string | null;
+  completedAt: Date | null;
+  createdAt: Date;
+}
+
+interface DeliveryDetail extends DeliveryRow {
+  orderNumber: string;
+  customerId: string;
+  customerName: string | null;
+  addressLine1: string | null;
+  addressLine2: string | null;
+  addressCity: string | null;
+  addressRegion: string | null;
+  addressPostalCode: string | null;
+  addressPhone: string | null;
+  fulfillmentType: string;
+  balanceDueCents: number;
+  lines: {
+    id: string;
+    orderLineId: string;
+    quantity: number;
+    description: string;
+    lineType: string;
+  }[];
+}
+
+/**
+ * Deliveries (STORIS cutover Day 3): the calendar and the trucks. A
+ * delivery is a promise to move specific order-line units on a date;
+ * completing it is the moment stock actually leaves — on-hand drops,
+ * the reservation is consumed, and the order advances along the
+ * fulfillment axis. Failure and cancellation move nothing.
+ */
+@TenantScoped()
+@Controller('v1')
+export class DeliveriesController {
+  constructor(
+    @Inject(DRIZZLE) private readonly db: PostgresJsDatabase,
+    @Inject(AuditService) private readonly audit: AuditService,
+    @Inject(OrdersService) private readonly orders: OrdersService,
+    @Inject(WebhookDispatcher) private readonly webhooks: WebhookDispatcher,
+  ) {}
+
+  /**
+   * Calendar / day-sheet query: deliveries in a date range, optionally
+   * one driver's, ordered by date then route position. The day-sheet is
+   * this list for a single day printed; no separate endpoint needed.
+   */
+  @Get('deliveries')
+  @RequirePermission('deliveries.view')
+  async list(
+    @CurrentTenant() _tenant: RequestTenantContext,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+    @Query('locationId') locationId?: string,
+    @Query('driverMembershipId') driverMembershipId?: string,
+    @Query('status') status?: string,
+  ): Promise<DeliveryDetail[]> {
+    const filters = [];
+    if (from) filters.push(gte(schema.deliveries.scheduledDate, from));
+    if (to) filters.push(lte(schema.deliveries.scheduledDate, to));
+    if (locationId) filters.push(eq(schema.deliveries.locationId, locationId));
+    if (driverMembershipId) {
+      filters.push(eq(schema.deliveries.driverMembershipId, driverMembershipId));
+    }
+    if (status) filters.push(eq(schema.deliveries.status, status));
+
+    const rows = await this.db
+      .select()
+      .from(schema.deliveries)
+      .where(filters.length ? and(...filters) : undefined)
+      .orderBy(
+        asc(schema.deliveries.scheduledDate),
+        asc(schema.deliveries.routePosition),
+        asc(schema.deliveries.createdAt),
+      )
+      .limit(500);
+    return Promise.all(rows.map((r) => this.hydrate(r)));
+  }
+
+  @Get('deliveries/:id')
+  @RequirePermission('deliveries.view')
+  async get(
+    @CurrentTenant() _tenant: RequestTenantContext,
+    @Param('id') id: string,
+  ): Promise<DeliveryDetail> {
+    const row = await this.load(id);
+    return this.hydrate(row);
+  }
+
+  /**
+   * Put an order (or part of one) on the truck for a date. Only a
+   * confirmed order can be scheduled — a quote holds no stock and has no
+   * committed customer. Units already riding on another live delivery
+   * cannot be double-booked.
+   */
+  @Post('orders/:orderId/deliveries')
+  @RequirePermission('deliveries.schedule')
+  async schedule(
+    @CurrentTenant() tenant: RequestTenantContext,
+    @CurrentUser() actor: CurrentUserPayload,
+    @Param('orderId') orderId: string,
+    @Body() body: ScheduleDeliveryBody,
+  ): Promise<DeliveryDetail> {
+    if (!body.scheduledDate || Number.isNaN(new Date(body.scheduledDate).getTime())) {
+      throw new BadRequestException('scheduledDate (YYYY-MM-DD) is required');
+    }
+    const [order] = await this.db
+      .select()
+      .from(schema.orders)
+      .where(eq(schema.orders.id, orderId))
+      .limit(1);
+    if (!order) throw new NotFoundException('Order not found');
+    if (order.status === 'quote') {
+      throw new BadRequestException('Confirm the order (take a deposit) before scheduling it');
+    }
+    if (order.completedAt || order.cancelledAt) {
+      throw new BadRequestException('This order is closed');
+    }
+
+    const orderLines = await this.db
+      .select({
+        id: schema.orderLines.id,
+        variantId: schema.orderLines.variantId,
+        description: schema.orderLines.description,
+        quantity: schema.orderLines.quantity,
+        qtyReserved: schema.orderLines.qtyReserved,
+        qtyFulfilled: schema.orderLines.qtyFulfilled,
+      })
+      .from(schema.orderLines)
+      .where(eq(schema.orderLines.orderId, orderId));
+
+    // Units already promised to a live (not delivered/failed/cancelled)
+    // delivery are spoken for.
+    const pending = await this.pendingByOrderLine(orderId);
+    const schedulable = orderLines.map((l) => ({
+      ...l,
+      // For scheduling purposes, "fulfilled" includes what's already on a
+      // truck — planFulfillment then caps requests at what's truly free.
+      qtyFulfilled: l.qtyFulfilled + (pending.get(l.id) ?? 0),
+    }));
+
+    const requests: FulfillmentRequest[] =
+      body.lines && body.lines.length > 0
+        ? body.lines.map((l) => ({
+            orderLineId: String(l.orderLineId ?? ''),
+            quantity: Number(l.quantity ?? 0),
+          }))
+        : remainingFulfillment(schedulable);
+    if (requests.length === 0) {
+      throw new BadRequestException('Nothing left to schedule on this order');
+    }
+    const plan = planFulfillment(schedulable, requests);
+    if (plan.errors.length > 0) throw new BadRequestException(plan.errors.join('; '));
+
+    // Route position: append to the end of that day's route.
+    const dayRows = await this.db
+      .select({ routePosition: schema.deliveries.routePosition })
+      .from(schema.deliveries)
+      .where(
+        and(
+          eq(schema.deliveries.locationId, order.locationId),
+          eq(schema.deliveries.scheduledDate, body.scheduledDate),
+        ),
+      );
+    const nextPosition = dayRows.reduce((m, r) => Math.max(m, r.routePosition ?? 0), 0) + 1;
+
+    const [delivery] = await this.db
+      .insert(schema.deliveries)
+      .values({
+        businessId: tenant.businessId!,
+        locationId: order.locationId,
+        orderId,
+        scheduledDate: body.scheduledDate,
+        windowStart: body.windowStart ?? null,
+        windowEnd: body.windowEnd ?? null,
+        driverMembershipId: body.driverMembershipId ?? null,
+        routePosition: nextPosition,
+        notes: body.notes ?? null,
+      })
+      .returning();
+    if (!delivery) throw new BadRequestException('failed to create delivery');
+
+    await this.db.insert(schema.deliveryLines).values(
+      plan.steps.map((s) => ({
+        businessId: tenant.businessId!,
+        deliveryId: delivery.id,
+        orderLineId: s.orderLineId,
+        quantity: s.quantity,
+      })),
+    );
+
+    await this.audit.log({
+      action: 'delivery.schedule',
+      targetType: 'delivery',
+      targetId: delivery.id,
+      after: {
+        orderId,
+        orderNumber: order.number,
+        scheduledDate: body.scheduledDate,
+        lineCount: plan.steps.length,
+      },
+    });
+    const detail = await this.hydrate(delivery);
+    this.fireEvent('delivery.scheduled', tenant.businessId!, detail);
+    return detail;
+  }
+
+  /** Reschedule / reassign; only before the truck leaves. */
+  @Patch('deliveries/:id')
+  @RequirePermission('deliveries.schedule')
+  async update(
+    @CurrentTenant() _tenant: RequestTenantContext,
+    @Param('id') id: string,
+    @Body() body: UpdateDeliveryBody,
+  ): Promise<DeliveryDetail> {
+    const row = await this.load(id);
+    if (!EDITABLE.includes(row.status as DeliveryStatus)) {
+      throw new BadRequestException(`A ${row.status} delivery cannot be edited`);
+    }
+    if (body.scheduledDate !== undefined && Number.isNaN(new Date(body.scheduledDate).getTime())) {
+      throw new BadRequestException('scheduledDate must be a date');
+    }
+    await this.db
+      .update(schema.deliveries)
+      .set({
+        ...(body.scheduledDate !== undefined ? { scheduledDate: body.scheduledDate } : {}),
+        ...(body.windowStart !== undefined ? { windowStart: body.windowStart } : {}),
+        ...(body.windowEnd !== undefined ? { windowEnd: body.windowEnd } : {}),
+        ...(body.driverMembershipId !== undefined
+          ? { driverMembershipId: body.driverMembershipId }
+          : {}),
+        ...(body.routePosition !== undefined ? { routePosition: body.routePosition } : {}),
+        ...(body.notes !== undefined ? { notes: body.notes } : {}),
+        updatedAt: new Date(),
+      })
+      .where(eq(schema.deliveries.id, id));
+    await this.audit.log({
+      action: 'delivery.update',
+      targetType: 'delivery',
+      targetId: id,
+      after: body as Record<string, unknown>,
+    });
+    return this.hydrate(await this.load(id));
+  }
+
+  /** Loaded / out-for-delivery hops (and stepping back while still out). */
+  @Post('deliveries/:id/status')
+  @RequirePermission('deliveries.complete')
+  async setStatus(
+    @CurrentTenant() _tenant: RequestTenantContext,
+    @Param('id') id: string,
+    @Body() body: { status?: string },
+  ): Promise<DeliveryDetail> {
+    const row = await this.load(id);
+    const next = body.status as DeliveryStatus;
+    const allowed = TRANSITIONS[row.status] ?? [];
+    if (!next || !allowed.includes(next)) {
+      throw new BadRequestException(
+        `Cannot go from ${row.status} to ${body.status ?? '(missing)'} — allowed: ${allowed.join(', ') || 'none'}`,
+      );
+    }
+    await this.db
+      .update(schema.deliveries)
+      .set({ status: next, updatedAt: new Date() })
+      .where(eq(schema.deliveries.id, id));
+    await this.audit.log({
+      action: 'delivery.status',
+      targetType: 'delivery',
+      targetId: id,
+      before: { status: row.status },
+      after: { status: next },
+    });
+    return this.hydrate(await this.load(id));
+  }
+
+  /**
+   * The truck's verdict. Delivered → the goods leave: stock decrements,
+   * reservations consume, lines' fulfilled counts rise, and the order
+   * advances (partially_fulfilled / fulfilled). Failed → record it,
+   * nothing moves; the units go back on the schedulable pile.
+   */
+  @Post('deliveries/:id/complete')
+  @RequirePermission('deliveries.complete')
+  async complete(
+    @CurrentTenant() tenant: RequestTenantContext,
+    @CurrentUser() actor: CurrentUserPayload,
+    @Param('id') id: string,
+    @Body() body: CompleteDeliveryBody,
+  ): Promise<DeliveryDetail> {
+    const row = await this.load(id);
+    if (row.status === 'delivered' || row.status === 'failed' || row.status === 'cancelled') {
+      throw new BadRequestException(`This delivery is already ${row.status}`);
+    }
+
+    if (body.failed) {
+      await this.db
+        .update(schema.deliveries)
+        .set({
+          status: 'failed',
+          completedAt: new Date(),
+          notes: body.notes
+            ? [row.notes, `Failed: ${body.notes}`].filter(Boolean).join('\n')
+            : row.notes,
+          updatedAt: new Date(),
+        })
+        .where(eq(schema.deliveries.id, id));
+      await this.audit.log({
+        action: 'delivery.failed',
+        targetType: 'delivery',
+        targetId: id,
+        after: { notes: body.notes ?? null },
+      });
+      return this.hydrate(await this.load(id));
+    }
+
+    const dLines = await this.db
+      .select({
+        orderLineId: schema.deliveryLines.orderLineId,
+        quantity: schema.deliveryLines.quantity,
+      })
+      .from(schema.deliveryLines)
+      .where(eq(schema.deliveryLines.deliveryId, id));
+    const orderLines = await this.db
+      .select({
+        id: schema.orderLines.id,
+        variantId: schema.orderLines.variantId,
+        quantity: schema.orderLines.quantity,
+        qtyReserved: schema.orderLines.qtyReserved,
+        qtyFulfilled: schema.orderLines.qtyFulfilled,
+      })
+      .from(schema.orderLines)
+      .where(eq(schema.orderLines.orderId, row.orderId));
+
+    const plan = planFulfillment(
+      orderLines,
+      dLines.map((l) => ({ orderLineId: l.orderLineId, quantity: l.quantity })),
+    );
+    if (plan.errors.length > 0) throw new BadRequestException(plan.errors.join('; '));
+
+    await this.orders.applyFulfillment(this.db, {
+      businessId: tenant.businessId!,
+      orderId: row.orderId,
+      locationId: row.locationId,
+      actorUserId: actor?.id ?? null,
+      steps: plan.steps,
+      referenceType: 'delivery',
+      referenceId: id,
+    });
+    await this.db
+      .update(schema.deliveries)
+      .set({ status: 'delivered', completedAt: new Date(), updatedAt: new Date() })
+      .where(eq(schema.deliveries.id, id));
+
+    await this.advanceOrder(row.orderId);
+
+    await this.audit.log({
+      action: 'delivery.delivered',
+      targetType: 'delivery',
+      targetId: id,
+      after: { orderId: row.orderId, units: plan.steps.reduce((s, x) => s + x.quantity, 0) },
+    });
+    const detail = await this.hydrate(await this.load(id));
+    this.fireEvent('delivery.delivered', tenant.businessId!, detail);
+    return detail;
+  }
+
+  @Post('deliveries/:id/cancel')
+  @RequirePermission('deliveries.schedule')
+  async cancel(
+    @CurrentTenant() _tenant: RequestTenantContext,
+    @Param('id') id: string,
+  ): Promise<DeliveryDetail> {
+    const row = await this.load(id);
+    if (!EDITABLE.includes(row.status as DeliveryStatus)) {
+      throw new BadRequestException(`A ${row.status} delivery cannot be cancelled`);
+    }
+    await this.db
+      .update(schema.deliveries)
+      .set({ status: 'cancelled', updatedAt: new Date() })
+      .where(eq(schema.deliveries.id, id));
+    await this.audit.log({ action: 'delivery.cancel', targetType: 'delivery', targetId: id });
+    return this.hydrate(await this.load(id));
+  }
+
+  // ---------------------------------------------------------------------
+  // Internals
+  // ---------------------------------------------------------------------
+
+  private async load(id: string): Promise<DeliveryRow> {
+    const [row] = await this.db
+      .select()
+      .from(schema.deliveries)
+      .where(eq(schema.deliveries.id, id))
+      .limit(1);
+    if (!row) throw new NotFoundException('Delivery not found');
+    return row;
+  }
+
+  /** Units of each order line riding on a live delivery (not this one's history). */
+  private async pendingByOrderLine(orderId: string): Promise<Map<string, number>> {
+    const rows = await this.db
+      .select({
+        orderLineId: schema.deliveryLines.orderLineId,
+        quantity: schema.deliveryLines.quantity,
+        status: schema.deliveries.status,
+      })
+      .from(schema.deliveryLines)
+      .innerJoin(schema.deliveries, eq(schema.deliveries.id, schema.deliveryLines.deliveryId))
+      .where(
+        and(
+          eq(schema.deliveries.orderId, orderId),
+          inArray(schema.deliveries.status, ['scheduled', 'loaded', 'out_for_delivery']),
+        ),
+      );
+    const map = new Map<string, number>();
+    for (const r of rows) map.set(r.orderLineId, (map.get(r.orderLineId) ?? 0) + r.quantity);
+    return map;
+  }
+
+  /** Recompute the order's fulfillment status from its lines and persist. */
+  private async advanceOrder(orderId: string): Promise<void> {
+    const lines = await this.db
+      .select({
+        quantity: schema.orderLines.quantity,
+        qtyFulfilled: schema.orderLines.qtyFulfilled,
+      })
+      .from(schema.orderLines)
+      .where(eq(schema.orderLines.orderId, orderId));
+    const status = deriveFulfillmentStatus(lines);
+    await this.db
+      .update(schema.orders)
+      .set({ status, updatedAt: new Date() })
+      .where(
+        and(
+          eq(schema.orders.id, orderId),
+          inArray(schema.orders.status, ['open', 'partially_fulfilled', 'fulfilled']),
+        ),
+      );
+  }
+
+  private async hydrate(row: DeliveryRow): Promise<DeliveryDetail> {
+    const [order] = await this.db
+      .select({
+        number: schema.orders.number,
+        customerId: schema.orders.customerId,
+        fulfillmentType: schema.orders.fulfillmentType,
+        totalCents: schema.orders.totalCents,
+        addressLine1: schema.orders.addressLine1,
+        addressLine2: schema.orders.addressLine2,
+        addressCity: schema.orders.addressCity,
+        addressRegion: schema.orders.addressRegion,
+        addressPostalCode: schema.orders.addressPostalCode,
+        addressPhone: schema.orders.addressPhone,
+      })
+      .from(schema.orders)
+      .where(eq(schema.orders.id, row.orderId))
+      .limit(1);
+    const [customer] = order
+      ? await this.db
+          .select({
+            firstName: schema.customers.firstName,
+            lastName: schema.customers.lastName,
+          })
+          .from(schema.customers)
+          .where(eq(schema.customers.id, order.customerId))
+          .limit(1)
+      : [];
+    const payments = await this.db
+      .select({ amountCents: schema.payments.amountCents, status: schema.payments.status })
+      .from(schema.payments)
+      .where(eq(schema.payments.orderId, row.orderId));
+    const paid = payments
+      .filter((p) => p.status === 'succeeded')
+      .reduce((s, p) => s + p.amountCents, 0);
+    const lines = await this.db
+      .select({
+        id: schema.deliveryLines.id,
+        orderLineId: schema.deliveryLines.orderLineId,
+        quantity: schema.deliveryLines.quantity,
+        description: schema.orderLines.description,
+        lineType: schema.orderLines.lineType,
+      })
+      .from(schema.deliveryLines)
+      .innerJoin(schema.orderLines, eq(schema.orderLines.id, schema.deliveryLines.orderLineId))
+      .where(eq(schema.deliveryLines.deliveryId, row.id));
+    return {
+      ...row,
+      orderNumber: order?.number ?? '?',
+      customerId: order?.customerId ?? '',
+      customerName: customer
+        ? [customer.firstName, customer.lastName].filter(Boolean).join(' ') || null
+        : null,
+      addressLine1: order?.addressLine1 ?? null,
+      addressLine2: order?.addressLine2 ?? null,
+      addressCity: order?.addressCity ?? null,
+      addressRegion: order?.addressRegion ?? null,
+      addressPostalCode: order?.addressPostalCode ?? null,
+      addressPhone: order?.addressPhone ?? null,
+      fulfillmentType: order?.fulfillmentType ?? 'delivery',
+      balanceDueCents: Math.max(0, (order?.totalCents ?? 0) - paid),
+      lines,
+    };
+  }
+
+  private fireEvent(
+    eventType: 'delivery.scheduled' | 'delivery.delivered',
+    businessId: string,
+    detail: DeliveryDetail,
+  ): void {
+    void this.webhooks.fire({
+      businessId,
+      eventType,
+      payload: {
+        deliveryId: detail.id,
+        orderId: detail.orderId,
+        orderNumber: detail.orderNumber,
+        status: detail.status,
+        scheduledDate: detail.scheduledDate,
+      },
+    });
+  }
+}
