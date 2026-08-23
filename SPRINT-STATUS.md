@@ -215,6 +215,17 @@ _Acceptance: layaway order pays off across installments; commission entries matc
 
 _(newest first — sessions append: date · day · what shipped · open flags)_
 
+- 2026-08-23 · Beyond-plan · **One-click platform integrations.** `integrations`
+  table (0024) + connector framework: Shopify (Admin API token), WooCommerce
+  (REST key/secret), Wix Stores (API key) — connect verifies credentials against
+  the platform before storing; "Sync now" pulls customers/products/paid order
+  history and lands it through the D7 import pipeline (per-provider legacy-id
+  prefixes keep identity spaces separate; re-sync updates in place; synced sales
+  are D8 imported history). UI at /settings/integrations with the STORIS CSV
+  wizard as a sibling card. `integrations.manage` permission + a boot-time
+  system-role permission sync so pre-existing businesses pick up new catalog
+  permissions automatically. 6-test int spec against a fake Shopify
+  (`jetnine_integrations` DB, in CI). Suite: 374 tests.
 - 2026-08-23 · Days 3–9 in sequence · **Whole remaining build track shipped on PR #26.**
   Deliveries/fulfillment · special orders + serials · financing/layaway/commissions ·
   service/CRM/AR · import pipeline + wizard + recon gates · business templates +

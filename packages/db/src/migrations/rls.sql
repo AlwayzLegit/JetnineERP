@@ -110,6 +110,7 @@ DECLARE
     'legacy_refs',
     'import_batches',
     'import_rows',
+    'integrations',
     'po_line_allocations',
     'serial_units',
     'payment_plans',

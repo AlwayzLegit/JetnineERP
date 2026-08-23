@@ -87,6 +87,9 @@ export default function SettingsPage() {
             <LinkButton href="/settings/import" variant="secondary" size="sm">
               Data import
             </LinkButton>
+            <LinkButton href="/settings/integrations" variant="secondary" size="sm">
+              Integrations
+            </LinkButton>
             <LinkButton href="/settings/billing" variant="primary" size="sm">
               Billing
             </LinkButton>
