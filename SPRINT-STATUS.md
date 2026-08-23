@@ -144,8 +144,25 @@ _Acceptance: layaway order pays off across installments; commission entries matc
 
 ## Day 7 — Migration rehearsal #1
 
-- [ ] **Build:** Import pipeline: upload → staging → mapping config → validation report → commit via `legacy_refs` upserts → recon report (gates 1–5, plan §7)
+- [x] **Build:** Import pipeline: upload → staging → mapping config → validation report → commit via `legacy_refs` upserts → recon report (gates 1–5, plan §7)
+      — _2026-08-23: `/v1/import/*` — 7 entity importers (customers, vendors,
+      products+variants+categories, inventory on-hand w/ audit movements, open-order
+      headers + deposit payments, order lines, closed-sales history), STORIS-shaped
+      auto-mapping (editable per batch), RFC-4180 CSV parser, money/date/bool coercion,
+      validation report (missing FKs, bad money, dup legacy ids, unknown SKUs — first
+      200 rows + message rollup), commit as `legacy_refs` upserts (D7 — every re-run
+      updates in place; inventory re-runs write no ledger noise), everything imported
+      flagged `imported_at` (D8). Recon gates 1–4 computed source-vs-DB to the cent at
+      `GET /v1/import/recon`; gate 5 stays human. Wizard UI at
+      `(business)/settings/import` (upload → map → validate → commit → recon panel).
+      9-test int spec (`jetnine_import` DB) wired into CI; JSON body limit raised to
+      25 MB for CSV upload._
 - [ ] **Build:** Full rehearsal import into throwaway `migration-rehearsal` tenant
+      — _2026-08-23: the synthetic rehearsal (fixtures shaped like STORIS report-writer
+      exports) runs end-to-end in `apps/api/test/import.int.spec.ts` with all recon
+      gates matching. The real rehearsal is blocked on the actual STORIS export files
+      (Ops, flagged) — once delivered, create the `migration-rehearsal` tenant and walk
+      the wizard top-to-bottom; **do not commit the export files to the repo**._
 - [ ] **Ops:** Review recon report line-by-line vs STORIS reports; log every mismatch
 
 ## Day 8 — Rehearsal #2 + platform layer

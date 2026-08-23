@@ -127,6 +127,20 @@ export default function SettingsPage() {
             API keys
           </Link>
           <Link
+            href="/settings/import"
+            style={{
+              padding: '8px 14px',
+              background: 'transparent',
+              color: '#444',
+              border: '1px solid #ccc',
+              borderRadius: 4,
+              textDecoration: 'none',
+              fontSize: 13,
+            }}
+          >
+            Data import
+          </Link>
+          <Link
             href="/settings/billing"
             style={{
               padding: '8px 14px',
