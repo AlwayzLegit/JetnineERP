@@ -8,6 +8,7 @@ export * from './customers';
 export * from './orders';
 export * from './sales';
 export * from './money-plans';
+export * from './service';
 export * from './cash';
 export * from './billing';
 export * from './stripe';
@@ -74,4 +75,10 @@ export const TENANT_SCOPED_TABLES = [
   'payment_plan_installments',
   'commission_plans',
   'commission_entries',
+  'service_orders',
+  'service_order_lines',
+  'service_order_notes',
+  'customer_notes',
+  'customer_tags',
+  'customer_tag_links',
 ] as const;

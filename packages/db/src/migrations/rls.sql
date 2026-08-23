@@ -115,7 +115,13 @@ DECLARE
     'payment_plans',
     'payment_plan_installments',
     'commission_plans',
-    'commission_entries'
+    'commission_entries',
+    'service_orders',
+    'service_order_lines',
+    'service_order_notes',
+    'customer_notes',
+    'customer_tags',
+    'customer_tag_links'
   ];
 BEGIN
   FOREACH t IN ARRAY tenant_tables LOOP

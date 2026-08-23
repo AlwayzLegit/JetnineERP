@@ -120,9 +120,26 @@ _Acceptance: layaway order pays off across installments; commission entries matc
 
 ## Day 6 — Service & CRM
 
-- [ ] **Build:** Service orders: intake form, status board, ticket detail + charges + notes, complete; ticket print
-- [ ] **Build:** CRM: `customer_notes`, tags, customer timeline page (merged feed)
-- [ ] **Build:** Receivables/AR report + customer statement print
+- [x] **Build:** Service orders: intake form, status board, ticket detail + charges + notes, complete; ticket print
+      — _2026-08-23 (API-level): migration `0022_service_crm` — `service_orders`
+      (SV-YYYY-NNNNNN, warranty flag, imported_at/legacy_number for D7/D8),
+      `service_order_lines` (part-from-variant or free-text labor; warranty prices
+      lines at 0), `service_order_notes`. `payments.service_order_id` added and the
+      one-tender CHECK widened to `num_nonnulls(sale_id, order_id, service_order_id) = 1`
+      (D2 holds: one payments table behind every tender). Lifecycle
+      intake ↔ awaiting_parts ↔ in_service → ready → completed with auto status notes,
+      customer "ready for pickup" email at ready, over-collect guard, complete requires
+      zero balance, attached serial units walk in_service → sold. 8-test int spec
+      (`jetnine_service` DB) green; UI pages ride the QA/design pass with the other screens._
+- [x] **Build:** CRM: `customer_notes`, tags, customer timeline page (merged feed)
+      — _2026-08-23: notes CRUD, tags (unique per business, attach/detach), and
+      `GET /v1/customers/:id/timeline` — a read-model merge of sales, orders,
+      deliveries, order payments, service tickets, and notes, newest first. No event
+      table; the documents are the history._
+- [x] **Build:** Receivables/AR report + customer statement print
+      — _2026-08-23: `GET /v1/reports/ar` (permission `reports.financial.view`) —
+      confirmed+ orders with balance due, aged 0-30/31-60/61-90/90+ by order date,
+      rolled up per customer. Statement print rides the UI pass._
 - [ ] **Ops:** Walk the service workflow; list any STORIS report not yet covered
 
 ## Day 7 — Migration rehearsal #1

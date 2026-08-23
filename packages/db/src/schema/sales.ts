@@ -95,6 +95,8 @@ export const payments = pgTable(
       .references(() => businesses.id, { onDelete: 'cascade' }),
     saleId: uuid('sale_id').references(() => sales.id, { onDelete: 'cascade' }),
     orderId: uuid('order_id').references(() => orders.id, { onDelete: 'cascade' }),
+    /** G6: a service ticket's charge. Exactly one parent among sale/order/service. */
+    serviceOrderId: uuid('service_order_id'),
     /**
      * 'sale' — POS cash-and-carry tender
      * 'deposit' — money down on an order that is not yet fulfilled
@@ -133,7 +135,7 @@ export const payments = pgTable(
     // drawer would double-count it.
     parentExactlyOne: check(
       'payments_parent_exactly_one',
-      sql`num_nonnulls(${t.saleId}, ${t.orderId}) = 1`,
+      sql`num_nonnulls(${t.saleId}, ${t.orderId}, ${t.serviceOrderId}) = 1`,
     ),
   }),
 );
