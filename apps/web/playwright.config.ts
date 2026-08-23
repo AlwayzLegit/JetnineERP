@@ -26,6 +26,8 @@ export default defineConfig({
       reuseExistingServer: !process.env.CI,
       env: {
         NODE_ENV: 'development',
+        // One sign-in per test quickly exceeds the 5/min production rule.
+        AUTH_RATE_LIMIT_DISABLED: '1',
         PORT: String(API_PORT),
         BETTER_AUTH_URL: `http://localhost:${API_PORT}`,
         BETTER_AUTH_SECRET: 'test-secret-test-secret-test-secret-12',

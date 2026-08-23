@@ -217,13 +217,18 @@ export class OnboardingController {
   @Get('checklist')
   async checklist(
     @CurrentUser() actor: CurrentUserPayload,
-    // Passthrough so we can emit a literal JSON `null` for the "no business
-    // yet" case. Returning `null` from the handler makes Nest end the
-    // response with an empty body, so a client doing `await res.json()`
-    // throws a parse error instead of reading the documented
-    // `OnboardingChecklist | null`.
-    @Res({ passthrough: true }) res: Response,
-  ): Promise<OnboardingChecklist | null> {
+    // Fully manual response (NOT passthrough) so we can emit a literal
+    // JSON `null` for the "no business yet" case. Returning `null` from a
+    // Nest-managed handler ends the response with an empty body, so a
+    // client doing `await res.json()` throws a parse error instead of
+    // reading the documented `OnboardingChecklist | null`. The previous
+    // passthrough + res.json() combination double-sent the response: on a
+    // conditional request (If-None-Match) express's ETag handling had
+    // already committed a 304 by the time Nest serialized the return
+    // value, which threw "Cannot remove headers after they are sent" and
+    // turned every dashboard revalidation into a 500.
+    @Res() res: Response,
+  ): Promise<void> {
     const memberships = await this.db
       .select({
         businessId: schema.memberships.businessId,
@@ -234,7 +239,7 @@ export class OnboardingController {
       .where(and(eq(schema.memberships.userId, actor.id), eq(schema.memberships.status, 'active')));
     if (memberships.length === 0) {
       res.json(null);
-      return null;
+      return;
     }
     // Most recently-created business is the one we onboard against.
     memberships.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
@@ -299,11 +304,12 @@ export class OnboardingController {
       },
     ];
 
-    return {
+    const checklist: OnboardingChecklist = {
       businessId,
       steps,
       complete: steps.every((s) => s.done),
     };
+    res.json(checklist);
   }
 }
 

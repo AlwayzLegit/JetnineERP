@@ -278,6 +278,16 @@ CREATE POLICY verifications_super_admin_only ON verifications
   USING (is_super_admin())
   WITH CHECK (is_super_admin());
 
+-- business_templates: platform-level config snapshots, super-admin
+-- surface only.
+ALTER TABLE business_templates ENABLE ROW LEVEL SECURITY;
+ALTER TABLE business_templates FORCE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS business_templates_super_admin_only ON business_templates;
+CREATE POLICY business_templates_super_admin_only ON business_templates
+  USING (is_super_admin())
+  WITH CHECK (is_super_admin());
+
 -- stripe_webhook_events: platform-internal log; the webhook handler runs
 -- as the postgres role (RLS bypassed there) and tenant code never needs
 -- to read this table.

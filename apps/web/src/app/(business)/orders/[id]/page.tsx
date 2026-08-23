@@ -338,6 +338,14 @@ export default function OrderDetailPage() {
             )}
           </div>
 
+          {live && (
+            <PaymentPlanCard
+              orderId={order.id}
+              balanceDueCents={order.balanceDueCents}
+              onChanged={load}
+            />
+          )}
+
           <div style={card}>
             <h3 style={section}>Deliveries & fulfillment</h3>
             {deliveries.length === 0 ? (
@@ -595,6 +603,171 @@ function Row({ label, value, bold }: { label: string; value: number; bold?: bool
       <span>
         <Money cents={value} />
       </span>
+    </div>
+  );
+}
+
+interface PlanInstallment {
+  seq: number;
+  dueDate: string;
+  amountCents: number;
+  status: string;
+}
+interface PlanDetail {
+  id: string;
+  orderId: string;
+  status: string;
+  frequency: string;
+  installments: PlanInstallment[];
+}
+
+/** Layaway / in-house plan (G4): create it here, take installments here. */
+function PaymentPlanCard(props: {
+  orderId: string;
+  balanceDueCents: number;
+  onChanged: () => Promise<void> | void;
+}) {
+  const [plan, setPlan] = useState<PlanDetail | null | undefined>(undefined);
+  const [count, setCount] = useState('3');
+  const [frequency, setFrequency] = useState('monthly');
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function load() {
+    try {
+      const plans = await api<PlanDetail[]>('/v1/payment-plans');
+      setPlan(plans.find((p) => p.orderId === props.orderId) ?? null);
+    } catch {
+      setPlan(null);
+    }
+  }
+  useEffect(() => {
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.orderId]);
+
+  async function createPlan() {
+    setBusy(true);
+    setError(null);
+    try {
+      const created = await api<PlanDetail>(`/v1/orders/${props.orderId}/payment-plan`, {
+        method: 'POST',
+        body: JSON.stringify({ installmentCount: Number(count), frequency }),
+      });
+      setPlan(created);
+      await props.onChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function pay(seq: number) {
+    if (!plan) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const updated = await api<PlanDetail>(
+        `/v1/payment-plans/${plan.id}/installments/${seq}/pay`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ method: 'cash' }),
+        },
+      );
+      setPlan(updated);
+      await props.onChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (plan === undefined) return null;
+
+  return (
+    <div style={card} data-testid="payment-plan-card">
+      <h3 style={section}>Payment plan</h3>
+      {error && <p style={{ color: '#b00', fontSize: 13 }}>{error}</p>}
+      {plan === null ? (
+        props.balanceDueCents > 0 ? (
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 13, color: '#444' }}>Split the balance into</span>
+            <input
+              type="number"
+              min={2}
+              max={24}
+              value={count}
+              onChange={(e) => setCount(e.target.value)}
+              style={{ ...fieldStyle, width: 60 }}
+              data-testid="plan-count"
+            />
+            <select
+              value={frequency}
+              onChange={(e) => setFrequency(e.target.value)}
+              style={{ ...fieldStyle, width: 120 }}
+            >
+              <option value="weekly">weekly</option>
+              <option value="biweekly">biweekly</option>
+              <option value="monthly">monthly</option>
+            </select>
+            <button
+              onClick={() => void createPlan()}
+              disabled={busy || !(Number(count) >= 1)}
+              style={primaryBtn}
+              data-testid="create-plan"
+            >
+              Start layaway plan
+            </button>
+          </div>
+        ) : (
+          <p style={{ color: '#888', fontSize: 13, margin: 0 }}>
+            No plan — the balance is already zero.
+          </p>
+        )
+      ) : (
+        <>
+          <p style={{ fontSize: 12, color: '#888', margin: '0 0 8px' }}>
+            {plan.frequency} plan · <span data-testid="plan-status">{plan.status}</span>
+          </p>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+            <thead>
+              <tr style={{ textAlign: 'left', borderBottom: '1px solid #ddd' }}>
+                <Th>#</Th>
+                <Th>Due</Th>
+                <Th>Status</Th>
+                <Th align="right">Amount</Th>
+                <Th align="right"> </Th>
+              </tr>
+            </thead>
+            <tbody>
+              {plan.installments.map((i) => (
+                <tr key={i.seq} style={{ borderBottom: '1px solid #f3f3f3' }}>
+                  <Td>{i.seq}</Td>
+                  <Td>{i.dueDate}</Td>
+                  <Td>{i.status}</Td>
+                  <Td align="right">
+                    <Money cents={i.amountCents} />
+                  </Td>
+                  <Td align="right">
+                    {i.status !== 'paid' && plan.status === 'active' && (
+                      <button
+                        onClick={() => void pay(i.seq)}
+                        disabled={busy}
+                        style={primaryBtn}
+                        data-testid={`pay-installment-${i.seq}`}
+                      >
+                        Pay cash
+                      </button>
+                    )}
+                  </Td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      )}
     </div>
   );
 }

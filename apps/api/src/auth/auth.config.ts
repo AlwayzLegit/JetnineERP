@@ -136,9 +136,12 @@ export async function createAuth(deps: AuthDeps) {
     rateLimit: {
       // Disabled in tests because vitest shares process state across the
       // integration suites and the cumulative sign-in count quickly trips
-      // a 429 in the second-or-third spec file. Production + dev keep the
-      // PLAN.md §10.6 limits.
-      enabled: process.env.NODE_ENV !== 'test',
+      // a 429 in the second-or-third spec file. The Playwright suite runs
+      // the API under NODE_ENV=development (prod-like auth flows) and
+      // signs in once per test — enough to trip the 5/min sign-in rule as
+      // the suite grows — so it opts out explicitly instead. Production +
+      // dev keep the PLAN.md §10.6 limits.
+      enabled: process.env.NODE_ENV !== 'test' && process.env.AUTH_RATE_LIMIT_DISABLED !== '1',
       window: 60,
       max: 100,
       customRules: {
