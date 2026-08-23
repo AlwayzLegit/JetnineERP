@@ -99,9 +99,21 @@ email names the order → serials register/assign/sold with customer stamped.
 
 ## Day 5 — Money features
 
-- [ ] **Build:** Financing tender (`method='financing'`, provider + ref) in POS + order payments
-- [ ] **Build:** `payment_plans` + installments; pay-installment flow; nightly overdue job + reminder emails; overdue report
-- [ ] **Build:** Commissions: plans, membership assignment, accrual at completion, refund reversal, report with approve/mark-paid
+- [x] **Build:** Financing tender (`method='financing'`, provider + ref) in POS + order payments
+      — _2026-08-23: POS tender set widened to financing/external_card/check with
+      provider+ref recorded on the payment row; order payments carried these since Day 1._
+- [x] **Build:** `payment_plans` + installments; pay-installment flow; nightly overdue job + reminder emails; overdue report
+      — _2026-08-23: migration `0020_money_plans_commissions`; plans generate installments
+      that sum to the balance exactly (remainder on the last); paying one posts an order
+      payment `kind='installment'` so drawer/balance math just works; overdue sweep
+      (`POST /v1/payment-plans/run-overdue`, idempotent, reminder emails) + overdue
+      report. Nightly scheduling wired in the deploy-hardening slice._
+- [x] **Build:** Commissions (plans, accrual at sale/order completion, refund reversal, report, approve/mark-paid)
+      — _2026-08-23: `commission_plans` (percent_of_sale | percent_of_margin, bps) assigned
+      per membership; accrual at POS-sale completion and order completion (split via
+      `split_bps`); refunds write proportional negative entries; period report
+      (view_own vs view_all) + approve→paid payroll actions. Imported docs never accrue
+      (D8; `sales.imported_at` added in 0021)._
 - [ ] **Ops:** Provide real commission rules + financing provider list; validate 5 historical examples
 
 _Acceptance: layaway order pays off across installments; commission entries match hand math._

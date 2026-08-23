@@ -7,6 +7,7 @@ export * from './inventory';
 export * from './customers';
 export * from './orders';
 export * from './sales';
+export * from './money-plans';
 export * from './cash';
 export * from './billing';
 export * from './stripe';
@@ -69,4 +70,8 @@ export const TENANT_SCOPED_TABLES = [
   'import_rows',
   'po_line_allocations',
   'serial_units',
+  'payment_plans',
+  'payment_plan_installments',
+  'commission_plans',
+  'commission_entries',
 ] as const;

@@ -22,6 +22,7 @@ import { buildPage, clampLimit, decodeCursor, type PageResponse } from '../commo
 import { DRIZZLE } from '../database/database.module';
 import { RequirePermission, TenantScoped } from '../tenancy/decorators';
 import type { RequestTenantContext } from '../tenancy/request-context';
+import { CommissionsService } from '../money/commissions.service';
 import { WebhookDispatcher } from '../webhooks/webhook-dispatcher.service';
 import {
   balanceDueCents,
@@ -215,6 +216,7 @@ export class OrdersController {
     @Inject(AuditService) private readonly audit: AuditService,
     @Inject(OrdersService) private readonly orders: OrdersService,
     @Inject(WebhookDispatcher) private readonly webhooks: WebhookDispatcher,
+    @Inject(CommissionsService) private readonly commissions: CommissionsService,
   ) {}
 
   @Get('orders')
@@ -916,6 +918,13 @@ export class OrdersController {
       .update(schema.orders)
       .set({ status: 'completed', completedAt: new Date(), updatedAt: new Date() })
       .where(eq(schema.orders.id, id));
+
+    // Commission accrues at completion (G5), split per split_bps;
+    // imported orders never accrue (D8) — enforced in the service.
+    await this.commissions.accrueForOrder(this.db, {
+      businessId: tenant.businessId!,
+      orderId: id,
+    });
 
     await this.audit.log({
       action: 'order.complete',

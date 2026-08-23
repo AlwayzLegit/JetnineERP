@@ -39,6 +39,8 @@ export const sales = pgTable(
     totalCents: integer('total_cents').notNull(),
     notes: text('notes'),
     completedAt: timestamp('completed_at', { withTimezone: true }),
+    /** D8: set on legacy-imported sales — excluded from drawer, commissions, webhooks. */
+    importedAt: timestamp('imported_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => ({

@@ -111,7 +111,11 @@ DECLARE
     'import_batches',
     'import_rows',
     'po_line_allocations',
-    'serial_units'
+    'serial_units',
+    'payment_plans',
+    'payment_plan_installments',
+    'commission_plans',
+    'commission_entries'
   ];
 BEGIN
   FOREACH t IN ARRAY tenant_tables LOOP

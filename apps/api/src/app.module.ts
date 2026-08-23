@@ -26,6 +26,7 @@ import { OnboardingModule } from './onboarding/onboarding.module';
 import { OpenApiModule } from './openapi/openapi.module';
 import { DeliveriesModule } from './deliveries/deliveries.module';
 import { OrdersModule } from './orders/orders.module';
+import { MoneyModule } from './money/money.module';
 import { SpecialOrdersModule } from './special-orders/special-orders.module';
 import { PurchasingModule } from './purchasing/purchasing.module';
 import { RedisModule } from './redis/redis.module';
@@ -88,6 +89,7 @@ import { WebhooksModule } from './webhooks/webhooks.module';
     OrdersModule,
     DeliveriesModule,
     SpecialOrdersModule,
+    MoneyModule,
     CashModule,
     ReportsModule,
     BillingModule,
