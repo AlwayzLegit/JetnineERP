@@ -55,16 +55,26 @@ save-as-order path with the suggested 25% deposit. 2 e2e tests green.
 
 ## Day 3 — Delivery & fulfillment
 
-- [ ] **Build:** `deliveries` module + calendar UI (week/day), drag-to-schedule, driver day-sheet (print)
-- [ ] **Build:** Fulfillment flow: decrement stock, serial pick (stub until Day 4), collect balance, order receipt print; completion requires balance = 0 or `orders.complete_with_balance`
-- [ ] **Build:** Reports union `sales` + `orders` (revenue, drawer picks up order payments)
-      — ⚠️ carried from Day 1: `cash-shifts.controller.ts` and `reports.controller.ts` both
-      `innerJoin(sales, sales.id = payments.sale_id)`, so order payments are silently
-      **excluded** from the drawer and the tender mix today. Nothing is broken, but the
-      drawer will not balance against order deposits until this lands.
+- [x] **Build:** `deliveries` module + calendar UI (week/day), drag-to-schedule, driver day-sheet (print)
+      — _2026-08-23: `apps/api/src/deliveries/` + `(business)/deliveries` (week board with
+      drag-to-reschedule, delivery page with driver verbs, printable day-sheet at
+      `/deliveries/day/[date]`)._
+- [x] **Build:** Fulfillment flow: decrement stock, serial pick (stub until Day 4), collect balance, order receipt print; completion requires balance = 0 or `orders.complete_with_balance`
+      — _2026-08-23: `planFulfillment`/`applyFulfillment` (`order_fulfill` movements,
+      negative delta, reservation consumed), pickup path `POST /orders/:id/fulfill`,
+      `POST /orders/:id/complete` gated on balance/permission. Serial pick + receipt
+      print carried to the serials slice._
+- [x] **Build:** Reports union `sales` + `orders` (revenue, drawer picks up order payments)
+      — _2026-08-23: shift close and the daily report count order deposits/balances by the
+      payment's own timestamp (imported excluded per D8); tender mix merges both;
+      `orderPaymentsByDay` added to the daily report. Int test proves a mid-shift deposit
+      lands in `expectedCashCents`._
 - [ ] **Ops:** First export files land — joint sanity read; freeze SKU/category cleanup decisions
 
 _Acceptance: schedule → deliver → collect balance → order completed; day's drawer includes deposits._
+**✅ met** — `deliveries.int.spec.ts` (12 tests) walks the whole cycle API-side including the
+drawer; `e2e/orders.spec.ts` drives it in the browser: schedule from the order page →
+calendar card → delivered → fulfilled → collect → completed.
 
 ## Day 4 — Special orders & serials
 

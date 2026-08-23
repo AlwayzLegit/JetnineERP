@@ -28,15 +28,13 @@ import { RequirePermission, TenantScoped } from '../tenancy/decorators';
 import type { RequestTenantContext } from '../tenancy/request-context';
 import { WebhookDispatcher } from '../webhooks/webhook-dispatcher.service';
 
-const DELIVERY_STATUSES = [
-  'scheduled',
-  'loaded',
-  'out_for_delivery',
-  'delivered',
-  'failed',
-  'cancelled',
-] as const;
-type DeliveryStatus = (typeof DELIVERY_STATUSES)[number];
+type DeliveryStatus =
+  | 'scheduled'
+  | 'loaded'
+  | 'out_for_delivery'
+  | 'delivered'
+  | 'failed'
+  | 'cancelled';
 
 /** Statuses a delivery can still be edited/rescheduled in. */
 const EDITABLE: DeliveryStatus[] = ['scheduled', 'loaded'];
@@ -139,8 +137,10 @@ export class DeliveriesController {
     @Query('locationId') locationId?: string,
     @Query('driverMembershipId') driverMembershipId?: string,
     @Query('status') status?: string,
+    @Query('orderId') orderId?: string,
   ): Promise<DeliveryDetail[]> {
     const filters = [];
+    if (orderId) filters.push(eq(schema.deliveries.orderId, orderId));
     if (from) filters.push(gte(schema.deliveries.scheduledDate, from));
     if (to) filters.push(lte(schema.deliveries.scheduledDate, to));
     if (locationId) filters.push(eq(schema.deliveries.locationId, locationId));

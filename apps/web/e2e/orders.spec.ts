@@ -140,6 +140,57 @@ test.describe('Day 2 — order writer', () => {
     await page.waitForURL(orderUrl);
   });
 
+  test('delivery lifecycle: schedule → deliver → collect balance → complete', async ({ page }) => {
+    test.slow();
+    await loginAndPickBusiness(page);
+
+    // Write and confirm a fresh order for 1 unit.
+    await page.goto('/orders/new');
+    const scan = page.getByPlaceholder('Scan barcode or type to search…');
+    await scan.fill(variantSku);
+    await scan.press('Enter');
+    const result = page.locator('button:has(strong)').first();
+    await expect(result).toBeVisible();
+    await result.click();
+    await page.getByRole('button', { name: 'Attach customer' }).click();
+    await page.getByRole('button', { name: '+ New customer' }).click();
+    await page.getByPlaceholder('First name').fill('Del');
+    await page.getByPlaceholder('Last name').fill('Ivery');
+    await page.getByRole('button', { name: 'Create & attach' }).click();
+    await expect(page.getByTestId('order-customer')).toContainText('Del Ivery');
+    await page.getByTestId('confirm-order').click();
+    await page.waitForURL(/\/orders\/[0-9a-f-]{36}$/);
+    await expect(page.getByTestId('order-status')).toHaveText(/open/i);
+
+    // Schedule a delivery for today.
+    const today = new Date().toISOString().slice(0, 10);
+    await page.getByTestId('delivery-date').fill(today);
+    await page.getByTestId('schedule-delivery').click();
+    await expect(page.locator('a', { hasText: today }).first()).toBeVisible();
+
+    // The calendar shows the stop.
+    await page.goto('/deliveries');
+    await expect(page.getByTestId('delivery-card').first()).toBeVisible();
+
+    // Drive the truck: open the delivery, mark delivered.
+    await page.getByTestId('delivery-card').first().click();
+    await page.waitForURL(/\/deliveries\/[0-9a-f-]{36}$/);
+    await page.getByTestId('mark-delivered').click();
+    await expect(page.getByTestId('delivery-status')).toHaveText(/delivered/i);
+
+    // Back on the order: fulfilled, balance still due.
+    await page.getByRole('link', { name: 'open the order' }).click();
+    await page.waitForURL(/\/orders\/[0-9a-f-]{36}$/);
+    await expect(page.getByTestId('order-status')).toHaveText(/fulfilled/i);
+
+    // Collect the whole balance, then complete.
+    await page.getByTestId('payment-amount').fill('10.00');
+    await page.getByTestId('take-payment').click();
+    await expect(page.getByTestId('balance-due')).toContainText('$0.00');
+    await page.getByTestId('complete-order').click();
+    await expect(page.getByTestId('order-status')).toHaveText(/completed/i);
+  });
+
   test('POS cart saves as a confirmed order with deposit', async ({ page }) => {
     test.slow();
     await loginAndPickBusiness(page);

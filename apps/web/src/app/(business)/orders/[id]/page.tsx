@@ -73,6 +73,14 @@ interface CustomerRow {
   email: string | null;
   phone: string | null;
 }
+interface DeliveryRow {
+  id: string;
+  scheduledDate: string;
+  status: string;
+  windowStart: string | null;
+  windowEnd: string | null;
+  lines: { id: string; description: string; quantity: number }[];
+}
 interface AuditRow {
   id: string;
   action: string;
@@ -109,6 +117,8 @@ export default function OrderDetailPage() {
   const [busy, setBusy] = useState(false);
   const [payAmount, setPayAmount] = useState('');
   const [payMethod, setPayMethod] = useState<(typeof PAYMENT_METHODS)[number]>('cash');
+  const [deliveries, setDeliveries] = useState<DeliveryRow[]>([]);
+  const [deliveryDate, setDeliveryDate] = useState('');
 
   async function load() {
     try {
@@ -117,6 +127,9 @@ export default function OrderDetailPage() {
       void api<CustomerRow>(`/v1/customers/${o.customerId}`)
         .then(setCustomer)
         .catch(() => setCustomer(null));
+      void api<DeliveryRow[]>(`/v1/deliveries?orderId=${o.id}`)
+        .then(setDeliveries)
+        .catch(() => setDeliveries([]));
       // The audit log is the order's timeline: every mutation the API
       // makes writes an entry with targetId = the order id.
       void api<{ data: AuditRow[]; nextCursor: string | null }>(
@@ -326,6 +339,76 @@ export default function OrderDetailPage() {
           </div>
 
           <div style={card}>
+            <h3 style={section}>Deliveries & fulfillment</h3>
+            {deliveries.length === 0 ? (
+              <p style={{ color: '#888', fontSize: 13, margin: 0 }}>
+                {order.fulfillmentType === 'pickup'
+                  ? 'Pickup order — hand over the goods below when the customer arrives.'
+                  : 'Nothing scheduled yet.'}
+              </p>
+            ) : (
+              <ul style={{ margin: 0, paddingLeft: 16, fontSize: 13 }}>
+                {deliveries.map((dv) => (
+                  <li key={dv.id} style={{ marginBottom: 4 }}>
+                    <Link href={`/deliveries/${dv.id}`} style={{ color: '#06c' }}>
+                      {dv.scheduledDate}
+                      {dv.windowStart ? ` ${dv.windowStart.slice(0, 5)}` : ''}
+                    </Link>{' '}
+                    — {dv.status.replace(/_/g, ' ')} ·{' '}
+                    {dv.lines.reduce((s, l) => s + l.quantity, 0)} unit(s)
+                  </li>
+                ))}
+              </ul>
+            )}
+            {live && order.status !== 'quote' && (
+              <div
+                style={{
+                  display: 'flex',
+                  gap: 8,
+                  marginTop: 12,
+                  alignItems: 'center',
+                  flexWrap: 'wrap',
+                }}
+              >
+                {order.fulfillmentType === 'delivery' ? (
+                  <>
+                    <input
+                      type="date"
+                      value={deliveryDate}
+                      onChange={(e) => setDeliveryDate(e.target.value)}
+                      style={{ ...fieldStyle, width: 150 }}
+                      data-testid="delivery-date"
+                    />
+                    <button
+                      onClick={() => {
+                        if (!deliveryDate) {
+                          setError('Pick a delivery date first.');
+                          return;
+                        }
+                        void act('/deliveries', { scheduledDate: deliveryDate });
+                      }}
+                      disabled={busy}
+                      style={primaryBtn}
+                      data-testid="schedule-delivery"
+                    >
+                      Schedule delivery
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    onClick={() => void act('/fulfill', {})}
+                    disabled={busy}
+                    style={primaryBtn}
+                    data-testid="fulfill-pickup"
+                  >
+                    Hand over the goods (pickup)
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+
+          <div style={card}>
             <h3 style={section}>Timeline</h3>
             {timeline.length === 0 ? (
               <p style={{ color: '#888', fontSize: 13, margin: 0 }}>No events recorded.</p>
@@ -404,7 +487,32 @@ export default function OrderDetailPage() {
                   Confirm order (commit stock)
                 </button>
               )}
-              {order.status !== 'quote' && (
+              {order.status === 'fulfilled' && (
+                <button
+                  onClick={() => void act('/complete', {})}
+                  disabled={busy || order.balanceDueCents > 0}
+                  style={primaryBtn}
+                  data-testid="complete-order"
+                  title={
+                    order.balanceDueCents > 0
+                      ? 'Collect the balance first'
+                      : 'Close the book on this order'
+                  }
+                >
+                  Complete order
+                </button>
+              )}
+              {order.status === 'fulfilled' && order.balanceDueCents > 0 && (
+                <button
+                  onClick={() => void act('/complete', { allowBalance: true })}
+                  disabled={busy}
+                  style={linkBtn}
+                  data-testid="complete-with-balance"
+                >
+                  Complete with balance due (AR)
+                </button>
+              )}
+              {order.status !== 'quote' && order.status !== 'fulfilled' && (
                 <button onClick={() => void act('/release')} disabled={busy} style={linkBtn}>
                   Release reserved stock
                 </button>
