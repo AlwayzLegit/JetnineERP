@@ -59,8 +59,16 @@ export class RlsContextInterceptor implements NestInterceptor {
             // connection; consumers should issue all queries through `db`.
             tx,
             db: tx,
+            closed: false,
           };
-          return requestContextStore.run(ctx, () => lastValueFrom(next.handle()));
+          try {
+            return await requestContextStore.run(ctx, () => lastValueFrom(next.handle()));
+          } finally {
+            // Anything still running with this context (void-ed webhook
+            // fires, email sends) must stop using the transaction — it is
+            // about to commit and its connection returns to the pool.
+            ctx.closed = true;
+          }
         },
       ),
     );

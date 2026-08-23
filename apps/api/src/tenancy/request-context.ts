@@ -44,6 +44,14 @@ export interface RequestContext extends RequestTenantContext {
   // unset and `getRequestDb()` throws.
   tx: DrizzleTransaction;
   db: PostgresJsDatabase;
+  /**
+   * Flipped to true by the RLS interceptor once the request's transaction
+   * has committed. Fire-and-forget work spawned inside a handler (webhook
+   * delivery, email sends) inherits this context via AsyncLocalStorage but
+   * MUST NOT touch the closed transaction — the DRIZZLE proxy checks this
+   * flag and falls back to the root connection.
+   */
+  closed: boolean;
 }
 
 const store = new AsyncLocalStorage<RequestContext>();
