@@ -168,14 +168,39 @@ _Acceptance: layaway order pays off across installments; commission entries matc
 ## Day 8 — Rehearsal #2 + platform layer
 
 - [ ] **Build:** Fix import mismatches → rehearsal #2
-- [ ] **Build:** `business_templates` (snapshot/apply + super-admin UI); `agencies` tier (D9, additive) + agency console basics; white-label branding + subdomain middleware
-- [ ] **Build:** Deploy hardening (D10): always-on API instance, DB backups/PITR, Sentry alerts verified
+      — _blocked on real STORIS exports (same as rehearsal #1)._
+- [x] **Build:** `business_templates` (snapshot/apply + super-admin UI); `agencies` tier (D9, additive) + agency console basics; white-label branding + subdomain middleware
+      — _2026-08-23: templates shipped (0023; snapshot captures custom roles,
+      category tree, tax classes, settings, opt-in catalog; apply is additive and
+      idempotent; create-business accepts templateId; super-admin UI at
+      /admin/templates). **Agencies + white-label deliberately cut** per the slip
+      policy (P2/P3) — single-tenant cutover needs neither; revisit post-go-live._
+- [x] **Build:** Deploy hardening (D10): always-on API instance, DB backups/PITR, Sentry alerts verified
+      — _2026-08-23 (build side): nightly overdue sweep scheduler in-process
+      (OVERDUE_SWEEP_UTC_HOUR); SUPER_ADMIN_EMAILS startup bootstrap so the
+      platform console needs no manual DB pokes; CORS/auth accept wildcard
+      Vercel preview origins; Sentry wired since Phase 2 (instrument.ts).
+      **Always-on instance + DB plan upgrade remain Ops** (free Postgres expires
+      2026-09-21 — flagged)._
 - [ ] **Ops:** Recon #2 sign-off; choose hosting plan; DNS if subdomains now
 
 ## Day 9 — QA + parallel run
 
-- [ ] **Build:** Playwright e2e: POS sale · order+deposit+delivery+balance · special-order→PO→receive · layaway installment · service ticket · refund
-- [ ] **Build:** Bug burn-down; marketing basics (campaign send, one automation) only if green
+- [x] **Build:** Playwright e2e: POS sale · order+deposit+delivery+balance · special-order→PO→receive · layaway installment · service ticket · refund
+      — _2026-08-23: `apps/web/e2e/sweep.spec.ts` covers POS cash sale + refund,
+      layaway plan + installment, service ticket end-to-end, and special-order →
+      PO → receive → arrival email; order+deposit+delivery+balance already lived
+      in `orders.spec.ts`. Full Playwright suite green locally. Service and
+      payment-plan UI built as part of this pass (service board + ticket detail,
+      layaway card on order detail)._
+- [x] **Build:** Bug burn-down; marketing basics (campaign send, one automation) only if green
+      — _2026-08-23: the sweep flushed out three real bugs, all fixed:
+      (1) **cross-tenant read leak** — handlers queried the root pool so RLS
+      never applied; DRIZZLE is now a per-request proxy onto the RLS
+      transaction, with a regression test; (2) onboarding checklist double-sent
+      its response, 500-ing conditional requests and looping the dashboard;
+      (3) sign-in rate limiting tripped the growing e2e suite (explicit opt-out
+      env for test servers). Marketing basics not started (cuttable)._
 - [ ] **Ops:** Parallel run — replay today's real STORIS transactions; compare Z-report, drawer, commissions
 
 ## Day 10 — Cutover
@@ -189,6 +214,19 @@ _Acceptance: layaway order pays off across installments; commission entries matc
 ## Log
 
 _(newest first — sessions append: date · day · what shipped · open flags)_
+
+- 2026-08-23 · Days 3–9 in sequence · **Whole remaining build track shipped on PR #26.**
+  Deliveries/fulfillment · special orders + serials · financing/layaway/commissions ·
+  service/CRM/AR · import pipeline + wizard + recon gates · business templates +
+  nightly scheduler + super-admin bootstrap · service & layaway UI · Day-9 e2e sweep.
+  Critical fix: **cross-tenant RLS enforcement** (handlers ran on the root pool; now
+  proxied onto the request's RLS transaction) + checklist double-send 500 + e2e rate
+  limiting. Staging: Render API deploys the PR branch merge (migrations 0019–0023 run
+  on boot); trusted origins accept Vercel previews (wildcard); SUPER_ADMIN_EMAILS
+  grants the owner the /admin console. Open flags: real STORIS exports (rehearsals),
+  commission rules + financing providers, paid Render plan before 2026-09-21,
+  agencies/white-label + marketing cut per slip policy. UI/UX design-system overhaul
+  in flight (sidebar shell + tokens landed; page conversion following).
 
 - 2026-08-22 · Day 1 · **Build track shipped.** Schema batch 1 (7 tables + payments
   generalization per D2) with RLS and migration `0018_storis_order_spine`; the `orders`
