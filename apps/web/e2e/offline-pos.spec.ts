@@ -208,19 +208,27 @@ test.describe('Phase 2.16 — offline POS', () => {
     await context.setOffline(false);
 
     // Wait until the queue table is empty (or the empty-state message shows).
+    // Right after reload the page renders the loading skeleton (no table, no
+    // empty-state text) until IndexedDB answers — an instant isVisible()
+    // probe there reads "0 rows but not empty" and the poll can chase that
+    // snapshot on every iteration. Wait for either terminal state to render
+    // before sampling.
+    const emptyMsg = page.getByText(/Nothing queued/i);
+    const firstRow = page.locator('table tbody tr').first();
     await expect
       .poll(
         async () => {
           await page.reload();
-          const empty = await page
-            .getByText(/Nothing queued/i)
-            .isVisible()
-            .catch(() => false);
+          await emptyMsg
+            .or(firstRow)
+            .first()
+            .waitFor({ timeout: 5_000 })
+            .catch(() => {});
+          const empty = await emptyMsg.isVisible().catch(() => false);
           if (empty) return 'empty';
-          const rowCount = await page.locator('table tbody tr').count();
-          return rowCount;
+          return await page.locator('table tbody tr').count();
         },
-        { timeout: 20_000, message: 'queue should drain after reconnect' },
+        { timeout: 30_000, message: 'queue should drain after reconnect' },
       )
       .toBe('empty');
 
