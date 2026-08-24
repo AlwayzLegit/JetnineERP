@@ -286,3 +286,11 @@ _(newest first — sessions append: date · day · what shipped · open flags)_
   not outreach), campaigns are one-shot (marked sent before the send loop so a crash
   can't double-blast), `campaign.sent` webhook event; Marketing page in the People nav.
   marketing.int.spec.ts (8 tests) + MARKETING_TEST_DATABASE_URL in CI.
+- **2026-08-24 — Post-checkpoint slice 5 (dashboard analytics):** `/dashboard` moved into
+  the (business) shell (same URL) and rebuilt as the analytics home — today's KPI row
+  from the Z-report, 30-day revenue trend (inline SVG line, crosshair tooltip, sr-only
+  table; palette validated), receivables + open orders + low-stock cards, each hiding
+  itself when the role lacks the report permission. Also fixed the auth.spec CI flake:
+  a business-less user's /dashboard → /welcome redirect detached the Sign out button
+  mid-click; /welcome now carries its own Sign out and the test waits for the redirect.
+  Full local e2e 9/9 green.

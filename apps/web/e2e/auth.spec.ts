@@ -102,8 +102,15 @@ test.describe('auth golden path', () => {
       await expect(page.getByTestId('auth-success')).toContainText('2FA is now enabled');
     });
 
-    await test.step('sign out from the dashboard', async () => {
+    await test.step('sign out from the app', async () => {
+      // This user has no business, so /dashboard always redirects to
+      // /welcome once the checklist fetch resolves. Clicking Sign out
+      // on /dashboard raced that redirect — the button detached with
+      // the page mid-click (this exact race failed in CI). Wait for
+      // the redirect to finish and sign out from /welcome, which now
+      // renders its own Sign out button.
       await page.goto('/dashboard');
+      await page.waitForURL('**/welcome');
       await page.getByRole('button', { name: 'Sign out' }).click();
       await page.waitForURL('**/login');
     });

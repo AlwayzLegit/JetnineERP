@@ -217,7 +217,32 @@ export default function WelcomePage() {
 }
 
 function Wrapper({ children }: { children: React.ReactNode }) {
-  return <main className="mx-auto max-w-[520px] px-4 py-8 sm:py-16">{children}</main>;
+  return (
+    <main className="mx-auto max-w-[520px] px-4 py-8 sm:py-16">
+      {children}
+      {/* Business-less users land here (dashboard redirects them), so
+          this page needs its own way out of the account. */}
+      <p style={{ marginTop: 24 }}>
+        <SignOutButton />
+      </p>
+    </main>
+  );
+}
+
+function SignOutButton() {
+  return (
+    <Button
+      variant="ghost"
+      size="sm"
+      onClick={async () => {
+        const { signOut } = await import('@/lib/auth-client');
+        await signOut();
+        window.location.href = '/login';
+      }}
+    >
+      Sign out
+    </Button>
+  );
 }
 
 function LinkishButton({ onClick, children }: { onClick: () => void; children: React.ReactNode }) {
