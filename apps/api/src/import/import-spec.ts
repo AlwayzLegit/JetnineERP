@@ -88,9 +88,12 @@ export const ENTITY_SPECS: EntitySpec[] = [
       },
       { name: 'category', type: 'string', headers: ['CATEGORY', 'CAT', 'PRODUCT_GROUP', 'GROUP'] },
       {
+        // Optional by decision D12: STORIS exports carry cost only and the
+        // merchant prices at the register. Absent → new variants land at 0
+        // (unsellable until priced) and existing variants keep their price
+        // (a Shopify-synced price survives the STORIS import).
         name: 'priceCents',
         type: 'money',
-        required: true,
         headers: ['RETAIL', 'PRICE', 'SELL_PRICE', 'RETAIL_PRICE'],
       },
       {

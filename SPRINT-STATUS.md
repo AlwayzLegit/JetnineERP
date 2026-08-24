@@ -362,3 +362,38 @@ _(newest first — sessions append: date · day · what shipped · open flags)_
   report has cost only and product import requires price; (2) the location code → store
   name mapping (codes 1–12 and 88); (3) decision on 1,180 as-is units (import as
   on-hand, separate as-is SKUs, or skip).
+
+## Test-data ledger (D11 — what lives in the QA tenant and never reaches production)
+
+Production cutover creates a **fresh business**; everything below stays behind in the
+current staging business. Keep this list current whenever a test session creates data.
+
+- Browser-agent run 1 (2026-08-24): product "Cloud Comfort Mattress — Queen" ($899.99);
+  sale INV-2026-000001 + full refund; customer "Maria Testerson" (fake email + "gate
+  code" note); order SO-2026-000001 with $200 cash deposit + public share token +
+  delivery scheduled 8/25; segment "Test VIPs"; campaign "Browser test" (sent to 2 test
+  recipients via the memory outbox); branding round-trip (reverted); reorder settings
+  (cleared).
+- Browser-agent run 2 (2026-08-24, retest): more of the same shapes — additional POS
+  sale(s) + refund, an order + track link + delivery, a vendor + draft PO, a campaign,
+  vendor-SKU entries; whatever its report lists.
+- Shopify sync (2026-08-24, ~19:59Z): the REAL store catalog/customers/orders landed in
+  the QA tenant mapped to location "Glendale". This is real data but in the test tenant —
+  the sync will be re-run into the production business at cutover (with the proper
+  location mapping), not migrated.
+- At cutover into the fresh production business: recreate locations (real store list),
+  staff invitations + roles, business settings (tax, receipts, branding), re-run the
+  Shopify connector, then run the final STORIS import (D7 pipeline). The QA tenant keeps
+  serving as the safe playground for future testing and demos.
+- **2026-08-24 — D12 (no retail-price import) + QA run-2 triage:** priceCents is now
+  optional on product import — absent means new variants land at $0 and existing
+  variants keep their price (Shopify prices survive the STORIS import); POS cart lines
+  gained a register-side unit-price input (negotiated pricing) plus live type-to-search
+  (350ms debounce; scanner Enter flow unchanged); vendor-create form no longer throws
+  on success (React currentTarget-after-await bug); Shopify sync falls back to the
+  email local part when a customer has no name. import.int.spec.ts 10→11. STORIS CSVs
+  regenerated with real location names (88=Warehouse, 1=Koreatown, 2=West LA,
+  3=La Brea, 4=Studio City) and 552 as-is companion SKUs (`-AS`, 1,180 units);
+  location code 8 (186+122 units) held out pending its store name. QA run-2 "vendor
+  SKU FAIL" was a deploy lag — the live API is still 80ad9bd and the 18:23 auto
+  redeploy from the instance upgrade FAILED; Ops: Manual Deploy latest on jetnine-api.

@@ -317,6 +317,23 @@ SAM-18002-ET-Q,Queen Franklin Mattress,Mattresses,2499.00,1070.00,SAM18002Q,CANN
     expect(king?.preferredVendorId).toBe(cann[0]!.id);
   });
 
+  it('D12: import without a RETAIL column keeps existing prices, new SKUs land at 0', async () => {
+    const csv = `SKU,DESCRIPTION,CATEGORY,COST
+PILLOW-STD,Standard Pillow,Accessories,30.25
+NOPRICE-1,Unpriced Import Item,Accessories,12.00`;
+    await runBatch('product', csv);
+
+    const variants = await verifyDb
+      .select()
+      .from(schema.productVariants)
+      .where(eq(schema.productVariants.businessId, businessId));
+    // Pre-existing variant (priced 99.50 in the earlier product batch)
+    // keeps its price — the price-less re-import must not clobber it.
+    expect(variants.find((v) => v.sku === 'PILLOW-STD')?.priceCents).toBe(9950);
+    // Brand-new SKU with no price lands at 0 (unsellable until priced).
+    expect(variants.find((v) => v.sku === 'NOPRICE-1')?.priceCents).toBe(0);
+  });
+
   it('sets on-hand with an audit movement; re-run is a no-op', async () => {
     await runBatch('inventory', INVENTORY_CSV);
     const levels = await verifyDb
