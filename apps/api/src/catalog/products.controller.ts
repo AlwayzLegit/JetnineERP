@@ -65,6 +65,9 @@ interface VariantOut {
   costCents: number | null;
   attributesJson: unknown;
   isActive: boolean;
+  reorderPoint: number | null;
+  reorderQty: number | null;
+  preferredVendorId: string | null;
 }
 
 interface ProductOut {
@@ -205,6 +208,9 @@ export class CatalogProductsController {
         costCents: canSeeCost ? (v.costCents ?? null) : null,
         attributesJson: v.attributesJson,
         isActive: v.isActive,
+        reorderPoint: v.reorderPoint ?? null,
+        reorderQty: v.reorderQty ?? null,
+        preferredVendorId: v.preferredVendorId ?? null,
       })),
       images: images.map((i) => ({
         id: i.id,
@@ -339,6 +345,84 @@ export class CatalogProductsController {
     }
 
     return this.get(tenant, id);
+  }
+
+  /**
+   * Reorder automation settings for one variant. Explicit null clears a
+   * field; a variant with a null reorderPoint is not managed.
+   */
+  @Patch('variants/:variantId/reorder')
+  @RequirePermission('products.update')
+  async updateReorder(
+    @CurrentTenant() _tenant: RequestTenantContext,
+    @Param('variantId') variantId: string,
+    @Body()
+    body: {
+      reorderPoint?: number | null;
+      reorderQty?: number | null;
+      preferredVendorId?: string | null;
+    },
+  ): Promise<{
+    id: string;
+    reorderPoint: number | null;
+    reorderQty: number | null;
+    preferredVendorId: string | null;
+  }> {
+    const [variant] = await this.db
+      .select()
+      .from(schema.productVariants)
+      .where(eq(schema.productVariants.id, variantId))
+      .limit(1);
+    if (!variant) throw new NotFoundException('Variant not found');
+
+    const update: Partial<typeof schema.productVariants.$inferInsert> = {};
+    for (const key of ['reorderPoint', 'reorderQty'] as const) {
+      const value = body[key];
+      if (value === undefined) continue;
+      if (value !== null && (!Number.isInteger(value) || value < 0)) {
+        throw new BadRequestException(`${key} must be a non-negative integer or null`);
+      }
+      update[key] = value;
+    }
+    if (body.preferredVendorId !== undefined) {
+      if (body.preferredVendorId !== null) {
+        const [vendor] = await this.db
+          .select({ id: schema.vendors.id })
+          .from(schema.vendors)
+          .where(eq(schema.vendors.id, body.preferredVendorId))
+          .limit(1);
+        if (!vendor) throw new NotFoundException('Vendor not found');
+      }
+      update.preferredVendorId = body.preferredVendorId;
+    }
+    if (Object.keys(update).length > 0) {
+      await this.db
+        .update(schema.productVariants)
+        .set(update)
+        .where(eq(schema.productVariants.id, variantId));
+      await this.audit.log({
+        action: 'product.variant.reorder_settings',
+        targetType: 'product_variant',
+        targetId: variantId,
+        before: {
+          reorderPoint: variant.reorderPoint,
+          reorderQty: variant.reorderQty,
+          preferredVendorId: variant.preferredVendorId,
+        },
+        after: update,
+      });
+    }
+    const [updated] = await this.db
+      .select({
+        id: schema.productVariants.id,
+        reorderPoint: schema.productVariants.reorderPoint,
+        reorderQty: schema.productVariants.reorderQty,
+        preferredVendorId: schema.productVariants.preferredVendorId,
+      })
+      .from(schema.productVariants)
+      .where(eq(schema.productVariants.id, variantId))
+      .limit(1);
+    return updated!;
   }
 
   @Delete(':id')

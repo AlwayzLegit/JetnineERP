@@ -3,7 +3,8 @@
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
-import { CheckCircle2, CreditCard, Truck } from 'lucide-react';
+import { CheckCircle2, CreditCard, Share2, Truck } from 'lucide-react';
+import { toast } from 'sonner';
 import { formatMoney } from '@jetnine/shared';
 import { api } from '@/lib/api';
 import { Money } from '@/components/money';
@@ -199,9 +200,32 @@ export default function OrderDetailPage() {
             STORIS #{order.legacyNumber}
           </span>
         )}
-        <LinkButton href="/orders" variant="ghost" size="sm" style={{ marginLeft: 'auto' }}>
-          ← All orders
-        </LinkButton>
+        <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 8 }}>
+          <Button
+            size="sm"
+            variant="secondary"
+            data-testid="share-status-link"
+            onClick={async () => {
+              try {
+                const res = await api<{ path: string }>(`/v1/orders/${id}/share`, {
+                  method: 'POST',
+                });
+                const url = `${window.location.origin}${res.path}`;
+                await navigator.clipboard.writeText(url).catch(() => {});
+                toast.success('Status link copied — send it to the customer', {
+                  description: url,
+                });
+              } catch (err) {
+                toast.error(err instanceof Error ? err.message : String(err));
+              }
+            }}
+          >
+            <Share2 size={13} aria-hidden /> Share status link
+          </Button>
+          <LinkButton href="/orders" variant="ghost" size="sm">
+            ← All orders
+          </LinkButton>
+        </span>
       </div>
       <p style={{ fontSize: 13, color: 'var(--text-secondary)', margin: '0 0 16px' }}>
         {order.fulfillmentType}

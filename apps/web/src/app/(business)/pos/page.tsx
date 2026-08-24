@@ -98,9 +98,12 @@ export default function PosPage() {
         const [locs, stripe, settings] = await Promise.all([
           api<LocationRow[]>('/v1/pos/locations'),
           api<StripeStatus>('/v1/business/stripe').catch(() => null),
-          api<{ name: string; receiptHeader: string | null; receiptFooter: string | null }>(
-            '/v1/business/settings',
-          ).catch(() => null),
+          api<{
+            name: string;
+            receiptHeader: string | null;
+            receiptFooter: string | null;
+            branding?: { publicName?: string | null } | null;
+          }>('/v1/business/settings').catch(() => null),
         ]);
         setLocations(locs);
         if (locs.length > 0) {
@@ -111,7 +114,7 @@ export default function PosPage() {
         setStripeStatus(stripe);
         if (settings) {
           setReceiptBusiness({
-            name: settings.name,
+            name: settings.branding?.publicName ?? settings.name,
             receiptHeader: settings.receiptHeader,
             receiptFooter: settings.receiptFooter,
           });

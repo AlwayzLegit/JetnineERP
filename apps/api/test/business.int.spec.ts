@@ -432,3 +432,140 @@ describe('Epic 1.6 — Business admin console', () => {
     expect(res.body.currencyCode).toBe('USD');
   });
 });
+
+describe('White-label branding + agency overview', () => {
+  it('Owner sets branding; GET roundtrips it', async () => {
+    const res = await request(app.getHttpServer())
+      .patch('/v1/business/settings')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({
+        branding: {
+          accentColor: '#0ea5e9',
+          logoUrl: 'https://example.com/logo.png',
+          publicName: 'Sleepy Co',
+        },
+      });
+    expect(res.status).toBe(200);
+    expect(res.body.branding).toEqual({
+      accentColor: '#0ea5e9',
+      logoUrl: 'https://example.com/logo.png',
+      publicName: 'Sleepy Co',
+    });
+
+    const reread = await request(app.getHttpServer())
+      .get('/v1/business/settings')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId);
+    expect(reread.body.branding.accentColor).toBe('#0ea5e9');
+  });
+
+  it('Branding PATCH merges field-by-field instead of replacing', async () => {
+    const res = await request(app.getHttpServer())
+      .patch('/v1/business/settings')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ branding: { publicName: 'Sleepy Mattress Co' } });
+    expect(res.status).toBe(200);
+    // Accent + logo survive a publicName-only patch.
+    expect(res.body.branding.accentColor).toBe('#0ea5e9');
+    expect(res.body.branding.logoUrl).toBe('https://example.com/logo.png');
+    expect(res.body.branding.publicName).toBe('Sleepy Mattress Co');
+  });
+
+  it('Rejects bad accent colors and non-https logos', async () => {
+    const badColor = await request(app.getHttpServer())
+      .patch('/v1/business/settings')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ branding: { accentColor: 'red' } });
+    expect(badColor.status).toBe(400);
+
+    const badLogo = await request(app.getHttpServer())
+      .patch('/v1/business/settings')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ branding: { logoUrl: 'http://example.com/logo.png' } });
+    expect(badLogo.status).toBe(400);
+  });
+
+  it('Explicit nulls clear branding fields', async () => {
+    const res = await request(app.getHttpServer())
+      .patch('/v1/business/settings')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ branding: { logoUrl: null } });
+    expect(res.status).toBe(200);
+    expect(res.body.branding.logoUrl).toBeUndefined();
+    expect(res.body.branding.accentColor).toBe('#0ea5e9');
+  });
+
+  it('Agency overview lists every membership; owner of two businesses sees both with money', async () => {
+    const created = await request(app.getHttpServer())
+      .post('/v1/onboarding/business')
+      .set('Cookie', ownerCookie)
+      .send({ name: 'Second Store', slug: 'second-store', currencyCode: 'USD' });
+    expect(created.status).toBe(201);
+
+    const res = await request(app.getHttpServer())
+      .get('/v1/agency/overview')
+      .set('Cookie', ownerCookie);
+    expect(res.status).toBe(200);
+    expect(res.body.businesses.length).toBeGreaterThanOrEqual(2);
+    const second = res.body.businesses.find(
+      (b: { businessSlug: string }) => b.businessSlug === 'second-store',
+    );
+    expect(second).toBeTruthy();
+    expect(second.roleName).toBe('Owner');
+    // Owner can see money → numeric zeros, not null.
+    expect(second.todaySalesCents).toBe(0);
+    expect(second.openOrdersCount).toBe(0);
+    // Branding rides along for the card accent.
+    const first = res.body.businesses.find(
+      (b: { businessId: string }) => b.businessId === businessId,
+    );
+    expect(first.branding.accentColor).toBe('#0ea5e9');
+  });
+
+  it('Roles without reports.sales.view get the card but null money', async () => {
+    // The suite disabled the cashier's original membership above, so give
+    // them a fresh Cashier membership in the second business — a role
+    // that has no reports.sales.view grant.
+    const sql = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    const db = drizzle(sql);
+    try {
+      const [second] = await db
+        .select({ id: schema.businesses.id })
+        .from(schema.businesses)
+        .where(eq(schema.businesses.slug, 'second-store'));
+      const [cashierRole] = await db
+        .select({ id: schema.roles.id })
+        .from(schema.roles)
+        .where(and(eq(schema.roles.businessId, second!.id), eq(schema.roles.name, 'Cashier')));
+      await db.insert(schema.memberships).values({
+        businessId: second!.id,
+        userId: cashierUserId,
+        roleId: cashierRole!.id,
+        status: 'active',
+        acceptedAt: new Date(),
+      });
+    } finally {
+      await sql.end({ timeout: 5 });
+    }
+
+    const res = await request(app.getHttpServer())
+      .get('/v1/agency/overview')
+      .set('Cookie', cashierCookie);
+    expect(res.status).toBe(200);
+    const second = res.body.businesses.find(
+      (b: { businessSlug: string }) => b.businessSlug === 'second-store',
+    );
+    expect(second).toBeTruthy();
+    expect(second.todaySalesCents).toBeNull();
+    expect(second.openOrdersCount).toBeNull();
+    // The disabled membership in the first business stays hidden.
+    expect(
+      res.body.businesses.find((b: { businessId: string }) => b.businessId === businessId),
+    ).toBeUndefined();
+  });
+});

@@ -29,6 +29,7 @@ import { OrdersModule } from './orders/orders.module';
 import { CrmModule } from './crm/crm.module';
 import { ImportModule } from './import/import.module';
 import { IntegrationsModule } from './integrations/integrations.module';
+import { MarketingModule } from './marketing/marketing.module';
 import { MoneyModule } from './money/money.module';
 import { ServiceOrdersModule } from './service-orders/service-orders.module';
 import { SpecialOrdersModule } from './special-orders/special-orders.module';
@@ -98,6 +99,7 @@ import { WebhooksModule } from './webhooks/webhooks.module';
     CrmModule,
     ImportModule,
     IntegrationsModule,
+    MarketingModule,
     CashModule,
     ReportsModule,
     BillingModule,

@@ -2,6 +2,7 @@ import {
   boolean,
   index,
   integer,
+  jsonb,
   pgTable,
   text,
   timestamp,
@@ -75,6 +76,14 @@ export const businesses = pgTable(
     defaultTaxRateBps: integer('default_tax_rate_bps').notNull().default(0),
     receiptHeader: text('receipt_header'),
     receiptFooter: text('receipt_footer'),
+    /**
+     * White-label branding: `{ accentColor?, logoUrl?, publicName? }`.
+     * accentColor is a #rrggbb hex applied as the app's brand color for
+     * this tenant; logoUrl renders in the sidebar; publicName overrides
+     * the display name on the shell and printed receipts (the legal
+     * `name` stays what invoices and the platform know the business as).
+     */
+    brandingJson: jsonb('branding_json'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
     deletedAt: timestamp('deleted_at', { withTimezone: true }),

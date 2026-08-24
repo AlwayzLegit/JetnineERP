@@ -5,7 +5,7 @@
 > tracker with the work. **Ops** items are the human's — surface them, don't do them.
 > Slip policy and never-cut list live in the plan §8.
 
-**Sprint state:** Day 1 build track complete · **Current day:** 1 (Ops track open) · **Rehearsal imports done:** 0/2 · **Recon gates passed:** 0/5
+**Sprint state:** Build track COMPLETE through Day 9 + UI overhaul + integrations — checkpoint merged to main 2026-08-24 (PR #26, squash `89763d9`). Remaining build items (Day 7/8 rehearsals, Day 10 final import) are blocked on real STORIS export files; all other unchecked items are **Ops**. · **Rehearsal imports done:** 0/2 (synthetic dry-run passed; real exports pending) · **Recon gates passed:** 0/5 against real data (gates 1–4 pass on synthetic)
 
 ---
 
@@ -260,3 +260,64 @@ _(newest first — sessions append: date · day · what shipped · open flags)_
   The orders suite was verified 22/22 by bypassing that shim locally; the shim itself is
   unchanged in the commit.
 - 2026-08-22 · pre-sprint · Plan + handoff docs written (`PLAN-STORIS-CUTOVER.md`, `CLAUDE.md`, this tracker). Sprint not started.
+
+- **2026-08-24 — Post-checkpoint slice 1 (reports parity):** `/v1/reports/z` (daily
+  close-out: gross/refunds/net, tender mix across sale+order+service money, drawer
+  variances; D8-excluded), `/v1/reports/sales/by-category`, `/v1/reports/inventory/valuation`
+  (financial-gated, cost+retail), `/v1/reports/tax/summary` (net-sales caveat documented) —
+  all with CSV export; reports hub UI gained Z-report, category, tax, valuation cards.
+  reports.int.spec.ts 9→14 tests incl. refund-day Z math.
+- **2026-08-24 — Post-checkpoint slice 2 (printing):** dependency-free Code 128B SVG
+  encoder (`apps/web/src/lib/code128.ts`, 5 unit tests incl. checksum math); barcode
+  label sheets at `(business)/products/labels` (Avery 5160 30-up + 2.25×1.25" roll,
+  copy counts, print-only CSS grid); receipts now print a scannable document-number
+  barcode for returns.
+- **2026-08-24 — Post-checkpoint slice 3 (white-label + agency):** `businesses.branding_json`
+  (migration `0025_business_branding`: accentColor/logoUrl/publicName, merge-PATCH with
+  validation) re-themes the whole app per tenant (`--brand` override + shell logo/name +
+  receipt display name); `GET /v1/agency/overview` (auth/me pattern, membership-scoped,
+  money nulled where the caller's role lacks reports.sales.view) + `(business)/agency`
+  roll-up cards; topbar badge became a one-click business switcher. business.int.spec.ts
+  14→20 tests.
+- **2026-08-24 — Post-checkpoint slice 4 (marketing):** `customer_segments` + `campaigns`
+  (migration `0026_marketing`, RLS'd); `/v1/marketing/*` behind existing
+  `crm.campaigns.manage` — segments are stored filters over CRM tags resolved at
+  preview/send (email-holders only; imported customers included — D8 covers money flows,
+  not outreach), campaigns are one-shot (marked sent before the send loop so a crash
+  can't double-blast), `campaign.sent` webhook event; Marketing page in the People nav.
+  marketing.int.spec.ts (8 tests) + MARKETING_TEST_DATABASE_URL in CI.
+- **2026-08-24 — Post-checkpoint slice 5 (dashboard analytics):** `/dashboard` moved into
+  the (business) shell (same URL) and rebuilt as the analytics home — today's KPI row
+  from the Z-report, 30-day revenue trend (inline SVG line, crosshair tooltip, sr-only
+  table; palette validated), receivables + open orders + low-stock cards, each hiding
+  itself when the role lacks the report permission. Also fixed the auth.spec CI flake:
+  a business-less user's /dashboard → /welcome redirect detached the Sign out button
+  mid-click; /welcome now carries its own Sign out and the test waits for the redirect.
+  Full local e2e 9/9 green.
+- **2026-08-24 — Post-checkpoint slice 6 (reorder automation):** `product_variants` gained
+  `reorder_point`/`reorder_qty`/`preferred_vendor_id` (migration `0027_reorder_points`);
+  `GET /v1/purchase-orders/reorder-suggestions` groups shortfalls (available ≤ point,
+  all-location sum) by preferred vendor with suggested qty (explicit qty, else top-up to
+  2× point); one-click "Draft PO" per vendor group on the Purchasing page; per-variant
+  Reorder automation card on product detail. purchasing.int.spec.ts 11→16 tests.
+- **2026-08-24 — Post-checkpoint slice 7 (customer status link):** `orders.public_token`
+  (migration `0028_order_public_token`, unique); `POST /v1/orders/:id/share` (idempotent,
+  audited) + public no-auth `GET /v1/public/orders/:token` serving a narrow projection
+  (journey status, lines, paid/balance, branding accent — no address/notes/ids); branded
+  customer page at `/track/[token]` with a 4-stage journey rail; "Share status link"
+  button on order detail copies the URL. orders.int.spec.ts 22→25 tests.
+- **2026-08-24 — Post-checkpoint slice 8 (commission statements):** `GET
+/v1/commissions/statement?period&membershipId` (own by default; others behind
+  `commissions.view_all`; entries carry source document numbers; totals split
+  accruals/reversals and pending/approved/paid) + the first Commissions page
+  (Insights nav): monthly by-associate summary, printable per-associate statement,
+  approve/mark-paid payroll actions. money.int.spec.ts 9→12 tests.
+- **2026-08-24 — Post-checkpoint review fixes (self code-review of PR #27, 10 findings):**
+  campaign sent-flip moved to the root pool so it commits before the mail loop (the RLS
+  tx would have rolled it back on a crash → double-blast); Z-report tender mix now joins
+  service_orders (location filter dropped every service payment; D8 exclusion now applies);
+  public tracking shows only the next ACTIVE delivery; share-token write is race-guarded
+  (WHERE public_token IS NULL); statement totals aggregate in SQL over all entries (not a
+  truncated page) + entriesTruncated flag; segment tag filter is a subquery (no 65k-param
+  blowup) and sinceDays capped at 3650; valuation rows/CSV/UI carry the location; dashboard
+  reuses readActiveBusinessId; agency dead code removed.

@@ -443,3 +443,46 @@ describe('G4 — layaway plans', () => {
     expect(pay.body.updated).toBe(ids.length);
   });
 });
+
+describe('Commission statements', () => {
+  it("the owner's statement reconciles with the report to the cent", async () => {
+    const report = await ownerReq().get(`/v1/commissions/report?period=${thisPeriod}`);
+    const mine = report.body.entries.filter(
+      (e: { membershipId: string }) => e.membershipId === ownerMembershipId,
+    );
+    const expectedNet = mine.reduce(
+      (s: number, e: { amountCents: number }) => s + e.amountCents,
+      0,
+    );
+
+    // No membershipId param → the caller's own statement.
+    const res = await ownerReq().get(`/v1/commissions/statement?period=${thisPeriod}`);
+    expect(res.status).toBe(200);
+    expect(res.body.membershipId).toBe(ownerMembershipId);
+    expect(res.body.entries).toHaveLength(mine.length);
+    expect(res.body.totals.netCents).toBe(expectedNet);
+    expect(res.body.totals.accruedCents + res.body.totals.reversalCents).toBe(expectedNet);
+    // The previous payroll test marked everything paid.
+    expect(res.body.totals.paidCents).toBe(expectedNet);
+    expect(res.body.totals.pendingCents).toBe(0);
+
+    // Every sale-sourced entry carries its document number for the
+    // printed paper trail.
+    const withDoc = res.body.entries.filter((e: { saleId: string | null }) => e.saleId);
+    for (const e of withDoc) expect(e.documentNumber).toMatch(/^INV-/);
+  });
+
+  it('another associate’s statement is reachable with view_all', async () => {
+    const res = await ownerReq().get(
+      `/v1/commissions/statement?period=${thisPeriod}&membershipId=${secondMembershipId}`,
+    );
+    expect(res.status).toBe(200);
+    expect(res.body.membershipId).toBe(secondMembershipId);
+    expect(res.body.totals.netCents).toBe(2_000); // the 40% split entry
+  });
+
+  it('a bad period is rejected 400', async () => {
+    const res = await ownerReq().get('/v1/commissions/statement?period=2026');
+    expect(res.status).toBe(400);
+  });
+});

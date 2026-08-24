@@ -68,12 +68,15 @@ export default function SaleDetailPage() {
   }
   useEffect(() => {
     void load();
-    void api<{ name: string; receiptHeader: string | null; receiptFooter: string | null }>(
-      '/v1/business/settings',
-    )
+    void api<{
+      name: string;
+      receiptHeader: string | null;
+      receiptFooter: string | null;
+      branding?: { publicName?: string | null } | null;
+    }>('/v1/business/settings')
       .then((s) =>
         setBusiness({
-          name: s.name,
+          name: s.branding?.publicName ?? s.name,
           receiptHeader: s.receiptHeader,
           receiptFooter: s.receiptFooter,
         }),

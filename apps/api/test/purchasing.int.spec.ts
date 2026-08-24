@@ -348,3 +348,109 @@ describe('Phase 2.3 — Vendors & Purchase Orders', () => {
     expect(res.body.message).toMatch(/existing purchase orders/);
   });
 });
+
+describe('Reorder automation', () => {
+  let restockVendorId = '';
+  let lowVariantId = '';
+
+  it('Setup: vendor + a managed variant with zero stock', async () => {
+    const vendor = await request(app.getHttpServer())
+      .post('/v1/vendors')
+      .set('Cookie', clerkCookie)
+      .set('X-Business-Id', businessId)
+      .send({ name: 'Restock Co' });
+    expect(vendor.status).toBe(201);
+    restockVendorId = vendor.body.id;
+
+    const product = await request(app.getHttpServer())
+      .post('/v1/products')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({
+        name: 'Managed Pillow',
+        sku: 'PILLOW',
+        variants: [{ sku: 'PILLOW-1', priceCents: 4900, costCents: 1500 }],
+      });
+    expect(product.status).toBe(201);
+    lowVariantId = product.body.variants[0].id;
+
+    const patch = await request(app.getHttpServer())
+      .patch(`/v1/products/variants/${lowVariantId}/reorder`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ reorderPoint: 5, reorderQty: 12, preferredVendorId: restockVendorId });
+    expect(patch.status).toBe(200);
+    expect(patch.body.reorderPoint).toBe(5);
+    expect(patch.body.reorderQty).toBe(12);
+    expect(patch.body.preferredVendorId).toBe(restockVendorId);
+  });
+
+  it('Zero stock at point 5 → suggested under its vendor with reorderQty', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/v1/purchase-orders/reorder-suggestions')
+      .set('Cookie', clerkCookie)
+      .set('X-Business-Id', businessId);
+    expect(res.status).toBe(200);
+    const group = res.body.vendors.find(
+      (g: { vendorId: string | null }) => g.vendorId === restockVendorId,
+    );
+    expect(group).toBeTruthy();
+    const line = group.lines.find((l: { variantId: string }) => l.variantId === lowVariantId);
+    expect(line).toBeTruthy();
+    expect(line.available).toBe(0);
+    expect(line.reorderPoint).toBe(5);
+    expect(line.suggestedQty).toBe(12); // explicit reorderQty wins
+    expect(line.unitCostCents).toBe(1500);
+  });
+
+  it('Without an explicit qty, suggestion tops up to 2× the point', async () => {
+    const patch = await request(app.getHttpServer())
+      .patch(`/v1/products/variants/${lowVariantId}/reorder`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ reorderQty: null });
+    expect(patch.status).toBe(200);
+
+    const res = await request(app.getHttpServer())
+      .get('/v1/purchase-orders/reorder-suggestions')
+      .set('Cookie', clerkCookie)
+      .set('X-Business-Id', businessId);
+    const group = res.body.vendors.find(
+      (g: { vendorId: string | null }) => g.vendorId === restockVendorId,
+    );
+    const line = group.lines.find((l: { variantId: string }) => l.variantId === lowVariantId);
+    expect(line.suggestedQty).toBe(10); // 2×5 − 0
+  });
+
+  it('Clearing the reorder point removes the variant from suggestions', async () => {
+    await request(app.getHttpServer())
+      .patch(`/v1/products/variants/${lowVariantId}/reorder`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ reorderPoint: null })
+      .expect(200);
+
+    const res = await request(app.getHttpServer())
+      .get('/v1/purchase-orders/reorder-suggestions')
+      .set('Cookie', clerkCookie)
+      .set('X-Business-Id', businessId);
+    const all = res.body.vendors.flatMap((g: { lines: { variantId: string }[] }) => g.lines);
+    expect(all.find((l: { variantId: string }) => l.variantId === lowVariantId)).toBeUndefined();
+  });
+
+  it('Rejects negative points and unknown vendors', async () => {
+    const neg = await request(app.getHttpServer())
+      .patch(`/v1/products/variants/${lowVariantId}/reorder`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ reorderPoint: -1 });
+    expect(neg.status).toBe(400);
+
+    const badVendor = await request(app.getHttpServer())
+      .patch(`/v1/products/variants/${lowVariantId}/reorder`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ preferredVendorId: '00000000-0000-4000-8000-000000000000' });
+    expect(badVendor.status).toBe(404);
+  });
+});
