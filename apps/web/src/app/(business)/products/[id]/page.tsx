@@ -17,6 +17,13 @@ interface Variant {
   priceCents: number;
   costCents: number | null;
   isActive: boolean;
+  reorderPoint: number | null;
+  reorderQty: number | null;
+  preferredVendorId: string | null;
+}
+interface Vendor {
+  id: string;
+  name: string;
 }
 interface ProductImage {
   id: string;
@@ -230,6 +237,8 @@ export default function ProductDetailPage() {
         </div>
       </Card>
 
+      <ReorderSettingsCard variants={p.variants} onSaved={load} />
+
       <Card title="Images">
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
           {p.images.map((img) => (
@@ -260,5 +269,155 @@ export default function ProductDetailPage() {
         </div>
       </Card>
     </div>
+  );
+}
+
+/**
+ * Reorder automation per variant: the stock level that triggers a
+ * suggestion, how many to order, and which vendor's PO it lands on.
+ * Saved per row — a blank point turns the variant's automation off.
+ */
+function ReorderSettingsCard({
+  variants,
+  onSaved,
+}: {
+  variants: Variant[];
+  onSaved: () => Promise<void> | void;
+}) {
+  const [vendors, setVendors] = useState<Vendor[]>([]);
+  const [savingId, setSavingId] = useState<string | null>(null);
+  const [draft, setDraft] = useState<
+    Record<string, { point: string; qty: string; vendorId: string }>
+  >({});
+
+  useEffect(() => {
+    void api<Vendor[]>('/v1/vendors')
+      .then(setVendors)
+      .catch(() => setVendors([]));
+  }, []);
+
+  function valueFor(v: Variant) {
+    return (
+      draft[v.id] ?? {
+        point: v.reorderPoint != null ? String(v.reorderPoint) : '',
+        qty: v.reorderQty != null ? String(v.reorderQty) : '',
+        vendorId: v.preferredVendorId ?? '',
+      }
+    );
+  }
+
+  async function save(v: Variant) {
+    const d = valueFor(v);
+    setSavingId(v.id);
+    try {
+      await api(`/v1/products/variants/${v.id}/reorder`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          reorderPoint: d.point === '' ? null : Number(d.point),
+          reorderQty: d.qty === '' ? null : Number(d.qty),
+          preferredVendorId: d.vendorId === '' ? null : d.vendorId,
+        }),
+      });
+      toast.success('Reorder settings saved');
+      await onSaved();
+      setDraft((cur) => {
+        const next = { ...cur };
+        delete next[v.id];
+        return next;
+      });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSavingId(null);
+    }
+  }
+
+  return (
+    <Card title="Reorder automation" style={{ marginBottom: 16 }}>
+      <p className="muted" style={{ fontSize: 12.5, marginTop: 0 }}>
+        When available stock (on hand − committed, all locations) falls to the reorder point, the
+        item appears in Purchasing → Reorder suggestions under its vendor. Leave the point blank to
+        turn automation off for a variant.
+      </p>
+      <div className="overflow-x-auto">
+        <table className="table">
+          <thead>
+            <tr>
+              <th>Variant</th>
+              <th className="num">Reorder point</th>
+              <th className="num">Order qty</th>
+              <th>Preferred vendor</th>
+              <th>&nbsp;</th>
+            </tr>
+          </thead>
+          <tbody>
+            {variants
+              .filter((v) => v.isActive)
+              .map((v) => {
+                const d = valueFor(v);
+                return (
+                  <tr key={v.id}>
+                    <td>{v.name ?? <code>{v.sku ?? v.id.slice(0, 8)}</code>}</td>
+                    <td className="num">
+                      <Input
+                        type="number"
+                        min={0}
+                        value={d.point}
+                        placeholder="off"
+                        onChange={(e) =>
+                          setDraft((cur) => ({ ...cur, [v.id]: { ...d, point: e.target.value } }))
+                        }
+                        style={{ width: 80 }}
+                        data-testid={`reorder-point-${v.sku}`}
+                      />
+                    </td>
+                    <td className="num">
+                      <Input
+                        type="number"
+                        min={1}
+                        value={d.qty}
+                        placeholder="auto"
+                        onChange={(e) =>
+                          setDraft((cur) => ({ ...cur, [v.id]: { ...d, qty: e.target.value } }))
+                        }
+                        style={{ width: 80 }}
+                      />
+                    </td>
+                    <td>
+                      <Select
+                        value={d.vendorId}
+                        onChange={(e) =>
+                          setDraft((cur) => ({
+                            ...cur,
+                            [v.id]: { ...d, vendorId: e.target.value },
+                          }))
+                        }
+                      >
+                        <option value="">— none —</option>
+                        {vendors.map((vd) => (
+                          <option key={vd.id} value={vd.id}>
+                            {vd.name}
+                          </option>
+                        ))}
+                      </Select>
+                    </td>
+                    <td style={{ textAlign: 'right' }}>
+                      <Button
+                        size="sm"
+                        variant="primary"
+                        disabled={savingId === v.id}
+                        onClick={() => void save(v)}
+                        data-testid={`save-reorder-${v.sku}`}
+                      >
+                        Save
+                      </Button>
+                    </td>
+                  </tr>
+                );
+              })}
+          </tbody>
+        </table>
+      </div>
+    </Card>
   );
 }

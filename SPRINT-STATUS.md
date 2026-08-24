@@ -294,3 +294,9 @@ _(newest first — sessions append: date · day · what shipped · open flags)_
   a business-less user's /dashboard → /welcome redirect detached the Sign out button
   mid-click; /welcome now carries its own Sign out and the test waits for the redirect.
   Full local e2e 9/9 green.
+- **2026-08-24 — Post-checkpoint slice 6 (reorder automation):** `product_variants` gained
+  `reorder_point`/`reorder_qty`/`preferred_vendor_id` (migration `0027_reorder_points`);
+  `GET /v1/purchase-orders/reorder-suggestions` groups shortfalls (available ≤ point,
+  all-location sum) by preferred vendor with suggested qty (explicit qty, else top-up to
+  2× point); one-click "Draft PO" per vendor group on the Purchasing page; per-variant
+  Reorder automation card on product detail. purchasing.int.spec.ts 11→16 tests.
