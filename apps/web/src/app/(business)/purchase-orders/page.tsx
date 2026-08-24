@@ -31,6 +31,7 @@ interface SuggestionLine {
   productName: string;
   variantName: string | null;
   sku: string | null;
+  vendorSku: string | null;
   available: number;
   reorderPoint: number;
   suggestedQty: number;
@@ -167,7 +168,12 @@ export default function PurchaseOrdersPage() {
                           )}
                         </td>
                         <td>
-                          <code>{l.sku ?? '—'}</code>
+                          <code>{l.vendorSku ?? l.sku ?? '—'}</code>
+                          {l.vendorSku && l.sku && l.vendorSku !== l.sku && (
+                            <span className="muted" style={{ fontSize: 11, display: 'block' }}>
+                              ours: {l.sku}
+                            </span>
+                          )}
                         </td>
                         <td className="num" style={{ color: 'var(--danger)', fontWeight: 600 }}>
                           {l.available}

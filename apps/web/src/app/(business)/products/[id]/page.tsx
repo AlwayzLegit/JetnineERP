@@ -20,6 +20,7 @@ interface Variant {
   reorderPoint: number | null;
   reorderQty: number | null;
   preferredVendorId: string | null;
+  vendorSku: string | null;
 }
 interface Vendor {
   id: string;
@@ -287,7 +288,7 @@ function ReorderSettingsCard({
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [savingId, setSavingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<
-    Record<string, { point: string; qty: string; vendorId: string }>
+    Record<string, { point: string; qty: string; vendorId: string; vendorSku: string }>
   >({});
 
   useEffect(() => {
@@ -302,6 +303,7 @@ function ReorderSettingsCard({
         point: v.reorderPoint != null ? String(v.reorderPoint) : '',
         qty: v.reorderQty != null ? String(v.reorderQty) : '',
         vendorId: v.preferredVendorId ?? '',
+        vendorSku: v.vendorSku ?? '',
       }
     );
   }
@@ -316,6 +318,7 @@ function ReorderSettingsCard({
           reorderPoint: d.point === '' ? null : Number(d.point),
           reorderQty: d.qty === '' ? null : Number(d.qty),
           preferredVendorId: d.vendorId === '' ? null : d.vendorId,
+          vendorSku: d.vendorSku.trim() === '' ? null : d.vendorSku.trim(),
         }),
       });
       toast.success('Reorder settings saved');
@@ -337,7 +340,9 @@ function ReorderSettingsCard({
       <p className="muted" style={{ fontSize: 12.5, marginTop: 0 }}>
         When available stock (on hand − committed, all locations) falls to the reorder point, the
         item appears in Purchasing → Reorder suggestions under its vendor. Leave the point blank to
-        turn automation off for a variant.
+        turn automation off for a variant. If the vendor uses a different part number than your SKU
+        (common for Shopify-synced catalogs), set it as the Vendor SKU — purchase orders will show
+        the vendor&apos;s number.
       </p>
       <div className="overflow-x-auto">
         <table className="table">
@@ -347,6 +352,7 @@ function ReorderSettingsCard({
               <th className="num">Reorder point</th>
               <th className="num">Order qty</th>
               <th>Preferred vendor</th>
+              <th>Vendor SKU</th>
               <th>&nbsp;</th>
             </tr>
           </thead>
@@ -400,6 +406,20 @@ function ReorderSettingsCard({
                           </option>
                         ))}
                       </Select>
+                    </td>
+                    <td>
+                      <Input
+                        value={d.vendorSku}
+                        placeholder={v.sku ? `same as ${v.sku}` : 'vendor part #'}
+                        onChange={(e) =>
+                          setDraft((cur) => ({
+                            ...cur,
+                            [v.id]: { ...d, vendorSku: e.target.value },
+                          }))
+                        }
+                        style={{ width: 130 }}
+                        data-testid={`vendor-sku-${v.sku}`}
+                      />
                     </td>
                     <td style={{ textAlign: 'right' }}>
                       <Button

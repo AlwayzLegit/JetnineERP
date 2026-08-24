@@ -453,4 +453,59 @@ describe('Reorder automation', () => {
       .send({ preferredVendorId: '00000000-0000-4000-8000-000000000000' });
     expect(badVendor.status).toBe(404);
   });
+
+  it('Vendor SKU: saved (trimmed), surfaces in suggestions and PO lines, clears with null', async () => {
+    // The vendor's part number differs from our Shopify-style SKU.
+    const patch = await request(app.getHttpServer())
+      .patch(`/v1/products/variants/${lowVariantId}/reorder`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ reorderPoint: 5, vendorSku: '  RC-PLW-0099  ' });
+    expect(patch.status).toBe(200);
+    expect(patch.body.vendorSku).toBe('RC-PLW-0099');
+
+    const suggestions = await request(app.getHttpServer())
+      .get('/v1/purchase-orders/reorder-suggestions')
+      .set('Cookie', clerkCookie)
+      .set('X-Business-Id', businessId);
+    const line = suggestions.body.vendors
+      .flatMap((g: { lines: { variantId: string; vendorSku: string | null }[] }) => g.lines)
+      .find((l: { variantId: string }) => l.variantId === lowVariantId);
+    expect(line.vendorSku).toBe('RC-PLW-0099');
+
+    // A PO for this variant carries the vendor part number on its lines.
+    const po = await request(app.getHttpServer())
+      .post('/v1/purchase-orders')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({
+        vendorId: restockVendorId,
+        locationId,
+        lines: [{ variantId: lowVariantId, quantity: 3, unitCostCents: 1500 }],
+      });
+    expect(po.status).toBe(201);
+    const detail = await request(app.getHttpServer())
+      .get(`/v1/purchase-orders/${po.body.id}`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId);
+    expect(detail.status).toBe(200);
+    expect(detail.body.lines[0].vendorSku).toBe('RC-PLW-0099');
+    expect(detail.body.lines[0].sku).toBe('PILLOW-1');
+
+    // Explicit null clears it; empty/oversized strings are rejected.
+    const cleared = await request(app.getHttpServer())
+      .patch(`/v1/products/variants/${lowVariantId}/reorder`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ vendorSku: null, reorderPoint: null });
+    expect(cleared.status).toBe(200);
+    expect(cleared.body.vendorSku).toBeNull();
+
+    const blank = await request(app.getHttpServer())
+      .patch(`/v1/products/variants/${lowVariantId}/reorder`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ vendorSku: '   ' });
+    expect(blank.status).toBe(400);
+  });
 });

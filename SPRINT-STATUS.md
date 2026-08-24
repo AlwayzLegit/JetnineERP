@@ -340,3 +340,14 @@ _(newest first — sessions append: date · day · what shipped · open flags)_
   fail-open for offline POS). Earlier: Shopify/Woo/Wix connect dialog defaults its
   landing location to a Warehouse-named location and explains the choice. Remaining
   from the run: flow 14 (permissions) untested — needs a second non-owner login.
+- **2026-08-24 — Vendor SKU mapping (post-QA batch 2):** `product_variants.vendor_sku`
+  (migration `0029_variant_vendor_sku`) holds the vendor's part number when it differs
+  from our selling SKU (the exact discrepancy Shopify-synced catalogs create). PATCH
+  `variants/:id/reorder` accepts/validates/audits it; reorder suggestions and PO detail
+  lines return it; purchasing UIs print the vendor SKU with an "ours: …" hint when the
+  two differ; Reorder automation card gains a Vendor SKU field. Shopify sync keeps
+  filling the selling SKU only — vendor part numbers stay merchant-entered.
+  purchasing.int.spec.ts 16→17 tests. Also verified in Render logs: the first real
+  Shopify sync succeeded server-side (201 in ~7.3 min) — the browser toast errors
+  because proxies cut the response at ~100s. Follow-up queued: make provider sync a
+  background job with progress polling.

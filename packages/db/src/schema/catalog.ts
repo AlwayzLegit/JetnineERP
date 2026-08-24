@@ -97,6 +97,13 @@ export const productVariants = pgTable(
     preferredVendorId: uuid('preferred_vendor_id').references(() => vendors.id, {
       onDelete: 'set null',
     }),
+    /**
+     * The vendor's own part number for this variant, when it differs
+     * from our selling `sku` (e.g. Shopify-synced SKUs vs supplier
+     * catalogs). Purchasing surfaces (reorder suggestions, PO lines)
+     * print this to the vendor, falling back to `sku` when unset.
+     */
+    vendorSku: text('vendor_sku'),
     isActive: boolean('is_active').notNull().default(true),
     searchTsv: tsvector('search_tsv'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
