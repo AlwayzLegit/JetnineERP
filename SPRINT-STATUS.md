@@ -397,3 +397,14 @@ current staging business. Keep this list current whenever a test session creates
   location code 8 (186+122 units) held out pending its store name. QA run-2 "vendor
   SKU FAIL" was a deploy lag — the live API is still 80ad9bd and the 18:23 auto
   redeploy from the instance upgrade FAILED; Ops: Manual Deploy latest on jetnine-api.
+- **2026-08-24 — QA run-2 final: 10 PASS / 1 FAIL (vendor SKU = the deploy gap, since
+  closed by the 20:43Z manual deploy of 1bbd354; migrations incl. 0029 applied clean).**
+  Z-report refunds row verified live (−$968.99 ties out), Avery 5160 geometry confirmed
+  from print DOM, dashboard KPIs agree with the Z. Adopted the agent's hardening
+  suggestion: the reorder card now asserts the PATCH response echoes vendorSku before
+  showing success — a stale backend now produces an explicit error instead of a false
+  "saved". Flow-8 incognito caveat closed by server-side evidence: /v1/public/orders/:token
+  is @Public and answers unauthenticated (verified by curl on staging). Test-data ledger
+  additions from run 2: INV-2026-000002 ($1,949 Aviada, change $151), INV-2026-000003
+  ($69 protector + refund), vendor "Bedrock Bedding Supply", PO-2026-000001 (draft),
+  campaign send to 4,575 recipients (memory outbox), order + delivery + track link.
