@@ -408,3 +408,9 @@ current staging business. Keep this list current whenever a test session creates
   additions from run 2: INV-2026-000002 ($1,949 Aviada, change $151), INV-2026-000003
   ($69 protector + refund), vendor "Bedrock Bedding Supply", PO-2026-000001 (draft),
   campaign send to 4,575 recipients (memory outbox), order + delivery + track link.
+- **2026-08-24 — Sidebar blue-on-navy fix (user-reported):** the Tailwind v4 pass left
+  `a { color: var(--brand) }` UNLAYERED in globals.css; unlayered CSS outranks every
+  layered utility, so `text-[var(--sidebar-text)]`/`text-white` on nav links lost and
+  the whole sidebar rendered brand-blue on navy. The anchor default now lives in
+  `@layer base`, restoring utility overrides (bare content links keep the brand color).
+  Watch for the same pattern if other element defaults ever fight a utility. e2e 9/9.
