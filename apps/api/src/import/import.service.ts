@@ -653,15 +653,13 @@ export class ImportService {
         .set(variantValues)
         .where(eq(schema.productVariants.id, variant.id));
     } else {
-      await this.db
-        .insert(schema.productVariants)
-        .values({
-          businessId,
-          productId,
-          sku,
-          ...variantValues,
-          priceCents: n.priceCents as number,
-        });
+      await this.db.insert(schema.productVariants).values({
+        businessId,
+        productId,
+        sku,
+        ...variantValues,
+        priceCents: n.priceCents as number,
+      });
     }
     await this.upsertRef(businessId, 'product', legacyId, productId, batchId);
     return productId;
