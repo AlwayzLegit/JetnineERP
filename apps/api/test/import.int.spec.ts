@@ -284,6 +284,39 @@ describe('entity importers (D7 idempotency throughout)', () => {
     expect(cats.map((c) => c.name).sort()).toEqual(['Accessories', 'Bases', 'Mattresses']);
   });
 
+  it('enriches variants with vendor SKU / vendor / reorder point from STORIS-style columns', async () => {
+    const csv = `SKU,DESCRIPTION,CATEGORY,RETAIL,REPLACE_COST,VENDOR_MODEL_NUMBER,VENDOR,MIN_STOCK
+4163,Ireland Black Nightstand,Bedroom,199.00,83.00,04163,ACME,2
+SAM-18002-ET-K,E King Franklin Mattress,Mattresses,3299.00,1684.00,,CANN,
+SAM-18002-ET-Q,Queen Franklin Mattress,Mattresses,2499.00,1070.00,SAM18002Q,CANN,1`;
+    await runBatch('product', csv);
+
+    const variants = await verifyDb
+      .select()
+      .from(schema.productVariants)
+      .where(eq(schema.productVariants.businessId, businessId));
+    const nightstand = variants.find((v) => v.sku === '4163');
+    expect(nightstand?.vendorSku).toBe('04163');
+    expect(nightstand?.reorderPoint).toBe(2);
+    const king = variants.find((v) => v.sku === 'SAM-18002-ET-K');
+    expect(king?.vendorSku).toBeNull(); // blank column leaves it unset
+    expect(king?.reorderPoint).toBeNull();
+
+    // Both CANN rows share one vendor row, created on the fly; the ACME
+    // row gets its own. Preferred vendor lands on the variant.
+    const vendorRows = await verifyDb
+      .select()
+      .from(schema.vendors)
+      .where(eq(schema.vendors.businessId, businessId));
+    const cann = vendorRows.filter((v) => v.name.toLowerCase() === 'cann');
+    expect(cann).toHaveLength(1);
+    expect(vendorRows.some((v) => v.name.toLowerCase() === 'acme')).toBe(true);
+    expect(nightstand?.preferredVendorId).toBe(
+      vendorRows.find((v) => v.name.toLowerCase() === 'acme')?.id,
+    );
+    expect(king?.preferredVendorId).toBe(cann[0]!.id);
+  });
+
   it('sets on-hand with an audit movement; re-run is a no-op', async () => {
     await runBatch('inventory', INVENTORY_CSV);
     const levels = await verifyDb

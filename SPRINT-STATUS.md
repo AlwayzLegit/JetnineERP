@@ -351,3 +351,14 @@ _(newest first — sessions append: date · day · what shipped · open flags)_
   Shopify sync succeeded server-side (201 in ~7.3 min) — the browser toast errors
   because proxies cut the response at ~100s. Follow-up queued: make provider sync a
   background job with progress polling.
+- **2026-08-24 — Real STORIS inventory export received + import-pipeline enrichment:**
+  first real export analyzed (14,247 rows / 6,357 SKUs / 12 locations, clean — no dupes
+  or cost conflicts; file kept OUT of the repo). Product import now understands the
+  STORIS columns directly: `REPLACE_COST` as cost, `VENDOR_MODEL_NUMBER` → variant
+  vendor_sku, `VENDOR` → find-or-create vendor + preferred vendor, `MIN_STOCK` →
+  reorder point (all only-when-present, so re-imports never wipe merchant edits).
+  import.int.spec.ts 9→10 tests. Pipeline-ready CSVs staged outside the repo.
+  **Blocked on (Ops):** (1) a retail-price export (SKU → selling price) — the inventory
+  report has cost only and product import requires price; (2) the location code → store
+  name mapping (codes 1–12 and 88); (3) decision on 1,180 as-is units (import as
+  on-hand, separate as-is SKUs, or skip).
