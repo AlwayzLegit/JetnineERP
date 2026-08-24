@@ -122,7 +122,9 @@ DECLARE
     'service_order_notes',
     'customer_notes',
     'customer_tags',
-    'customer_tag_links'
+    'customer_tag_links',
+    'customer_segments',
+    'campaigns'
   ];
 BEGIN
   FOREACH t IN ARRAY tenant_tables LOOP

@@ -13,6 +13,7 @@ import {
   Gift,
   LayoutDashboard,
   MapPin,
+  Megaphone,
   Menu,
   Monitor,
   Package,
@@ -78,6 +79,7 @@ const NAV: NavGroup[] = [
     label: 'People',
     items: [
       { href: '/customers', label: 'Customers', icon: Users },
+      { href: '/marketing', label: 'Marketing', icon: Megaphone },
       { href: '/members', label: 'Members', icon: UserCog },
       { href: '/roles', label: 'Roles', icon: ShieldCheck },
     ],
