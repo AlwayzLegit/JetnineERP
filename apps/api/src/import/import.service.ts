@@ -624,11 +624,22 @@ export class ImportService {
       productId = created!.id;
     }
 
-    const variantValues = {
+    const variantValues: Partial<typeof schema.productVariants.$inferInsert> = {
       priceCents: n.priceCents as number,
       costCents: (n.costCents as number) ?? null,
       barcode: (n.barcode as string) ?? null,
     };
+    // Purchasing enrichment — only touch these when the file supplies
+    // them, so a re-import without the columns never wipes merchant edits.
+    if (typeof n.vendorSku === 'string' && n.vendorSku.trim().length > 0) {
+      variantValues.vendorSku = n.vendorSku.trim();
+    }
+    if (typeof n.reorderPoint === 'number' && Number.isInteger(n.reorderPoint)) {
+      variantValues.reorderPoint = n.reorderPoint;
+    }
+    if (typeof n.vendorName === 'string' && n.vendorName.trim().length > 0) {
+      variantValues.preferredVendorId = await this.vendorIdByName(businessId, n.vendorName.trim());
+    }
     const [variant] = await this.db
       .select({ id: schema.productVariants.id })
       .from(schema.productVariants)
@@ -644,10 +655,41 @@ export class ImportService {
     } else {
       await this.db
         .insert(schema.productVariants)
-        .values({ businessId, productId, sku, ...variantValues });
+        .values({
+          businessId,
+          productId,
+          sku,
+          ...variantValues,
+          priceCents: n.priceCents as number,
+        });
     }
     await this.upsertRef(businessId, 'product', legacyId, productId, batchId);
     return productId;
+  }
+
+  /**
+   * Find-or-create a vendor by (case-insensitive) name for product-import
+   * enrichment. Cached per service call-site via the DB itself — imports
+   * repeat the same few vendor names thousands of times, but the lookup
+   * is an indexed single-row select.
+   */
+  private async vendorIdByName(businessId: string, name: string): Promise<string> {
+    const [existing] = await this.db
+      .select({ id: schema.vendors.id })
+      .from(schema.vendors)
+      .where(
+        and(
+          eq(schema.vendors.businessId, businessId),
+          sql`lower(${schema.vendors.name}) = ${name.toLowerCase()}`,
+        ),
+      )
+      .limit(1);
+    if (existing) return existing.id;
+    const [created] = await this.db
+      .insert(schema.vendors)
+      .values({ businessId, name })
+      .returning({ id: schema.vendors.id });
+    return created!.id;
   }
 
   private async commitInventory(
