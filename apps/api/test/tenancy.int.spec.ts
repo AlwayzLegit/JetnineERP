@@ -236,3 +236,88 @@ describe('active-business cookie', () => {
     expect(res.get('Set-Cookie') ?? []).toHaveLength(0);
   });
 });
+
+describe('RLS actually applies to handler queries (cross-tenant leak regression)', () => {
+  // A second business this user is NOT a member of, holding rows that the
+  // queries under test would leak if they ran on the unscoped root
+  // connection (the pre-fix behavior: SET LOCAL ROLE app_user only ever
+  // ran on the interceptor's transaction, not on the pool the handlers
+  // used, so any query relying on RLS instead of an explicit business_id
+  // filter read across tenants).
+  it('search, lists, and boards never see the other business', async () => {
+    const sql = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    const db = drizzle(sql);
+    try {
+      const [other] = await db
+        .insert(schema.businesses)
+        .values({ slug: 'other-tenant', name: 'Other Tenant Co', status: 'active' })
+        .returning();
+      const [otherLoc] = await db
+        .insert(schema.locations)
+        .values({ businessId: other!.id, name: 'Other Store', timezone: 'UTC' })
+        .returning();
+      const [otherCust] = await db
+        .insert(schema.customers)
+        .values({
+          businessId: other!.id,
+          firstName: 'Zebulon',
+          lastName: 'Leakcheck',
+          email: 'zebulon@other-tenant.test',
+        })
+        .returning();
+      await db.insert(schema.serviceOrders).values({
+        businessId: other!.id,
+        locationId: otherLoc!.id,
+        number: 'SV-9999-000001',
+        customerId: otherCust!.id,
+        issue: 'Should be invisible',
+      });
+      await db
+        .insert(schema.customerTags)
+        .values({ businessId: other!.id, name: 'other-tenant-tag' });
+    } finally {
+      await sql.end({ timeout: 5 });
+    }
+
+    // Full-text customer search — the query that exposed the leak.
+    const search = await request(app.getHttpServer())
+      .get('/v1/customers?q=Zebulon')
+      .set('Cookie', owner.cookie)
+      .set('X-Business-Id', businessId);
+    expect(search.status).toBe(200);
+    expect(search.body.data).toHaveLength(0);
+
+    // Unfiltered cursor list.
+    const list = await request(app.getHttpServer())
+      .get('/v1/customers')
+      .set('Cookie', owner.cookie)
+      .set('X-Business-Id', businessId);
+    const emails = (list.body.data as { email: string | null }[]).map((c) => c.email);
+    expect(emails).not.toContain('zebulon@other-tenant.test');
+
+    // Service board.
+    const board = await request(app.getHttpServer())
+      .get('/v1/service-orders')
+      .set('Cookie', owner.cookie)
+      .set('X-Business-Id', businessId);
+    expect(board.status).toBe(200);
+    expect((board.body as { number: string }[]).map((t) => t.number)).not.toContain(
+      'SV-9999-000001',
+    );
+
+    // CRM tag list.
+    const tags = await request(app.getHttpServer())
+      .get('/v1/customer-tags')
+      .set('Cookie', owner.cookie)
+      .set('X-Business-Id', businessId);
+    expect(tags.status).toBe(200);
+    expect((tags.body as { name: string }[]).map((t) => t.name)).not.toContain('other-tenant-tag');
+
+    // Direct id fetch of a foreign customer must 404, not leak.
+    const direct = await request(app.getHttpServer())
+      .get(`/v1/customers/00000000-0000-0000-0000-000000000001`)
+      .set('Cookie', owner.cookie)
+      .set('X-Business-Id', businessId);
+    expect([404, 403]).toContain(direct.status);
+  });
+});

@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import { Money } from '@/components/money';
+import { EmptyState, LinkButton, LoadingRows, PageHeader, StatusBadge } from '@/components/ui';
 
 interface SaleRow {
   id: string;
@@ -34,94 +35,60 @@ export default function SalesPage() {
 
   return (
     <div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
-        <h1 style={{ fontSize: 22, margin: 0 }}>Sales</h1>
-        <Link
-          href="/pos"
-          style={{
-            marginLeft: 'auto',
-            padding: '8px 14px',
-            background: '#111',
-            color: '#fff',
-            borderRadius: 4,
-            textDecoration: 'none',
-            fontSize: 13,
-          }}
-        >
-          Open register
-        </Link>
-      </div>
-      {error && <p style={{ color: '#b00' }}>{error}</p>}
+      <PageHeader
+        title="Sales"
+        actions={
+          <LinkButton href="/pos" variant="primary">
+            Open register
+          </LinkButton>
+        }
+      />
+      {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
+      {!rows && !error && (
+        <div className="card">
+          <LoadingRows rows={5} />
+        </div>
+      )}
       {rows && (
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-          <thead>
-            <tr style={{ textAlign: 'left', borderBottom: '1px solid #ddd' }}>
-              <Th>Sale</Th>
-              <Th>Status</Th>
-              <Th>Total</Th>
-              <Th>Date</Th>
-              <Th>&nbsp;</Th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.length === 0 && (
-              <tr>
-                <td colSpan={5} style={{ padding: 16, color: '#888' }}>
-                  No sales yet.
-                </td>
-              </tr>
-            )}
-            {rows.map((s) => (
-              <tr key={s.id} style={{ borderBottom: '1px solid #f3f3f3' }}>
-                <Td>
-                  <code>{s.number}</code>
-                </Td>
-                <Td>
-                  <Badge status={s.status} />
-                </Td>
-                <Td>
-                  <Money cents={s.totalCents} />
-                </Td>
-                <Td>{new Date(s.completedAt ?? s.createdAt).toLocaleString()}</Td>
-                <Td>
-                  <Link href={`/sales/${s.id}`}>Open</Link>
-                </Td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <div className="card">
+          {rows.length === 0 ? (
+            <EmptyState>No sales yet. Ring one up at the register to see it here.</EmptyState>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Sale</th>
+                    <th>Status</th>
+                    <th className="num">Total</th>
+                    <th>Date</th>
+                    <th>&nbsp;</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((s) => (
+                    <tr key={s.id}>
+                      <td>
+                        <code>{s.number}</code>
+                      </td>
+                      <td>
+                        <StatusBadge status={s.status} />
+                      </td>
+                      <td className="num">
+                        <Money cents={s.totalCents} />
+                      </td>
+                      <td>{new Date(s.completedAt ?? s.createdAt).toLocaleString()}</td>
+                      <td>
+                        <Link href={`/sales/${s.id}`}>Open</Link>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
       )}
     </div>
   );
-}
-
-function Badge({ status }: { status: string }) {
-  const color =
-    status === 'completed'
-      ? '#070'
-      : status === 'refunded'
-        ? '#b00'
-        : status === 'partially_refunded'
-          ? '#a60'
-          : '#666';
-  return (
-    <span
-      style={{
-        background: '#f4f4f4',
-        color,
-        padding: '2px 6px',
-        borderRadius: 3,
-        fontSize: 12,
-      }}
-    >
-      {status}
-    </span>
-  );
-}
-
-function Th({ children }: { children: React.ReactNode }) {
-  return <th style={{ padding: '8px 6px', fontWeight: 600 }}>{children}</th>;
-}
-function Td({ children }: { children: React.ReactNode }) {
-  return <td style={{ padding: '8px 6px' }}>{children}</td>;
 }

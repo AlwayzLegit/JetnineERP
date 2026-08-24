@@ -9,8 +9,8 @@ import Link from 'next/link';
 export default function VerifyPage() {
   return (
     <div>
-      <h2 style={{ fontSize: 18, marginBottom: 12 }}>Email verified</h2>
-      <p style={{ fontSize: 14, marginBottom: 16 }}>
+      <h2 style={{ fontSize: 18, margin: '0 0 12px' }}>Email verified</h2>
+      <p style={{ fontSize: 14, color: 'var(--text-secondary)', margin: '0 0 16px' }}>
         Your email has been confirmed. You can now sign in.
       </p>
       <Link href="/login">Go to sign-in</Link>

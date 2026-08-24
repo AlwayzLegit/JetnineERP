@@ -2,7 +2,17 @@
 
 import Link from 'next/link';
 import { useEffect, useState, type FormEvent } from 'react';
+import { Plus } from 'lucide-react';
 import { api } from '@/lib/api';
+import {
+  Button,
+  Card,
+  EmptyState,
+  Input,
+  LinkButton,
+  LoadingRows,
+  PageHeader,
+} from '@/components/ui';
 
 interface ProductRow {
   id: string;
@@ -60,157 +70,124 @@ export default function ProductsPage() {
 
   return (
     <div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
-        <h1 style={{ fontSize: 22, margin: 0 }}>Products</h1>
-        <Link
-          href="/products/new"
-          style={{
-            marginLeft: 'auto',
-            padding: '8px 14px',
-            background: '#111',
-            color: '#fff',
-            borderRadius: 4,
-            textDecoration: 'none',
-            fontSize: 13,
-          }}
-        >
-          Create product
-        </Link>
-      </div>
+      <PageHeader
+        title="Products"
+        actions={
+          <LinkButton href="/products/new" variant="primary">
+            <Plus size={14} />
+            Create product
+          </LinkButton>
+        }
+      />
 
-      <form onSubmit={search} style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
-        <input
+      <form onSubmit={search} className="mb-4 flex flex-wrap gap-2">
+        <Input
           name="q"
           placeholder="Search by name, SKU, or barcode"
           value={q}
           onChange={(e) => setQ(e.target.value)}
-          style={{
-            flex: 1,
-            padding: '8px 10px',
-            border: '1px solid #ccc',
-            borderRadius: 4,
-            fontSize: 14,
-          }}
+          className="min-w-[200px] flex-1"
         />
-        <button type="submit" style={primaryBtn}>
+        <Button type="submit" variant="primary">
           Search
-        </button>
-        <button
+        </Button>
+        <Button
           type="button"
+          variant="secondary"
           onClick={() => {
             setQ('');
             void load('');
           }}
-          style={linkBtn}
         >
           Clear
-        </button>
+        </Button>
       </form>
 
-      {error && <p style={{ color: '#b00' }}>{error}</p>}
-      {rows && (
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-          <thead>
-            <tr style={{ textAlign: 'left', borderBottom: '1px solid #ddd' }}>
-              <Th>Name</Th>
-              <Th>SKU</Th>
-              <Th>Active</Th>
-              <Th>&nbsp;</Th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.length === 0 && (
-              <tr>
-                <td colSpan={4} style={{ padding: 16, color: '#888' }}>
-                  No products match{q ? ` "${q}"` : ' yet'}.
-                </td>
-              </tr>
-            )}
-            {rows.map((p) => (
-              <tr key={p.id} style={{ borderBottom: '1px solid #f3f3f3' }}>
-                <Td>
-                  <strong>{p.name}</strong>
-                </Td>
-                <Td>
-                  <code>{p.sku ?? '—'}</code>
-                </Td>
-                <Td>{p.isActive ? 'yes' : 'no'}</Td>
-                <Td>
-                  <Link href={`/products/${p.id}`}>Open</Link>
-                </Td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
-
-      <details style={{ marginTop: 32 }}>
-        <summary style={{ cursor: 'pointer', fontSize: 14 }}>CSV import</summary>
-        <p style={{ color: '#666', fontSize: 13 }}>
-          Headers: <code>name,sku,price,barcode</code>. Price is in dollars (e.g. 12.50).
-        </p>
-        <textarea
-          value={csv}
-          onChange={(e) => setCsv(e.target.value)}
-          rows={8}
-          style={{
-            width: '100%',
-            fontFamily: 'monospace',
-            fontSize: 12,
-            padding: 8,
-            border: '1px solid #ccc',
-            borderRadius: 4,
-          }}
-        />
-        <div style={{ marginTop: 8, display: 'flex', gap: 8 }}>
-          <button onClick={() => importCsv('preview')} disabled={csvBusy} style={primaryBtn}>
-            Preview
-          </button>
-          <button onClick={() => importCsv('commit')} disabled={csvBusy} style={primaryBtn}>
-            Commit
-          </button>
-        </div>
-        {csvResult && (
-          <pre
-            style={{
-              background: '#fafafa',
-              padding: 8,
-              borderRadius: 4,
-              marginTop: 8,
-              fontSize: 12,
-              whiteSpace: 'pre-wrap',
-            }}
-          >
-            {csvResult}
-          </pre>
+      {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
+      <Card style={{ padding: 0 }}>
+        {rows == null ? (
+          <div style={{ padding: 16 }}>
+            <LoadingRows />
+          </div>
+        ) : rows.length === 0 ? (
+          <EmptyState>
+            No products match{q ? ` "${q}"` : ' yet'}. Create a product or import a CSV below.
+          </EmptyState>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>SKU</th>
+                  <th>Active</th>
+                  <th>&nbsp;</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((p) => (
+                  <tr key={p.id}>
+                    <td>
+                      <strong>{p.name}</strong>
+                    </td>
+                    <td>
+                      <code>{p.sku ?? '—'}</code>
+                    </td>
+                    <td>
+                      <span className={`badge ${p.isActive ? 'badge-success' : 'badge-neutral'}`}>
+                        {p.isActive ? 'yes' : 'no'}
+                      </span>
+                    </td>
+                    <td style={{ textAlign: 'right' }}>
+                      <Link href={`/products/${p.id}`}>Open</Link>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
+      </Card>
+
+      <details style={{ marginTop: 24 }}>
+        <summary style={{ cursor: 'pointer', fontSize: 14, fontWeight: 500 }}>CSV import</summary>
+        <Card style={{ marginTop: 8 }}>
+          <p style={{ color: 'var(--text-secondary)', fontSize: 13, marginTop: 0 }}>
+            Headers: <code>name,sku,price,barcode</code>. Price is in dollars (e.g. 12.50).
+          </p>
+          <textarea
+            className="textarea"
+            value={csv}
+            onChange={(e) => setCsv(e.target.value)}
+            rows={8}
+            style={{ width: '100%', fontFamily: 'var(--font-mono)', fontSize: 12 }}
+          />
+          <div style={{ marginTop: 8 }} className="flex flex-wrap gap-2">
+            <Button variant="primary" onClick={() => importCsv('preview')} disabled={csvBusy}>
+              Preview
+            </Button>
+            <Button variant="primary" onClick={() => importCsv('commit')} disabled={csvBusy}>
+              Commit
+            </Button>
+          </div>
+          {csvResult && (
+            <pre
+              style={{
+                background: 'var(--surface-muted)',
+                border: '1px solid var(--border)',
+                padding: 8,
+                borderRadius: 'var(--radius-sm)',
+                marginTop: 8,
+                marginBottom: 0,
+                fontSize: 12,
+                whiteSpace: 'pre-wrap',
+              }}
+            >
+              {csvResult}
+            </pre>
+          )}
+        </Card>
       </details>
     </div>
   );
-}
-
-const primaryBtn = {
-  padding: '8px 14px',
-  background: '#111',
-  color: '#fff',
-  border: 'none',
-  borderRadius: 4,
-  cursor: 'pointer',
-  fontSize: 13,
-} as const;
-const linkBtn = {
-  padding: '8px 14px',
-  background: 'transparent',
-  color: '#444',
-  border: '1px solid #ccc',
-  borderRadius: 4,
-  cursor: 'pointer',
-  fontSize: 13,
-} as const;
-
-function Th({ children }: { children: React.ReactNode }) {
-  return <th style={{ padding: '8px 6px', fontWeight: 600 }}>{children}</th>;
-}
-function Td({ children }: { children: React.ReactNode }) {
-  return <td style={{ padding: '8px 6px' }}>{children}</td>;
 }

@@ -375,3 +375,123 @@ describe('Epic 1.5 — Super admin console', () => {
     expect(res.body.totalUsers).toBeGreaterThanOrEqual(2);
   });
 });
+
+describe('Platform layer — business templates (P1)', () => {
+  let templateId = '';
+  let sourceBusinessId = '';
+
+  it('snapshot captures roles, categories, tax classes, and settings', async () => {
+    // Configure a source business directly in the DB — a custom role, a
+    // category tree, a tax class, distinctive settings.
+    const sql = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    const db = drizzle(sql);
+    try {
+      const [biz] = await db
+        .insert(schema.businesses)
+        .values({
+          slug: `tpl-source-${Date.now()}`,
+          name: 'Template Source',
+          status: 'active',
+          currencyCode: 'USD',
+          defaultTaxRateBps: 950,
+          receiptHeader: 'LA Mattress — sleep well',
+        })
+        .returning();
+      sourceBusinessId = biz!.id;
+      const [role] = await db
+        .insert(schema.roles)
+        .values({ businessId: biz!.id, name: 'Delivery Driver', isSystem: false })
+        .returning();
+      await db.insert(schema.rolePermissions).values([
+        { roleId: role!.id, permission: 'deliveries.view' },
+        { roleId: role!.id, permission: 'deliveries.complete' },
+      ]);
+      const [parent] = await db
+        .insert(schema.categories)
+        .values({ businessId: biz!.id, name: 'Mattresses', position: 1 })
+        .returning();
+      await db
+        .insert(schema.categories)
+        .values({ businessId: biz!.id, name: 'Queen', parentId: parent!.id, position: 2 });
+      await db
+        .insert(schema.taxClasses)
+        .values({ businessId: biz!.id, name: 'CA Standard', rateBps: 950, isDefault: true });
+    } finally {
+      await sql.end({ timeout: 5 });
+    }
+
+    const res = await request(app.getHttpServer())
+      .post('/v1/admin/templates/snapshot')
+      .set('Cookie', superCookie)
+      .send({ businessId: sourceBusinessId, name: 'Mattress store starter' });
+    expect(res.status).toBe(201);
+    templateId = res.body.id;
+    const snap = res.body.snapshotJson;
+    expect(snap.settings.defaultTaxRateBps).toBe(950);
+    expect(snap.roles).toHaveLength(1);
+    expect(snap.roles[0].permissions.sort()).toEqual(['deliveries.complete', 'deliveries.view']);
+    expect(snap.categories.map((c: { name: string }) => c.name).sort()).toEqual([
+      'Mattresses',
+      'Queen',
+    ]);
+    expect(snap.taxClasses[0].name).toBe('CA Standard');
+  });
+
+  it('create-from-template stamps the config onto a new business', async () => {
+    const res = await request(app.getHttpServer())
+      .post('/v1/admin/businesses')
+      .set('Cookie', superCookie)
+      .send({
+        name: 'Franchise Two',
+        slug: `franchise-two-${Date.now()}`,
+        ownerEmail: 'owner2@admin-test.local',
+        templateId,
+      });
+    expect(res.status).toBe(201);
+    const newBizId = res.body.businessId as string;
+
+    const sql = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    const db = drizzle(sql);
+    try {
+      const roles = await db
+        .select()
+        .from(schema.roles)
+        .where(eq(schema.roles.businessId, newBizId));
+      expect(roles.map((r) => r.name)).toContain('Delivery Driver');
+      const cats = await db
+        .select()
+        .from(schema.categories)
+        .where(eq(schema.categories.businessId, newBizId));
+      expect(cats.map((c) => c.name).sort()).toEqual(['Mattresses', 'Queen']);
+      const queen = cats.find((c) => c.name === 'Queen');
+      const parent = cats.find((c) => c.name === 'Mattresses');
+      expect(queen?.parentId).toBe(parent?.id);
+      const [biz] = await db
+        .select()
+        .from(schema.businesses)
+        .where(eq(schema.businesses.id, newBizId));
+      expect(biz?.defaultTaxRateBps).toBe(950);
+      expect(biz?.receiptHeader).toBe('LA Mattress — sleep well');
+
+      // Applying the same template again is additive → a no-op here.
+      const apply = await request(app.getHttpServer())
+        .post(`/v1/admin/templates/${templateId}/apply`)
+        .set('Cookie', superCookie)
+        .send({ businessId: newBizId });
+      expect(apply.status).toBe(201);
+      expect(apply.body.roles).toBe(0);
+      expect(apply.body.categories).toBe(0);
+      expect(apply.body.taxClasses).toBe(0);
+    } finally {
+      await sql.end({ timeout: 5 });
+    }
+  });
+
+  it('non-super-admins cannot touch templates', async () => {
+    const ownerCookie = await captureCookie(OWNER_EMAIL, OWNER_PASSWORD);
+    const res = await request(app.getHttpServer())
+      .get('/v1/admin/templates')
+      .set('Cookie', ownerCookie);
+    expect(res.status).toBe(403);
+  });
+});

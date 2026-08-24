@@ -4,7 +4,7 @@ import { and, eq } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { randomBytes } from 'node:crypto';
 import { schema } from '@jetnine/db';
-import { DRIZZLE } from '../database/database.module';
+import { DRIZZLE, ROOT_DRIZZLE } from '../database/database.module';
 import { EmailService } from '../email/email.service';
 
 export interface InviteInput {
@@ -43,6 +43,7 @@ const INVITE_TTL_HOURS = 72;
 export class InvitationService {
   constructor(
     @Inject(DRIZZLE) private readonly db: PostgresJsDatabase,
+    @Inject(ROOT_DRIZZLE) private readonly rootDb: PostgresJsDatabase,
     @Inject(EmailService) private readonly email: EmailService,
     @Inject(ConfigService) private readonly config: ConfigService,
   ) {}
@@ -51,9 +52,11 @@ export class InvitationService {
     const email = input.email.trim().toLowerCase();
     const name = input.name?.trim() ?? null;
 
-    // 1. Find or create the user.
+    // 1. Find or create the user. Deliberately on the root connection:
+    // the invitee is not a member yet, so under RLS the inviting tenant
+    // can neither see nor create their `users` row.
     let userId: string;
-    const existingUser = await this.db
+    const existingUser = await this.rootDb
       .select({ id: schema.users.id })
       .from(schema.users)
       .where(eq(schema.users.email, email))
@@ -61,7 +64,7 @@ export class InvitationService {
     if (existingUser[0]) {
       userId = existingUser[0].id;
     } else {
-      const [u] = await this.db
+      const [u] = await this.rootDb
         .insert(schema.users)
         .values({ email, emailVerified: false, name })
         .returning();
@@ -118,7 +121,9 @@ export class InvitationService {
     // 3. Token + 4. Email.
     const token = randomBytes(32).toString('base64url');
     const expiresAt = new Date(Date.now() + INVITE_TTL_HOURS * 60 * 60 * 1000);
-    await this.db.insert(schema.verifications).values({
+    // Root connection: verifications is a better-auth platform table whose
+    // RLS policy (rightly) has no tenant path.
+    await this.rootDb.insert(schema.verifications).values({
       identifier: `${INVITE_PREFIX}${email}`,
       value: token,
       expiresAt,

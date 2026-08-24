@@ -1,7 +1,19 @@
 'use client';
 
 import Link from 'next/link';
+import { Building2 } from 'lucide-react';
+import { toast } from 'sonner';
 import { useEffect, useState, type FormEvent } from 'react';
+import {
+  Button,
+  Card,
+  EmptyState,
+  Field,
+  Input,
+  LoadingRows,
+  PageHeader,
+  StatusBadge,
+} from '@/components/ui';
 import { api } from '@/lib/api';
 
 interface BusinessSummary {
@@ -34,38 +46,42 @@ export default function BusinessesPage() {
 
   return (
     <div>
-      <h1 style={{ fontSize: 22, marginBottom: 24 }}>Businesses</h1>
+      <PageHeader title="Businesses" />
       <CreateBusinessForm onCreated={load} />
-      {error && <p style={{ color: '#b00' }}>{error}</p>}
+      {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
+      {!rows && !error && (
+        <div style={{ marginTop: 24 }}>
+          <LoadingRows />
+        </div>
+      )}
       {rows && (
-        <table
-          data-testid="businesses-table"
-          style={{ width: '100%', borderCollapse: 'collapse', marginTop: 24, fontSize: 13 }}
-        >
-          <thead>
-            <tr style={{ textAlign: 'left', borderBottom: '1px solid #ddd' }}>
-              <Th>Name</Th>
-              <Th>Slug</Th>
-              <Th>Status</Th>
-              <Th>Users</Th>
-              <Th>Locations</Th>
-              <Th>Last activity</Th>
-              <Th>Actions</Th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.length === 0 && (
+        <Card style={{ padding: 0, marginTop: 24, overflowX: 'auto' }}>
+          <table data-testid="businesses-table" className="table">
+            <thead>
               <tr>
-                <td colSpan={7} style={{ padding: 16, color: '#888' }}>
-                  No businesses yet. Create one above.
-                </td>
+                <th>Name</th>
+                <th>Slug</th>
+                <th>Status</th>
+                <th>Users</th>
+                <th>Locations</th>
+                <th>Last activity</th>
+                <th>Actions</th>
               </tr>
-            )}
-            {rows.map((b) => (
-              <BusinessRow key={b.id} business={b} onChanged={load} />
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {rows.length === 0 && (
+                <tr>
+                  <td colSpan={7}>
+                    <EmptyState>No businesses yet. Create one above.</EmptyState>
+                  </td>
+                </tr>
+              )}
+              {rows.map((b) => (
+                <BusinessRow key={b.id} business={b} onChanged={load} />
+              ))}
+            </tbody>
+          </table>
+        </Card>
       )}
     </div>
   );
@@ -103,66 +119,46 @@ function CreateBusinessForm({ onCreated }: { onCreated: () => void }) {
   }
 
   return (
-    <form
-      onSubmit={submit}
-      style={{
-        background: '#fff',
-        padding: 16,
-        borderRadius: 6,
-        boxShadow: '0 1px 2px rgba(0,0,0,0.06)',
-        marginBottom: 16,
-      }}
-    >
-      <h2 style={{ fontSize: 16, marginBottom: 12 }}>Create business</h2>
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(4, 1fr)',
-          gap: 12,
-          alignItems: 'end',
-        }}
-      >
-        <Field label="Name">
-          <input name="name" required style={fieldStyle} />
-        </Field>
-        <Field label="Slug">
-          <input name="slug" required pattern="[a-z0-9-]+" style={fieldStyle} />
-        </Field>
-        <Field label="Owner email">
-          <input name="ownerEmail" type="email" required style={fieldStyle} />
-        </Field>
-        <Field label="Owner name (optional)">
-          <input name="ownerName" style={fieldStyle} />
-        </Field>
-      </div>
-      {error && (
-        <p data-testid="create-error" style={{ color: '#b00', marginTop: 8, fontSize: 13 }}>
-          {error}
-        </p>
-      )}
-      {success && (
-        <p data-testid="create-success" style={{ color: '#080', marginTop: 8, fontSize: 13 }}>
-          {success}
-        </p>
-      )}
-      <div style={{ marginTop: 12 }}>
-        <button
-          type="submit"
-          disabled={submitting}
-          style={{
-            padding: '8px 14px',
-            background: '#111',
-            color: '#fff',
-            border: 'none',
-            borderRadius: 4,
-            cursor: submitting ? 'not-allowed' : 'pointer',
-            opacity: submitting ? 0.7 : 1,
-          }}
-        >
-          {submitting ? 'Working…' : 'Create + invite owner'}
-        </button>
-      </div>
-    </form>
+    <Card title="Create business">
+      <form onSubmit={submit}>
+        <div className="grid items-end gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <Field label="Name">
+            <Input name="name" required style={{ width: '100%' }} />
+          </Field>
+          <Field label="Slug">
+            <Input name="slug" required pattern="[a-z0-9-]+" style={{ width: '100%' }} />
+          </Field>
+          <Field label="Owner email">
+            <Input name="ownerEmail" type="email" required style={{ width: '100%' }} />
+          </Field>
+          <Field label="Owner name (optional)">
+            <Input name="ownerName" style={{ width: '100%' }} />
+          </Field>
+        </div>
+        {error && (
+          <p
+            data-testid="create-error"
+            style={{ color: 'var(--danger)', marginTop: 8, marginBottom: 0, fontSize: 13 }}
+          >
+            {error}
+          </p>
+        )}
+        {success && (
+          <p
+            data-testid="create-success"
+            style={{ color: 'var(--success)', marginTop: 8, marginBottom: 0, fontSize: 13 }}
+          >
+            {success}
+          </p>
+        )}
+        <div style={{ marginTop: 12 }}>
+          <Button type="submit" variant="primary" disabled={submitting}>
+            <Building2 size={14} aria-hidden />
+            {submitting ? 'Working…' : 'Create + invite owner'}
+          </Button>
+        </div>
+      </form>
+    </Card>
   );
 }
 
@@ -181,101 +177,44 @@ function BusinessRow({
       });
       onChanged();
     } catch (err) {
-      alert(err instanceof Error ? err.message : String(err));
+      toast.error(err instanceof Error ? err.message : String(err));
     }
   }
 
   return (
-    <tr style={{ borderBottom: '1px solid #f3f3f3' }}>
-      <Td>
+    <tr>
+      <td>
         <strong>{business.name}</strong>
-      </Td>
-      <Td>
+      </td>
+      <td>
         <code>{business.slug}</code>
-      </Td>
-      <Td>
-        <StatusPill status={business.status} />
-      </Td>
-      <Td>{business.userCount}</Td>
-      <Td>{business.locationCount}</Td>
-      <Td>
+      </td>
+      <td>
+        <StatusBadge status={business.status} />
+      </td>
+      <td>{business.userCount}</td>
+      <td>{business.locationCount}</td>
+      <td>
         {business.lastActivityAt ? (
           new Date(business.lastActivityAt).toLocaleString()
         ) : (
-          <em style={{ color: '#888' }}>—</em>
+          <em style={{ color: 'var(--text-muted)' }}>—</em>
         )}
-      </Td>
-      <Td>
-        <Link href={`/admin/businesses/${business.id}`}>Open</Link>
-        {' · '}
-        {business.status === 'suspended' ? (
-          <button onClick={() => setStatus('active')} style={linkButtonStyle}>
-            Unsuspend
-          </button>
-        ) : (
-          <button onClick={() => setStatus('suspended')} style={linkButtonStyle}>
-            Suspend
-          </button>
-        )}
-      </Td>
+      </td>
+      <td>
+        <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+          <Link href={`/admin/businesses/${business.id}`}>Open</Link>
+          {business.status === 'suspended' ? (
+            <Button size="sm" variant="ghost" onClick={() => setStatus('active')}>
+              Unsuspend
+            </Button>
+          ) : (
+            <Button size="sm" variant="ghost" onClick={() => setStatus('suspended')}>
+              Suspend
+            </Button>
+          )}
+        </span>
+      </td>
     </tr>
   );
-}
-
-function StatusPill({ status }: { status: string }) {
-  const colors: Record<string, [string, string]> = {
-    active: ['#0a7', '#e7f7ee'],
-    trial: ['#48a', '#e7f0f7'],
-    suspended: ['#b00', '#fde7e7'],
-    cancelled: ['#666', '#eee'],
-  };
-  const [fg, bg] = colors[status] ?? ['#444', '#eee'];
-  return (
-    <span
-      style={{
-        background: bg,
-        color: fg,
-        padding: '2px 8px',
-        borderRadius: 999,
-        fontSize: 11,
-        fontWeight: 600,
-        textTransform: 'capitalize',
-      }}
-    >
-      {status}
-    </span>
-  );
-}
-
-const fieldStyle = {
-  width: '100%',
-  padding: '6px 8px',
-  border: '1px solid #ccc',
-  borderRadius: 4,
-  fontSize: 13,
-} as const;
-
-const linkButtonStyle = {
-  background: 'none',
-  border: 'none',
-  color: '#06c',
-  textDecoration: 'underline',
-  cursor: 'pointer',
-  fontSize: 13,
-  padding: 0,
-} as const;
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12 }}>
-      <span style={{ color: '#555' }}>{label}</span>
-      {children}
-    </label>
-  );
-}
-function Th({ children }: { children: React.ReactNode }) {
-  return <th style={{ padding: '8px 6px', fontWeight: 600 }}>{children}</th>;
-}
-function Td({ children }: { children: React.ReactNode }) {
-  return <td style={{ padding: '8px 6px' }}>{children}</td>;
 }

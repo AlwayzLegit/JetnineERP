@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import { Money } from '@/components/money';
+import { Button, EmptyState, Field, Input, LoadingRows, PageHeader, Select } from '@/components/ui';
 
 interface ShiftRow {
   id: string;
@@ -77,143 +78,93 @@ export default function ShiftsPage() {
 
   return (
     <div>
-      <h1 style={{ fontSize: 22, marginBottom: 16 }}>Cash drawer</h1>
-      {error && <p style={{ color: '#b00' }}>{error}</p>}
+      <PageHeader title="Cash drawer" />
+      {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
 
-      <div style={card}>
-        <h2 style={section}>Open new shift</h2>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+      <div className="card">
+        <h2 className="card-title">Open new shift</h2>
+        <div className="grid gap-2 sm:flex sm:flex-wrap sm:items-end">
           <Field label="Location">
-            <select
-              value={openLocationId}
-              onChange={(e) => setOpenLocationId(e.target.value)}
-              style={inputStyle}
-            >
+            <Select value={openLocationId} onChange={(e) => setOpenLocationId(e.target.value)}>
               {locations.map((l) => (
                 <option key={l.id} value={l.id}>
                   {l.name}
                 </option>
               ))}
-            </select>
+            </Select>
           </Field>
           <Field label="Opening float ($)">
-            <input
+            <Input
               type="number"
               step="0.01"
               min={0}
               value={floatStr}
               onChange={(e) => setFloatStr(e.target.value)}
-              style={inputStyle}
             />
           </Field>
           <Field label="Notes">
-            <input
-              value={openNotes}
-              onChange={(e) => setOpenNotes(e.target.value)}
-              style={inputStyle}
-            />
+            <Input value={openNotes} onChange={(e) => setOpenNotes(e.target.value)} />
           </Field>
-          <button onClick={openShift} disabled={opening || !floatStr} style={primaryBtn}>
+          <Button
+            variant="primary"
+            onClick={openShift}
+            disabled={opening || !floatStr}
+            className="min-h-11 w-fit"
+          >
             {opening ? 'Opening…' : 'Open shift'}
-          </button>
+          </Button>
         </div>
       </div>
 
-      <div style={card}>
-        <h2 style={section}>Shifts</h2>
+      <div className="card">
+        <h2 className="card-title">Shifts</h2>
         {rows == null ? (
-          <p style={{ color: '#888', fontSize: 13 }}>Loading…</p>
+          <LoadingRows />
         ) : rows.length === 0 ? (
-          <p style={{ color: '#888', fontSize: 13 }}>No shifts yet.</p>
+          <EmptyState>No shifts yet. Open one above to start tracking the drawer.</EmptyState>
         ) : (
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-            <thead>
-              <tr>
-                <Th>Opened</Th>
-                <Th>Location</Th>
-                <Th>Float</Th>
-                <Th>Status</Th>
-                <Th>Variance</Th>
-                <Th>&nbsp;</Th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => (
-                <tr key={r.id}>
-                  <Td>{new Date(r.openedAt).toLocaleString()}</Td>
-                  <Td>{r.locationName ?? '—'}</Td>
-                  <Td>
-                    <Money cents={r.openingFloatCents} />
-                  </Td>
-                  <Td>
-                    {r.closedAt ? (
-                      <span style={{ color: '#666' }}>
-                        Closed {new Date(r.closedAt).toLocaleString()}
-                      </span>
-                    ) : (
-                      <strong style={{ color: '#070' }}>Open</strong>
-                    )}
-                  </Td>
-                  <Td>{r.varianceCents == null ? '—' : <Money cents={r.varianceCents} />}</Td>
-                  <Td>
-                    <Link href={`/shifts/${r.id}`}>Open</Link>
-                  </Td>
+          <div className="overflow-x-auto">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Opened</th>
+                  <th>Location</th>
+                  <th className="num">Float</th>
+                  <th>Status</th>
+                  <th className="num">Variance</th>
+                  <th>&nbsp;</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr key={r.id}>
+                    <td>{new Date(r.openedAt).toLocaleString()}</td>
+                    <td>{r.locationName ?? '—'}</td>
+                    <td className="num">
+                      <Money cents={r.openingFloatCents} />
+                    </td>
+                    <td>
+                      {r.closedAt ? (
+                        <span style={{ color: 'var(--text-secondary)' }}>
+                          Closed {new Date(r.closedAt).toLocaleString()}
+                        </span>
+                      ) : (
+                        <strong style={{ color: 'var(--success)' }}>Open</strong>
+                      )}
+                    </td>
+                    <td className="num">
+                      {r.varianceCents == null ? '—' : <Money cents={r.varianceCents} />}
+                    </td>
+                    <td>
+                      <Link href={`/shifts/${r.id}`}>Open</Link>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
     </div>
-  );
-}
-
-const card = {
-  background: '#fff',
-  padding: 16,
-  borderRadius: 6,
-  boxShadow: '0 1px 2px rgba(0,0,0,0.06)',
-  marginBottom: 16,
-};
-const section = { fontSize: 16, marginBottom: 12, marginTop: 0 } as const;
-const inputStyle = {
-  padding: '6px 8px',
-  border: '1px solid #ccc',
-  borderRadius: 4,
-  fontSize: 13,
-} as const;
-const primaryBtn = {
-  padding: '8px 14px',
-  background: '#111',
-  color: '#fff',
-  border: 'none',
-  borderRadius: 4,
-  cursor: 'pointer',
-  fontSize: 13,
-} as const;
-
-function Th({ children }: { children: React.ReactNode }) {
-  return (
-    <th
-      style={{
-        padding: '6px 4px',
-        fontWeight: 600,
-        textAlign: 'left',
-        borderBottom: '1px solid #ddd',
-      }}
-    >
-      {children}
-    </th>
-  );
-}
-function Td({ children }: { children: React.ReactNode }) {
-  return <td style={{ padding: '6px 4px', borderBottom: '1px solid #f3f3f3' }}>{children}</td>;
-}
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12 }}>
-      <span style={{ color: '#555' }}>{label}</span>
-      {children}
-    </label>
   );
 }

@@ -3,9 +3,11 @@
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
+import { toast } from 'sonner';
 import { centsToInputString } from '@jetnine/shared';
 import { api } from '@/lib/api';
 import { Money } from '@/components/money';
+import { Button, Card, Input, LoadingRows, PageHeader, Select, StatusBadge } from '@/components/ui';
 
 interface Variant {
   id: string;
@@ -73,7 +75,7 @@ export default function ProductDetailPage() {
       });
       void load();
     } catch (err) {
-      alert(err instanceof Error ? err.message : String(err));
+      toast.error(err instanceof Error ? err.message : String(err));
     }
   }
 
@@ -86,7 +88,7 @@ export default function ProductDetailPage() {
       });
       void load();
     } catch (err) {
-      alert(err instanceof Error ? err.message : String(err));
+      toast.error(err instanceof Error ? err.message : String(err));
     }
   }
 
@@ -96,7 +98,7 @@ export default function ProductDetailPage() {
       await api(`/v1/products/variants/${variantId}`, { method: 'DELETE' });
       void load();
     } catch (err) {
-      alert(err instanceof Error ? err.message : String(err));
+      toast.error(err instanceof Error ? err.message : String(err));
     }
   }
 
@@ -120,7 +122,7 @@ export default function ProductDetailPage() {
       });
       void load();
     } catch (err) {
-      alert(err instanceof Error ? err.message : String(err));
+      toast.error(err instanceof Error ? err.message : String(err));
     }
   }
 
@@ -130,119 +132,114 @@ export default function ProductDetailPage() {
       await api(`/v1/products/images/${imageId}`, { method: 'DELETE' });
       void load();
     } catch (err) {
-      alert(err instanceof Error ? err.message : String(err));
+      toast.error(err instanceof Error ? err.message : String(err));
     }
   }
 
-  if (error) return <p style={{ color: '#b00' }}>{error}</p>;
-  if (!p) return <p>Loading…</p>;
+  if (error) return <p style={{ color: 'var(--danger)' }}>{error}</p>;
+  if (!p) return <LoadingRows rows={5} />;
 
   return (
     <div>
       <p style={{ marginBottom: 12 }}>
         <Link href="/products">← All products</Link>
       </p>
-      <h1 style={{ fontSize: 22, marginBottom: 4 }}>{p.name}</h1>
-      <p style={{ color: '#666', fontSize: 13, marginBottom: 24 }}>
-        SKU <code>{p.sku ?? '—'}</code> · {p.isActive ? 'active' : 'inactive'}
-      </p>
+      <PageHeader
+        title={p.name}
+        sub={
+          <>
+            SKU <code>{p.sku ?? '—'}</code> ·{' '}
+            <StatusBadge status={p.isActive ? 'active' : 'inactive'} />
+          </>
+        }
+      />
 
       {taxClasses.length > 0 && (
-        <Section title="Tax class">
-          <p style={{ color: '#666', fontSize: 12, marginBottom: 8 }}>
+        <Card title="Tax class" style={{ marginBottom: 16 }}>
+          <p
+            style={{ color: 'var(--text-secondary)', fontSize: 12, marginTop: 0, marginBottom: 8 }}
+          >
             Override the location/business default tax rate for this product. Manage classes in{' '}
             <Link href="/settings/tax-classes">Settings → Tax classes</Link>.
           </p>
-          <select
-            value={p.taxClassId ?? ''}
-            onChange={(e) => setTaxClass(e.target.value || null)}
-            style={{
-              padding: '6px 8px',
-              border: '1px solid #ccc',
-              borderRadius: 4,
-              fontSize: 13,
-            }}
-          >
+          <Select value={p.taxClassId ?? ''} onChange={(e) => setTaxClass(e.target.value || null)}>
             <option value="">(use location/business default)</option>
             {taxClasses.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.name} — {(c.rateBps / 100).toFixed(2)}%
               </option>
             ))}
-          </select>
-        </Section>
+          </Select>
+        </Card>
       )}
 
-      <Section title="Variants">
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-          <thead>
-            <tr style={{ textAlign: 'left', borderBottom: '1px solid #ddd' }}>
-              <Th>Name</Th>
-              <Th>SKU</Th>
-              <Th>Barcode</Th>
-              <Th>Price</Th>
-              <Th>Cost</Th>
-              <Th>&nbsp;</Th>
-            </tr>
-          </thead>
-          <tbody>
-            {p.variants.map((v) => (
-              <tr key={v.id} style={{ borderBottom: '1px solid #f3f3f3' }}>
-                <Td>{v.name ?? '—'}</Td>
-                <Td>
-                  <code>{v.sku ?? '—'}</code>
-                </Td>
-                <Td>
-                  <code>{v.barcode ?? '—'}</code>
-                </Td>
-                <Td>
-                  <input
-                    defaultValue={centsToInputString(v.priceCents)}
-                    type="number"
-                    step="0.01"
-                    onBlur={(e) => {
-                      if (e.target.value !== centsToInputString(v.priceCents)) {
-                        void setVariantPrice(v.id, e.target.value);
-                      }
-                    }}
-                    style={{
-                      padding: '4px 6px',
-                      border: '1px solid #ccc',
-                      borderRadius: 4,
-                      width: 90,
-                      fontSize: 13,
-                    }}
-                  />
-                </Td>
-                <Td>
-                  {v.costCents != null ? (
-                    <Money cents={v.costCents} />
-                  ) : (
-                    <em style={{ color: '#888' }}>hidden</em>
-                  )}
-                </Td>
-                <Td>
-                  {v.isActive && (
-                    <button onClick={() => deactivateVariant(v.id)} style={linkBtnDanger}>
-                      Deactivate
-                    </button>
-                  )}
-                </Td>
+      <Card title="Variants" style={{ marginBottom: 16 }}>
+        <div className="overflow-x-auto">
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>SKU</th>
+                <th>Barcode</th>
+                <th>Price</th>
+                <th>Cost</th>
+                <th>&nbsp;</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </Section>
+            </thead>
+            <tbody>
+              {p.variants.map((v) => (
+                <tr key={v.id}>
+                  <td>{v.name ?? '—'}</td>
+                  <td>
+                    <code>{v.sku ?? '—'}</code>
+                  </td>
+                  <td>
+                    <code>{v.barcode ?? '—'}</code>
+                  </td>
+                  <td>
+                    <Input
+                      defaultValue={centsToInputString(v.priceCents)}
+                      type="number"
+                      step="0.01"
+                      onBlur={(e) => {
+                        if (e.target.value !== centsToInputString(v.priceCents)) {
+                          void setVariantPrice(v.id, e.target.value);
+                        }
+                      }}
+                      style={{ width: 90 }}
+                    />
+                  </td>
+                  <td>
+                    {v.costCents != null ? (
+                      <Money cents={v.costCents} />
+                    ) : (
+                      <em className="muted">hidden</em>
+                    )}
+                  </td>
+                  <td style={{ textAlign: 'right' }}>
+                    {v.isActive && (
+                      <Button size="sm" variant="danger" onClick={() => deactivateVariant(v.id)}>
+                        Deactivate
+                      </Button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Card>
 
-      <Section title="Images">
+      <Card title="Images">
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
           {p.images.map((img) => (
             <div
               key={img.id}
               style={{
-                background: '#fafafa',
+                background: 'var(--surface-muted)',
+                border: '1px solid var(--border)',
                 padding: 8,
-                borderRadius: 4,
+                borderRadius: 'var(--radius-sm)',
                 fontSize: 12,
                 maxWidth: 220,
               }}
@@ -250,61 +247,18 @@ export default function ProductDetailPage() {
               <code style={{ display: 'block', wordBreak: 'break-all', marginBottom: 6 }}>
                 {img.storageKey}
               </code>
-              <button onClick={() => deleteImage(img.id)} style={linkBtnDanger}>
+              <Button size="sm" variant="danger" onClick={() => deleteImage(img.id)}>
                 Delete
-              </button>
+              </Button>
             </div>
           ))}
           {p.images.length < 4 && (
-            <button onClick={registerImage} style={linkBtn}>
+            <Button variant="secondary" onClick={registerImage}>
               + Register image (max 4)
-            </button>
+            </Button>
           )}
         </div>
-      </Section>
+      </Card>
     </div>
   );
 }
-
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <section
-      style={{
-        background: '#fff',
-        padding: 16,
-        borderRadius: 6,
-        boxShadow: '0 1px 2px rgba(0,0,0,0.06)',
-        marginBottom: 16,
-      }}
-    >
-      <h2 style={{ fontSize: 16, marginBottom: 12 }}>{title}</h2>
-      {children}
-    </section>
-  );
-}
-
-function Th({ children }: { children: React.ReactNode }) {
-  return <th style={{ padding: '8px 6px', fontWeight: 600 }}>{children}</th>;
-}
-function Td({ children }: { children: React.ReactNode }) {
-  return <td style={{ padding: '8px 6px' }}>{children}</td>;
-}
-
-const linkBtn = {
-  background: 'none',
-  border: '1px dashed #ccc',
-  color: '#444',
-  padding: '8px 14px',
-  borderRadius: 4,
-  cursor: 'pointer',
-  fontSize: 13,
-} as const;
-const linkBtnDanger = {
-  background: 'none',
-  border: 'none',
-  color: '#b00',
-  textDecoration: 'underline',
-  cursor: 'pointer',
-  fontSize: 12,
-  padding: 0,
-} as const;

@@ -109,7 +109,20 @@ DECLARE
     'gift_card_transactions',
     'legacy_refs',
     'import_batches',
-    'import_rows'
+    'import_rows',
+    'integrations',
+    'po_line_allocations',
+    'serial_units',
+    'payment_plans',
+    'payment_plan_installments',
+    'commission_plans',
+    'commission_entries',
+    'service_orders',
+    'service_order_lines',
+    'service_order_notes',
+    'customer_notes',
+    'customer_tags',
+    'customer_tag_links'
   ];
 BEGIN
   FOREACH t IN ARRAY tenant_tables LOOP
@@ -263,6 +276,16 @@ ALTER TABLE verifications FORCE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS verifications_super_admin_only ON verifications;
 CREATE POLICY verifications_super_admin_only ON verifications
+  USING (is_super_admin())
+  WITH CHECK (is_super_admin());
+
+-- business_templates: platform-level config snapshots, super-admin
+-- surface only.
+ALTER TABLE business_templates ENABLE ROW LEVEL SECURITY;
+ALTER TABLE business_templates FORCE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS business_templates_super_admin_only ON business_templates;
+CREATE POLICY business_templates_super_admin_only ON business_templates
   USING (is_super_admin())
   WITH CHECK (is_super_admin());
 

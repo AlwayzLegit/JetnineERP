@@ -6,6 +6,7 @@ import { useState, type FormEvent } from 'react';
 import { parseMoneyToCents } from '@jetnine/shared';
 import { api } from '@/lib/api';
 import { Money } from '@/components/money';
+import { Button, Field, Input, PageHeader } from '@/components/ui';
 
 export default function NewGiftCardPage() {
   const router = useRouter();
@@ -53,14 +54,14 @@ export default function NewGiftCardPage() {
         <p style={{ marginBottom: 12 }}>
           <Link href="/gift-cards">← Gift cards</Link>
         </p>
-        <h1 style={{ fontSize: 22, marginBottom: 16 }}>Card issued</h1>
+        <PageHeader title="Card issued" />
         <div
           style={{
-            background: '#fff8e1',
-            border: '1px solid #f0a000',
-            color: '#5a3500',
+            background: 'var(--warning-soft)',
+            border: '1px solid var(--warning)',
+            color: 'var(--warning-soft-text)',
             padding: 16,
-            borderRadius: 6,
+            borderRadius: 'var(--radius)',
             marginBottom: 16,
           }}
         >
@@ -69,7 +70,7 @@ export default function NewGiftCardPage() {
           </p>
           <p
             style={{
-              fontFamily: 'ui-monospace, monospace',
+              fontFamily: 'var(--font-mono)',
               fontSize: 22,
               letterSpacing: 1,
               margin: '12px 0',
@@ -81,9 +82,9 @@ export default function NewGiftCardPage() {
             Initial balance: <Money cents={created.initial} />
           </p>
         </div>
-        <button onClick={() => router.push(`/gift-cards/${created.id}`)} style={primaryBtn}>
+        <Button variant="primary" onClick={() => router.push(`/gift-cards/${created.id}`)}>
           Open card detail
-        </button>
+        </Button>
       </div>
     );
   }
@@ -93,69 +94,38 @@ export default function NewGiftCardPage() {
       <p style={{ marginBottom: 12 }}>
         <Link href="/gift-cards">← Gift cards</Link>
       </p>
-      <h1 style={{ fontSize: 22, marginBottom: 16 }}>Issue a gift card</h1>
-      <form
-        onSubmit={submit}
-        style={{
-          background: '#fff',
-          padding: 20,
-          borderRadius: 6,
-          boxShadow: '0 1px 2px rgba(0,0,0,0.06)',
-          display: 'grid',
-          gap: 12,
-        }}
-      >
+      <PageHeader title="Issue a gift card" />
+      <form onSubmit={submit} className="card" style={{ display: 'grid', gap: 12 }}>
         <Field label="Initial balance ($)">
-          <input
+          <Input
             type="text"
             inputMode="decimal"
             required
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
-            style={inputStyle}
+            style={{ width: '100%' }}
           />
         </Field>
         <Field label="Expires (optional)">
-          <input
+          <Input
             type="date"
             value={expires}
             onChange={(e) => setExpires(e.target.value)}
-            style={inputStyle}
+            style={{ width: '100%' }}
           />
         </Field>
         <Field label="Notes (optional)">
-          <input value={notes} onChange={(e) => setNotes(e.target.value)} style={inputStyle} />
+          <Input
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            style={{ width: '100%' }}
+          />
         </Field>
-        {error && <p style={{ color: '#b00', fontSize: 13 }}>{error}</p>}
-        <button type="submit" disabled={busy} style={primaryBtn}>
+        {error && <p style={{ color: 'var(--danger)', fontSize: 13, margin: 0 }}>{error}</p>}
+        <Button type="submit" variant="primary" disabled={busy} style={{ width: 'fit-content' }}>
           {busy ? 'Issuing…' : 'Issue card'}
-        </button>
+        </Button>
       </form>
     </div>
-  );
-}
-
-const inputStyle = {
-  width: '100%',
-  padding: '8px 10px',
-  border: '1px solid #ccc',
-  borderRadius: 4,
-  fontSize: 13,
-} as const;
-const primaryBtn = {
-  padding: '8px 14px',
-  background: '#111',
-  color: '#fff',
-  border: 'none',
-  borderRadius: 4,
-  cursor: 'pointer',
-  width: 'fit-content',
-} as const;
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12 }}>
-      <span style={{ color: '#555' }}>{label}</span>
-      {children}
-    </label>
   );
 }

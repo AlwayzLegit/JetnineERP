@@ -1,6 +1,8 @@
 'use client';
 
+import { toast } from 'sonner';
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { Button, Card, LoadingRows, PageHeader } from '@/components/ui';
 import { api } from '@/lib/api';
 
 interface Role {
@@ -52,7 +54,7 @@ export default function RolesPage() {
       });
       await load();
     } catch (err) {
-      alert(err instanceof Error ? err.message : String(err));
+      toast.error(err instanceof Error ? err.message : String(err));
     }
   }
 
@@ -62,7 +64,7 @@ export default function RolesPage() {
       await api(`/v1/business/roles/${role.id}`, { method: 'DELETE' });
       await load();
     } catch (err) {
-      alert(err instanceof Error ? err.message : String(err));
+      toast.error(err instanceof Error ? err.message : String(err));
     }
   }
 
@@ -75,54 +77,54 @@ export default function RolesPage() {
       setEditing(null);
       await load();
     } catch (err) {
-      alert(err instanceof Error ? err.message : String(err));
+      toast.error(err instanceof Error ? err.message : String(err));
     }
   }
 
   return (
     <div>
-      <h1 style={{ fontSize: 22, marginBottom: 16 }}>Roles</h1>
-      {error && <p style={{ color: '#b00' }}>{error}</p>}
+      <PageHeader title="Roles" />
+      {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
+      {!roles && !error && <LoadingRows />}
       {roles && (
         <div style={{ display: 'grid', gap: 12 }}>
           {roles.map((r) => (
-            <div key={r.id} style={card}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                <h2 style={{ fontSize: 16, margin: 0 }}>{r.name}</h2>
-                {r.isSystem && (
-                  <span
-                    style={{
-                      background: '#eee',
-                      color: '#444',
-                      padding: '2px 8px',
-                      borderRadius: 999,
-                      fontSize: 11,
-                      fontWeight: 600,
-                    }}
-                  >
-                    System
-                  </span>
-                )}
-                <span style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
-                  <button onClick={() => clone(r)} style={linkBtn}>
+            <Card
+              key={r.id}
+              title={
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                  {r.name}
+                  {r.isSystem && <span className="badge badge-neutral">System</span>}
+                </span>
+              }
+              actions={
+                <span style={{ display: 'flex', gap: 8 }}>
+                  <Button size="sm" variant="secondary" onClick={() => clone(r)}>
                     Clone
-                  </button>
+                  </Button>
                   {!r.isSystem && (
                     <>
-                      <button
+                      <Button
+                        size="sm"
+                        variant="ghost"
                         onClick={() => setEditing(editing === r.id ? null : r.id)}
-                        style={linkBtn}
                       >
                         {editing === r.id ? 'Cancel' : 'Edit perms'}
-                      </button>
-                      <button onClick={() => remove(r)} style={linkBtnDanger}>
+                      </Button>
+                      <Button size="sm" variant="danger" onClick={() => remove(r)}>
                         Delete
-                      </button>
+                      </Button>
                     </>
                   )}
                 </span>
-              </div>
-              {r.description && <p style={{ color: '#666', fontSize: 13 }}>{r.description}</p>}
+              }
+              style={{ marginTop: 0 }}
+            >
+              {r.description && (
+                <p style={{ color: 'var(--text-secondary)', fontSize: 13, marginTop: 0 }}>
+                  {r.description}
+                </p>
+              )}
               {editing === r.id ? (
                 <PermissionsEditor
                   catalog={catalog}
@@ -133,7 +135,7 @@ export default function RolesPage() {
               ) : (
                 <PermissionList catalog={catalog} permissions={r.permissions} />
               )}
-            </div>
+            </Card>
           ))}
         </div>
       )}
@@ -153,12 +155,18 @@ function PermissionList({
     [catalog, permissions],
   );
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, marginTop: 8 }}>
+    <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
       {Array.from(grouped.entries()).map(([prefix, entries]) => (
-        <div key={prefix} style={{ background: '#fafafa', padding: 8, borderRadius: 4 }}>
-          <div style={{ fontSize: 11, color: '#666', marginBottom: 4 }}>{prefix}</div>
+        <div key={prefix} style={groupBox}>
+          <div style={groupHeading}>{prefix}</div>
           {entries.map(({ entry, present }) => (
-            <div key={entry.key} style={{ fontSize: 12, color: present ? '#080' : '#bbb' }}>
+            <div
+              key={entry.key}
+              style={{
+                fontSize: 12,
+                color: present ? 'var(--success)' : 'var(--text-muted)',
+              }}
+            >
               {present ? '✓' : '·'} {entry.key}
             </div>
           ))}
@@ -197,18 +205,10 @@ function PermissionsEditor({
 
   const grouped = useMemo(() => groupCatalog(catalog, selected), [catalog, selected]);
   return (
-    <form
-      onSubmit={handle}
-      style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(3, 1fr)',
-        gap: 8,
-        marginTop: 8,
-      }}
-    >
+    <form onSubmit={handle} className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
       {Array.from(grouped.entries()).map(([prefix, entries]) => (
-        <div key={prefix} style={{ background: '#fafafa', padding: 8, borderRadius: 4 }}>
-          <div style={{ fontSize: 11, color: '#666', marginBottom: 4 }}>{prefix}</div>
+        <div key={prefix} style={groupBox}>
+          <div style={groupHeading}>{prefix}</div>
           {entries.map(({ entry, present }) => (
             <label
               key={entry.key}
@@ -224,7 +224,7 @@ function PermissionsEditor({
                 type="checkbox"
                 checked={present}
                 onChange={() => toggle(entry.key)}
-                style={{ marginRight: 6 }}
+                style={{ marginRight: 6, accentColor: 'var(--brand)' }}
               />
               {entry.key}
             </label>
@@ -232,12 +232,12 @@ function PermissionsEditor({
         </div>
       ))}
       <div style={{ gridColumn: '1 / -1', display: 'flex', gap: 8 }}>
-        <button type="submit" style={primaryBtn}>
+        <Button type="submit" variant="primary" size="sm">
           Save
-        </button>
-        <button type="button" onClick={onCancel} style={linkBtn}>
+        </Button>
+        <Button type="button" variant="ghost" size="sm" onClick={onCancel}>
           Cancel
-        </button>
+        </Button>
       </div>
     </form>
   );
@@ -257,28 +257,17 @@ function groupCatalog(
   return map;
 }
 
-const card = {
-  background: '#fff',
-  padding: 16,
-  borderRadius: 6,
-  boxShadow: '0 1px 2px rgba(0,0,0,0.06)',
-};
-const linkBtn = {
-  background: 'none',
-  border: 'none',
-  color: '#06c',
-  textDecoration: 'underline',
-  cursor: 'pointer',
-  fontSize: 13,
-  padding: 0,
+const groupBox = {
+  background: 'var(--surface-muted)',
+  border: '1px solid var(--border)',
+  padding: 8,
+  borderRadius: 'var(--radius-sm)',
 } as const;
-const linkBtnDanger = { ...linkBtn, color: '#b00' } as const;
-const primaryBtn = {
-  padding: '6px 12px',
-  background: '#111',
-  color: '#fff',
-  border: 'none',
-  borderRadius: 4,
-  cursor: 'pointer',
-  fontSize: 13,
+const groupHeading = {
+  fontSize: 11,
+  fontWeight: 600,
+  textTransform: 'uppercase' as const,
+  letterSpacing: '0.05em',
+  color: 'var(--text-muted)',
+  marginBottom: 4,
 } as const;

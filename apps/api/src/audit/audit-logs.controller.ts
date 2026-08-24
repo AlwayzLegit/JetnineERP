@@ -29,7 +29,9 @@ interface AuditLogRow {
 
 /**
  * Read-only viewer for the current business's audit log. Filters: actor
- * (user_id), action, date range. Cursor-paginated newest-first.
+ * (user_id), action, target (type + id), date range. Cursor-paginated
+ * newest-first. The target filter is what turns this into a per-record
+ * timeline — the order detail page reads its history through it.
  */
 @TenantScoped()
 @Controller('v1/audit-logs')
@@ -39,6 +41,8 @@ export class AuditLogsController {
   async list(
     @Query('actorUserId') actorUserId?: string,
     @Query('action') action?: string,
+    @Query('targetType') targetType?: string,
+    @Query('targetId') targetId?: string,
     @Query('since') since?: string,
     @Query('until') until?: string,
     @Query('limit') limitStr?: string,
@@ -50,6 +54,8 @@ export class AuditLogsController {
     const conditions: SQL[] = [];
     if (actorUserId) conditions.push(eq(schema.auditLogs.actorUserId, actorUserId));
     if (action) conditions.push(eq(schema.auditLogs.action, action));
+    if (targetType) conditions.push(eq(schema.auditLogs.targetType, targetType));
+    if (targetId) conditions.push(eq(schema.auditLogs.targetId, targetId));
     if (since) {
       const sinceDate = new Date(since);
       if (!Number.isNaN(sinceDate.getTime())) {

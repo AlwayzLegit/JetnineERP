@@ -13,8 +13,10 @@ function AcceptInviteInner() {
   if (!token) {
     return (
       <div>
-        <h2 style={{ fontSize: 18, marginBottom: 12 }}>Invitation</h2>
-        <p>Missing invitation token. Check the link in your email.</p>
+        <h2 style={{ fontSize: 18, margin: '0 0 12px' }}>Invitation</h2>
+        <p style={{ color: 'var(--text-secondary)', margin: 0 }}>
+          Missing invitation token. Check the link in your email.
+        </p>
       </div>
     );
   }

@@ -10,6 +10,9 @@ import {
   planReservations,
   type ReservableLine,
   type StockLevel,
+  planFulfillment,
+  remainingFulfillment,
+  type FulfillableStockLine,
 } from './order-math';
 
 const succeeded = (amountCents: number) => ({ amountCents, status: 'succeeded' });
@@ -320,5 +323,59 @@ describe('order totals reuse the POS cart math', () => {
     // 10,000 → 9,000, so 10% of 90,000.
     expect(totals.taxCents).toBe(9_000);
     expect(totals.totalCents).toBe(99_000);
+  });
+});
+
+describe('planFulfillment', () => {
+  const line = (over: Partial<FulfillableStockLine> = {}): FulfillableStockLine => ({
+    id: 'L1',
+    variantId: 'V1',
+    quantity: 3,
+    qtyReserved: 3,
+    qtyFulfilled: 0,
+    ...over,
+  });
+
+  it('fulfills within the reservation', () => {
+    const { steps, errors } = planFulfillment([line()], [{ orderLineId: 'L1', quantity: 2 }]);
+    expect(errors).toEqual([]);
+    expect(steps).toEqual([{ orderLineId: 'L1', variantId: 'V1', quantity: 2, fromReserved: 2 }]);
+  });
+
+  it('caps reserved consumption at what was actually reserved', () => {
+    const { steps } = planFulfillment(
+      [line({ qtyReserved: 1 })],
+      [{ orderLineId: 'L1', quantity: 3 }],
+    );
+    expect(steps[0]).toEqual({ orderLineId: 'L1', variantId: 'V1', quantity: 3, fromReserved: 1 });
+  });
+
+  it('rejects over-fulfillment past the unfulfilled remainder', () => {
+    const { steps, errors } = planFulfillment(
+      [line({ qtyFulfilled: 2 })],
+      [{ orderLineId: 'L1', quantity: 2 }],
+    );
+    expect(steps).toEqual([]);
+    expect(errors[0]).toMatch(/only 1 unfulfilled/);
+  });
+
+  it('rejects unknown lines, duplicates, and non-positive quantities', () => {
+    const { errors } = planFulfillment(
+      [line()],
+      [
+        { orderLineId: 'NOPE', quantity: 1 },
+        { orderLineId: 'L1', quantity: 0 },
+        { orderLineId: 'L1', quantity: 1 },
+      ],
+    );
+    // Unknown line, zero quantity, and the duplicate — the first L1 entry
+    // claims the slot even though its quantity was invalid, so the retry
+    // is reported as a duplicate rather than silently taking its place.
+    expect(errors).toHaveLength(3);
+  });
+
+  it('remainingFulfillment asks for exactly what is still owed', () => {
+    const lines = [line({ id: 'A', qtyFulfilled: 1 }), line({ id: 'B', qtyFulfilled: 3 })];
+    expect(remainingFulfillment(lines)).toEqual([{ orderLineId: 'A', quantity: 2 }]);
   });
 });

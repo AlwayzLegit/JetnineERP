@@ -6,6 +6,7 @@ import { useParams } from 'next/navigation';
 import { parseMoneyToCents } from '@jetnine/shared';
 import { api } from '@/lib/api';
 import { Money } from '@/components/money';
+import { Button, EmptyState, Input, LoadingRows, StatusBadge } from '@/components/ui';
 
 interface GiftCardTransaction {
   id: string;
@@ -80,45 +81,35 @@ export default function GiftCardDetailPage() {
     }
   }
 
-  if (error && !card) return <p style={{ color: '#b00' }}>{error}</p>;
-  if (!card) return <p>Loading…</p>;
+  if (error && !card) return <p style={{ color: 'var(--danger)' }}>{error}</p>;
+  if (!card) return <LoadingRows rows={4} />;
 
   return (
     <div>
       <p style={{ marginBottom: 12 }}>
         <Link href="/gift-cards">← Gift cards</Link>
       </p>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 16 }}>
-        <h1 style={{ fontSize: 22, margin: 0 }}>
+      <div className="page-header">
+        <h1 className="page-title" style={{ fontSize: 22 }}>
           <code>{card.code}</code>
         </h1>
-        <span
-          style={{
-            background: '#f4f4f4',
-            color: card.status === 'active' ? '#070' : '#666',
-            padding: '2px 8px',
-            borderRadius: 3,
-            fontSize: 12,
-          }}
-        >
-          {card.status}
-        </span>
+        <StatusBadge status={card.status} />
       </div>
 
-      <div style={{ ...card_style, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+      <div className="card grid gap-4 sm:grid-cols-2">
         <div>
-          <div style={{ color: '#666', fontSize: 12 }}>Current balance</div>
-          <div style={{ fontSize: 24, fontWeight: 600 }}>
+          <div className="field-label">Current balance</div>
+          <div style={{ fontSize: 24, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>
             <Money cents={card.currentBalanceCents} />
           </div>
         </div>
         <div>
-          <div style={{ color: '#666', fontSize: 12 }}>Initial balance</div>
-          <div style={{ fontSize: 16 }}>
+          <div className="field-label">Initial balance</div>
+          <div style={{ fontSize: 16, fontVariantNumeric: 'tabular-nums' }}>
             <Money cents={card.initialBalanceCents} />
           </div>
           {card.expiresAt && (
-            <div style={{ color: '#666', fontSize: 12, marginTop: 8 }}>
+            <div className="muted" style={{ fontSize: 12, marginTop: 8 }}>
               Expires {new Date(card.expiresAt).toLocaleDateString()}
             </div>
           )}
@@ -126,112 +117,77 @@ export default function GiftCardDetailPage() {
       </div>
 
       {card.status !== 'cancelled' && (
-        <div style={card_style}>
-          <h2 style={section}>Adjust balance</h2>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <input
+        <div className="card">
+          <h2 className="card-title">Adjust balance</h2>
+          <div className="flex flex-wrap items-center gap-2">
+            <Input
               type="text"
               inputMode="decimal"
               placeholder="±$0.00"
               value={adjust}
               onChange={(e) => setAdjust(e.target.value)}
-              style={{ ...inputStyle, width: 120 }}
+              style={{ width: 120 }}
             />
-            <button onClick={applyAdjust} style={primaryBtn}>
+            <Button variant="primary" onClick={applyAdjust}>
               Apply
-            </button>
-            <button onClick={cancelCard} style={dangerBtn}>
+            </Button>
+            <Button variant="danger" onClick={cancelCard}>
               Cancel card
-            </button>
-            {error && <span style={{ color: '#b00', fontSize: 13 }}>{error}</span>}
+            </Button>
+            {error && <span style={{ color: 'var(--danger)', fontSize: 13 }}>{error}</span>}
           </div>
-          <p style={{ color: '#666', fontSize: 12, marginTop: 8, marginBottom: 0 }}>
+          <p
+            style={{ color: 'var(--text-secondary)', fontSize: 12, marginTop: 8, marginBottom: 0 }}
+          >
             Use a negative amount to debit, positive to credit. Cancelling voids any remaining
             balance.
           </p>
         </div>
       )}
 
-      <div style={card_style}>
-        <h2 style={section}>Transactions</h2>
+      <div className="card">
+        <h2 className="card-title">Transactions</h2>
         {card.transactions.length === 0 ? (
-          <p style={{ color: '#888' }}>No activity yet.</p>
+          <EmptyState>No activity yet. Redemptions and adjustments will show up here.</EmptyState>
         ) : (
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-            <thead>
-              <tr style={{ textAlign: 'left', borderBottom: '1px solid #ddd' }}>
-                <Th>When</Th>
-                <Th>Kind</Th>
-                <Th>Amount</Th>
-                <Th>Balance after</Th>
-                <Th>Reference</Th>
-              </tr>
-            </thead>
-            <tbody>
-              {card.transactions.map((t) => (
-                <tr key={t.id} style={{ borderBottom: '1px solid #f3f3f3' }}>
-                  <Td>{new Date(t.createdAt).toLocaleString()}</Td>
-                  <Td>{t.kind}</Td>
-                  <Td>
-                    <Money cents={t.amountCents} />
-                  </Td>
-                  <Td>
-                    <Money cents={t.balanceAfterCents} />
-                  </Td>
-                  <Td>
-                    {t.saleId ? (
-                      <Link href={`/sales/${t.saleId}`}>sale</Link>
-                    ) : t.refundId ? (
-                      <em>refund</em>
-                    ) : (
-                      <span style={{ color: '#888' }}>—</span>
-                    )}
-                  </Td>
+          <div className="overflow-x-auto">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>When</th>
+                  <th>Kind</th>
+                  <th className="num">Amount</th>
+                  <th className="num">Balance after</th>
+                  <th>Reference</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {card.transactions.map((t) => (
+                  <tr key={t.id}>
+                    <td>{new Date(t.createdAt).toLocaleString()}</td>
+                    <td>{t.kind}</td>
+                    <td className="num">
+                      <Money cents={t.amountCents} />
+                    </td>
+                    <td className="num">
+                      <Money cents={t.balanceAfterCents} />
+                    </td>
+                    <td>
+                      {t.saleId ? (
+                        <Link href={`/sales/${t.saleId}`}>sale</Link>
+                      ) : t.refundId ? (
+                        <em>refund</em>
+                      ) : (
+                        <span className="muted">—</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
     </div>
   );
-}
-
-const card_style = {
-  background: '#fff',
-  padding: 16,
-  borderRadius: 6,
-  boxShadow: '0 1px 2px rgba(0,0,0,0.06)',
-  marginBottom: 16,
-};
-const section = { fontSize: 16, marginBottom: 12, marginTop: 0 } as const;
-const inputStyle = {
-  padding: '6px 8px',
-  border: '1px solid #ccc',
-  borderRadius: 4,
-  fontSize: 13,
-} as const;
-const primaryBtn = {
-  padding: '6px 12px',
-  background: '#111',
-  color: '#fff',
-  border: 'none',
-  borderRadius: 4,
-  cursor: 'pointer',
-  fontSize: 13,
-} as const;
-const dangerBtn = {
-  padding: '6px 12px',
-  background: 'transparent',
-  color: '#b00',
-  border: '1px solid #b00',
-  borderRadius: 4,
-  cursor: 'pointer',
-  fontSize: 13,
-} as const;
-function Th({ children }: { children: React.ReactNode }) {
-  return <th style={{ padding: '8px 6px', fontWeight: 600 }}>{children}</th>;
-}
-function Td({ children }: { children: React.ReactNode }) {
-  return <td style={{ padding: '8px 6px', verticalAlign: 'top' }}>{children}</td>;
 }

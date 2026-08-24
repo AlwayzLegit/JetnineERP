@@ -1,7 +1,9 @@
 'use client';
 
 import Link from 'next/link';
+import { toast } from 'sonner';
 import { useEffect, useState, type FormEvent } from 'react';
+import { Button, Card, EmptyState, Field, Input, LoadingRows, PageHeader } from '@/components/ui';
 import { api } from '@/lib/api';
 
 interface TaxClass {
@@ -80,7 +82,7 @@ export default function TaxClassesPage() {
       setEditing(null);
       void load();
     } catch (err) {
-      alert(err instanceof Error ? err.message : String(err));
+      toast.error(err instanceof Error ? err.message : String(err));
     }
   }
 
@@ -94,103 +96,110 @@ export default function TaxClassesPage() {
       await api(`/v1/business/tax-classes/${row.id}`, { method: 'DELETE' });
       void load();
     } catch (err) {
-      alert(err instanceof Error ? err.message : String(err));
+      toast.error(err instanceof Error ? err.message : String(err));
     }
   }
 
   return (
     <div>
-      <p style={{ marginBottom: 12 }}>
+      <p style={{ margin: '0 0 12px' }}>
         <Link href="/settings">← Settings</Link>
       </p>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
-        <h1 style={{ fontSize: 22, margin: 0 }}>Tax classes</h1>
-        <button
-          onClick={() => setCreating((v) => !v)}
-          style={{ marginLeft: 'auto', ...primaryBtn }}
-        >
-          {creating ? 'Cancel' : '+ New tax class'}
-        </button>
-      </div>
+      <PageHeader
+        title="Tax classes"
+        sub={
+          <>
+            Tax classes override the location/business default rate at the product level. Products
+            without a class use the default. Rates are entered as percentages (e.g.{' '}
+            <code>8.75</code> = 8.75%).
+          </>
+        }
+        actions={
+          <Button
+            variant={creating ? 'secondary' : 'primary'}
+            onClick={() => setCreating((v) => !v)}
+          >
+            {creating ? 'Cancel' : '+ New tax class'}
+          </Button>
+        }
+      />
 
-      <p style={{ color: '#666', fontSize: 13, marginBottom: 16 }}>
-        Tax classes override the location/business default rate at the product level. Products
-        without a class use the default. Rates are entered as percentages (e.g. <code>8.75</code> =
-        8.75%).
-      </p>
-
-      {error && <p style={{ color: '#b00' }}>{error}</p>}
+      {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
 
       {creating && (
-        <form onSubmit={create} style={{ ...card, display: 'grid', gap: 8, maxWidth: 560 }}>
-          <Field label="Name *">
-            <input name="name" required style={inputStyle} />
-          </Field>
-          <Field label="Rate (%) *">
-            <input
-              name="rate"
-              type="number"
-              step="0.01"
-              min={0}
-              max={1000}
-              required
-              style={inputStyle}
-            />
-          </Field>
-          <Field label="Description">
-            <input name="description" style={inputStyle} />
-          </Field>
-          <label style={{ display: 'flex', gap: 6, fontSize: 13 }}>
-            <input name="isDefault" type="checkbox" />
-            Use as the default class for new products
-          </label>
-          <button type="submit" style={primaryBtn}>
-            Create class
-          </button>
-        </form>
+        <Card style={{ maxWidth: 560, marginBottom: 16 }}>
+          <form onSubmit={create} style={{ display: 'grid', gap: 8 }}>
+            <Field label="Name *">
+              <Input name="name" required style={{ width: '100%' }} />
+            </Field>
+            <Field label="Rate (%) *">
+              <Input
+                name="rate"
+                type="number"
+                step="0.01"
+                min={0}
+                max={1000}
+                required
+                style={{ width: '100%' }}
+              />
+            </Field>
+            <Field label="Description">
+              <Input name="description" style={{ width: '100%' }} />
+            </Field>
+            <label style={{ display: 'flex', gap: 6, fontSize: 13, alignItems: 'center' }}>
+              <input name="isDefault" type="checkbox" style={{ accentColor: 'var(--brand)' }} />
+              Use as the default class for new products
+            </label>
+            <Button type="submit" variant="primary" style={{ width: 'fit-content' }}>
+              Create class
+            </Button>
+          </form>
+        </Card>
       )}
 
-      <div style={card}>
+      <Card>
         {rows == null ? (
-          <p style={{ color: '#888' }}>Loading…</p>
+          <LoadingRows />
         ) : rows.length === 0 ? (
-          <p style={{ color: '#888' }}>No tax classes yet.</p>
+          <EmptyState>No tax classes yet.</EmptyState>
         ) : (
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-            <thead>
-              <tr style={{ textAlign: 'left', borderBottom: '1px solid #ddd' }}>
-                <Th>Name</Th>
-                <Th>Rate</Th>
-                <Th>Default</Th>
-                <Th>Products</Th>
-                <Th>&nbsp;</Th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) =>
-                editing === r.id ? (
-                  <EditRow
-                    key={r.id}
-                    row={r}
-                    onSave={(patch) => save(r.id, patch)}
-                    onCancel={() => setEditing(null)}
-                  />
-                ) : (
-                  <FragmentRow
-                    key={r.id}
-                    row={r}
-                    locations={locations}
-                    expanded={expanded === r.id}
-                    onToggleExpand={() => setExpanded(expanded === r.id ? null : r.id)}
-                    onEdit={() => setEditing(r.id)}
-                    onDelete={() => destroy(r)}
-                  />
-                ),
-              )}
-            </tbody>
-          </table>
+          <div style={{ overflowX: 'auto' }}>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Rate</th>
+                  <th>Default</th>
+                  <th>Products</th>
+                  <th>&nbsp;</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r) =>
+                  editing === r.id ? (
+                    <EditRow
+                      key={r.id}
+                      row={r}
+                      onSave={(patch) => save(r.id, patch)}
+                      onCancel={() => setEditing(null)}
+                    />
+                  ) : (
+                    <FragmentRow
+                      key={r.id}
+                      row={r}
+                      locations={locations}
+                      expanded={expanded === r.id}
+                      onToggleExpand={() => setExpanded(expanded === r.id ? null : r.id)}
+                      onEdit={() => setEditing(r.id)}
+                      onDelete={() => destroy(r)}
+                    />
+                  ),
+                )}
+              </tbody>
+            </table>
+          </div>
         )}
-      </div>
+      </Card>
     </div>
   );
 }
@@ -212,29 +221,33 @@ function FragmentRow({
 }) {
   return (
     <>
-      <tr style={{ borderBottom: '1px solid #f3f3f3' }}>
-        <Td>
+      <tr>
+        <td>
           <strong>{row.name}</strong>
-          {row.description && <div style={{ color: '#666', fontSize: 12 }}>{row.description}</div>}
-        </Td>
-        <Td>{(row.rateBps / 100).toFixed(2)}%</Td>
-        <Td>{row.isDefault ? 'yes' : '—'}</Td>
-        <Td>{row.productCount}</Td>
-        <Td>
-          <button onClick={onToggleExpand} style={linkBtn}>
-            {expanded ? 'Hide overrides' : 'Per-location'}
-          </button>{' '}
-          <button onClick={onEdit} style={linkBtn}>
-            Edit
-          </button>{' '}
-          <button onClick={onDelete} style={linkBtnDanger}>
-            Delete
-          </button>
-        </Td>
+          {row.description && (
+            <div style={{ color: 'var(--text-secondary)', fontSize: 12 }}>{row.description}</div>
+          )}
+        </td>
+        <td>{(row.rateBps / 100).toFixed(2)}%</td>
+        <td>{row.isDefault ? <span className="badge badge-brand">yes</span> : '—'}</td>
+        <td>{row.productCount}</td>
+        <td>
+          <span style={{ display: 'inline-flex', gap: 6 }}>
+            <Button size="sm" variant="ghost" onClick={onToggleExpand}>
+              {expanded ? 'Hide overrides' : 'Per-location'}
+            </Button>
+            <Button size="sm" variant="ghost" onClick={onEdit}>
+              Edit
+            </Button>
+            <Button size="sm" variant="danger" onClick={onDelete}>
+              Delete
+            </Button>
+          </span>
+        </td>
       </tr>
       {expanded && (
         <tr>
-          <td colSpan={5} style={{ background: '#fafafa', padding: 12 }}>
+          <td colSpan={5} style={{ background: 'var(--surface-muted)', padding: 12 }}>
             <OverridesPanel taxClass={row} locations={locations} />
           </td>
         </tr>
@@ -305,61 +318,67 @@ function OverridesPanel({ taxClass, locations }: { taxClass: TaxClass; locations
     }
   }
 
-  if (overrides == null) return <p style={{ color: '#888', fontSize: 12, margin: 0 }}>Loading…</p>;
+  if (overrides == null)
+    return <p style={{ color: 'var(--text-muted)', fontSize: 12, margin: 0 }}>Loading…</p>;
   if (locations.length === 0) {
-    return <p style={{ color: '#666', fontSize: 12, margin: 0 }}>No locations yet.</p>;
+    return (
+      <p style={{ color: 'var(--text-secondary)', fontSize: 12, margin: 0 }}>No locations yet.</p>
+    );
   }
 
   return (
     <div>
-      <p style={{ color: '#555', fontSize: 12, margin: '0 0 8px' }}>
+      <p style={{ color: 'var(--text-secondary)', fontSize: 12, margin: '0 0 8px' }}>
         Override the <strong>{(taxClass.rateBps / 100).toFixed(2)}%</strong> fallback per location.
         Leave blank to use the fallback. Empty input + Save removes the override.
       </p>
-      {error && <p style={{ color: '#b00', fontSize: 12 }}>{error}</p>}
-      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-        <thead>
-          <tr style={{ textAlign: 'left', color: '#666' }}>
-            <th style={{ padding: '4px 6px', fontWeight: 500 }}>Location</th>
-            <th style={{ padding: '4px 6px', fontWeight: 500 }}>Rate (%)</th>
-            <th style={{ padding: '4px 6px', fontWeight: 500 }}>Source</th>
-            <th />
-          </tr>
-        </thead>
-        <tbody>
-          {locations.map((l) => {
-            const ov = overrides.get(l.id);
-            return (
-              <tr key={l.id}>
-                <td style={{ padding: '4px 6px' }}>{l.name}</td>
-                <td style={{ padding: '4px 6px' }}>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min={0}
-                    placeholder={(taxClass.rateBps / 100).toFixed(2)}
-                    value={drafts[l.id] ?? ''}
-                    onChange={(e) => setDrafts((prev) => ({ ...prev, [l.id]: e.target.value }))}
-                    style={{ ...inputStyle, width: 90 }}
-                  />
-                </td>
-                <td style={{ padding: '4px 6px', color: '#666', fontSize: 12 }}>
-                  {ov ? 'override' : 'class fallback'}
-                </td>
-                <td style={{ padding: '4px 6px' }}>
-                  <button
-                    onClick={() => void saveRate(l.id)}
-                    disabled={busy === l.id}
-                    style={primaryBtn}
-                  >
-                    {busy === l.id ? '…' : 'Save'}
-                  </button>
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+      {error && <p style={{ color: 'var(--danger)', fontSize: 12 }}>{error}</p>}
+      <div className="overflow-x-auto">
+        <table className="table">
+          <thead>
+            <tr>
+              <th>Location</th>
+              <th>Rate (%)</th>
+              <th>Source</th>
+              <th />
+            </tr>
+          </thead>
+          <tbody>
+            {locations.map((l) => {
+              const ov = overrides.get(l.id);
+              return (
+                <tr key={l.id}>
+                  <td>{l.name}</td>
+                  <td>
+                    <Input
+                      type="number"
+                      step="0.01"
+                      min={0}
+                      placeholder={(taxClass.rateBps / 100).toFixed(2)}
+                      value={drafts[l.id] ?? ''}
+                      onChange={(e) => setDrafts((prev) => ({ ...prev, [l.id]: e.target.value }))}
+                      style={{ width: 90 }}
+                    />
+                  </td>
+                  <td style={{ color: 'var(--text-secondary)', fontSize: 12 }}>
+                    {ov ? 'override' : 'class fallback'}
+                  </td>
+                  <td>
+                    <Button
+                      size="sm"
+                      variant="primary"
+                      onClick={() => void saveRate(l.id)}
+                      disabled={busy === l.id}
+                    >
+                      {busy === l.id ? '…' : 'Save'}
+                    </Button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
@@ -378,102 +397,49 @@ function EditRow({
   const [isDefault, setIsDefault] = useState(row.isDefault);
 
   return (
-    <tr style={{ borderBottom: '1px solid #f3f3f3' }}>
-      <Td>
-        <input value={name} onChange={(e) => setName(e.target.value)} style={inputStyle} />
-      </Td>
-      <Td>
-        <input
+    <tr>
+      <td>
+        <Input value={name} onChange={(e) => setName(e.target.value)} style={{ width: '100%' }} />
+      </td>
+      <td>
+        <Input
           type="number"
           step="0.01"
           min={0}
           value={rate}
           onChange={(e) => setRate(e.target.value)}
-          style={{ ...inputStyle, width: 90 }}
+          style={{ width: 90 }}
         />
-      </Td>
-      <Td>
+      </td>
+      <td>
         <input
           type="checkbox"
           checked={isDefault}
           onChange={(e) => setIsDefault(e.target.checked)}
+          style={{ accentColor: 'var(--brand)' }}
         />
-      </Td>
-      <Td>{row.productCount}</Td>
-      <Td>
-        <button
-          onClick={() =>
-            onSave({
-              name,
-              rateBps: Math.round(Number(rate) * 100),
-              isDefault,
-            })
-          }
-          style={primaryBtn}
-        >
-          Save
-        </button>{' '}
-        <button onClick={onCancel} style={linkBtn}>
-          Cancel
-        </button>
-      </Td>
+      </td>
+      <td>{row.productCount}</td>
+      <td>
+        <span style={{ display: 'inline-flex', gap: 6 }}>
+          <Button
+            size="sm"
+            variant="primary"
+            onClick={() =>
+              onSave({
+                name,
+                rateBps: Math.round(Number(rate) * 100),
+                isDefault,
+              })
+            }
+          >
+            Save
+          </Button>
+          <Button size="sm" variant="ghost" onClick={onCancel}>
+            Cancel
+          </Button>
+        </span>
+      </td>
     </tr>
-  );
-}
-
-const card = {
-  background: '#fff',
-  padding: 16,
-  borderRadius: 6,
-  boxShadow: '0 1px 2px rgba(0,0,0,0.06)',
-  marginBottom: 16,
-};
-const inputStyle = {
-  padding: '6px 8px',
-  border: '1px solid #ccc',
-  borderRadius: 4,
-  fontSize: 13,
-  width: '100%',
-} as const;
-const primaryBtn = {
-  padding: '6px 12px',
-  background: '#111',
-  color: '#fff',
-  border: 'none',
-  borderRadius: 4,
-  cursor: 'pointer',
-  fontSize: 13,
-} as const;
-const linkBtn = {
-  background: 'none',
-  border: 'none',
-  color: '#444',
-  textDecoration: 'underline',
-  cursor: 'pointer',
-  fontSize: 12,
-  padding: 0,
-} as const;
-const linkBtnDanger = {
-  background: 'none',
-  border: 'none',
-  color: '#b00',
-  textDecoration: 'underline',
-  cursor: 'pointer',
-  fontSize: 12,
-  padding: 0,
-} as const;
-
-function Th({ children }: { children: React.ReactNode }) {
-  return <th style={{ padding: '8px 6px', fontWeight: 600 }}>{children}</th>;
-}
-function Td({ children }: { children: React.ReactNode }) {
-  return <td style={{ padding: '8px 6px' }}>{children}</td>;
-}
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12 }}>
-      <span style={{ color: '#555' }}>{label}</span>
-      {children}
-    </label>
   );
 }

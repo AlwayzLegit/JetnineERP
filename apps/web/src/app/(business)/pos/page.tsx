@@ -1,9 +1,11 @@
 'use client';
 
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { loadStripe, type Stripe as StripeJs } from '@stripe/stripe-js';
 import { CardElement, Elements, useElements, useStripe } from '@stripe/react-stripe-js';
+import { Plus, Printer } from 'lucide-react';
 import { centsToInputString, formatMoney } from '@jetnine/shared';
 import { api, apiUrl } from '@/lib/api';
 import {
@@ -17,7 +19,9 @@ import {
 } from '@/lib/offline';
 import { useOnlineStatus } from '@/lib/use-online-status';
 import { Money } from '@/components/money';
+import { CustomerPicker, type CustomerRow } from '@/components/customer-picker';
 import { PrintableReceipt, type ReceiptBusiness } from '@/components/printable-receipt';
+import { Button, Field, Input, LinkButton, Select } from '@/components/ui';
 
 interface LookupRow {
   variantId: string;
@@ -34,13 +38,6 @@ interface CartLine {
   quantity: number;
   unitPriceCents: number;
   lineDiscountCents: number;
-}
-interface CustomerRow {
-  id: string;
-  firstName: string | null;
-  lastName: string | null;
-  email: string | null;
-  phone: string | null;
 }
 interface LocationRow {
   id: string;
@@ -73,6 +70,7 @@ interface SaleResp {
 }
 
 export default function PosPage() {
+  const router = useRouter();
   const [locations, setLocations] = useState<LocationRow[]>([]);
   const [locationId, setLocationId] = useState<string>('');
   const [taxRateBps, setTaxRateBps] = useState<number>(0);
@@ -83,6 +81,7 @@ export default function PosPage() {
   const [scan, setScan] = useState('');
   const [results, setResults] = useState<LookupRow[]>([]);
   const [showCustomerPicker, setShowCustomerPicker] = useState(false);
+  const [showOrderDialog, setShowOrderDialog] = useState(false);
   const [phase, setPhase] = useState<'cart' | 'pay' | 'done'>('cart');
   const [completedSale, setCompletedSale] = useState<SaleResp | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -379,13 +378,10 @@ export default function PosPage() {
       {!online && (
         <div
           style={{
-            background: '#fff8e1',
-            border: '1px solid #f0a000',
-            color: '#5a3500',
-            padding: '8px 12px',
-            borderRadius: 6,
-            marginBottom: 12,
-            fontSize: 13,
+            ...banner,
+            background: 'var(--warning-soft)',
+            color: 'var(--warning-soft-text)',
+            borderColor: 'var(--warning)',
           }}
         >
           <strong>Offline.</strong> Sales will queue locally and sync when the connection returns.
@@ -395,13 +391,10 @@ export default function PosPage() {
       {online && pendingSync > 0 && (
         <div
           style={{
-            background: '#e8f4fd',
-            border: '1px solid #4a90d9',
-            color: '#1a4870',
-            padding: '8px 12px',
-            borderRadius: 6,
-            marginBottom: 12,
-            fontSize: 13,
+            ...banner,
+            background: 'var(--info-soft)',
+            color: 'var(--info-soft-text)',
+            borderColor: 'var(--info)',
             display: 'flex',
             alignItems: 'center',
             gap: 8,
@@ -410,72 +403,55 @@ export default function PosPage() {
           <span>
             Syncing {pendingSync} queued sale{pendingSync === 1 ? '' : 's'}…
           </span>
-          <Link href="/pos/pending" style={{ marginLeft: 'auto', color: '#1a4870' }}>
+          <Link href="/pos/pending" style={{ marginLeft: 'auto', color: 'inherit' }}>
             View queue →
           </Link>
         </div>
       )}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
-        <h1 style={{ fontSize: 22, margin: 0 }}>Register</h1>
-        <div style={{ marginLeft: 'auto', fontSize: 13 }}>
-          <label style={{ marginRight: 6, color: '#666' }}>Location:</label>
-          <select
+      <div className="page-header">
+        <h1 className="page-title" style={{ fontSize: 22 }}>
+          Register
+        </h1>
+        <div className="ml-auto flex flex-wrap items-center gap-1.5">
+          <label className="field-label" style={{ margin: 0 }}>
+            Location:
+          </label>
+          <Select
             value={locationId}
             onChange={(e) => {
               setLocationId(e.target.value);
               const next = locations.find((l) => l.id === e.target.value);
               if (next) setTaxRateBps(next.taxRateBps ?? taxRateBps);
             }}
-            style={{ padding: '4px 8px', fontSize: 13 }}
           >
             {locations.map((l) => (
               <option key={l.id} value={l.id}>
                 {l.name}
               </option>
             ))}
-          </select>
+          </Select>
         </div>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 16 }}>
+      <div className="grid gap-4 lg:grid-cols-[2fr_1fr]">
         <div>
           <form onSubmit={handleScanSubmit} style={{ marginBottom: 12 }}>
             <input
               ref={scanRef}
               autoFocus
+              className="input"
               value={scan}
               onChange={(e) => setScan(e.target.value)}
               placeholder="Scan barcode or type to search…"
-              style={{
-                width: '100%',
-                padding: '12px 14px',
-                fontSize: 16,
-                border: '2px solid #111',
-                borderRadius: 4,
-              }}
+              style={{ width: '100%', padding: '12px 14px', fontSize: 16 }}
             />
           </form>
           {results.length > 0 && (
-            <div style={{ ...card, marginBottom: 12 }}>
+            <div className="card" style={{ marginBottom: 12, padding: 8 }}>
               {results.map((r) => (
-                <button
-                  key={r.variantId}
-                  onClick={() => addToCart(r)}
-                  style={{
-                    display: 'block',
-                    width: '100%',
-                    textAlign: 'left',
-                    padding: 8,
-                    background: '#fff',
-                    border: '1px solid #eee',
-                    borderRadius: 4,
-                    marginBottom: 4,
-                    cursor: 'pointer',
-                    fontSize: 13,
-                  }}
-                >
+                <button key={r.variantId} onClick={() => addToCart(r)} style={resultBtn}>
                   <strong>{r.productName}</strong> {r.variantName && <>— {r.variantName}</>}{' '}
-                  <span style={{ color: '#666' }}>
+                  <span style={{ color: 'var(--text-secondary)' }}>
                     <Money cents={r.priceCents} /> · {r.sku ?? '—'}
                   </span>
                 </button>
@@ -483,92 +459,89 @@ export default function PosPage() {
             </div>
           )}
 
-          <div style={card}>
+          <div className="card">
             {cart.length === 0 ? (
-              <p style={{ color: '#888', margin: 0, fontSize: 13 }}>
+              <div className="empty-state" style={{ padding: '24px 16px' }}>
                 Cart is empty. Scan a barcode or type to search.
-              </p>
+              </div>
             ) : (
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-                <thead>
-                  <tr style={{ textAlign: 'left', borderBottom: '1px solid #ddd' }}>
-                    <Th>Item</Th>
-                    <Th>Qty</Th>
-                    <Th>Price</Th>
-                    <Th>Disc</Th>
-                    <Th align="right">Line</Th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {cart.map((l) => {
-                    const lineTotal = l.quantity * l.unitPriceCents - l.lineDiscountCents;
-                    return (
-                      <tr key={l.variantId} style={{ borderBottom: '1px solid #f3f3f3' }}>
-                        <Td>{l.description}</Td>
-                        <Td>
-                          <input
-                            type="number"
-                            min={0}
-                            value={l.quantity}
-                            onChange={(e) => setQty(l.variantId, Number(e.target.value))}
-                            style={qtyInput}
-                          />
-                        </Td>
-                        <Td>
-                          <Money cents={l.unitPriceCents} />
-                        </Td>
-                        <Td>
-                          <input
-                            type="number"
-                            step="0.01"
-                            min={0}
-                            placeholder="0.00"
-                            defaultValue={
-                              l.lineDiscountCents ? centsToInputString(l.lineDiscountCents) : ''
-                            }
-                            onBlur={(e) => setLineDiscount(l.variantId, e.target.value)}
-                            style={{ ...qtyInput, width: 60 }}
-                          />
-                        </Td>
-                        <Td align="right">
-                          <Money cents={lineTotal} />
-                        </Td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+              <div className="overflow-x-auto">
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Item</th>
+                      <th>Qty</th>
+                      <th>Price</th>
+                      <th>Disc</th>
+                      <th className="num">Line</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {cart.map((l) => {
+                      const lineTotal = l.quantity * l.unitPriceCents - l.lineDiscountCents;
+                      return (
+                        <tr key={l.variantId}>
+                          <td>{l.description}</td>
+                          <td>
+                            <Input
+                              type="number"
+                              min={0}
+                              value={l.quantity}
+                              onChange={(e) => setQty(l.variantId, Number(e.target.value))}
+                              style={qtyInput}
+                            />
+                          </td>
+                          <td>
+                            <Money cents={l.unitPriceCents} />
+                          </td>
+                          <td>
+                            <Input
+                              type="number"
+                              step="0.01"
+                              min={0}
+                              placeholder="0.00"
+                              defaultValue={
+                                l.lineDiscountCents ? centsToInputString(l.lineDiscountCents) : ''
+                              }
+                              onBlur={(e) => setLineDiscount(l.variantId, e.target.value)}
+                              style={{ ...qtyInput, width: 72 }}
+                            />
+                          </td>
+                          <td className="num">
+                            <Money cents={lineTotal} />
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
             )}
           </div>
         </div>
 
         <div>
-          <div style={card}>
-            <h3 style={section}>Customer</h3>
+          <div className="card">
+            <h3 className="card-title">Customer</h3>
             {customer ? (
               <p style={{ fontSize: 13, margin: 0 }}>
                 <strong>
                   {[customer.firstName, customer.lastName].filter(Boolean).join(' ') || '(no name)'}
                 </strong>
                 <br />
-                <span style={{ color: '#666' }}>{customer.email ?? customer.phone ?? '—'}</span>
+                <span className="muted">{customer.email ?? customer.phone ?? '—'}</span>
                 <br />
-                <button
-                  onClick={() => setCustomer(null)}
-                  style={{ ...linkBtn, marginTop: 6, fontSize: 12 }}
-                >
+                <Button size="sm" onClick={() => setCustomer(null)} style={{ marginTop: 6 }}>
                   Detach
-                </button>
+                </Button>
               </p>
             ) : (
-              <button onClick={() => setShowCustomerPicker(true)} style={linkBtn}>
-                Attach customer
-              </button>
+              <Button onClick={() => setShowCustomerPicker(true)}>Attach customer</Button>
             )}
           </div>
 
-          <div style={card}>
-            <h3 style={section}>Totals</h3>
+          <div className="card">
+            <h3 className="card-title">Totals</h3>
             <Row label="Subtotal" value={totals.subtotalCents} />
             <Row label="Discount" value={-totals.discountCents} negate />
             <div
@@ -577,11 +550,11 @@ export default function PosPage() {
                 alignItems: 'center',
                 gap: 6,
                 fontSize: 12,
-                marginBottom: 4,
+                marginBottom: 6,
               }}
             >
-              <span style={{ color: '#666', minWidth: 92 }}>Discount code</span>
-              <input
+              <span style={{ color: 'var(--text-secondary)', minWidth: 92 }}>Discount code</span>
+              <Input
                 value={discountCode}
                 onChange={(e) => setDiscountCode(e.target.value.toUpperCase())}
                 placeholder="(optional)"
@@ -589,8 +562,8 @@ export default function PosPage() {
               />
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
-              <span style={{ color: '#666', minWidth: 92 }}>Order disc $</span>
-              <input
+              <span style={{ color: 'var(--text-secondary)', minWidth: 92 }}>Order disc $</span>
+              <Input
                 type="number"
                 step="0.01"
                 min={0}
@@ -601,7 +574,7 @@ export default function PosPage() {
               />
             </div>
             {discountCode.trim() && (
-              <p style={{ fontSize: 11, color: '#888', margin: '4px 0 0' }}>
+              <p className="muted" style={{ fontSize: 11, margin: '4px 0 0' }}>
                 Code overrides the order-discount field. Final amount is computed by the server.
               </p>
             )}
@@ -610,17 +583,27 @@ export default function PosPage() {
           </div>
 
           <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {error && <p style={{ color: '#b00', margin: 0, fontSize: 13 }}>{error}</p>}
-            <button
+            {error && <p style={{ color: 'var(--danger)', margin: 0, fontSize: 13 }}>{error}</p>}
+            <Button
+              variant="primary"
               onClick={() => setPhase('pay')}
               disabled={cart.length === 0}
-              style={{ ...primaryBtn, padding: '14px', fontSize: 16 }}
+              className="min-h-11"
+              style={{ padding: 14, fontSize: 16 }}
             >
               Pay {formatMoney(totals.totalCents)}
-            </button>
-            <button onClick={reset} style={linkBtn}>
+            </Button>
+            <Button
+              onClick={() => setShowOrderDialog(true)}
+              disabled={cart.length === 0}
+              className="min-h-11"
+              data-testid="save-as-order"
+            >
+              Save as order / take deposit…
+            </Button>
+            <Button variant="ghost" onClick={reset} className="min-h-11">
               Clear cart
-            </button>
+            </Button>
           </div>
         </div>
       </div>
@@ -632,6 +615,47 @@ export default function PosPage() {
             setShowCustomerPicker(false);
           }}
           onCancel={() => setShowCustomerPicker(false)}
+        />
+      )}
+      {showOrderDialog && (
+        <SaveAsOrderDialog
+          totalCents={totals.totalCents}
+          customer={customer}
+          onAttachCustomer={() => {
+            setShowOrderDialog(false);
+            setShowCustomerPicker(true);
+          }}
+          onCancel={() => setShowOrderDialog(false)}
+          onSave={async (opts) => {
+            const order = await api<{ id: string }>('/v1/orders', {
+              method: 'POST',
+              body: JSON.stringify({
+                locationId,
+                customerId: customer!.id,
+                lines: cart.map((l) => ({
+                  variantId: l.variantId,
+                  quantity: l.quantity,
+                  unitPriceCents: l.unitPriceCents,
+                  lineDiscountCents: l.lineDiscountCents || undefined,
+                })),
+                orderDiscountCents: parseDollars(orderDiscount) || undefined,
+                fulfillmentType: opts.fulfillmentType,
+                requestedDate: opts.requestedDate || null,
+                confirm: true,
+              }),
+            });
+            if (opts.depositCents > 0) {
+              await api(`/v1/orders/${order.id}/payments`, {
+                method: 'POST',
+                body: JSON.stringify({
+                  method: opts.depositMethod,
+                  amountCents: opts.depositCents,
+                  kind: 'deposit',
+                }),
+              });
+            }
+            router.push(`/orders/${order.id}`);
+          }}
         />
       )}
     </div>
@@ -706,10 +730,11 @@ function GiftCardTender({
     return (
       <div
         style={{
-          background: '#f4faf4',
-          border: '1px solid #cfe2cf',
+          background: 'var(--success-soft)',
+          border: '1px solid var(--success)',
+          color: 'var(--success-soft-text)',
           padding: 8,
-          borderRadius: 4,
+          borderRadius: 'var(--radius-sm)',
           fontSize: 13,
           marginBottom: 12,
         }}
@@ -720,13 +745,13 @@ function GiftCardTender({
             <strong>
               <Money cents={applied.appliedCents} />
             </strong>{' '}
-            <span style={{ color: '#666' }}>
+            <span style={{ color: 'var(--text-secondary)' }}>
               (of <Money cents={applied.cardBalance} />)
             </span>
           </span>
-          <button onClick={onClear} style={linkBtn}>
+          <Button size="sm" onClick={onClear}>
             Remove
-          </button>
+          </Button>
         </div>
       </div>
     );
@@ -734,9 +759,11 @@ function GiftCardTender({
 
   return (
     <div style={{ marginBottom: 12 }}>
-      <span style={{ color: '#555', fontSize: 12 }}>Gift card</span>
+      <span className="field-label" style={{ marginBottom: 0 }}>
+        Gift card
+      </span>
       <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
-        <input
+        <Input
           type="text"
           placeholder="Card code"
           value={code}
@@ -747,18 +774,18 @@ function GiftCardTender({
               void lookupAndApply();
             }
           }}
-          style={{ ...fieldStyle, fontFamily: 'ui-monospace, monospace', flex: 1 }}
+          style={{ fontFamily: 'var(--font-mono)', flex: 1 }}
         />
-        <button
-          type="button"
+        <Button
+          variant="primary"
           onClick={() => void lookupAndApply()}
           disabled={busy || !code.trim() || remainingDue <= 0}
-          style={{ ...primaryBtn, padding: '6px 12px', fontSize: 13 }}
+          className="min-h-11"
         >
           {busy ? '…' : 'Apply'}
-        </button>
+        </Button>
       </div>
-      {err && <p style={{ color: '#b00', fontSize: 12, marginTop: 4 }}>{err}</p>}
+      {err && <p style={{ color: 'var(--danger)', fontSize: 12, marginTop: 4 }}>{err}</p>}
     </div>
   );
 }
@@ -791,7 +818,7 @@ function PaymentScreen({
 
   if (useStripeElements) {
     if (!stripePromise) {
-      return <p>Loading card form…</p>;
+      return <p className="muted">Loading card form…</p>;
     }
     return (
       <Elements stripe={stripePromise}>
@@ -858,15 +885,17 @@ function ManualPaymentForm({
 
   return (
     <div style={{ maxWidth: 480 }}>
-      <h1 style={{ fontSize: 22, marginBottom: 16 }}>Payment</h1>
-      <div style={card}>
+      <h1 className="page-title" style={{ fontSize: 22, marginBottom: 16 }}>
+        Payment
+      </h1>
+      <div className="card">
         <div style={{ fontSize: 14, marginBottom: 12 }}>
           Total due:{' '}
           <strong>
             <Money cents={totalCents} />
           </strong>
           {giftApplied > 0 && (
-            <span style={{ color: '#666', marginLeft: 8 }}>
+            <span style={{ color: 'var(--text-secondary)', marginLeft: 8 }}>
               · After gift card: <Money cents={remainingAfterGift} />
             </span>
           )}
@@ -877,28 +906,28 @@ function ManualPaymentForm({
           onApply={setGift}
           onClear={() => setGift(null)}
         />
-        <Field label="Cash tendered ($)">
-          <input
+        <Field label="Cash tendered ($)" style={{ marginBottom: 10 }}>
+          <Input
             autoFocus
             type="number"
             step="0.01"
             min={0}
             value={cashStr}
             onChange={(e) => setCashStr(e.target.value)}
-            style={fieldStyle}
+            style={{ width: '100%', fontSize: 16 }}
           />
         </Field>
         <Field label="Card ($)">
-          <input
+          <Input
             type="number"
             step="0.01"
             min={0}
             value={cardStr}
             onChange={(e) => setCardStr(e.target.value)}
-            style={fieldStyle}
+            style={{ width: '100%', fontSize: 16 }}
           />
         </Field>
-        <p style={{ fontSize: 12, color: '#666' }}>
+        <p style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
           {stripeConnected
             ? 'Stripe is connected but charges are disabled — finish onboarding in Stripe to enable real card capture.'
             : 'Card payments are recorded as manual captures. Connect Stripe in Settings → Billing for real card processing.'}
@@ -907,18 +936,20 @@ function ManualPaymentForm({
           Tendered: {formatMoney(tendered)} · Change: {formatMoney(change)}
         </div>
       </div>
-      {error && <p style={{ color: '#b00', fontSize: 13 }}>{error}</p>}
-      <div style={{ marginTop: 16, display: 'flex', gap: 8 }}>
-        <button
+      {error && <p style={{ color: 'var(--danger)', fontSize: 13 }}>{error}</p>}
+      <div className="mt-4 flex flex-wrap gap-2">
+        <Button
+          variant="primary"
           onClick={submit}
           disabled={!ready || busy}
-          style={{ ...primaryBtn, padding: '14px', fontSize: 16, flex: 1 }}
+          className="min-h-11"
+          style={{ padding: 14, fontSize: 16, flex: 1 }}
         >
           {busy ? 'Processing…' : 'Confirm payment'}
-        </button>
-        <button onClick={onCancel} style={linkBtn}>
+        </Button>
+        <Button onClick={onCancel} className="min-h-11">
           Back to cart
-        </button>
+        </Button>
       </div>
     </div>
   );
@@ -993,15 +1024,17 @@ function StripePaymentForm({
 
   return (
     <div style={{ maxWidth: 480 }}>
-      <h1 style={{ fontSize: 22, marginBottom: 16 }}>Payment</h1>
-      <div style={card}>
+      <h1 className="page-title" style={{ fontSize: 22, marginBottom: 16 }}>
+        Payment
+      </h1>
+      <div className="card">
         <div style={{ fontSize: 14, marginBottom: 12 }}>
           Total due:{' '}
           <strong>
             <Money cents={totalCents} />
           </strong>
           {giftApplied > 0 && (
-            <span style={{ color: '#666', marginLeft: 8 }}>
+            <span style={{ color: 'var(--text-secondary)', marginLeft: 8 }}>
               · After gift card: <Money cents={remainingAfterGift} />
             </span>
           )}
@@ -1013,17 +1046,17 @@ function StripePaymentForm({
           onClear={() => setGift(null)}
         />
         <Field label="Cash tendered ($)">
-          <input
+          <Input
             autoFocus
             type="number"
             step="0.01"
             min={0}
             value={cashStr}
             onChange={(e) => setCashStr(e.target.value)}
-            style={fieldStyle}
+            style={{ width: '100%', fontSize: 16 }}
           />
         </Field>
-        <p style={{ fontSize: 12, color: '#666' }}>
+        <p style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
           Cash applied: {formatMoney(cashApplied)} · Change: {formatMoney(change)} · Card to charge:{' '}
           <strong>
             <Money cents={cardCents} />
@@ -1032,37 +1065,44 @@ function StripePaymentForm({
 
         {cardCents > 0 && (
           <div style={{ marginTop: 12 }}>
-            <span style={{ color: '#555', fontSize: 12 }}>Card details</span>
+            <span className="field-label" style={{ marginBottom: 0 }}>
+              Card details
+            </span>
             <div
               style={{
                 padding: '10px 8px',
-                border: '1px solid #ccc',
-                borderRadius: 4,
+                border: '1px solid var(--border-strong)',
+                borderRadius: 'var(--radius-sm)',
+                background: 'var(--surface)',
                 marginTop: 4,
               }}
             >
               <CardElement options={{ hidePostalCode: false }} />
             </div>
             {stub && (
-              <p style={{ fontSize: 11, color: '#7a4a00', marginTop: 6 }}>
+              <p style={{ fontSize: 11, color: 'var(--warning-soft-text)', marginTop: 6 }}>
                 Stub mode — any input accepts. Set STRIPE_SECRET_KEY for real cards.
               </p>
             )}
           </div>
         )}
       </div>
-      {(error || cardError) && <p style={{ color: '#b00', fontSize: 13 }}>{cardError ?? error}</p>}
-      <div style={{ marginTop: 16, display: 'flex', gap: 8 }}>
-        <button
+      {(error || cardError) && (
+        <p style={{ color: 'var(--danger)', fontSize: 13 }}>{cardError ?? error}</p>
+      )}
+      <div className="mt-4 flex flex-wrap gap-2">
+        <Button
+          variant="primary"
           onClick={submit}
           disabled={busy}
-          style={{ ...primaryBtn, padding: '14px', fontSize: 16, flex: 1 }}
+          className="min-h-11"
+          style={{ padding: 14, fontSize: 16, flex: 1 }}
         >
           {busy ? 'Processing…' : `Charge ${formatMoney(cardCents)}`}
-        </button>
-        <button onClick={onCancel} style={linkBtn}>
+        </Button>
+        <Button onClick={onCancel} className="min-h-11">
           Back to cart
-        </button>
+        </Button>
       </div>
     </div>
   );
@@ -1082,8 +1122,10 @@ function Receipt({
   const isQueued = sale.number.startsWith('QUEUED');
   return (
     <div style={{ maxWidth: 420 }}>
-      <h1 style={{ fontSize: 22, marginBottom: 8 }}>Sale complete</h1>
-      <p style={{ color: '#666', fontSize: 13, marginBottom: 16 }}>
+      <h1 className="page-title" style={{ fontSize: 22, marginBottom: 8 }}>
+        Sale complete
+      </h1>
+      <p className="muted" style={{ fontSize: 13, marginBottom: 16 }}>
         <code>{sale.number}</code>
       </p>
       {!isQueued && (
@@ -1105,209 +1147,235 @@ function Receipt({
           business={business}
         />
       )}
-      <div style={card}>
+      <div className="card">
         {customer && (
           <p style={{ fontSize: 13 }}>
             {[customer.firstName, customer.lastName].filter(Boolean).join(' ')}
           </p>
         )}
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-          <tbody>
-            {sale.lines.map((l) => (
-              <tr key={l.id}>
-                <Td>
-                  {l.description} <span style={{ color: '#888' }}>×{l.quantity}</span>
-                </Td>
-                <Td align="right">
-                  <Money cents={l.totalCents} />
-                </Td>
-              </tr>
-            ))}
-          </tbody>
-          <tfoot>
-            <tr>
-              <Td>Subtotal</Td>
-              <Td align="right">
-                <Money cents={sale.subtotalCents} />
-              </Td>
-            </tr>
-            {sale.discountCents > 0 && (
+        <div className="overflow-x-auto">
+          <table className="table">
+            <tbody>
+              {sale.lines.map((l) => (
+                <tr key={l.id}>
+                  <td>
+                    {l.description} <span className="muted">×{l.quantity}</span>
+                  </td>
+                  <td className="num">
+                    <Money cents={l.totalCents} />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
               <tr>
-                <Td>Discount</Td>
-                <Td align="right">
-                  <Money cents={-sale.discountCents} />
-                </Td>
+                <td>Subtotal</td>
+                <td className="num">
+                  <Money cents={sale.subtotalCents} />
+                </td>
               </tr>
-            )}
-            <tr>
-              <Td>Tax</Td>
-              <Td align="right">
-                <Money cents={sale.taxCents} />
-              </Td>
-            </tr>
-            <tr style={{ fontWeight: 700 }}>
-              <Td>Total</Td>
-              <Td align="right">
-                <Money cents={sale.totalCents} />
-              </Td>
-            </tr>
-            {sale.payments.map((p, i) => (
-              <tr key={i} style={{ color: '#666' }}>
-                <Td>
-                  {p.method === 'cash' ? 'Cash' : p.method === 'gift_card' ? 'Gift card' : 'Card'}
-                </Td>
-                <Td align="right">
-                  <Money cents={p.amountCents} />
-                </Td>
+              {sale.discountCents > 0 && (
+                <tr>
+                  <td>Discount</td>
+                  <td className="num">
+                    <Money cents={-sale.discountCents} />
+                  </td>
+                </tr>
+              )}
+              <tr>
+                <td>Tax</td>
+                <td className="num">
+                  <Money cents={sale.taxCents} />
+                </td>
               </tr>
-            ))}
-          </tfoot>
-        </table>
+              <tr style={{ fontWeight: 700 }}>
+                <td>Total</td>
+                <td className="num">
+                  <Money cents={sale.totalCents} />
+                </td>
+              </tr>
+              {sale.payments.map((p, i) => (
+                <tr key={i} style={{ color: 'var(--text-secondary)' }}>
+                  <td>
+                    {p.method === 'cash' ? 'Cash' : p.method === 'gift_card' ? 'Gift card' : 'Card'}
+                  </td>
+                  <td className="num">
+                    <Money cents={p.amountCents} />
+                  </td>
+                </tr>
+              ))}
+            </tfoot>
+          </table>
+        </div>
       </div>
-      <div style={{ marginTop: 16, display: 'flex', gap: 8 }}>
-        <button
+      <div className="mt-4 flex flex-wrap gap-2">
+        <Button
+          variant="primary"
           onClick={() => window.print()}
           disabled={isQueued}
+          className="min-h-11 inline-flex items-center gap-1.5"
           title={isQueued ? 'Sale is still queued; print after it syncs' : ''}
-          style={isQueued ? { ...primaryBtn, opacity: 0.5, cursor: 'not-allowed' } : primaryBtn}
         >
-          Print receipt
-        </button>
-        {!isQueued && (
-          <Link href={`/sales/${sale.id}`} style={{ ...linkBtn, textDecoration: 'none' }}>
-            Open sale
-          </Link>
-        )}
-        <button onClick={onNew} style={linkBtn}>
-          New sale
-        </button>
+          <Printer size={14} /> Print receipt
+        </Button>
+        {!isQueued && <LinkButton href={`/sales/${sale.id}`}>Open sale</LinkButton>}
+        <Button
+          variant="ghost"
+          onClick={onNew}
+          className="min-h-11 inline-flex items-center gap-1.5"
+        >
+          <Plus size={14} /> New sale
+        </Button>
       </div>
     </div>
   );
 }
 
-function CustomerPicker({
-  onPick,
+/**
+ * "Save as order / take deposit" (STORIS cutover Day 2). Turns the
+ * register's cart into a confirmed sales order — the everyday flow for
+ * a mattress sale: write it now, deliver later, take money down today.
+ * Confirming commits stock immediately; the deposit posts as an order
+ * payment, so the drawer math picks it up when Day 3's report union
+ * lands.
+ */
+function SaveAsOrderDialog({
+  totalCents,
+  customer,
+  onAttachCustomer,
   onCancel,
+  onSave,
 }: {
-  onPick: (c: CustomerRow) => void;
+  totalCents: number;
+  customer: CustomerRow | null;
+  onAttachCustomer: () => void;
   onCancel: () => void;
+  onSave: (opts: {
+    fulfillmentType: 'delivery' | 'pickup';
+    requestedDate: string;
+    depositCents: number;
+    depositMethod: 'cash' | 'external_card' | 'check';
+  }) => Promise<void>;
 }) {
-  const [q, setQ] = useState('');
-  const [rows, setRows] = useState<CustomerRow[]>([]);
-  const [creating, setCreating] = useState(false);
+  const suggested = Math.ceil((totalCents * 2500) / 10000);
+  const [fulfillmentType, setFulfillmentType] = useState<'delivery' | 'pickup'>('delivery');
+  const [requestedDate, setRequestedDate] = useState('');
+  const [deposit, setDeposit] = useState(centsToInputString(suggested));
+  const [depositMethod, setDepositMethod] = useState<'cash' | 'external_card' | 'check'>('cash');
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function search() {
-    try {
-      const res = await api<{ data: CustomerRow[]; nextCursor: string | null }>(
-        `/v1/customers?q=${encodeURIComponent(q)}`,
-      );
-      setRows(res.data);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    }
-  }
-  useEffect(() => {
-    void search();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  async function createNew(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault();
+  async function save() {
     setError(null);
+    setBusy(true);
     try {
-      const data = new FormData(e.currentTarget);
-      const created = await api<CustomerRow>('/v1/customers', {
-        method: 'POST',
-        body: JSON.stringify({
-          firstName: data.get('firstName') || null,
-          lastName: data.get('lastName') || null,
-          email: data.get('email') || null,
-          phone: data.get('phone') || null,
-        }),
+      await onSave({
+        fulfillmentType,
+        requestedDate,
+        depositCents: parseDollars(deposit),
+        depositMethod,
       });
-      onPick(created);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+      setBusy(false);
     }
   }
 
   return (
     <div style={modalBackdrop}>
-      <div style={{ ...modal, maxWidth: 480 }}>
-        <h2 style={{ fontSize: 18, marginBottom: 12 }}>Attach customer</h2>
-        {creating ? (
-          <form onSubmit={createNew} style={{ display: 'grid', gap: 8 }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-              <input name="firstName" placeholder="First name" style={fieldStyle} />
-              <input name="lastName" placeholder="Last name" style={fieldStyle} />
-            </div>
-            <input name="email" type="email" placeholder="Email" style={fieldStyle} />
-            <input name="phone" placeholder="Phone" style={fieldStyle} />
-            {error && <p style={{ color: '#b00', fontSize: 12, margin: 0 }}>{error}</p>}
-            <div style={{ display: 'flex', gap: 8 }}>
-              <button type="submit" style={primaryBtn}>
-                Create & attach
-              </button>
-              <button type="button" onClick={() => setCreating(false)} style={linkBtn}>
+      <div style={{ ...modal, maxWidth: 420 }}>
+        <h2 style={{ fontSize: 18, margin: '0 0 4px' }}>Save as order</h2>
+        <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 0 }}>
+          Order total {formatMoney(totalCents)}. Confirming commits stock now; the balance is
+          collected at fulfillment.
+        </p>
+        {!customer ? (
+          <div>
+            <p style={{ fontSize: 13, color: 'var(--warning-soft-text)' }}>
+              An order needs a customer attached first.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                variant="primary"
+                onClick={onAttachCustomer}
+                data-testid="order-attach-customer"
+              >
+                Attach customer
+              </Button>
+              <Button variant="ghost" onClick={onCancel}>
                 Back
-              </button>
+              </Button>
             </div>
-          </form>
+          </div>
         ) : (
-          <>
-            <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-              <input
-                value={q}
-                onChange={(e) => setQ(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') void search();
-                }}
-                placeholder="Search by name, email, or phone"
-                style={{ ...fieldStyle, flex: 1 }}
-              />
-              <button onClick={search} style={linkBtn}>
-                Search
-              </button>
-            </div>
-            <div style={{ maxHeight: 240, overflow: 'auto' }}>
-              {rows.length === 0 && (
-                <p style={{ color: '#888', fontSize: 13, margin: 0 }}>No matches.</p>
-              )}
-              {rows.map((c) => (
-                <button
-                  key={c.id}
-                  onClick={() => onPick(c)}
-                  style={{
-                    display: 'block',
-                    width: '100%',
-                    textAlign: 'left',
-                    padding: 8,
-                    background: '#fff',
-                    border: '1px solid #eee',
-                    borderRadius: 4,
-                    marginBottom: 4,
-                    cursor: 'pointer',
-                    fontSize: 13,
-                  }}
+          <div style={{ display: 'grid', gap: 10 }}>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <Field label="Fulfillment">
+                <Select
+                  value={fulfillmentType}
+                  onChange={(e) => setFulfillmentType(e.target.value as 'delivery' | 'pickup')}
+                  style={{ width: '100%' }}
                 >
-                  <strong>
-                    {[c.firstName, c.lastName].filter(Boolean).join(' ') || '(no name)'}
-                  </strong>{' '}
-                  <span style={{ color: '#666' }}>{c.email ?? c.phone ?? ''}</span>
-                </button>
-              ))}
+                  <option value="delivery">Delivery</option>
+                  <option value="pickup">Pickup</option>
+                </Select>
+              </Field>
+              <Field label="Promised date">
+                <Input
+                  type="date"
+                  value={requestedDate}
+                  onChange={(e) => setRequestedDate(e.target.value)}
+                  style={{ width: '100%' }}
+                />
+              </Field>
             </div>
-            <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
-              <button onClick={() => setCreating(true)} style={linkBtn}>
-                + New customer
-              </button>
-              <button onClick={onCancel} style={linkBtn}>
-                Cancel
-              </button>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <Field label="Deposit today ($)">
+                <Input
+                  type="number"
+                  step="0.01"
+                  min={0}
+                  value={deposit}
+                  onChange={(e) => setDeposit(e.target.value)}
+                  style={{ width: '100%' }}
+                  data-testid="order-deposit"
+                />
+              </Field>
+              <Field label="Deposit method">
+                <Select
+                  value={depositMethod}
+                  onChange={(e) =>
+                    setDepositMethod(e.target.value as 'cash' | 'external_card' | 'check')
+                  }
+                  style={{ width: '100%' }}
+                >
+                  <option value="cash">Cash</option>
+                  <option value="external_card">Card (external terminal)</option>
+                  <option value="check">Check</option>
+                </Select>
+              </Field>
             </div>
-          </>
+            <p className="muted" style={{ fontSize: 11, margin: 0 }}>
+              Suggested deposit: {formatMoney(suggested)} (25% down). Set 0 to hold the order
+              without money — it still commits stock.
+            </p>
+            {error && <p style={{ color: 'var(--danger)', fontSize: 12, margin: 0 }}>{error}</p>}
+            <div className="flex flex-wrap gap-2">
+              <Button
+                variant="primary"
+                onClick={() => void save()}
+                disabled={busy}
+                data-testid="order-save-confirm"
+              >
+                {parseDollars(deposit) > 0
+                  ? `Save order & take ${formatMoney(parseDollars(deposit))}`
+                  : 'Save order'}
+              </Button>
+              <Button variant="ghost" onClick={onCancel} disabled={busy}>
+                Back
+              </Button>
+            </div>
+          </div>
         )}
       </div>
     </div>
@@ -1340,39 +1408,27 @@ function parseDollars(s: string): number {
   return Math.round(n * 100);
 }
 
-const card = {
-  background: '#fff',
-  padding: 16,
-  borderRadius: 6,
-  boxShadow: '0 1px 2px rgba(0,0,0,0.06)',
-  marginBottom: 16,
-};
-const section = { fontSize: 14, marginBottom: 8, marginTop: 0 } as const;
-const fieldStyle = {
+const banner = {
+  border: '1px solid',
+  padding: '8px 12px',
+  borderRadius: 'var(--radius-sm)',
+  marginBottom: 12,
+  fontSize: 13,
+} as const;
+const qtyInput = { width: 56, padding: '5px 6px' } as const;
+const resultBtn = {
+  display: 'block',
   width: '100%',
-  padding: '6px 8px',
-  border: '1px solid #ccc',
-  borderRadius: 4,
-  fontSize: 13,
-} as const;
-const qtyInput = { ...fieldStyle, width: 50, padding: '4px 6px' } as const;
-const primaryBtn = {
-  padding: '8px 14px',
-  background: '#111',
-  color: '#fff',
-  border: 'none',
-  borderRadius: 4,
+  textAlign: 'left',
+  padding: '10px 12px',
+  background: 'var(--surface)',
+  border: '1px solid var(--border)',
+  borderRadius: 'var(--radius-sm)',
+  marginBottom: 4,
   cursor: 'pointer',
   fontSize: 13,
-} as const;
-const linkBtn = {
-  padding: '8px 14px',
-  background: 'transparent',
-  color: '#444',
-  border: '1px solid #ccc',
-  borderRadius: 4,
-  cursor: 'pointer',
-  fontSize: 13,
+  fontFamily: 'var(--font)',
+  color: 'var(--text)',
 } as const;
 const modalBackdrop = {
   position: 'fixed',
@@ -1384,29 +1440,13 @@ const modalBackdrop = {
   zIndex: 100,
 } as const;
 const modal = {
-  background: '#fff',
+  background: 'var(--surface)',
   padding: 20,
-  borderRadius: 6,
-  boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+  borderRadius: 'var(--radius)',
+  boxShadow: 'var(--shadow-lg)',
   width: '90%',
 } as const;
 
-function Th({ children, align }: { children: React.ReactNode; align?: 'right' | 'left' }) {
-  return (
-    <th style={{ padding: '6px 4px', fontWeight: 600, textAlign: align ?? 'left' }}>{children}</th>
-  );
-}
-function Td({ children, align }: { children: React.ReactNode; align?: 'right' | 'left' }) {
-  return <td style={{ padding: '6px 4px', textAlign: align ?? 'left' }}>{children}</td>;
-}
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12 }}>
-      <span style={{ color: '#555' }}>{label}</span>
-      {children}
-    </label>
-  );
-}
 function Row({
   label,
   value,
@@ -1425,6 +1465,7 @@ function Row({
         justifyContent: 'space-between',
         fontSize: 13,
         fontWeight: bold ? 700 : 400,
+        fontVariantNumeric: 'tabular-nums',
         marginBottom: 4,
       }}
     >

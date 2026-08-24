@@ -52,7 +52,9 @@ export class AuditService {
    */
   async log(input: AuditLogInput): Promise<void> {
     const ctx = tryGetRequestContext();
-    const db = ctx?.db ?? this.rootDb;
+    // Never touch a transaction that already committed (fire-and-forget
+    // work outliving its request); the root handle routes correctly.
+    const db = ctx && !ctx.closed ? ctx.db : this.rootDb;
 
     let changesJson: Record<string, unknown> | null = null;
     if (input.before !== undefined || input.after !== undefined) {

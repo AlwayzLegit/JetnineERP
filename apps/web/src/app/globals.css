@@ -1,0 +1,467 @@
+/* ============================================================
+   LA Mattress ERP — design tokens + base styles
+   Tailwind v4 supplies utilities (responsive grids, spacing,
+   etc.); the @theme block below maps our tokens into Tailwind's
+   palette so `bg-brand`, `text-danger`, `border-border` work.
+   The hand-rolled component classes (.btn/.card/.table/...) stay —
+   the shared components in src/components/ui.tsx build on them.
+   ============================================================ */
+
+@import 'tailwindcss';
+
+@theme inline {
+  --color-brand: var(--brand);
+  --color-brand-hover: var(--brand-hover);
+  --color-brand-soft: var(--brand-soft);
+  --color-surface: var(--surface);
+  --color-surface-muted: var(--surface-muted);
+  --color-page: var(--bg);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-text: var(--text);
+  --color-secondary: var(--text-secondary);
+  --color-muted: var(--text-muted);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-danger: var(--danger);
+  --color-info: var(--info);
+  --font-sans: var(--font);
+  --font-mono: var(--font-mono);
+  --radius-card: var(--radius);
+  --radius-control: var(--radius-sm);
+}
+
+:root {
+  /* Brand */
+  --brand: #4f46e5; /* indigo-600 */
+  --brand-hover: #4338ca;
+  --brand-soft: #eef2ff;
+  --brand-soft-text: #3730a3;
+
+  /* Neutrals */
+  --bg: #f5f8fa; /* airy, blue-tinted canvas — HubSpot-style */
+  --surface: #ffffff;
+  --surface-muted: #f9fafb;
+  --border: #e5e7eb;
+  --border-strong: #d1d5db;
+  --text: #111827;
+  --text-secondary: #4b5563;
+  --text-muted: #9ca3af;
+
+  /* Status */
+  --success: #16a34a;
+  --success-soft: #f0fdf4;
+  --success-soft-text: #166534;
+  --warning: #d97706;
+  --warning-soft: #fffbeb;
+  --warning-soft-text: #92400e;
+  --danger: #dc2626;
+  --danger-soft: #fef2f2;
+  --danger-soft-text: #991b1b;
+  --info: #2563eb;
+  --info-soft: #eff6ff;
+  --info-soft-text: #1e40af;
+  --neutral-soft: #f3f4f6;
+  --neutral-soft-text: #374151;
+
+  /* Elevation */
+  --shadow-sm: 0 1px 3px rgb(23 43 77 / 0.06), 0 1px 2px rgb(23 43 77 / 0.04);
+  --shadow-md: 0 6px 16px rgb(23 43 77 / 0.1);
+  --shadow-lg: 0 12px 32px rgb(16 24 40 / 0.14);
+
+  /* Shape + type */
+  --radius: 12px;
+  --radius-sm: 8px;
+  --font:
+    'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', 'Cascadia Code', Menlo, Consolas, monospace;
+
+  /* Shell */
+  --sidebar-width: 232px;
+  --sidebar-bg: #1b2540; /* deep navy — HubSpot-style chrome */
+  --sidebar-text: #9ca3af;
+  --sidebar-text-active: #ffffff;
+  --sidebar-active-bg: rgb(255 255 255 / 0.08);
+  --topbar-height: 56px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--font);
+  color: var(--text);
+  background: var(--bg);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+
+a {
+  color: var(--brand);
+}
+
+code {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+}
+
+::selection {
+  background: var(--brand-soft);
+}
+
+:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 1px;
+  border-radius: 4px;
+}
+
+/* ---------- Buttons ---------- */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  font-family: var(--font);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.2;
+  cursor: pointer;
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease,
+    color 0.12s ease,
+    box-shadow 0.12s ease;
+  white-space: nowrap;
+  text-decoration: none;
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  background: var(--brand);
+  color: #fff;
+  box-shadow: var(--shadow-sm);
+}
+.btn-primary:hover:not(:disabled) {
+  background: var(--brand-hover);
+}
+
+.btn-secondary {
+  background: var(--surface);
+  color: var(--text);
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-sm);
+}
+.btn-secondary:hover:not(:disabled) {
+  background: var(--surface-muted);
+}
+
+.btn-ghost {
+  background: transparent;
+  color: var(--text-secondary);
+  border-color: transparent;
+}
+.btn-ghost:hover:not(:disabled) {
+  background: var(--neutral-soft);
+  color: var(--text);
+}
+
+.btn-danger {
+  background: var(--surface);
+  color: var(--danger);
+  border-color: var(--border-strong);
+}
+.btn-danger:hover:not(:disabled) {
+  background: var(--danger-soft);
+  border-color: var(--danger);
+}
+
+.btn-sm {
+  padding: 5px 10px;
+  font-size: 12px;
+}
+
+/* ---------- Inputs ---------- */
+
+.input,
+.select,
+.textarea {
+  font-family: var(--font);
+  font-size: 13px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  transition:
+    border-color 0.12s ease,
+    box-shadow 0.12s ease;
+}
+
+.input::placeholder {
+  color: var(--text-muted);
+}
+
+.input:focus,
+.select:focus,
+.textarea:focus {
+  outline: none;
+  border-color: var(--brand);
+  box-shadow: 0 0 0 3px var(--brand-soft);
+}
+
+.field-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+}
+
+/* ---------- Cards ---------- */
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+  padding: 16px;
+}
+
+.card + .card {
+  margin-top: 16px;
+}
+
+/* Trello-style interactive card: lifts on hover. Applied to board
+   tickets, list rows rendered as cards, and other clickable cards. */
+.card-hover {
+  transition:
+    box-shadow 0.15s ease,
+    transform 0.15s ease,
+    border-color 0.15s ease;
+}
+.card-hover:hover {
+  box-shadow: var(--shadow-md);
+  transform: translateY(-1px);
+  border-color: var(--border-strong);
+}
+
+.card-title {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0 0 12px;
+}
+
+/* ---------- Tables ---------- */
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.table th {
+  text-align: left;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-muted);
+  white-space: nowrap;
+}
+
+.table th:first-child {
+  border-top-left-radius: 8px;
+}
+.table th:last-child {
+  border-top-right-radius: 8px;
+}
+
+.table td {
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+
+.table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.table tbody tr:hover {
+  background: var(--brand-soft);
+}
+
+.table .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- Badges ---------- */
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 2px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+  text-transform: capitalize;
+}
+
+.badge-neutral {
+  background: var(--neutral-soft);
+  color: var(--neutral-soft-text);
+}
+.badge-success {
+  background: var(--success-soft);
+  color: var(--success-soft-text);
+}
+.badge-warning {
+  background: var(--warning-soft);
+  color: var(--warning-soft-text);
+}
+.badge-danger {
+  background: var(--danger-soft);
+  color: var(--danger-soft-text);
+}
+.badge-info {
+  background: var(--info-soft);
+  color: var(--info-soft-text);
+}
+.badge-brand {
+  background: var(--brand-soft);
+  color: var(--brand-soft-text);
+}
+
+/* ---------- Page scaffolding ---------- */
+
+.page-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+.page-title {
+  font-size: 20px;
+  font-weight: 700;
+  margin: 0;
+}
+
+.page-sub {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin: -10px 0 16px;
+}
+
+.muted {
+  color: var(--text-muted);
+}
+
+.empty-state {
+  text-align: center;
+  padding: 48px 16px;
+  color: var(--text-muted);
+  font-size: 13px;
+  background: var(--surface-muted);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-sm);
+}
+
+/* HubSpot-style pill tabs / filter chips. Active tab gets .pill-active. */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    background 0.12s ease,
+    color 0.12s ease,
+    border-color 0.12s ease;
+}
+.pill:hover {
+  border-color: var(--brand);
+  color: var(--brand);
+}
+.pill-active {
+  background: var(--brand);
+  border-color: var(--brand);
+  color: #fff;
+}
+
+/* ---------- Skeletons ---------- */
+
+@keyframes shimmer {
+  0% {
+    background-position: -400px 0;
+  }
+  100% {
+    background-position: 400px 0;
+  }
+}
+
+.skeleton {
+  border-radius: var(--radius-sm);
+  background: linear-gradient(90deg, #eceef1 25%, #f5f6f8 50%, #eceef1 75%);
+  background-size: 800px 100%;
+  animation: shimmer 1.4s infinite linear;
+  min-height: 14px;
+}
+
+/* ---------- Print ---------- */
+
+@media print {
+  body {
+    background: #fff;
+  }
+  .no-print,
+  .app-sidebar,
+  .app-topbar {
+    display: none !important;
+  }
+  .app-main {
+    margin-left: 0 !important;
+    padding: 0 !important;
+  }
+  .card {
+    box-shadow: none;
+    border-color: #ccc;
+  }
+}

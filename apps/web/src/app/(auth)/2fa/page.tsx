@@ -16,8 +16,8 @@ export default function TwoFactorPage() {
   if (!session.data) {
     return (
       <div>
-        <h2 style={{ fontSize: 18, marginBottom: 8 }}>Two-factor authentication</h2>
-        <p>Please sign in first.</p>
+        <h2 style={{ fontSize: 18, margin: '0 0 8px' }}>Two-factor authentication</h2>
+        <p style={{ color: 'var(--text-secondary)', margin: 0 }}>Please sign in first.</p>
       </div>
     );
   }
@@ -48,17 +48,18 @@ export default function TwoFactorPage() {
 function Verify({ enrolment, reset }: { enrolment: EnrollmentSecret; reset: () => void }) {
   return (
     <div>
-      <h2 style={{ fontSize: 18, marginBottom: 8 }}>Scan or paste the secret</h2>
-      <p style={{ fontSize: 13, color: '#555', marginBottom: 12 }}>
+      <h2 style={{ fontSize: 18, margin: '0 0 8px' }}>Scan or paste the secret</h2>
+      <p style={{ fontSize: 13, color: 'var(--text-secondary)', margin: '0 0 12px' }}>
         Add this to an authenticator app (1Password, Authy, Google Authenticator), then enter the
         6-digit code below to confirm.
       </p>
       <pre
         data-testid="totp-uri"
         style={{
-          background: '#f3f3f3',
+          background: 'var(--surface-muted)',
+          border: '1px solid var(--border)',
           padding: '8px 10px',
-          borderRadius: 4,
+          borderRadius: 'var(--radius-sm)',
           fontSize: 12,
           overflow: 'auto',
           marginBottom: 12,
@@ -67,10 +68,14 @@ function Verify({ enrolment, reset }: { enrolment: EnrollmentSecret; reset: () =
         {enrolment.totpURI}
       </pre>
       <details style={{ marginBottom: 16 }}>
-        <summary style={{ fontSize: 13, cursor: 'pointer' }}>Backup codes</summary>
+        <summary style={{ fontSize: 13, cursor: 'pointer', color: 'var(--text-secondary)' }}>
+          Backup codes
+        </summary>
         <ul data-testid="backup-codes" style={{ fontSize: 12, marginTop: 8 }}>
           {enrolment.backupCodes.map((c) => (
-            <li key={c}>{c}</li>
+            <li key={c}>
+              <code>{c}</code>
+            </li>
           ))}
         </ul>
       </details>
@@ -91,8 +96,9 @@ function Verify({ enrolment, reset }: { enrolment: EnrollmentSecret; reset: () =
           marginTop: 12,
           fontSize: 13,
           background: 'none',
-          color: '#555',
+          color: 'var(--text-secondary)',
           border: 'none',
+          padding: 0,
           textDecoration: 'underline',
           cursor: 'pointer',
         }}

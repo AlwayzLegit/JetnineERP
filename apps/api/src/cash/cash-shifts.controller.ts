@@ -165,7 +165,26 @@ export class CashShiftsController {
           lt(schema.sales.completedAt, closedAt),
         ),
       );
-    const cashIn = cashRows[0]?.cashIn ?? 0;
+    // Order deposits/balances taken in cash during the shift land in the
+    // same drawer as sale payments (D2). Imported legacy orders are
+    // excluded per D8 — their money never touched this drawer.
+    const orderCashRows = await this.db
+      .select({
+        cashIn: sql<number>`COALESCE(SUM(${schema.payments.amountCents}), 0)::int`,
+      })
+      .from(schema.payments)
+      .innerJoin(schema.orders, eq(schema.orders.id, schema.payments.orderId))
+      .where(
+        and(
+          eq(schema.orders.locationId, shift.locationId),
+          eq(schema.payments.method, 'cash'),
+          eq(schema.payments.status, 'succeeded'),
+          gte(schema.payments.createdAt, shift.openedAt),
+          lt(schema.payments.createdAt, closedAt),
+          isNull(schema.orders.importedAt),
+        ),
+      );
+    const cashIn = (cashRows[0]?.cashIn ?? 0) + (orderCashRows[0]?.cashIn ?? 0);
 
     const expectedCashCents = shift.openingFloatCents + cashIn;
     const varianceCents = body.countedCashCents - expectedCashCents;

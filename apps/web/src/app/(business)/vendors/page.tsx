@@ -2,7 +2,19 @@
 
 import Link from 'next/link';
 import { useEffect, useState, type FormEvent } from 'react';
+import { Plus } from 'lucide-react';
+import { toast } from 'sonner';
 import { api } from '@/lib/api';
+import {
+  Button,
+  Card,
+  EmptyState,
+  Field,
+  Input,
+  LoadingRows,
+  PageHeader,
+  StatusBadge,
+} from '@/components/ui';
 
 interface Vendor {
   id: string;
@@ -61,139 +73,109 @@ export default function VendorsPage() {
       await api(`/v1/vendors/${id}`, { method: 'DELETE' });
       void load();
     } catch (err) {
-      alert(err instanceof Error ? err.message : String(err));
+      toast.error(err instanceof Error ? err.message : String(err));
     }
   }
 
   return (
     <div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
-        <h1 style={{ fontSize: 22, margin: 0 }}>Vendors</h1>
-        <button
-          onClick={() => setCreating((v) => !v)}
-          style={{ marginLeft: 'auto', ...primaryBtn }}
-        >
-          {creating ? 'Cancel' : '+ New vendor'}
-        </button>
-      </div>
+      <PageHeader
+        title="Vendors"
+        actions={
+          <Button
+            variant={creating ? 'secondary' : 'primary'}
+            onClick={() => setCreating((v) => !v)}
+          >
+            {creating ? 'Cancel' : '+ New vendor'}
+          </Button>
+        }
+      />
 
-      {error && <p style={{ color: '#b00' }}>{error}</p>}
+      {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
 
       {creating && (
-        <form onSubmit={create} style={{ ...card, display: 'grid', gap: 8, maxWidth: 560 }}>
-          <Field label="Name *">
-            <input name="name" required style={inputStyle} />
-          </Field>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-            <Field label="Contact name">
-              <input name="contactName" style={inputStyle} />
+        <Card style={{ maxWidth: 560, marginBottom: 16 }}>
+          <form onSubmit={create} style={{ display: 'grid', gap: 8 }}>
+            <Field label="Name *">
+              <Input name="name" required style={{ width: '100%' }} />
             </Field>
-            <Field label="Email">
-              <input name="email" type="email" style={inputStyle} />
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label="Contact name">
+                <Input name="contactName" style={{ width: '100%' }} />
+              </Field>
+              <Field label="Email">
+                <Input name="email" type="email" style={{ width: '100%' }} />
+              </Field>
+            </div>
+            <Field label="Phone">
+              <Input name="phone" style={{ width: '100%' }} />
             </Field>
-          </div>
-          <Field label="Phone">
-            <input name="phone" style={inputStyle} />
-          </Field>
-          <Field label="Notes">
-            <textarea name="notes" rows={2} style={{ ...inputStyle, resize: 'vertical' }} />
-          </Field>
-          <button type="submit" style={primaryBtn}>
-            Create vendor
-          </button>
-        </form>
+            <Field label="Notes">
+              <textarea
+                className="textarea"
+                name="notes"
+                rows={2}
+                style={{ width: '100%', resize: 'vertical' }}
+              />
+            </Field>
+            <div>
+              <Button type="submit" variant="primary">
+                <Plus size={14} />
+                Create vendor
+              </Button>
+            </div>
+          </form>
+        </Card>
       )}
 
-      <div style={card}>
+      <Card style={{ padding: 0 }}>
         {rows == null ? (
-          <p style={{ color: '#888' }}>Loading…</p>
+          <div style={{ padding: 16 }}>
+            <LoadingRows />
+          </div>
         ) : rows.length === 0 ? (
-          <p style={{ color: '#888' }}>No vendors yet.</p>
+          <EmptyState>No vendors yet. Add a vendor to start placing purchase orders.</EmptyState>
         ) : (
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-            <thead>
-              <tr style={{ textAlign: 'left', borderBottom: '1px solid #ddd' }}>
-                <Th>Name</Th>
-                <Th>Contact</Th>
-                <Th>Email</Th>
-                <Th>Phone</Th>
-                <Th>Status</Th>
-                <Th>&nbsp;</Th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((v) => (
-                <tr key={v.id} style={{ borderBottom: '1px solid #f3f3f3' }}>
-                  <Td>
-                    <strong>{v.name}</strong>
-                  </Td>
-                  <Td>{v.contactName ?? '—'}</Td>
-                  <Td>{v.email ?? '—'}</Td>
-                  <Td>{v.phone ?? '—'}</Td>
-                  <Td>{v.isActive ? 'active' : 'inactive'}</Td>
-                  <Td>
-                    <button onClick={() => destroy(v.id)} style={linkBtnDanger}>
-                      Delete
-                    </button>
-                  </Td>
+          <div className="overflow-x-auto">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Contact</th>
+                  <th>Email</th>
+                  <th>Phone</th>
+                  <th>Status</th>
+                  <th>&nbsp;</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {rows.map((v) => (
+                  <tr key={v.id}>
+                    <td>
+                      <strong>{v.name}</strong>
+                    </td>
+                    <td>{v.contactName ?? '—'}</td>
+                    <td>{v.email ?? '—'}</td>
+                    <td>{v.phone ?? '—'}</td>
+                    <td>
+                      <StatusBadge status={v.isActive ? 'active' : 'inactive'} />
+                    </td>
+                    <td style={{ textAlign: 'right' }}>
+                      <Button size="sm" variant="danger" onClick={() => destroy(v.id)}>
+                        Delete
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
-      </div>
+      </Card>
 
       <p style={{ fontSize: 13, marginTop: 12 }}>
         <Link href="/purchase-orders">→ Purchase orders</Link>
       </p>
     </div>
-  );
-}
-
-const card = {
-  background: '#fff',
-  padding: 16,
-  borderRadius: 6,
-  boxShadow: '0 1px 2px rgba(0,0,0,0.06)',
-  marginBottom: 16,
-};
-const inputStyle = {
-  width: '100%',
-  padding: '6px 8px',
-  border: '1px solid #ccc',
-  borderRadius: 4,
-  fontSize: 13,
-} as const;
-const primaryBtn = {
-  padding: '8px 14px',
-  background: '#111',
-  color: '#fff',
-  border: 'none',
-  borderRadius: 4,
-  cursor: 'pointer',
-  fontSize: 13,
-} as const;
-const linkBtnDanger = {
-  background: 'none',
-  border: 'none',
-  color: '#b00',
-  textDecoration: 'underline',
-  cursor: 'pointer',
-  fontSize: 12,
-  padding: 0,
-} as const;
-
-function Th({ children }: { children: React.ReactNode }) {
-  return <th style={{ padding: '8px 6px', fontWeight: 600 }}>{children}</th>;
-}
-function Td({ children }: { children: React.ReactNode }) {
-  return <td style={{ padding: '8px 6px' }}>{children}</td>;
-}
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12 }}>
-      <span style={{ color: '#555' }}>{label}</span>
-      {children}
-    </label>
   );
 }

@@ -17,6 +17,7 @@ import { AuditService } from '../audit/audit.service';
 import { CurrentTenant, CurrentUser } from '../auth/current-user.decorator';
 import type { CurrentUserPayload } from '../auth/current-user.decorator';
 import { DRIZZLE } from '../database/database.module';
+import { SpecialOrdersService } from '../special-orders/special-orders.service';
 import { WebhookDispatcher } from '../webhooks/webhook-dispatcher.service';
 import { RequirePermission, TenantScoped } from '../tenancy/decorators';
 import type { RequestTenantContext } from '../tenancy/request-context';
@@ -85,6 +86,7 @@ export class PurchaseOrdersController {
     @Inject(DRIZZLE) private readonly db: PostgresJsDatabase,
     @Inject(AuditService) private readonly audit: AuditService,
     @Inject(WebhookDispatcher) private readonly webhooks: WebhookDispatcher,
+    @Inject(SpecialOrdersService) private readonly specialOrders: SpecialOrdersService,
   ) {}
 
   @Get()
@@ -320,6 +322,17 @@ export class PurchaseOrdersController {
           quantityReceived: v.line.quantityReceived + v.qty,
         })
         .where(eq(schema.purchaseOrderLines.id, v.line.id));
+
+      // Special-order loop (G3): units bought FOR a customer commit to
+      // that customer the moment they hit the dock, and they get the
+      // "your item is in" email.
+      await this.specialOrders.handleReceipt(this.db, {
+        businessId: tenant.businessId!,
+        poLineId: v.line.id,
+        locationId: po.locationId,
+        quantity: v.qty,
+        actorUserId: actor.id ?? null,
+      });
       totalReceivedThisTx += v.qty;
     }
 

@@ -2,8 +2,10 @@
 
 import { useRouter } from 'next/navigation';
 import { useEffect, useState, type FormEvent } from 'react';
+import { Plus, Search } from 'lucide-react';
 import { api } from '@/lib/api';
 import { Money } from '@/components/money';
+import { Button, Card, EmptyState, Field, Input, PageHeader, Select } from '@/components/ui';
 
 interface Vendor {
   id: string;
@@ -140,61 +142,61 @@ export default function NewPurchaseOrderPage() {
 
   return (
     <div>
-      <h1 style={{ fontSize: 22, marginBottom: 16 }}>New purchase order</h1>
+      <PageHeader title="New purchase order" />
       <form onSubmit={submit} style={{ display: 'grid', gap: 16 }}>
-        <section style={card}>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+        <Card>
+          <div className="grid gap-3 sm:grid-cols-2">
             <Field label="Vendor">
-              <select
+              <Select
                 value={vendorId}
                 onChange={(e) => setVendorId(e.target.value)}
-                style={inputStyle}
+                style={{ width: '100%' }}
               >
                 {vendors.map((v) => (
                   <option key={v.id} value={v.id}>
                     {v.name}
                   </option>
                 ))}
-              </select>
+              </Select>
             </Field>
             <Field label="Location">
-              <select
+              <Select
                 value={locationId}
                 onChange={(e) => setLocationId(e.target.value)}
-                style={inputStyle}
+                style={{ width: '100%' }}
               >
                 {locations.map((l) => (
                   <option key={l.id} value={l.id}>
                     {l.name}
                   </option>
                 ))}
-              </select>
+              </Select>
             </Field>
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 8 }}>
+          <div style={{ marginTop: 8 }} className="grid gap-3 sm:grid-cols-2">
             <Field label="Expected delivery">
-              <input
+              <Input
                 type="date"
                 value={expectedAt}
                 onChange={(e) => setExpectedAt(e.target.value)}
-                style={inputStyle}
+                style={{ width: '100%' }}
               />
             </Field>
           </div>
-          <Field label="Notes">
+          <Field label="Notes" style={{ marginTop: 8 }}>
             <textarea
+              className="textarea"
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
               rows={2}
-              style={{ ...inputStyle, resize: 'vertical', marginTop: 8 }}
+              style={{ width: '100%', resize: 'vertical' }}
             />
           </Field>
-        </section>
+        </Card>
 
-        <section style={card}>
-          <h2 style={{ fontSize: 14, margin: 0, marginBottom: 8 }}>Add items</h2>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <input
+        <Card title="Add items">
+          <div className="flex flex-wrap gap-2">
+            <Input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               onKeyDown={(e) => {
@@ -204,11 +206,12 @@ export default function NewPurchaseOrderPage() {
                 }
               }}
               placeholder="Search by name, SKU, or barcode"
-              style={{ ...inputStyle, flex: 1 }}
+              className="min-w-[200px] flex-1"
             />
-            <button type="button" onClick={searchVariants} style={primaryBtn}>
+            <Button type="button" variant="primary" onClick={searchVariants}>
+              <Search size={14} />
               Search
-            </button>
+            </Button>
           </div>
           {results.length > 0 && (
             <div style={{ marginTop: 8 }}>
@@ -221,156 +224,107 @@ export default function NewPurchaseOrderPage() {
                     display: 'block',
                     width: '100%',
                     textAlign: 'left',
-                    padding: 6,
-                    background: '#fff',
-                    border: '1px solid #eee',
-                    borderRadius: 4,
+                    padding: '6px 8px',
+                    background: 'var(--surface)',
+                    border: '1px solid var(--border)',
+                    borderRadius: 'var(--radius-sm)',
                     marginBottom: 4,
                     cursor: 'pointer',
                     fontSize: 13,
+                    fontFamily: 'var(--font)',
+                    color: 'var(--text)',
                   }}
                 >
                   <strong>{r.productName}</strong> {r.variantName && <>— {r.variantName}</>}{' '}
-                  <span style={{ color: '#666' }}>{r.sku ?? '—'}</span>
+                  <span style={{ color: 'var(--text-secondary)' }}>{r.sku ?? '—'}</span>
                 </button>
               ))}
             </div>
           )}
-        </section>
+        </Card>
 
-        <section style={card}>
-          <h2 style={{ fontSize: 14, margin: 0, marginBottom: 12 }}>Lines</h2>
+        <Card title="Lines">
           {lines.length === 0 ? (
-            <p style={{ color: '#888', fontSize: 13 }}>No lines yet.</p>
+            <EmptyState>No lines yet. Search for an item above to add it to the order.</EmptyState>
           ) : (
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-              <thead>
-                <tr>
-                  <Th>Item</Th>
-                  <Th>Qty</Th>
-                  <Th>Unit cost ($)</Th>
-                  <Th align="right">Line total</Th>
-                  <Th>&nbsp;</Th>
-                </tr>
-              </thead>
-              <tbody>
-                {lines.map((l, i) => {
-                  const lineTotal =
-                    Math.round(Number(l.unitCostStr) * 100) * Number(l.quantity || 0);
-                  return (
-                    <tr key={l.variantId} style={{ borderBottom: '1px solid #f3f3f3' }}>
-                      <Td>{l.description}</Td>
-                      <Td>
-                        <input
-                          type="number"
-                          min={1}
-                          value={l.quantity}
-                          onChange={(e) => setLine(i, { quantity: Number(e.target.value) })}
-                          style={{ ...inputStyle, width: 70 }}
-                        />
-                      </Td>
-                      <Td>
-                        <input
-                          type="number"
-                          step="0.01"
-                          min={0}
-                          value={l.unitCostStr}
-                          onChange={(e) => setLine(i, { unitCostStr: e.target.value })}
-                          style={{ ...inputStyle, width: 100 }}
-                        />
-                      </Td>
-                      <Td align="right">
-                        <Money cents={lineTotal} />
-                      </Td>
-                      <Td>
-                        <button type="button" onClick={() => removeLine(i)} style={linkBtnDanger}>
-                          Remove
-                        </button>
-                      </Td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-              <tfoot>
-                <tr>
-                  <td colSpan={3} style={{ padding: 8, fontWeight: 600, textAlign: 'right' }}>
-                    Subtotal
-                  </td>
-                  <td style={{ padding: 8, fontWeight: 600, textAlign: 'right' }}>
-                    <Money cents={subtotalCents} />
-                  </td>
-                  <td />
-                </tr>
-              </tfoot>
-            </table>
+            <div className="overflow-x-auto">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Item</th>
+                    <th>Qty</th>
+                    <th>Unit cost ($)</th>
+                    <th className="num">Line total</th>
+                    <th>&nbsp;</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {lines.map((l, i) => {
+                    const lineTotal =
+                      Math.round(Number(l.unitCostStr) * 100) * Number(l.quantity || 0);
+                    return (
+                      <tr key={l.variantId}>
+                        <td>{l.description}</td>
+                        <td>
+                          <Input
+                            type="number"
+                            min={1}
+                            value={l.quantity}
+                            onChange={(e) => setLine(i, { quantity: Number(e.target.value) })}
+                            style={{ width: 70 }}
+                          />
+                        </td>
+                        <td>
+                          <Input
+                            type="number"
+                            step="0.01"
+                            min={0}
+                            value={l.unitCostStr}
+                            onChange={(e) => setLine(i, { unitCostStr: e.target.value })}
+                            style={{ width: 100 }}
+                          />
+                        </td>
+                        <td className="num">
+                          <Money cents={lineTotal} />
+                        </td>
+                        <td style={{ textAlign: 'right' }}>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="danger"
+                            onClick={() => removeLine(i)}
+                          >
+                            Remove
+                          </Button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+                <tfoot>
+                  <tr>
+                    <td colSpan={3} style={{ padding: 8, fontWeight: 600, textAlign: 'right' }}>
+                      Subtotal
+                    </td>
+                    <td className="num" style={{ padding: 8, fontWeight: 600 }}>
+                      <Money cents={subtotalCents} />
+                    </td>
+                    <td />
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
           )}
-        </section>
+        </Card>
 
-        {error && <p style={{ color: '#b00' }}>{error}</p>}
+        {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
         <div>
-          <button type="submit" disabled={saving} style={primaryBtn}>
+          <Button type="submit" variant="primary" disabled={saving}>
+            <Plus size={14} />
             {saving ? 'Saving…' : 'Place order'}
-          </button>
+          </Button>
         </div>
       </form>
     </div>
   );
-}
-
-const card = {
-  background: '#fff',
-  padding: 16,
-  borderRadius: 6,
-  boxShadow: '0 1px 2px rgba(0,0,0,0.06)',
-};
-const inputStyle = {
-  padding: '6px 8px',
-  border: '1px solid #ccc',
-  borderRadius: 4,
-  fontSize: 13,
-  width: '100%',
-} as const;
-const primaryBtn = {
-  padding: '8px 14px',
-  background: '#111',
-  color: '#fff',
-  border: 'none',
-  borderRadius: 4,
-  cursor: 'pointer',
-  fontSize: 13,
-} as const;
-const linkBtnDanger = {
-  background: 'none',
-  border: 'none',
-  color: '#b00',
-  textDecoration: 'underline',
-  cursor: 'pointer',
-  fontSize: 12,
-  padding: 0,
-} as const;
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12 }}>
-      <span style={{ color: '#555' }}>{label}</span>
-      {children}
-    </label>
-  );
-}
-function Th({ children, align }: { children: React.ReactNode; align?: 'right' | 'left' }) {
-  return (
-    <th
-      style={{
-        padding: '6px 4px',
-        fontWeight: 600,
-        textAlign: align ?? 'left',
-        borderBottom: '1px solid #ddd',
-      }}
-    >
-      {children}
-    </th>
-  );
-}
-function Td({ children, align }: { children: React.ReactNode; align?: 'right' | 'left' }) {
-  return <td style={{ padding: '6px 4px', textAlign: align ?? 'left' }}>{children}</td>;
 }

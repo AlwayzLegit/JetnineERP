@@ -221,3 +221,91 @@ export type OrderStatus =
 export function isLiveOrderStatus(status: string): boolean {
   return (LIVE_ORDER_STATUSES as readonly string[]).includes(status);
 }
+
+// ============================================================================
+// Fulfillment (Day 3)
+// ============================================================================
+
+export interface FulfillableStockLine {
+  id: string;
+  variantId: string | null;
+  quantity: number;
+  qtyReserved: number;
+  qtyFulfilled: number;
+}
+
+export interface FulfillmentRequest {
+  orderLineId: string;
+  quantity: number;
+}
+
+export interface FulfillmentStep {
+  orderLineId: string;
+  variantId: string | null;
+  /** Units leaving the building now. Always > 0. */
+  quantity: number;
+  /**
+   * How many of those units were counted in `reserved`. On-hand drops by
+   * `quantity` regardless; `reserved` only drops by this — fulfilling a
+   * never-reserved unit (a shortfall the store covered anyway) must not
+   * drive the reserved counter negative for everyone else.
+   */
+  fromReserved: number;
+}
+
+/**
+ * Validate and shape a fulfillment: which units leave, per line, and how
+ * much of each line's reservation they consume. Throws (via the returned
+ * error string) on nothing at all — validation is data-driven so the
+ * caller can turn problems into 400s with the line named.
+ */
+export function planFulfillment(
+  lines: readonly FulfillableStockLine[],
+  requests: readonly FulfillmentRequest[],
+): { steps: FulfillmentStep[]; errors: string[] } {
+  const byId = new Map(lines.map((l) => [l.id, l]));
+  const errors: string[] = [];
+  const steps: FulfillmentStep[] = [];
+  const seen = new Set<string>();
+  for (const req of requests) {
+    const line = byId.get(req.orderLineId);
+    if (!line) {
+      errors.push(`line ${req.orderLineId} is not on this order`);
+      continue;
+    }
+    if (seen.has(req.orderLineId)) {
+      errors.push(`line ${req.orderLineId} appears twice in the request`);
+      continue;
+    }
+    seen.add(req.orderLineId);
+    if (!Number.isInteger(req.quantity) || req.quantity <= 0) {
+      errors.push(`line ${req.orderLineId}: quantity must be a positive integer`);
+      continue;
+    }
+    const remaining = line.quantity - line.qtyFulfilled;
+    if (req.quantity > remaining) {
+      errors.push(
+        `line ${req.orderLineId}: ${req.quantity} requested but only ${remaining} unfulfilled`,
+      );
+      continue;
+    }
+    steps.push({
+      orderLineId: line.id,
+      variantId: line.variantId,
+      quantity: req.quantity,
+      fromReserved: Math.min(line.qtyReserved, req.quantity),
+    });
+  }
+  return { steps, errors };
+}
+
+/**
+ * Default fulfillment request: everything still owed on every line.
+ * The single-delivery common case ("bring it all") without the caller
+ * enumerating lines.
+ */
+export function remainingFulfillment(lines: readonly FulfillableStockLine[]): FulfillmentRequest[] {
+  return lines
+    .filter((l) => l.quantity - l.qtyFulfilled > 0)
+    .map((l) => ({ orderLineId: l.id, quantity: l.quantity - l.qtyFulfilled }));
+}

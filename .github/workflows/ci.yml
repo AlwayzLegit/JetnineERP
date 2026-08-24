@@ -52,6 +52,12 @@ jobs:
       CUSTOMERS_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/jetnine_customers
       SALES_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/jetnine_sales
       ORDERS_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/jetnine_orders
+      DELIVERIES_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/jetnine_deliveries
+      SPECIALS_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/jetnine_specials
+      MONEY_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/jetnine_money
+      SERVICE_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/jetnine_service
+      IMPORT_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/jetnine_import
+      INTEGRATIONS_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/jetnine_integrations
       REPORTS_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/jetnine_reports
       BILLING_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/jetnine_billing
       STRIPE_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/jetnine_stripe
@@ -94,6 +100,12 @@ jobs:
           createdb -h localhost -U postgres jetnine_customers
           createdb -h localhost -U postgres jetnine_sales
           createdb -h localhost -U postgres jetnine_orders
+          createdb -h localhost -U postgres jetnine_deliveries
+          createdb -h localhost -U postgres jetnine_specials
+          createdb -h localhost -U postgres jetnine_money
+          createdb -h localhost -U postgres jetnine_service
+          createdb -h localhost -U postgres jetnine_import
+          createdb -h localhost -U postgres jetnine_integrations
           createdb -h localhost -U postgres jetnine_reports
           createdb -h localhost -U postgres jetnine_billing
           createdb -h localhost -U postgres jetnine_stripe

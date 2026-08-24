@@ -1,7 +1,19 @@
 'use client';
 
 import Link from 'next/link';
+import { toast } from 'sonner';
 import { useEffect, useState, type FormEvent } from 'react';
+import {
+  Button,
+  Card,
+  EmptyState,
+  Field,
+  Input,
+  LoadingRows,
+  PageHeader,
+  Select,
+  StatusBadge,
+} from '@/components/ui';
 import { api } from '@/lib/api';
 import { Money } from '@/components/money';
 
@@ -79,7 +91,7 @@ export default function DiscountsPage() {
       });
       void load();
     } catch (err) {
-      alert(err instanceof Error ? err.message : String(err));
+      toast.error(err instanceof Error ? err.message : String(err));
     }
   }
 
@@ -93,159 +105,174 @@ export default function DiscountsPage() {
       await api(`/v1/business/discount-codes/${row.id}`, { method: 'DELETE' });
       void load();
     } catch (err) {
-      alert(err instanceof Error ? err.message : String(err));
+      toast.error(err instanceof Error ? err.message : String(err));
     }
   }
 
   return (
     <div>
-      <p style={{ marginBottom: 12 }}>
+      <p style={{ margin: '0 0 12px' }}>
         <Link href="/settings">← Settings</Link>
       </p>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
-        <h1 style={{ fontSize: 22, margin: 0 }}>Discount codes</h1>
-        <button
-          onClick={() => setCreating((v) => !v)}
-          style={{ marginLeft: 'auto', ...primaryBtn }}
-        >
-          {creating ? 'Cancel' : '+ New code'}
-        </button>
-      </div>
+      <PageHeader
+        title="Discount codes"
+        sub="Codes apply at the POS as an order-level discount. Cashiers enter the code on the payment screen; the system validates window, limits, and minimum subtotal before the sale completes."
+        actions={
+          <Button
+            variant={creating ? 'secondary' : 'primary'}
+            onClick={() => setCreating((v) => !v)}
+          >
+            {creating ? 'Cancel' : '+ New code'}
+          </Button>
+        }
+      />
 
-      <p style={{ color: '#666', fontSize: 13, marginBottom: 16 }}>
-        Codes apply at the POS as an order-level discount. Cashiers enter the code on the payment
-        screen; the system validates window, limits, and minimum subtotal before the sale completes.
-      </p>
-
-      {error && <p style={{ color: '#b00' }}>{error}</p>}
+      {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
 
       {creating && (
-        <form onSubmit={create} style={{ ...card, display: 'grid', gap: 8, maxWidth: 720 }}>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-            <Field label="Code *">
-              <input
-                name="code"
+        <Card style={{ maxWidth: 720, marginBottom: 16 }}>
+          <form onSubmit={create} style={{ display: 'grid', gap: 8 }}>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <Field label="Code *">
+                <Input
+                  name="code"
+                  required
+                  placeholder="SAVE15"
+                  style={{ width: '100%', textTransform: 'uppercase' }}
+                />
+              </Field>
+              <Field label="Kind *">
+                <Select
+                  value={kind}
+                  onChange={(e) => setKind(e.target.value as 'percent' | 'fixed')}
+                  style={{ width: '100%' }}
+                >
+                  <option value="percent">% off</option>
+                  <option value="fixed">$ off</option>
+                </Select>
+              </Field>
+            </div>
+            <Field label={kind === 'percent' ? 'Percent (e.g. 15 = 15%) *' : 'Amount in dollars *'}>
+              <Input
+                name="value"
+                type="number"
+                step="0.01"
+                min={0.01}
                 required
-                placeholder="SAVE15"
-                style={{ ...inputStyle, textTransform: 'uppercase' }}
+                style={{ width: '100%' }}
               />
             </Field>
-            <Field label="Kind *">
-              <select
-                value={kind}
-                onChange={(e) => setKind(e.target.value as 'percent' | 'fixed')}
-                style={inputStyle}
-              >
-                <option value="percent">% off</option>
-                <option value="fixed">$ off</option>
-              </select>
+            <Field label="Description (optional)">
+              <Input name="description" style={{ width: '100%' }} />
             </Field>
-          </div>
-          <Field label={kind === 'percent' ? 'Percent (e.g. 15 = 15%) *' : 'Amount in dollars *'}>
-            <input name="value" type="number" step="0.01" min={0.01} required style={inputStyle} />
-          </Field>
-          <Field label="Description (optional)">
-            <input name="description" style={inputStyle} />
-          </Field>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-            <Field label="Starts (optional)">
-              <input name="startsAt" type="datetime-local" style={inputStyle} />
-            </Field>
-            <Field label="Ends (optional)">
-              <input name="endsAt" type="datetime-local" style={inputStyle} />
-            </Field>
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
-            <Field label="Total uses (optional)">
-              <input name="usageLimit" type="number" min={1} style={inputStyle} />
-            </Field>
-            <Field label="Uses per customer (optional)">
-              <input name="perCustomerLimit" type="number" min={1} style={inputStyle} />
-            </Field>
-            <Field label="Min subtotal $ (optional)">
-              <input name="minSubtotal" type="number" step="0.01" min={0} style={inputStyle} />
-            </Field>
-          </div>
-          <button type="submit" style={primaryBtn}>
-            Create code
-          </button>
-        </form>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <Field label="Starts (optional)">
+                <Input name="startsAt" type="datetime-local" style={{ width: '100%' }} />
+              </Field>
+              <Field label="Ends (optional)">
+                <Input name="endsAt" type="datetime-local" style={{ width: '100%' }} />
+              </Field>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+              <Field label="Total uses (optional)">
+                <Input name="usageLimit" type="number" min={1} style={{ width: '100%' }} />
+              </Field>
+              <Field label="Uses per customer (optional)">
+                <Input name="perCustomerLimit" type="number" min={1} style={{ width: '100%' }} />
+              </Field>
+              <Field label="Min subtotal $ (optional)">
+                <Input
+                  name="minSubtotal"
+                  type="number"
+                  step="0.01"
+                  min={0}
+                  style={{ width: '100%' }}
+                />
+              </Field>
+            </div>
+            <Button type="submit" variant="primary" style={{ width: 'fit-content' }}>
+              Create code
+            </Button>
+          </form>
+        </Card>
       )}
 
-      <div style={card}>
+      <Card>
         {rows == null ? (
-          <p style={{ color: '#888' }}>Loading…</p>
+          <LoadingRows />
         ) : rows.length === 0 ? (
-          <p style={{ color: '#888' }}>No discount codes yet.</p>
+          <EmptyState>No discount codes yet.</EmptyState>
         ) : (
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-            <thead>
-              <tr style={{ textAlign: 'left', borderBottom: '1px solid #ddd' }}>
-                <Th>Code</Th>
-                <Th>Discount</Th>
-                <Th>Window</Th>
-                <Th>Used</Th>
-                <Th>Status</Th>
-                <Th>&nbsp;</Th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => (
-                <tr key={r.id} style={{ borderBottom: '1px solid #f3f3f3' }}>
-                  <Td>
-                    <code>{r.code}</code>
-                    {r.description && (
-                      <div style={{ color: '#666', fontSize: 12 }}>{r.description}</div>
-                    )}
-                  </Td>
-                  <Td>
-                    {r.kind === 'percent' ? (
-                      `${(r.value / 100).toFixed(2)}%`
-                    ) : (
-                      <Money cents={r.value} />
-                    )}
-                    {r.minSubtotalCents != null && (
-                      <div style={{ color: '#666', fontSize: 12 }}>
-                        min <Money cents={r.minSubtotalCents} />
-                      </div>
-                    )}
-                  </Td>
-                  <Td>
-                    <div style={{ fontSize: 12 }}>
-                      {r.startsAt ? new Date(r.startsAt).toLocaleDateString() : '—'} →{' '}
-                      {r.endsAt ? new Date(r.endsAt).toLocaleDateString() : '∞'}
-                    </div>
-                  </Td>
-                  <Td>
-                    {r.usageCount}
-                    {r.usageLimit != null && ` / ${r.usageLimit}`}
-                    {r.perCustomerLimit != null && (
-                      <div style={{ color: '#666', fontSize: 12 }}>
-                        {r.perCustomerLimit}/customer
-                      </div>
-                    )}
-                  </Td>
-                  <Td>
-                    {r.isActive ? (
-                      <span style={{ color: '#070' }}>active</span>
-                    ) : (
-                      <span style={{ color: '#888' }}>inactive</span>
-                    )}
-                  </Td>
-                  <Td>
-                    <button onClick={() => toggleActive(r)} style={linkBtn}>
-                      {r.isActive ? 'Disable' : 'Enable'}
-                    </button>{' '}
-                    <button onClick={() => destroy(r)} style={linkBtnDanger}>
-                      Delete
-                    </button>
-                  </Td>
+          <div style={{ overflowX: 'auto' }}>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Code</th>
+                  <th>Discount</th>
+                  <th>Window</th>
+                  <th>Used</th>
+                  <th>Status</th>
+                  <th>&nbsp;</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr key={r.id} style={{ verticalAlign: 'top' }}>
+                    <td>
+                      <code>{r.code}</code>
+                      {r.description && (
+                        <div style={{ color: 'var(--text-secondary)', fontSize: 12 }}>
+                          {r.description}
+                        </div>
+                      )}
+                    </td>
+                    <td>
+                      {r.kind === 'percent' ? (
+                        `${(r.value / 100).toFixed(2)}%`
+                      ) : (
+                        <Money cents={r.value} />
+                      )}
+                      {r.minSubtotalCents != null && (
+                        <div style={{ color: 'var(--text-secondary)', fontSize: 12 }}>
+                          min <Money cents={r.minSubtotalCents} />
+                        </div>
+                      )}
+                    </td>
+                    <td>
+                      <div style={{ fontSize: 12 }}>
+                        {r.startsAt ? new Date(r.startsAt).toLocaleDateString() : '—'} →{' '}
+                        {r.endsAt ? new Date(r.endsAt).toLocaleDateString() : '∞'}
+                      </div>
+                    </td>
+                    <td>
+                      {r.usageCount}
+                      {r.usageLimit != null && ` / ${r.usageLimit}`}
+                      {r.perCustomerLimit != null && (
+                        <div style={{ color: 'var(--text-secondary)', fontSize: 12 }}>
+                          {r.perCustomerLimit}/customer
+                        </div>
+                      )}
+                    </td>
+                    <td>
+                      <StatusBadge status={r.isActive ? 'active' : 'inactive'} />
+                    </td>
+                    <td>
+                      <span style={{ display: 'inline-flex', gap: 6 }}>
+                        <Button size="sm" variant="ghost" onClick={() => toggleActive(r)}>
+                          {r.isActive ? 'Disable' : 'Enable'}
+                        </Button>
+                        <Button size="sm" variant="danger" onClick={() => destroy(r)}>
+                          Delete
+                        </Button>
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
-      </div>
+      </Card>
     </div>
   );
 }
@@ -262,61 +289,4 @@ function parseDollarsOrNull(raw: FormDataEntryValue | null): number | null {
   const n = Number(s);
   if (!Number.isFinite(n) || n < 0) return null;
   return Math.round(n * 100);
-}
-
-const card = {
-  background: '#fff',
-  padding: 16,
-  borderRadius: 6,
-  boxShadow: '0 1px 2px rgba(0,0,0,0.06)',
-  marginBottom: 16,
-};
-const inputStyle = {
-  padding: '6px 8px',
-  border: '1px solid #ccc',
-  borderRadius: 4,
-  fontSize: 13,
-  width: '100%',
-} as const;
-const primaryBtn = {
-  padding: '6px 12px',
-  background: '#111',
-  color: '#fff',
-  border: 'none',
-  borderRadius: 4,
-  cursor: 'pointer',
-  fontSize: 13,
-} as const;
-const linkBtn = {
-  background: 'none',
-  border: 'none',
-  color: '#444',
-  textDecoration: 'underline',
-  cursor: 'pointer',
-  fontSize: 12,
-  padding: 0,
-} as const;
-const linkBtnDanger = {
-  background: 'none',
-  border: 'none',
-  color: '#b00',
-  textDecoration: 'underline',
-  cursor: 'pointer',
-  fontSize: 12,
-  padding: 0,
-} as const;
-
-function Th({ children }: { children: React.ReactNode }) {
-  return <th style={{ padding: '8px 6px', fontWeight: 600 }}>{children}</th>;
-}
-function Td({ children }: { children: React.ReactNode }) {
-  return <td style={{ padding: '8px 6px', verticalAlign: 'top' }}>{children}</td>;
-}
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12 }}>
-      <span style={{ color: '#555' }}>{label}</span>
-      {children}
-    </label>
-  );
 }

@@ -78,6 +78,8 @@ export const memberships = pgTable(
     roleId: uuid('role_id')
       .notNull()
       .references(() => roles.id, { onDelete: 'restrict' }),
+    /** G5: which commission plan pays this member; null = no commission. */
+    commissionPlanId: uuid('commission_plan_id'),
     // 'active' | 'invited' | 'disabled'
     status: text('status').notNull(),
     invitedByUserId: uuid('invited_by').references(() => users.id, { onDelete: 'set null' }),

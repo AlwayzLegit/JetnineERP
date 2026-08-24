@@ -1,6 +1,6 @@
 import { Controller, ForbiddenException, Get, Inject, Query, Res } from '@nestjs/common';
 import type { Response } from 'express';
-import { and, desc, eq, gte, lt, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, isNull, lt, sql } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { schema } from '@jetnine/db';
 import { CurrentTenant } from '../auth/current-user.decorator';
@@ -28,12 +28,20 @@ interface PaymentMethodRow {
   amountCents: number;
   count: number;
 }
+interface OrderPaymentsDayRow {
+  day: string;
+  amountCents: number;
+  count: number;
+}
 interface DailyReport {
   start: string;
   end: string;
   byDay: DailyTotalRow[];
   byAssociate: AssociateTotalRow[];
+  /** Tender mix across POS sales AND order deposits/balances (D2). */
   byPaymentMethod: PaymentMethodRow[];
+  /** Money taken against sales orders per day — deposits and balances. */
+  orderPaymentsByDay: OrderPaymentsDayRow[];
 }
 
 interface ProductRow {
@@ -118,7 +126,7 @@ export class ReportsController {
       .groupBy(schema.sales.associateUserId, schema.users.email)
       .orderBy(desc(sql`COALESCE(SUM(${schema.sales.totalCents}), 0)`));
 
-    const byPaymentMethod = await this.db
+    const salePayments = await this.db
       .select({
         method: schema.payments.method,
         amountCents: sql<number>`COALESCE(SUM(${schema.payments.amountCents}), 0)::int`,
@@ -127,8 +135,51 @@ export class ReportsController {
       .from(schema.payments)
       .innerJoin(schema.sales, eq(schema.sales.id, schema.payments.saleId))
       .where(and(dateRange, includedStatuses, eq(schema.payments.status, 'succeeded')))
-      .groupBy(schema.payments.method)
-      .orderBy(desc(sql`COALESCE(SUM(${schema.payments.amountCents}), 0)`));
+      .groupBy(schema.payments.method);
+
+    // Order deposits/balances join the tender mix (D2). Received-at is the
+    // payment's own timestamp — an order can live for weeks, its money
+    // lands the day it is taken. Imported legacy orders excluded per D8.
+    const orderPaymentWindow = and(
+      gte(schema.payments.createdAt, startTs),
+      lt(schema.payments.createdAt, endTsExclusive),
+      eq(schema.payments.status, 'succeeded'),
+      isNull(schema.orders.importedAt),
+    );
+    const orderPayments = await this.db
+      .select({
+        method: schema.payments.method,
+        amountCents: sql<number>`COALESCE(SUM(${schema.payments.amountCents}), 0)::int`,
+        count: sql<number>`COUNT(*)::int`,
+      })
+      .from(schema.payments)
+      .innerJoin(schema.orders, eq(schema.orders.id, schema.payments.orderId))
+      .where(orderPaymentWindow)
+      .groupBy(schema.payments.method);
+
+    const methodTotals = new Map<string, { amountCents: number; count: number }>();
+    for (const row of [...salePayments, ...orderPayments]) {
+      const cur = methodTotals.get(row.method) ?? { amountCents: 0, count: 0 };
+      cur.amountCents += row.amountCents;
+      cur.count += row.count;
+      methodTotals.set(row.method, cur);
+    }
+    const byPaymentMethod = [...methodTotals.entries()]
+      .map(([method, v]) => ({ method, ...v }))
+      .sort((a, b) => b.amountCents - a.amountCents);
+
+    const orderPayDayExpr = sql<string>`to_char(${schema.payments.createdAt} AT TIME ZONE 'UTC', 'YYYY-MM-DD')`;
+    const orderPaymentsByDay = await this.db
+      .select({
+        day: orderPayDayExpr,
+        amountCents: sql<number>`COALESCE(SUM(${schema.payments.amountCents}), 0)::int`,
+        count: sql<number>`COUNT(*)::int`,
+      })
+      .from(schema.payments)
+      .innerJoin(schema.orders, eq(schema.orders.id, schema.payments.orderId))
+      .where(orderPaymentWindow)
+      .groupBy(orderPayDayExpr)
+      .orderBy(orderPayDayExpr);
 
     const report: DailyReport = {
       start: startDate,
@@ -136,6 +187,7 @@ export class ReportsController {
       byDay,
       byAssociate,
       byPaymentMethod,
+      orderPaymentsByDay,
     };
     if (format === 'csv') {
       requireExport(tenant);
@@ -304,6 +356,110 @@ export class ReportsController {
       return;
     }
     return filtered;
+  }
+
+  /**
+   * Accounts receivable (G8-lite): every live or completed document that
+   * still has money owing, bucketed by age. Quotes owe nothing; imported
+   * docs are included — their balances are real even if their history
+   * came from STORIS.
+   */
+  @Get('ar')
+  @RequirePermission('reports.financial.view')
+  async ar(@CurrentTenant() _tenant: RequestTenantContext): Promise<{
+    rows: {
+      customerId: string;
+      customerName: string | null;
+      documents: number;
+      balanceCents: number;
+      bucket0_30: number;
+      bucket31_60: number;
+      bucket61_90: number;
+      bucket90plus: number;
+    }[];
+    totalCents: number;
+  }> {
+    const orders = await this.db
+      .select({
+        id: schema.orders.id,
+        customerId: schema.orders.customerId,
+        totalCents: schema.orders.totalCents,
+        createdAt: schema.orders.createdAt,
+        status: schema.orders.status,
+      })
+      .from(schema.orders)
+      .where(sql`${schema.orders.status} NOT IN ('quote', 'cancelled')`);
+    const orderIds = orders.map((o) => o.id);
+    const paid = new Map<string, number>();
+    if (orderIds.length > 0) {
+      const pays = await this.db
+        .select({
+          orderId: schema.payments.orderId,
+          amount: sql<number>`COALESCE(SUM(${schema.payments.amountCents}), 0)::int`,
+        })
+        .from(schema.payments)
+        .where(
+          and(sql`${schema.payments.orderId} IS NOT NULL`, eq(schema.payments.status, 'succeeded')),
+        )
+        .groupBy(schema.payments.orderId);
+      for (const p of pays) if (p.orderId) paid.set(p.orderId, p.amount);
+    }
+
+    const byCustomer = new Map<
+      string,
+      {
+        documents: number;
+        balanceCents: number;
+        bucket0_30: number;
+        bucket31_60: number;
+        bucket61_90: number;
+        bucket90plus: number;
+      }
+    >();
+    const now = Date.now();
+    for (const o of orders) {
+      const balance = o.totalCents - (paid.get(o.id) ?? 0);
+      if (balance <= 0) continue;
+      const days = Math.floor((now - new Date(o.createdAt).getTime()) / 86_400_000);
+      const cur = byCustomer.get(o.customerId) ?? {
+        documents: 0,
+        balanceCents: 0,
+        bucket0_30: 0,
+        bucket31_60: 0,
+        bucket61_90: 0,
+        bucket90plus: 0,
+      };
+      cur.documents += 1;
+      cur.balanceCents += balance;
+      if (days <= 30) cur.bucket0_30 += balance;
+      else if (days <= 60) cur.bucket31_60 += balance;
+      else if (days <= 90) cur.bucket61_90 += balance;
+      else cur.bucket90plus += balance;
+      byCustomer.set(o.customerId, cur);
+    }
+
+    const customerIds = [...byCustomer.keys()];
+    const names = customerIds.length
+      ? await this.db
+          .select({
+            id: schema.customers.id,
+            firstName: schema.customers.firstName,
+            lastName: schema.customers.lastName,
+          })
+          .from(schema.customers)
+          .where(inArray(schema.customers.id, customerIds))
+      : [];
+    const nameBy = new Map(
+      names.map((c) => [c.id, [c.firstName, c.lastName].filter(Boolean).join(' ') || null]),
+    );
+    const rows = customerIds
+      .map((customerId) => ({
+        customerId,
+        customerName: nameBy.get(customerId) ?? null,
+        ...byCustomer.get(customerId)!,
+      }))
+      .sort((a, b) => b.balanceCents - a.balanceCents);
+    return { rows, totalCents: rows.reduce((s, r) => s + r.balanceCents, 0) };
   }
 }
 
