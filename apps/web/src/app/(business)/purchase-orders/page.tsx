@@ -135,7 +135,10 @@ export default function PurchaseOrdersPage() {
                   </Button>
                 ) : (
                   <span className="muted" style={{ fontSize: 12 }}>
-                    assign a vendor on the variant to draft automatically
+                    <Link href="/vendors" style={{ color: 'inherit' }}>
+                      create a vendor
+                    </Link>{' '}
+                    and assign it on the variant to draft automatically
                   </span>
                 )}
               </div>

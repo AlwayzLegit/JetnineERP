@@ -321,3 +321,22 @@ _(newest first — sessions append: date · day · what shipped · open flags)_
   truncated page) + entriesTruncated flag; segment tag filter is a subquery (no 65k-param
   blowup) and sinceDays capped at 3650; valuation rows/CSV/UI carry the location; dashboard
   reuses readActiveBusinessId; agency dead code removed.
+- **2026-08-24 — Browser-agent QA triage (14-flow staging run: 12 pass / 1 fail / 1 skip):**
+  fixes pushed to PR #27 for every finding. CSV exports no longer use `<a href>`
+  navigations (they 503'd through the proxy and failed silently) — all six report
+  export buttons download via in-page fetch → blob (`lib/download.ts`) with busy state
+  and an error toast. Vendors page existed but was unreachable: added Vendors to the
+  Catalog nav plus create-vendor links from the New PO empty dropdown and the reorder
+  "no preferred vendor" hint. POS now surfaces cash change: the payment forms pass
+  `changeDueCents` up, the Sale complete screen shows a "Change due" banner + totals
+  row, and the printed receipt gets a Change line (server still stores applied cash
+  only — change exists client-side by design). Campaign send confirm is an inline
+  arm/confirm step instead of a native `confirm()`. Public tracking advances to
+  "Ready / scheduled" as soon as a delivery/pickup date is booked. Z-report tenders
+  table shows a negative "refunds (all tenders)" row + reconciliation note — refunds
+  carry no tender method column, so per-method attribution is deferred (design
+  decision if drawer-level attribution is ever needed). Delivery calendar chips show
+  the customer's city. Logged-out shell flash fixed earlier the same day (AuthGate,
+  fail-open for offline POS). Earlier: Shopify/Woo/Wix connect dialog defaults its
+  landing location to a Warehouse-named location and explains the choice. Remaining
+  from the run: flow 14 (permissions) untested — needs a second non-owner login.

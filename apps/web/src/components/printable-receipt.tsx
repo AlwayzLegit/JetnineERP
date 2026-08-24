@@ -25,6 +25,12 @@ export interface ReceiptSale {
   totalCents: number;
   lines: ReceiptLine[];
   payments: ReceiptPayment[];
+  /**
+   * Cash change handed back at the register. The server never stores
+   * this (recorded cash is capped at the total), so it only exists on
+   * the just-completed sale — omit when reprinting from history.
+   */
+  changeDueCents?: number;
 }
 
 export interface ReceiptBusiness {
@@ -101,6 +107,12 @@ export function PrintableReceipt({
               <td className="r-amt">{formatMoney(p.amountCents)}</td>
             </tr>
           ))}
+          {(sale.changeDueCents ?? 0) > 0 && (
+            <tr className="r-pay">
+              <td>Change</td>
+              <td className="r-amt">{formatMoney(sale.changeDueCents!)}</td>
+            </tr>
+          )}
         </tbody>
       </table>
 
