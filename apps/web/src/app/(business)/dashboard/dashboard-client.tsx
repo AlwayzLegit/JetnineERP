@@ -8,6 +8,7 @@ import { Button, Card, EmptyState, LoadingRows, Skeleton } from '@/components/ui
 import { api } from '@/lib/api';
 import { signOut, useSession } from '@/lib/auth-client';
 import { Money } from '@/components/money';
+import { readActiveBusinessId } from '@/lib/offline';
 import { RevenueTrend, type TrendPoint } from './revenue-trend';
 
 interface ChecklistStep {
@@ -117,7 +118,7 @@ export default function DashboardClient() {
     // Open orders for the active business, via the membership overview.
     void api<AgencyOverview>('/v1/agency/overview')
       .then((res) => {
-        const activeId = readCookie('jetnine.active_business_id');
+        const activeId = readActiveBusinessId();
         const mine = res.businesses.find((b) => b.businessId === activeId);
         setOpenOrders(mine?.openOrdersCount ?? null);
       })
@@ -369,10 +370,4 @@ function ChecklistCard({ checklist }: { checklist: Checklist }) {
       </ol>
     </Card>
   );
-}
-
-function readCookie(name: string): string | null {
-  if (typeof document === 'undefined') return null;
-  const m = document.cookie.match(new RegExp(`(?:^|; )${name}=([^;]*)`));
-  return m ? decodeURIComponent(m[1]!) : null;
 }

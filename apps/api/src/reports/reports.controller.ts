@@ -85,6 +85,7 @@ interface CategoryRow {
 interface ValuationRow {
   variantId: string;
   locationId: string;
+  locationName: string | null;
   productName: string;
   variantName: string | null;
   sku: string | null;
@@ -489,6 +490,12 @@ export class ReportsController {
       .from(schema.payments)
       .leftJoin(schema.sales, eq(schema.sales.id, schema.payments.saleId))
       .leftJoin(schema.orders, eq(schema.orders.id, schema.payments.orderId))
+      // Service charges are the third payment parent (exactly one of
+      // sale/order/service per row). Without this join a location
+      // filter's COALESCE was NULL for them — every service payment
+      // silently vanished from the filtered Z — and D8's imported
+      // exclusion could never apply to service documents.
+      .leftJoin(schema.serviceOrders, eq(schema.serviceOrders.id, schema.payments.serviceOrderId))
       .where(
         and(
           gte(schema.payments.createdAt, dayStart),
@@ -496,8 +503,9 @@ export class ReportsController {
           eq(schema.payments.status, 'succeeded'),
           isNull(schema.sales.importedAt),
           isNull(schema.orders.importedAt),
+          isNull(schema.serviceOrders.importedAt),
           locationId
-            ? sql`COALESCE(${schema.sales.locationId}, ${schema.orders.locationId}) = ${locationId}`
+            ? sql`COALESCE(${schema.sales.locationId}, ${schema.orders.locationId}, ${schema.serviceOrders.locationId}) = ${locationId}`
             : undefined,
         ),
       )
@@ -638,6 +646,7 @@ export class ReportsController {
       .select({
         variantId: schema.inventoryLevels.variantId,
         locationId: schema.inventoryLevels.locationId,
+        locationName: schema.locations.name,
         productName: schema.products.name,
         variantName: schema.productVariants.name,
         sku: schema.productVariants.sku,
@@ -651,6 +660,7 @@ export class ReportsController {
         eq(schema.productVariants.id, schema.inventoryLevels.variantId),
       )
       .innerJoin(schema.products, eq(schema.products.id, schema.productVariants.productId))
+      .leftJoin(schema.locations, eq(schema.locations.id, schema.inventoryLevels.locationId))
       .where(locationId ? eq(schema.inventoryLevels.locationId, locationId) : undefined)
       .orderBy(schema.products.name, schema.productVariants.sku);
 
@@ -672,6 +682,7 @@ export class ReportsController {
             'product',
             'variant',
             'sku',
+            'location',
             'on_hand',
             'cost_cents',
             'cost_value_cents',
@@ -681,6 +692,7 @@ export class ReportsController {
             r.productName,
             r.variantName,
             r.sku,
+            r.locationName ?? r.locationId,
             r.onHand,
             r.costCents,
             r.costValueCents,

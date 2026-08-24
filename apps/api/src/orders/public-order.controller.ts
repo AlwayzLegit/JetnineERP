@@ -1,5 +1,5 @@
 import { Controller, Get, Inject, NotFoundException, Param } from '@nestjs/common';
-import { asc, eq } from 'drizzle-orm';
+import { and, asc, eq, inArray } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { schema } from '@jetnine/db';
 import { DRIZZLE } from '../database/database.module';
@@ -88,11 +88,17 @@ export class PublicOrderController {
       .where(eq(schema.payments.orderId, order.id));
     const paid = paidCents(payments);
 
-    // The next scheduled delivery, if any.
+    // The next ACTIVE delivery — cancelled/failed/completed attempts
+    // must not surface a stale (possibly past) date to the customer.
     const [delivery] = await this.db
       .select({ scheduledDate: schema.deliveries.scheduledDate })
       .from(schema.deliveries)
-      .where(eq(schema.deliveries.orderId, order.id))
+      .where(
+        and(
+          eq(schema.deliveries.orderId, order.id),
+          inArray(schema.deliveries.status, ['scheduled', 'loaded', 'out_for_delivery']),
+        ),
+      )
       .orderBy(asc(schema.deliveries.scheduledDate))
       .limit(1);
 

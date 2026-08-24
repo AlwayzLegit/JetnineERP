@@ -16,7 +16,7 @@ import { schema } from '@jetnine/db';
 import { AuditService } from '../audit/audit.service';
 import { CurrentTenant } from '../auth/current-user.decorator';
 import { CurrentUser, type CurrentUserPayload } from '../auth/current-user.decorator';
-import { DRIZZLE } from '../database/database.module';
+import { DRIZZLE, ROOT_DRIZZLE } from '../database/database.module';
 import { EMAIL_TRANSPORT, type EmailTransport } from '../email/email.service';
 import { RequirePermission, TenantScoped } from '../tenancy/decorators';
 import type { RequestTenantContext } from '../tenancy/request-context';
@@ -53,6 +53,14 @@ interface CampaignBody {
 export class MarketingController {
   constructor(
     @Inject(DRIZZLE) private readonly db: PostgresJsDatabase,
+    /**
+     * The sent-flip must be durable BEFORE the first email leaves: the
+     * request-scoped RLS transaction only commits after the handler
+     * returns, so writing 'sent' through the tenant tx would roll back
+     * on a mid-send crash and a retry would double-blast everyone. The
+     * root pool autocommits; the row was already tenant-verified above.
+     */
+    @Inject(ROOT_DRIZZLE) private readonly rootDb: PostgresJsDatabase,
     @Inject(AuditService) private readonly audit: AuditService,
     @Inject(EMAIL_TRANSPORT) private readonly email: EmailTransport,
     @Inject(WebhookDispatcher) private readonly webhooks: WebhookDispatcher,
@@ -208,10 +216,11 @@ export class MarketingController {
     const members = await this.resolveMembers(segment.filterJson as SegmentFilter);
     const recipients = members.filter((m): m is typeof m & { email: string } => Boolean(m.email));
 
-    // Mark sent BEFORE the send loop: if the process dies mid-send we
-    // must fail toward "some people missed an email", never toward a
-    // re-send double-blasting everyone.
-    const [updated] = await this.db
+    // Mark sent BEFORE the send loop — via the ROOT pool so it commits
+    // immediately, not when the request's RLS transaction does. If the
+    // process dies mid-send we must fail toward "some people missed an
+    // email", never toward a re-send double-blasting everyone.
+    const [updated] = await this.rootDb
       .update(schema.campaigns)
       .set({
         status: 'sent',
@@ -289,8 +298,10 @@ export class MarketingController {
       }
     }
     if (filter.sinceDays !== undefined) {
-      if (!Number.isInteger(filter.sinceDays) || filter.sinceDays < 1) {
-        throw new BadRequestException('filter.sinceDays must be a positive integer');
+      // Cap at ~10 years: beyond that the cutoff arithmetic overflows
+      // the JS Date range and the stored segment 500s forever.
+      if (!Number.isInteger(filter.sinceDays) || filter.sinceDays < 1 || filter.sinceDays > 3650) {
+        throw new BadRequestException('filter.sinceDays must be an integer between 1 and 3650');
       }
       out.sinceDays = filter.sinceDays;
     }
@@ -304,13 +315,18 @@ export class MarketingController {
       conditions.push(gte(schema.customers.createdAt, cutoff));
     }
     if (filter.tagIds && filter.tagIds.length > 0) {
-      const tagged = await this.db
-        .selectDistinct({ customerId: schema.customerTagLinks.customerId })
-        .from(schema.customerTagLinks)
-        .where(inArray(schema.customerTagLinks.tagId, filter.tagIds));
-      const ids = tagged.map((t) => t.customerId);
-      if (ids.length === 0) return [];
-      conditions.push(inArray(schema.customers.id, ids));
+      // Subquery, not a materialized id list: a big tag would otherwise
+      // ship tens of thousands of bind parameters (postgres caps at
+      // ~65k) just to filter customers we're about to read anyway.
+      conditions.push(
+        inArray(
+          schema.customers.id,
+          this.db
+            .select({ customerId: schema.customerTagLinks.customerId })
+            .from(schema.customerTagLinks)
+            .where(inArray(schema.customerTagLinks.tagId, filter.tagIds)),
+        ),
+      );
     }
     return this.db
       .select({

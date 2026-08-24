@@ -312,3 +312,12 @@ _(newest first — sessions append: date · day · what shipped · open flags)_
   accruals/reversals and pending/approved/paid) + the first Commissions page
   (Insights nav): monthly by-associate summary, printable per-associate statement,
   approve/mark-paid payroll actions. money.int.spec.ts 9→12 tests.
+- **2026-08-24 — Post-checkpoint review fixes (self code-review of PR #27, 10 findings):**
+  campaign sent-flip moved to the root pool so it commits before the mail loop (the RLS
+  tx would have rolled it back on a crash → double-blast); Z-report tender mix now joins
+  service_orders (location filter dropped every service payment; D8 exclusion now applies);
+  public tracking shows only the next ACTIVE delivery; share-token write is race-guarded
+  (WHERE public_token IS NULL); statement totals aggregate in SQL over all entries (not a
+  truncated page) + entriesTruncated flag; segment tag filter is a subquery (no 65k-param
+  blowup) and sinceDays capped at 3650; valuation rows/CSV/UI carry the location; dashboard
+  reuses readActiveBusinessId; agency dead code removed.

@@ -67,7 +67,6 @@ export class AgencyController {
       );
     const canSeeMoney = new Set(grants.map((g) => g.roleId));
 
-    const businessIds = memberships.map((m) => m.businessId);
     const moneyIds = memberships
       .filter((m) => user.isSuperAdmin || canSeeMoney.has(m.roleId))
       .map((m) => m.businessId);
@@ -115,7 +114,6 @@ export class AgencyController {
         .groupBy(schema.orders.businessId);
       for (const r of orderRows) ordersByBusiness.set(r.businessId, r.count);
     }
-    void businessIds;
 
     const businesses: AgencyBusinessRow[] = memberships.map((m) => {
       const money = user.isSuperAdmin || canSeeMoney.has(m.roleId);

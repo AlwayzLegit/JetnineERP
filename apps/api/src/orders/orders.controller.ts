@@ -13,7 +13,7 @@ import {
   Query,
 } from '@nestjs/common';
 import { randomBytes } from 'node:crypto';
-import { and, desc, eq, inArray, lt, or } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, lt, or } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { schema } from '@jetnine/db';
 import { AuditService } from '../audit/audit.service';
@@ -958,16 +958,29 @@ export class OrdersController {
     if (!order) throw new NotFoundException('Order not found');
     let token = order.publicToken;
     if (!token) {
-      token = randomBytes(24).toString('hex');
-      await this.db
+      const fresh = randomBytes(24).toString('hex');
+      // Guarded write: two staff sharing at once must not overwrite a
+      // token whose URL the other response already handed out.
+      const [written] = await this.db
         .update(schema.orders)
-        .set({ publicToken: token, updatedAt: new Date() })
-        .where(eq(schema.orders.id, id));
-      await this.audit.log({
-        action: 'order.share_link_created',
-        targetType: 'order',
-        targetId: id,
-      });
+        .set({ publicToken: fresh, updatedAt: new Date() })
+        .where(and(eq(schema.orders.id, id), isNull(schema.orders.publicToken)))
+        .returning({ publicToken: schema.orders.publicToken });
+      if (written) {
+        token = fresh;
+        await this.audit.log({
+          action: 'order.share_link_created',
+          targetType: 'order',
+          targetId: id,
+        });
+      } else {
+        const [reread] = await this.db
+          .select({ publicToken: schema.orders.publicToken })
+          .from(schema.orders)
+          .where(eq(schema.orders.id, id))
+          .limit(1);
+        token = reread?.publicToken ?? fresh;
+      }
     }
     return { token, path: `/track/${token}` };
   }

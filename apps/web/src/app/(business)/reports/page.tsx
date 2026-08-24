@@ -94,6 +94,7 @@ interface Valuation {
   rows: {
     variantId: string;
     locationId: string;
+    locationName: string | null;
     productName: string;
     variantName: string | null;
     sku: string | null;
@@ -653,6 +654,7 @@ export default function ReportsPage() {
                     <tr>
                       <th>Product</th>
                       <th>SKU</th>
+                      <th>Location</th>
                       <th className="num">On hand</th>
                       <th className="num">Unit cost</th>
                       <th className="num">Cost value</th>
@@ -660,7 +662,7 @@ export default function ReportsPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {valuation.rows.length === 0 && <Empty colSpan={6} />}
+                    {valuation.rows.length === 0 && <Empty colSpan={7} />}
                     {valuation.rows.map((r) => (
                       <tr key={`${r.variantId}-${r.locationId}`}>
                         <td>
@@ -675,6 +677,7 @@ export default function ReportsPage() {
                         <td>
                           <code>{r.sku ?? '—'}</code>
                         </td>
+                        <td>{r.locationName ?? '—'}</td>
                         <td className="num">{r.onHand}</td>
                         <td className="num">
                           {r.costCents != null ? <Money cents={r.costCents} /> : '—'}

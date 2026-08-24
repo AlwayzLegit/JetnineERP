@@ -9,7 +9,7 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
-import { and, desc, eq, inArray } from 'drizzle-orm';
+import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { schema } from '@jetnine/db';
 import { AuditService } from '../audit/audit.service';
@@ -266,18 +266,25 @@ export class CommissionsController {
       .orderBy(desc(schema.commissionEntries.accruedAt))
       .limit(2000);
 
-    let accruedCents = 0;
-    let reversalCents = 0;
-    let pendingCents = 0;
-    let approvedCents = 0;
-    let paidCents = 0;
-    for (const e of entries) {
-      if (e.amountCents >= 0) accruedCents += e.amountCents;
-      else reversalCents += e.amountCents;
-      if (e.status === 'pending') pendingCents += e.amountCents;
-      else if (e.status === 'approved') approvedCents += e.amountCents;
-      else if (e.status === 'paid') paidCents += e.amountCents;
-    }
+    // Totals aggregate in SQL over EVERY entry — the entries list above
+    // is a display page, and payroll math must never sum a truncated
+    // page.
+    const [agg] = await this.db
+      .select({
+        entryCount: sql<number>`COUNT(*)::int`,
+        accruedCents: sql<number>`COALESCE(SUM(CASE WHEN ${schema.commissionEntries.amountCents} >= 0 THEN ${schema.commissionEntries.amountCents} ELSE 0 END), 0)::int`,
+        reversalCents: sql<number>`COALESCE(SUM(CASE WHEN ${schema.commissionEntries.amountCents} < 0 THEN ${schema.commissionEntries.amountCents} ELSE 0 END), 0)::int`,
+        pendingCents: sql<number>`COALESCE(SUM(${schema.commissionEntries.amountCents}) FILTER (WHERE ${schema.commissionEntries.status} = 'pending'), 0)::int`,
+        approvedCents: sql<number>`COALESCE(SUM(${schema.commissionEntries.amountCents}) FILTER (WHERE ${schema.commissionEntries.status} = 'approved'), 0)::int`,
+        paidCents: sql<number>`COALESCE(SUM(${schema.commissionEntries.amountCents}) FILTER (WHERE ${schema.commissionEntries.status} = 'paid'), 0)::int`,
+      })
+      .from(schema.commissionEntries)
+      .where(
+        and(
+          eq(schema.commissionEntries.period, period),
+          eq(schema.commissionEntries.membershipId, membershipId),
+        ),
+      );
 
     return {
       period,
@@ -287,13 +294,15 @@ export class CommissionsController {
         ...e,
         documentNumber: e.orderNumber ?? e.saleNumber ?? null,
       })),
+      /** True when the period has more entries than the list shows. */
+      entriesTruncated: (agg?.entryCount ?? 0) > entries.length,
       totals: {
-        accruedCents,
-        reversalCents,
-        netCents: accruedCents + reversalCents,
-        pendingCents,
-        approvedCents,
-        paidCents,
+        accruedCents: agg?.accruedCents ?? 0,
+        reversalCents: agg?.reversalCents ?? 0,
+        netCents: (agg?.accruedCents ?? 0) + (agg?.reversalCents ?? 0),
+        pendingCents: agg?.pendingCents ?? 0,
+        approvedCents: agg?.approvedCents ?? 0,
+        paidCents: agg?.paidCents ?? 0,
       },
     };
   }
