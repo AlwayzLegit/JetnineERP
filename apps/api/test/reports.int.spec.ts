@@ -328,6 +328,108 @@ describe('Epic 1.11 — Reports & cash drawer', () => {
     );
   });
 
+  it('Z-report totals the day: 2 sales, $25 gross, tender mix, closed shift variance', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/v1/reports/z')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId);
+    if (res.status !== 200) console.error('Z-report error body:', res.body);
+    expect(res.status).toBe(200);
+    expect(res.body.saleCount).toBe(2);
+    expect(res.body.grossCents).toBe(2500);
+    expect(res.body.taxCents).toBe(0);
+    expect(res.body.refundCount).toBe(0);
+    expect(res.body.netCents).toBe(2500);
+    const cash = res.body.tenders.find((t: { method: string }) => t.method === 'cash');
+    const card = res.body.tenders.find((t: { method: string }) => t.method === 'card');
+    expect(cash.amountCents).toBe(2000);
+    expect(card.amountCents).toBe(500);
+    expect(res.body.shifts).toHaveLength(1);
+    expect(res.body.shifts[0].varianceCents).toBe(-200);
+  });
+
+  it('Z-report picks up a refund: $5 back on the Gadget sale → net $20', async () => {
+    // Find the $5 card sale and its line, then refund the single unit.
+    const list = await request(app.getHttpServer())
+      .get('/v1/sales')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId);
+    expect(list.status).toBe(200);
+    const gadgetSale = list.body.data.find((s: { totalCents: number }) => s.totalCents === 500);
+    expect(gadgetSale).toBeTruthy();
+    const detail = await request(app.getHttpServer())
+      .get(`/v1/sales/${gadgetSale.id}`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId);
+    expect(detail.status).toBe(200);
+    const lineId = detail.body.lines[0].id;
+
+    const refund = await request(app.getHttpServer())
+      .post(`/v1/sales/${gadgetSale.id}/refund`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ lines: [{ saleLineId: lineId, quantity: 1 }], reason: 'test refund' });
+    expect(refund.status).toBe(201);
+    expect(refund.body.amountCents).toBe(500);
+
+    const res = await request(app.getHttpServer())
+      .get('/v1/reports/z')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId);
+    expect(res.status).toBe(200);
+    // The refunded sale keeps its original revenue in gross; the refund
+    // shows on its own line and nets out.
+    expect(res.body.grossCents).toBe(2500);
+    expect(res.body.refundCount).toBe(1);
+    expect(res.body.refundsCents).toBe(500);
+    expect(res.body.netCents).toBe(2000);
+  });
+
+  it('Sales by category groups uncategorized lines together', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/v1/reports/sales/by-category')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId);
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveLength(1);
+    expect(res.body[0].categoryName).toBe('Uncategorized');
+    expect(res.body[0].quantity).toBe(3);
+    expect(res.body[0].revenueCents).toBe(2500);
+  });
+
+  it('Inventory valuation multiplies on-hand by cost and retail; cashier is 403', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/v1/reports/inventory/valuation')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId);
+    expect(res.status).toBe(200);
+    // Widget: 18 on hand × cost 400 / price 1000. Gadget: back to 2 on
+    // hand (sold 1, then the refund test restocked it) × 200 / 500.
+    const widget = res.body.rows.find((r: { sku: string }) => r.sku === 'A-1');
+    expect(widget.costValueCents).toBe(18 * 400);
+    expect(widget.retailValueCents).toBe(18 * 1000);
+    expect(res.body.totalCostValueCents).toBe(18 * 400 + 2 * 200);
+    expect(res.body.totalRetailValueCents).toBe(18 * 1000 + 2 * 500);
+
+    const cashierRes = await request(app.getHttpServer())
+      .get('/v1/reports/inventory/valuation')
+      .set('Cookie', cashierCookie)
+      .set('X-Business-Id', businessId);
+    expect(cashierRes.status).toBe(403);
+  });
+
+  it('Tax summary reconciles with the day: zero tax, net sales $25', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/v1/reports/tax/summary')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId);
+    expect(res.status).toBe(200);
+    expect(res.body.rows).toHaveLength(1);
+    expect(res.body.rows[0].taxClassName).toBe('Default rate');
+    expect(res.body.rows[0].netSalesCents).toBe(2500);
+    expect(res.body.totalTaxCents).toBe(0);
+  });
+
   it('CSV export denied for users without reports.export', async () => {
     // The Bookkeeper role has reports.export, so we use a role that
     // explicitly does not — Cashier — but Cashier is also missing

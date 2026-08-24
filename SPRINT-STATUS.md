@@ -260,3 +260,10 @@ _(newest first — sessions append: date · day · what shipped · open flags)_
   The orders suite was verified 22/22 by bypassing that shim locally; the shim itself is
   unchanged in the commit.
 - 2026-08-22 · pre-sprint · Plan + handoff docs written (`PLAN-STORIS-CUTOVER.md`, `CLAUDE.md`, this tracker). Sprint not started.
+
+- **2026-08-24 — Post-checkpoint slice 1 (reports parity):** `/v1/reports/z` (daily
+  close-out: gross/refunds/net, tender mix across sale+order+service money, drawer
+  variances; D8-excluded), `/v1/reports/sales/by-category`, `/v1/reports/inventory/valuation`
+  (financial-gated, cost+retail), `/v1/reports/tax/summary` (net-sales caveat documented) —
+  all with CSV export; reports hub UI gained Z-report, category, tax, valuation cards.
+  reports.int.spec.ts 9→14 tests incl. refund-day Z math.

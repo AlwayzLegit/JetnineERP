@@ -1,6 +1,6 @@
 import { Controller, ForbiddenException, Get, Inject, Query, Res } from '@nestjs/common';
 import type { Response } from 'express';
-import { and, desc, eq, gte, inArray, isNull, lt, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, isNull, lt, or, sql } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { schema } from '@jetnine/db';
 import { CurrentTenant } from '../auth/current-user.decorator';
@@ -42,6 +42,71 @@ interface DailyReport {
   byPaymentMethod: PaymentMethodRow[];
   /** Money taken against sales orders per day — deposits and balances. */
   orderPaymentsByDay: OrderPaymentsDayRow[];
+}
+
+interface ZReportTenderRow {
+  method: string;
+  amountCents: number;
+  count: number;
+}
+interface ZReportShiftRow {
+  id: string;
+  locationId: string;
+  openedAt: string;
+  closedAt: string | null;
+  openingFloatCents: number;
+  expectedCashCents: number | null;
+  countedCashCents: number | null;
+  varianceCents: number | null;
+}
+interface ZReport {
+  date: string;
+  locationId: string | null;
+  saleCount: number;
+  grossCents: number;
+  subtotalCents: number;
+  discountCents: number;
+  taxCents: number;
+  refundCount: number;
+  refundsCents: number;
+  netCents: number;
+  tenders: ZReportTenderRow[];
+  orderPaymentsCents: number;
+  shifts: ZReportShiftRow[];
+}
+
+interface CategoryRow {
+  categoryId: string | null;
+  categoryName: string;
+  quantity: number;
+  revenueCents: number;
+}
+
+interface ValuationRow {
+  variantId: string;
+  locationId: string;
+  productName: string;
+  variantName: string | null;
+  sku: string | null;
+  onHand: number;
+  costCents: number | null;
+  priceCents: number;
+  costValueCents: number | null;
+  retailValueCents: number;
+}
+
+interface TaxSummaryRow {
+  taxClassId: string | null;
+  taxClassName: string;
+  lineCount: number;
+  /**
+   * Net line revenue (after line discounts, before order-level discount
+   * allocation). The exact taxed base differs by the pro-rata order
+   * discount, so this is context, not a filing figure — `taxCents` is
+   * the exact number.
+   */
+  netSalesCents: number;
+  taxCents: number;
 }
 
 interface ProductRow {
@@ -356,6 +421,336 @@ export class ReportsController {
       return;
     }
     return filtered;
+  }
+
+  /**
+   * Z-report — the daily close-out sheet, built to sit next to the STORIS
+   * Z-report on parallel-run day. One UTC day (default: today), optional
+   * location filter. Imported legacy documents are excluded (D8): this is
+   * a drawer-day view, not a history view.
+   */
+  @Get('z')
+  @RequirePermission('reports.sales.view')
+  async zReport(
+    @CurrentTenant() _tenant: RequestTenantContext,
+    @Query('date') dateStr?: string,
+    @Query('locationId') locationId?: string,
+  ): Promise<ZReport> {
+    const date = matchesDate(dateStr) ? dateStr! : new Date().toISOString().slice(0, 10);
+    const dayStart = new Date(`${date}T00:00:00.000Z`);
+    const dayEnd = new Date(dayStart);
+    dayEnd.setUTCDate(dayEnd.getUTCDate() + 1);
+
+    const saleDay = and(
+      gte(schema.sales.completedAt, dayStart),
+      lt(schema.sales.completedAt, dayEnd),
+      sql`${schema.sales.status} IN ('completed', 'partially_refunded', 'refunded')`,
+      isNull(schema.sales.importedAt),
+      locationId ? eq(schema.sales.locationId, locationId) : undefined,
+    );
+
+    const [salesTotals] = await this.db
+      .select({
+        saleCount: sql<number>`COUNT(*)::int`,
+        subtotalCents: sql<number>`COALESCE(SUM(${schema.sales.subtotalCents}), 0)::int`,
+        discountCents: sql<number>`COALESCE(SUM(${schema.sales.discountCents}), 0)::int`,
+        taxCents: sql<number>`COALESCE(SUM(${schema.sales.taxCents}), 0)::int`,
+        grossCents: sql<number>`COALESCE(SUM(${schema.sales.totalCents}), 0)::int`,
+      })
+      .from(schema.sales)
+      .where(saleDay);
+
+    const [refundTotals] = await this.db
+      .select({
+        refundCount: sql<number>`COUNT(*)::int`,
+        refundsCents: sql<number>`COALESCE(SUM(${schema.refunds.amountCents}), 0)::int`,
+      })
+      .from(schema.refunds)
+      .innerJoin(schema.sales, eq(schema.sales.id, schema.refunds.saleId))
+      .where(
+        and(
+          gte(schema.refunds.createdAt, dayStart),
+          lt(schema.refunds.createdAt, dayEnd),
+          isNull(schema.sales.importedAt),
+          locationId ? eq(schema.sales.locationId, locationId) : undefined,
+        ),
+      );
+
+    // Tender mix: every succeeded payment taken today, whatever document
+    // it landed on (POS sale, order deposit/balance, service charge) —
+    // matching what the drawer actually saw. Payments against imported
+    // documents are excluded via the left joins.
+    const tenders = await this.db
+      .select({
+        method: schema.payments.method,
+        amountCents: sql<number>`COALESCE(SUM(${schema.payments.amountCents}), 0)::int`,
+        count: sql<number>`COUNT(*)::int`,
+      })
+      .from(schema.payments)
+      .leftJoin(schema.sales, eq(schema.sales.id, schema.payments.saleId))
+      .leftJoin(schema.orders, eq(schema.orders.id, schema.payments.orderId))
+      .where(
+        and(
+          gte(schema.payments.createdAt, dayStart),
+          lt(schema.payments.createdAt, dayEnd),
+          eq(schema.payments.status, 'succeeded'),
+          isNull(schema.sales.importedAt),
+          isNull(schema.orders.importedAt),
+          locationId
+            ? sql`COALESCE(${schema.sales.locationId}, ${schema.orders.locationId}) = ${locationId}`
+            : undefined,
+        ),
+      )
+      .groupBy(schema.payments.method)
+      .orderBy(desc(sql`COALESCE(SUM(${schema.payments.amountCents}), 0)`));
+
+    const [orderMoney] = await this.db
+      .select({
+        amountCents: sql<number>`COALESCE(SUM(${schema.payments.amountCents}), 0)::int`,
+      })
+      .from(schema.payments)
+      .innerJoin(schema.orders, eq(schema.orders.id, schema.payments.orderId))
+      .where(
+        and(
+          gte(schema.payments.createdAt, dayStart),
+          lt(schema.payments.createdAt, dayEnd),
+          eq(schema.payments.status, 'succeeded'),
+          isNull(schema.orders.importedAt),
+          locationId ? eq(schema.orders.locationId, locationId) : undefined,
+        ),
+      );
+
+    const shifts = await this.db
+      .select({
+        id: schema.cashShifts.id,
+        locationId: schema.cashShifts.locationId,
+        openedAt: schema.cashShifts.openedAt,
+        closedAt: schema.cashShifts.closedAt,
+        openingFloatCents: schema.cashShifts.openingFloatCents,
+        expectedCashCents: schema.cashShifts.expectedCashCents,
+        countedCashCents: schema.cashShifts.countedCashCents,
+        varianceCents: schema.cashShifts.varianceCents,
+      })
+      .from(schema.cashShifts)
+      .where(
+        and(
+          // A shift belongs to today's Z if it was open at any point today:
+          // opened before end-of-day and not closed before start-of-day.
+          lt(schema.cashShifts.openedAt, dayEnd),
+          or(isNull(schema.cashShifts.closedAt), gte(schema.cashShifts.closedAt, dayStart)),
+          locationId ? eq(schema.cashShifts.locationId, locationId) : undefined,
+        ),
+      )
+      .orderBy(schema.cashShifts.openedAt);
+
+    const grossCents = salesTotals?.grossCents ?? 0;
+    const refundsCents = refundTotals?.refundsCents ?? 0;
+    return {
+      date,
+      locationId: locationId ?? null,
+      saleCount: salesTotals?.saleCount ?? 0,
+      grossCents,
+      subtotalCents: salesTotals?.subtotalCents ?? 0,
+      discountCents: salesTotals?.discountCents ?? 0,
+      taxCents: salesTotals?.taxCents ?? 0,
+      refundCount: refundTotals?.refundCount ?? 0,
+      refundsCents,
+      netCents: grossCents - refundsCents,
+      tenders,
+      orderPaymentsCents: orderMoney?.amountCents ?? 0,
+      shifts: shifts.map((s) => ({
+        ...s,
+        openedAt: s.openedAt.toISOString(),
+        closedAt: s.closedAt ? s.closedAt.toISOString() : null,
+      })),
+    };
+  }
+
+  /** Sales aggregated per product category across a date window. */
+  @Get('sales/by-category')
+  @RequirePermission('reports.sales.view')
+  async byCategory(
+    @CurrentTenant() tenant: RequestTenantContext,
+    @Query('start') startStr?: string,
+    @Query('end') endStr?: string,
+    @Query('format') format?: string,
+    @Res({ passthrough: true }) res?: Response,
+  ): Promise<CategoryRow[] | void> {
+    const { startDate, endDate } = parseRange(startStr, endStr);
+    const startTs = new Date(`${startDate}T00:00:00.000Z`);
+    const endTsExclusive = new Date(`${endDate}T00:00:00.000Z`);
+    endTsExclusive.setUTCDate(endTsExclusive.getUTCDate() + 1);
+
+    const rows = await this.db
+      .select({
+        categoryId: schema.products.categoryId,
+        categoryName: sql<string>`COALESCE(${schema.categories.name}, 'Uncategorized')`,
+        quantity: sql<number>`COALESCE(SUM(${schema.saleLines.quantity}), 0)::int`,
+        revenueCents: sql<number>`COALESCE(SUM(${schema.saleLines.totalCents}), 0)::int`,
+      })
+      .from(schema.saleLines)
+      .innerJoin(schema.sales, eq(schema.sales.id, schema.saleLines.saleId))
+      .leftJoin(schema.productVariants, eq(schema.productVariants.id, schema.saleLines.variantId))
+      .leftJoin(schema.products, eq(schema.products.id, schema.productVariants.productId))
+      .leftJoin(schema.categories, eq(schema.categories.id, schema.products.categoryId))
+      .where(
+        and(
+          gte(schema.sales.completedAt, startTs),
+          lt(schema.sales.completedAt, endTsExclusive),
+          sql`${schema.sales.status} IN ('completed', 'partially_refunded', 'refunded')`,
+        ),
+      )
+      .groupBy(schema.products.categoryId, schema.categories.name)
+      .orderBy(desc(sql`COALESCE(SUM(${schema.saleLines.totalCents}), 0)`));
+
+    if (format === 'csv') {
+      requireExport(tenant);
+      sendCsv(
+        res!,
+        `sales-by-category-${startDate}-to-${endDate}.csv`,
+        toCsv(
+          ['category', 'quantity', 'revenue_cents'],
+          rows.map((r) => [r.categoryName, r.quantity, r.revenueCents]),
+        ),
+      );
+      return;
+    }
+    return rows;
+  }
+
+  /**
+   * Inventory valuation: on-hand × cost (and × retail) per variant.
+   * Cost-derived, so it sits behind `reports.financial.view`.
+   */
+  @Get('inventory/valuation')
+  @RequirePermission('reports.financial.view')
+  async valuation(
+    @CurrentTenant() tenant: RequestTenantContext,
+    @Query('locationId') locationId?: string,
+    @Query('format') format?: string,
+    @Res({ passthrough: true }) res?: Response,
+  ): Promise<{
+    rows: ValuationRow[];
+    totalCostValueCents: number;
+    totalRetailValueCents: number;
+  } | void> {
+    const rows = await this.db
+      .select({
+        variantId: schema.inventoryLevels.variantId,
+        locationId: schema.inventoryLevels.locationId,
+        productName: schema.products.name,
+        variantName: schema.productVariants.name,
+        sku: schema.productVariants.sku,
+        onHand: schema.inventoryLevels.onHand,
+        costCents: schema.productVariants.costCents,
+        priceCents: schema.productVariants.priceCents,
+      })
+      .from(schema.inventoryLevels)
+      .innerJoin(
+        schema.productVariants,
+        eq(schema.productVariants.id, schema.inventoryLevels.variantId),
+      )
+      .innerJoin(schema.products, eq(schema.products.id, schema.productVariants.productId))
+      .where(locationId ? eq(schema.inventoryLevels.locationId, locationId) : undefined)
+      .orderBy(schema.products.name, schema.productVariants.sku);
+
+    const out: ValuationRow[] = rows.map((r) => ({
+      ...r,
+      costValueCents: r.costCents != null ? r.costCents * r.onHand : null,
+      retailValueCents: r.priceCents * r.onHand,
+    }));
+    const totalCostValueCents = out.reduce((s, r) => s + (r.costValueCents ?? 0), 0);
+    const totalRetailValueCents = out.reduce((s, r) => s + r.retailValueCents, 0);
+
+    if (format === 'csv') {
+      requireExport(tenant);
+      sendCsv(
+        res!,
+        `inventory-valuation-${new Date().toISOString().slice(0, 10)}.csv`,
+        toCsv(
+          [
+            'product',
+            'variant',
+            'sku',
+            'on_hand',
+            'cost_cents',
+            'cost_value_cents',
+            'retail_value_cents',
+          ],
+          out.map((r) => [
+            r.productName,
+            r.variantName,
+            r.sku,
+            r.onHand,
+            r.costCents,
+            r.costValueCents,
+            r.retailValueCents,
+          ]),
+        ),
+      );
+      return;
+    }
+    return { rows: out, totalCostValueCents, totalRetailValueCents };
+  }
+
+  /**
+   * Tax collected across a window, grouped by the product's tax class.
+   * Lines whose product has no class fall under the business/location
+   * default rate. Reconciles to the cent with SUM(sales.tax_cents).
+   */
+  @Get('tax/summary')
+  @RequirePermission('reports.financial.view')
+  async taxSummary(
+    @CurrentTenant() tenant: RequestTenantContext,
+    @Query('start') startStr?: string,
+    @Query('end') endStr?: string,
+    @Query('format') format?: string,
+    @Res({ passthrough: true }) res?: Response,
+  ): Promise<{ rows: TaxSummaryRow[]; totalTaxCents: number; start: string; end: string } | void> {
+    const { startDate, endDate } = parseRange(startStr, endStr);
+    const startTs = new Date(`${startDate}T00:00:00.000Z`);
+    const endTsExclusive = new Date(`${endDate}T00:00:00.000Z`);
+    endTsExclusive.setUTCDate(endTsExclusive.getUTCDate() + 1);
+
+    const rows = await this.db
+      .select({
+        taxClassId: schema.products.taxClassId,
+        taxClassName: sql<string>`COALESCE(${schema.taxClasses.name}, 'Default rate')`,
+        lineCount: sql<number>`COUNT(*)::int`,
+        // Line totalCents is net of line discounts and pre-tax (totals.ts).
+        netSalesCents: sql<number>`COALESCE(SUM(${schema.saleLines.totalCents}), 0)::int`,
+        taxCents: sql<number>`COALESCE(SUM(${schema.saleLines.taxCents}), 0)::int`,
+      })
+      .from(schema.saleLines)
+      .innerJoin(schema.sales, eq(schema.sales.id, schema.saleLines.saleId))
+      .leftJoin(schema.productVariants, eq(schema.productVariants.id, schema.saleLines.variantId))
+      .leftJoin(schema.products, eq(schema.products.id, schema.productVariants.productId))
+      .leftJoin(schema.taxClasses, eq(schema.taxClasses.id, schema.products.taxClassId))
+      .where(
+        and(
+          gte(schema.sales.completedAt, startTs),
+          lt(schema.sales.completedAt, endTsExclusive),
+          sql`${schema.sales.status} IN ('completed', 'partially_refunded', 'refunded')`,
+        ),
+      )
+      .groupBy(schema.products.taxClassId, schema.taxClasses.name)
+      .orderBy(desc(sql`COALESCE(SUM(${schema.saleLines.taxCents}), 0)`));
+
+    const totalTaxCents = rows.reduce((s, r) => s + r.taxCents, 0);
+
+    if (format === 'csv') {
+      requireExport(tenant);
+      sendCsv(
+        res!,
+        `tax-summary-${startDate}-to-${endDate}.csv`,
+        toCsv(
+          ['tax_class', 'line_count', 'net_sales_cents', 'tax_cents'],
+          rows.map((r) => [r.taxClassName, r.lineCount, r.netSalesCents, r.taxCents]),
+        ),
+      );
+      return;
+    }
+    return { rows, totalTaxCents, start: startDate, end: endDate };
   }
 
   /**
