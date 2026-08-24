@@ -385,3 +385,15 @@ current staging business. Keep this list current whenever a test session creates
   staff invitations + roles, business settings (tax, receipts, branding), re-run the
   Shopify connector, then run the final STORIS import (D7 pipeline). The QA tenant keeps
   serving as the safe playground for future testing and demos.
+- **2026-08-24 — D12 (no retail-price import) + QA run-2 triage:** priceCents is now
+  optional on product import — absent means new variants land at $0 and existing
+  variants keep their price (Shopify prices survive the STORIS import); POS cart lines
+  gained a register-side unit-price input (negotiated pricing) plus live type-to-search
+  (350ms debounce; scanner Enter flow unchanged); vendor-create form no longer throws
+  on success (React currentTarget-after-await bug); Shopify sync falls back to the
+  email local part when a customer has no name. import.int.spec.ts 10→11. STORIS CSVs
+  regenerated with real location names (88=Warehouse, 1=Koreatown, 2=West LA,
+  3=La Brea, 4=Studio City) and 552 as-is companion SKUs (`-AS`, 1,180 units);
+  location code 8 (186+122 units) held out pending its store name. QA run-2 "vendor
+  SKU FAIL" was a deploy lag — the live API is still 80ad9bd and the 18:23 auto
+  redeploy from the instance upgrade FAILED; Ops: Manual Deploy latest on jetnine-api.

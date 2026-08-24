@@ -156,6 +156,50 @@ export default function PosPage() {
     if (phase === 'cart') scanRef.current?.focus();
   }, [phase]);
 
+  // Live search while typing: results appear after a short pause, no
+  // Enter needed. A barcode scanner still ends its burst with Enter,
+  // which keeps the exact-match auto-add in handleScanSubmit. Errors
+  // here are swallowed — live search is best-effort; submitting
+  // surfaces them.
+  useEffect(() => {
+    const query = scan.trim();
+    if (query.length < 2) {
+      if (query.length === 0) setResults([]);
+      return;
+    }
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      void (async () => {
+        try {
+          let rows: LookupRow[] = [];
+          if (online) {
+            rows = await api<LookupRow[]>(`/v1/pos/lookup?q=${encodeURIComponent(query)}`);
+            if (businessId && rows.length > 0) void cacheVariants(businessId, rows);
+          } else if (businessId) {
+            const cached = await lookupVariantsLocally(businessId, query);
+            rows = cached.map((v) => ({
+              variantId: v.variantId,
+              productId: v.productId,
+              productName: v.productName,
+              sku: v.sku,
+              barcode: v.barcode,
+              variantName: v.variantName,
+              priceCents: v.priceCents,
+            }));
+          }
+          if (!cancelled) setResults(rows);
+        } catch {
+          /* best-effort */
+        }
+      })();
+    }, 350);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scan, online, businessId]);
+
   const totals = useMemo(
     () => computeTotals(cart, parseDollars(orderDiscount), taxRateBps),
     [cart, orderDiscount, taxRateBps],
@@ -243,6 +287,17 @@ export default function PosPage() {
     const cents = parseDollars(dollars);
     setCart((prev) =>
       prev.map((l) => (l.variantId === variantId ? { ...l, lineDiscountCents: cents } : l)),
+    );
+  }
+  /**
+   * Register-side price entry (D12): catalogs imported without retail
+   * prices land at $0 and the cashier types the negotiated price here.
+   * The sale line records whatever was charged, as it always has.
+   */
+  function setLinePrice(variantId: string, dollars: string) {
+    const cents = parseDollars(dollars);
+    setCart((prev) =>
+      prev.map((l) => (l.variantId === variantId ? { ...l, unitPriceCents: cents } : l)),
     );
   }
 
@@ -508,7 +563,17 @@ export default function PosPage() {
                             />
                           </td>
                           <td>
-                            <Money cents={l.unitPriceCents} />
+                            <Input
+                              type="number"
+                              step="0.01"
+                              min={0}
+                              key={`${l.variantId}-${l.unitPriceCents}`}
+                              defaultValue={centsToInputString(l.unitPriceCents)}
+                              onBlur={(e) => setLinePrice(l.variantId, e.target.value)}
+                              style={{ ...qtyInput, width: 88 }}
+                              aria-label={`Unit price for ${l.description}`}
+                              data-testid={`line-price-${l.variantId}`}
+                            />
                           </td>
                           <td>
                             <Input

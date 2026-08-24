@@ -625,10 +625,14 @@ export class ImportService {
     }
 
     const variantValues: Partial<typeof schema.productVariants.$inferInsert> = {
-      priceCents: n.priceCents as number,
       costCents: (n.costCents as number) ?? null,
       barcode: (n.barcode as string) ?? null,
     };
+    // Price only when the file carries one (D12): an import without a
+    // RETAIL column never clobbers an existing price (e.g. from Shopify).
+    if (typeof n.priceCents === 'number') {
+      variantValues.priceCents = n.priceCents;
+    }
     // Purchasing enrichment — only touch these when the file supplies
     // them, so a re-import without the columns never wipes merchant edits.
     if (typeof n.vendorSku === 'string' && n.vendorSku.trim().length > 0) {
@@ -658,7 +662,7 @@ export class ImportService {
         productId,
         sku,
         ...variantValues,
-        priceCents: n.priceCents as number,
+        priceCents: typeof n.priceCents === 'number' ? n.priceCents : 0,
       });
     }
     await this.upsertRef(businessId, 'product', legacyId, productId, batchId);

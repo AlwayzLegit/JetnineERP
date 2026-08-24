@@ -112,13 +112,22 @@ const shopify: Connector = {
       '&status=any&financial_status=paid',
     )) as Record<string, unknown>[];
 
-    const customerRows = customers.map((c) => ({
-      accountNo: `shp-${s(c.id)}`,
-      firstName: s(c.first_name),
-      lastName: s(c.last_name),
-      email: s(c.email),
-      phone: s(c.phone),
-    }));
+    const customerRows = customers.map((c) => {
+      const email = s(c.email);
+      let firstName = s(c.first_name);
+      // Shopify guest checkouts often carry no name at all — fall back
+      // to the email's local part so CRM lists aren't rows of "—".
+      if (!firstName && !s(c.last_name) && email.includes('@')) {
+        firstName = email.split('@')[0]!;
+      }
+      return {
+        accountNo: `shp-${s(c.id)}`,
+        firstName,
+        lastName: s(c.last_name),
+        email,
+        phone: s(c.phone),
+      };
+    });
 
     const productRows = products.flatMap((p) => {
       const variants = (p.variants as Record<string, unknown>[] | undefined) ?? [];
