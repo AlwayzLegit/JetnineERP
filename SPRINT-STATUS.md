@@ -272,3 +272,10 @@ _(newest first — sessions append: date · day · what shipped · open flags)_
   label sheets at `(business)/products/labels` (Avery 5160 30-up + 2.25×1.25" roll,
   copy counts, print-only CSS grid); receipts now print a scannable document-number
   barcode for returns.
+- **2026-08-24 — Post-checkpoint slice 3 (white-label + agency):** `businesses.branding_json`
+  (migration `0025_business_branding`: accentColor/logoUrl/publicName, merge-PATCH with
+  validation) re-themes the whole app per tenant (`--brand` override + shell logo/name +
+  receipt display name); `GET /v1/agency/overview` (auth/me pattern, membership-scoped,
+  money nulled where the caller's role lacks reports.sales.view) + `(business)/agency`
+  roll-up cards; topbar badge became a one-click business switcher. business.int.spec.ts
+  14→20 tests.

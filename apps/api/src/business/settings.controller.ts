@@ -9,6 +9,16 @@ import { DRIZZLE } from '../database/database.module';
 import { RequirePermission, TenantScoped } from '../tenancy/decorators';
 import type { RequestTenantContext } from '../tenancy/request-context';
 
+/** White-label branding. All fields optional; null clears the field. */
+export interface BusinessBranding {
+  /** #rrggbb accent applied as the app's brand color for this tenant. */
+  accentColor?: string | null;
+  /** https URL rendered in the sidebar header. */
+  logoUrl?: string | null;
+  /** Display-name override for the shell + receipts; legal `name` stays. */
+  publicName?: string | null;
+}
+
 interface BusinessSettings {
   id: string;
   slug: string;
@@ -19,6 +29,7 @@ interface BusinessSettings {
   defaultTaxRateBps: number;
   receiptHeader: string | null;
   receiptFooter: string | null;
+  branding: BusinessBranding | null;
 }
 
 interface UpdateBody {
@@ -33,6 +44,48 @@ interface UpdateBody {
    * render with an unsupported symbol.
    */
   currencyCode?: string;
+  branding?: BusinessBranding;
+}
+
+const HEX_COLOR_RE = /^#[0-9a-fA-F]{6}$/;
+
+function validateBranding(input: BusinessBranding): BusinessBranding {
+  const out: BusinessBranding = {};
+  if (input.accentColor !== undefined) {
+    if (input.accentColor !== null && !HEX_COLOR_RE.test(input.accentColor)) {
+      throw new BadRequestException('branding.accentColor must be a #rrggbb hex color');
+    }
+    out.accentColor = input.accentColor;
+  }
+  if (input.logoUrl !== undefined) {
+    if (input.logoUrl !== null) {
+      let url: URL;
+      try {
+        url = new URL(input.logoUrl);
+      } catch {
+        throw new BadRequestException('branding.logoUrl must be a valid URL');
+      }
+      if (url.protocol !== 'https:') {
+        throw new BadRequestException('branding.logoUrl must be https');
+      }
+      if (input.logoUrl.length > 2000) {
+        throw new BadRequestException('branding.logoUrl too long');
+      }
+    }
+    out.logoUrl = input.logoUrl;
+  }
+  if (input.publicName !== undefined) {
+    if (input.publicName !== null) {
+      const trimmed = input.publicName.trim();
+      if (trimmed.length === 0 || trimmed.length > 120) {
+        throw new BadRequestException('branding.publicName must be 1–120 characters');
+      }
+      out.publicName = trimmed;
+    } else {
+      out.publicName = null;
+    }
+  }
+  return out;
 }
 
 @TenantScoped()
@@ -114,6 +167,22 @@ export class SettingsController {
         after.currencyCode = next;
       }
     }
+    if (body.branding !== undefined) {
+      // Merge field-by-field: PATCHing one branding field must not wipe
+      // the others; explicit null clears a field.
+      const patch = validateBranding(body.branding);
+      const current = (existing.brandingJson ?? {}) as BusinessBranding;
+      const merged: BusinessBranding = { ...current, ...patch };
+      for (const key of Object.keys(merged) as (keyof BusinessBranding)[]) {
+        if (merged[key] == null) delete merged[key];
+      }
+      const next = Object.keys(merged).length > 0 ? merged : null;
+      if (JSON.stringify(next) !== JSON.stringify(existing.brandingJson ?? null)) {
+        update.brandingJson = next;
+        before.branding = existing.brandingJson ?? null;
+        after.branding = next;
+      }
+    }
 
     if (Object.keys(after).length === 0) return toSettings(existing);
 
@@ -147,5 +216,6 @@ function toSettings(b: typeof schema.businesses.$inferSelect): BusinessSettings 
     defaultTaxRateBps: b.defaultTaxRateBps,
     receiptHeader: b.receiptHeader ?? null,
     receiptFooter: b.receiptFooter ?? null,
+    branding: (b.brandingJson as BusinessBranding | null) ?? null,
   };
 }
