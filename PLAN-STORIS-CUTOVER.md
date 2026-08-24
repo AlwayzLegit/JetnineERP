@@ -67,6 +67,7 @@ GHL-inspired platform layer (also in scope, but **never allowed to block cutover
 | D8 | Legacy history imports as `orders`/`sales` flagged `imported_at IS NOT NULL`, **excluded** from cash-drawer, commission accrual, and webhook emission. | History without side effects. |
 | D9 | Agency tier is **additive**: `businesses.agency_id` nullable; behavior with `NULL` agency is byte-for-byte today's behavior. | P2 can never break single-business tenants. |
 | D10 | Deployment for go-live: API must run on an **always-on instance** (Render paid tier or equivalent). A free tier that sleeps 15 min is unacceptable for a live register. | 30s cold start at the register is a failed cutover. |
+| D11 | Production go-live happens in a **fresh business (tenant)** — the current staging business, with all its QA/browser-test data, is kept as a permanent test tenant and never promoted. The real STORIS import, Shopify sync, locations, staff, and settings are (re)run into the new production business at cutover. A running ledger of QA data lives in SPRINT-STATUS under "Test-data ledger". | Multi-tenancy makes a clean cutover free: no purge script over live tables, zero risk of a test sale/campaign/customer surviving into production books. |
 
 ## 4. Data model — new tables
 
