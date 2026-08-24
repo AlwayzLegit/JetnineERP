@@ -267,3 +267,8 @@ _(newest first — sessions append: date · day · what shipped · open flags)_
   (financial-gated, cost+retail), `/v1/reports/tax/summary` (net-sales caveat documented) —
   all with CSV export; reports hub UI gained Z-report, category, tax, valuation cards.
   reports.int.spec.ts 9→14 tests incl. refund-day Z math.
+- **2026-08-24 — Post-checkpoint slice 2 (printing):** dependency-free Code 128B SVG
+  encoder (`apps/web/src/lib/code128.ts`, 5 unit tests incl. checksum math); barcode
+  label sheets at `(business)/products/labels` (Avery 5160 30-up + 2.25×1.25" roll,
+  copy counts, print-only CSS grid); receipts now print a scannable document-number
+  barcode for returns.

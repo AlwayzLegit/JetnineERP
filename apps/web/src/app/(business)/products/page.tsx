@@ -73,10 +73,15 @@ export default function ProductsPage() {
       <PageHeader
         title="Products"
         actions={
-          <LinkButton href="/products/new" variant="primary">
-            <Plus size={14} />
-            Create product
-          </LinkButton>
+          <>
+            <LinkButton href="/products/labels" variant="secondary">
+              Print labels
+            </LinkButton>
+            <LinkButton href="/products/new" variant="primary">
+              <Plus size={14} />
+              Create product
+            </LinkButton>
+          </>
         }
       />
 
