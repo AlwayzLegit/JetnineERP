@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState, type FormEvent } from 'react';
 import { Plus, Search } from 'lucide-react';
@@ -158,6 +159,15 @@ export default function NewPurchaseOrderPage() {
                   </option>
                 ))}
               </Select>
+              {vendors.length === 0 && (
+                <span className="muted" style={{ display: 'block', fontSize: 12, marginTop: 4 }}>
+                  No vendors yet —{' '}
+                  <Link href="/vendors" style={{ color: 'inherit' }}>
+                    create one first
+                  </Link>
+                  .
+                </span>
+              )}
             </Field>
             <Field label="Location">
               <Select

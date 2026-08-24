@@ -68,6 +68,7 @@ interface VariantOut {
   reorderPoint: number | null;
   reorderQty: number | null;
   preferredVendorId: string | null;
+  vendorSku: string | null;
 }
 
 interface ProductOut {
@@ -211,6 +212,7 @@ export class CatalogProductsController {
         reorderPoint: v.reorderPoint ?? null,
         reorderQty: v.reorderQty ?? null,
         preferredVendorId: v.preferredVendorId ?? null,
+        vendorSku: v.vendorSku ?? null,
       })),
       images: images.map((i) => ({
         id: i.id,
@@ -361,12 +363,14 @@ export class CatalogProductsController {
       reorderPoint?: number | null;
       reorderQty?: number | null;
       preferredVendorId?: string | null;
+      vendorSku?: string | null;
     },
   ): Promise<{
     id: string;
     reorderPoint: number | null;
     reorderQty: number | null;
     preferredVendorId: string | null;
+    vendorSku: string | null;
   }> {
     const [variant] = await this.db
       .select()
@@ -395,6 +399,17 @@ export class CatalogProductsController {
       }
       update.preferredVendorId = body.preferredVendorId;
     }
+    if (body.vendorSku !== undefined) {
+      if (body.vendorSku !== null) {
+        const trimmed = body.vendorSku.trim();
+        if (trimmed.length === 0 || trimmed.length > 100) {
+          throw new BadRequestException('vendorSku must be 1–100 characters or null');
+        }
+        update.vendorSku = trimmed;
+      } else {
+        update.vendorSku = null;
+      }
+    }
     if (Object.keys(update).length > 0) {
       await this.db
         .update(schema.productVariants)
@@ -408,6 +423,7 @@ export class CatalogProductsController {
           reorderPoint: variant.reorderPoint,
           reorderQty: variant.reorderQty,
           preferredVendorId: variant.preferredVendorId,
+          vendorSku: variant.vendorSku,
         },
         after: update,
       });
@@ -418,6 +434,7 @@ export class CatalogProductsController {
         reorderPoint: schema.productVariants.reorderPoint,
         reorderQty: schema.productVariants.reorderQty,
         preferredVendorId: schema.productVariants.preferredVendorId,
+        vendorSku: schema.productVariants.vendorSku,
       })
       .from(schema.productVariants)
       .where(eq(schema.productVariants.id, variantId))

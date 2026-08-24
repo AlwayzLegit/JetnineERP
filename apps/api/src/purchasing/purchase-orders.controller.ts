@@ -67,6 +67,8 @@ interface PoLineRow {
   productName: string;
   variantName: string | null;
   sku: string | null;
+  /** Vendor's part number when it differs from our sku (null = same). */
+  vendorSku: string | null;
   quantityOrdered: number;
   quantityReceived: number;
   unitCostCents: number;
@@ -139,6 +141,7 @@ export class PurchaseOrdersController {
         productName: string;
         variantName: string | null;
         sku: string | null;
+        vendorSku: string | null;
         available: number;
         reorderPoint: number;
         suggestedQty: number;
@@ -152,6 +155,7 @@ export class PurchaseOrdersController {
         productName: schema.products.name,
         variantName: schema.productVariants.name,
         sku: schema.productVariants.sku,
+        vendorSku: schema.productVariants.vendorSku,
         reorderPoint: schema.productVariants.reorderPoint,
         reorderQty: schema.productVariants.reorderQty,
         costCents: schema.productVariants.costCents,
@@ -178,6 +182,7 @@ export class PurchaseOrdersController {
         schema.products.name,
         schema.productVariants.name,
         schema.productVariants.sku,
+        schema.productVariants.vendorSku,
         schema.productVariants.reorderPoint,
         schema.productVariants.reorderQty,
         schema.productVariants.costCents,
@@ -206,6 +211,7 @@ export class PurchaseOrdersController {
         productName: r.productName,
         variantName: r.variantName,
         sku: r.sku,
+        vendorSku: r.vendorSku,
         available: r.available,
         reorderPoint: point,
         suggestedQty,
@@ -540,6 +546,7 @@ export class PurchaseOrdersController {
         productName: schema.products.name,
         variantName: schema.productVariants.name,
         sku: schema.productVariants.sku,
+        vendorSku: schema.productVariants.vendorSku,
         quantityOrdered: schema.purchaseOrderLines.quantityOrdered,
         quantityReceived: schema.purchaseOrderLines.quantityReceived,
         unitCostCents: schema.purchaseOrderLines.unitCostCents,

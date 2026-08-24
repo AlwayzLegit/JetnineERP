@@ -84,6 +84,11 @@ export default function PosPage() {
   const [showOrderDialog, setShowOrderDialog] = useState(false);
   const [phase, setPhase] = useState<'cart' | 'pay' | 'done'>('cart');
   const [completedSale, setCompletedSale] = useState<SaleResp | null>(null);
+  // Cash change owed on the last completed sale. The server only stores
+  // the applied tender (cash never exceeds the total), so the change the
+  // cashier must hand back exists only here — surfaced prominently on
+  // the Sale complete screen and receipt.
+  const [changeDueCents, setChangeDueCents] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [stripeStatus, setStripeStatus] = useState<StripeStatus | null>(null);
   const [receiptBusiness, setReceiptBusiness] = useState<ReceiptBusiness | null>(null);
@@ -241,8 +246,9 @@ export default function PosPage() {
     );
   }
 
-  async function complete(payments: Payment[]) {
+  async function complete(payments: Payment[], meta?: { changeDueCents?: number }) {
     setError(null);
+    setChangeDueCents(meta?.changeDueCents ?? 0);
     const body = {
       locationId,
       customerId: customer?.id ?? null,
@@ -354,13 +360,20 @@ export default function PosPage() {
     setScan('');
     setResults([]);
     setCompletedSale(null);
+    setChangeDueCents(0);
     setError(null);
     setPhase('cart');
   }
 
   if (phase === 'done' && completedSale) {
     return (
-      <Receipt sale={completedSale} onNew={reset} customer={customer} business={receiptBusiness} />
+      <Receipt
+        sale={completedSale}
+        onNew={reset}
+        customer={customer}
+        business={receiptBusiness}
+        changeDueCents={changeDueCents}
+      />
     );
   }
 
@@ -802,7 +815,7 @@ function PaymentScreen({
 }: {
   totalCents: number;
   onCancel: () => void;
-  onConfirm: (payments: Payment[]) => Promise<void>;
+  onConfirm: (payments: Payment[], meta?: { changeDueCents?: number }) => Promise<void>;
   error: string | null;
   stripe: StripeStatus | null;
 }) {
@@ -856,7 +869,7 @@ function ManualPaymentForm({
 }: {
   totalCents: number;
   onCancel: () => void;
-  onConfirm: (payments: Payment[]) => Promise<void>;
+  onConfirm: (payments: Payment[], meta?: { changeDueCents?: number }) => Promise<void>;
   error: string | null;
   stripeConnected: boolean;
 }) {
@@ -882,7 +895,7 @@ function ManualPaymentForm({
       payments.push({ method: 'gift_card', amountCents: giftApplied, giftCardCode: gift.code });
     if (cashApplied > 0) payments.push({ method: 'cash', amountCents: cashApplied });
     if (cardCents > 0) payments.push({ method: 'card', amountCents: cardCents });
-    await onConfirm(payments);
+    await onConfirm(payments, { changeDueCents: change });
     setBusy(false);
   }
 
@@ -967,7 +980,7 @@ function StripePaymentForm({
 }: {
   totalCents: number;
   onCancel: () => void;
-  onConfirm: (payments: Payment[]) => Promise<void>;
+  onConfirm: (payments: Payment[], meta?: { changeDueCents?: number }) => Promise<void>;
   error: string | null;
   stub: boolean;
 }) {
@@ -1017,7 +1030,7 @@ function StripePaymentForm({
         });
       }
 
-      await onConfirm(payments);
+      await onConfirm(payments, { changeDueCents: change });
     } catch (err) {
       setCardError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -1116,11 +1129,13 @@ function Receipt({
   customer,
   business,
   onNew,
+  changeDueCents = 0,
 }: {
   sale: SaleResp;
   customer: CustomerRow | null;
   business: ReceiptBusiness | null;
   onNew: () => void;
+  changeDueCents?: number;
 }) {
   const isQueued = sale.number.startsWith('QUEUED');
   return (
@@ -1131,6 +1146,23 @@ function Receipt({
       <p className="muted" style={{ fontSize: 13, marginBottom: 16 }}>
         <code>{sale.number}</code>
       </p>
+      {changeDueCents > 0 && (
+        <div
+          data-testid="change-due"
+          style={{
+            background: 'var(--success-soft)',
+            color: 'var(--success-soft-text, var(--success))',
+            border: '1px solid var(--success)',
+            borderRadius: 10,
+            padding: '10px 14px',
+            marginBottom: 14,
+            fontSize: 18,
+            fontWeight: 700,
+          }}
+        >
+          Change due: {formatMoney(changeDueCents)}
+        </div>
+      )}
       {!isQueued && (
         <PrintableReceipt
           sale={{
@@ -1146,6 +1178,7 @@ function Receipt({
               totalCents: l.totalCents,
             })),
             payments: sale.payments,
+            changeDueCents,
           }}
           business={business}
         />
@@ -1207,6 +1240,14 @@ function Receipt({
                   </td>
                 </tr>
               ))}
+              {changeDueCents > 0 && (
+                <tr style={{ fontWeight: 700 }}>
+                  <td>Change due</td>
+                  <td className="num">
+                    <Money cents={changeDueCents} />
+                  </td>
+                </tr>
+              )}
             </tfoot>
           </table>
         </div>

@@ -2,9 +2,40 @@
 
 import { Download, RefreshCw } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import { toast } from 'sonner';
 import { Button, Card, Field, Input, LoadingRows, PageHeader } from '@/components/ui';
-import { api, apiUrl } from '@/lib/api';
+import { api } from '@/lib/api';
+import { downloadFile } from '@/lib/download';
 import { Money } from '@/components/money';
+
+/**
+ * Export button that downloads via an in-page fetch (see lib/download)
+ * so failures surface as a toast instead of a silent dead click.
+ */
+function CsvButton({ path, filename, size }: { path: string; filename: string; size?: 'sm' }) {
+  const [busy, setBusy] = useState(false);
+  return (
+    <Button
+      variant="secondary"
+      size={size}
+      disabled={busy}
+      style={size === 'sm' ? { display: 'inline-flex', marginBottom: 12 } : undefined}
+      onClick={async () => {
+        setBusy(true);
+        try {
+          await downloadFile(path, filename);
+        } catch (err) {
+          toast.error(`CSV download failed: ${err instanceof Error ? err.message : String(err)}`);
+        } finally {
+          setBusy(false);
+        }
+      }}
+    >
+      <Download size={size === 'sm' ? 13 : 14} aria-hidden />
+      {busy ? 'Preparing…' : 'Download CSV'}
+    </Button>
+  );
+}
 
 interface DailyTotalRow {
   day: string;
@@ -244,9 +275,24 @@ export default function ReportsPage() {
                       </td>
                     </tr>
                   ))}
+                  {z.refundsCents > 0 && (
+                    <tr style={{ color: 'var(--danger)' }}>
+                      <td>refunds (all tenders)</td>
+                      <td className="num">{z.refundCount}</td>
+                      <td className="num">
+                        <Money cents={-z.refundsCents} />
+                      </td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
             </div>
+            {z.refundsCents > 0 && (
+              <p className="muted" style={{ fontSize: 12, margin: '6px 0 0' }}>
+                Tender rows are money taken in; refunds aren&apos;t attributed to a specific tender,
+                so the drawer count should be reconciled against the refund line above.
+              </p>
+            )}
 
             <h3 style={subhead}>Cash drawers</h3>
             <div style={{ overflowX: 'auto' }}>
@@ -319,14 +365,12 @@ export default function ReportsPage() {
             <RefreshCw size={14} aria-hidden />
             Refresh
           </Button>
-          <a
-            className="btn btn-secondary"
-            href={`${apiUrl}/v1/reports/sales/daily?start=${start}&end=${end}&format=csv`}
-            style={{ alignSelf: 'flex-end' }}
-          >
-            <Download size={14} aria-hidden />
-            Download CSV
-          </a>
+          <div style={{ alignSelf: 'flex-end' }}>
+            <CsvButton
+              path={`/v1/reports/sales/daily?start=${start}&end=${end}&format=csv`}
+              filename={`daily-sales-${start}-to-${end}.csv`}
+            />
+          </div>
         </div>
 
         {daily ? (
@@ -426,14 +470,11 @@ export default function ReportsPage() {
       </Card>
 
       <Card title="Sales by product">
-        <a
-          className="btn btn-secondary btn-sm"
-          href={`${apiUrl}/v1/reports/sales/by-product?start=${start}&end=${end}&format=csv`}
-          style={{ display: 'inline-flex', marginBottom: 12 }}
-        >
-          <Download size={13} aria-hidden />
-          Download CSV
-        </a>
+        <CsvButton
+          size="sm"
+          path={`/v1/reports/sales/by-product?start=${start}&end=${end}&format=csv`}
+          filename={`sales-by-product-${start}-to-${end}.csv`}
+        />
         {products ? (
           <div style={{ overflowX: 'auto' }}>
             <table className="table">
@@ -490,13 +531,10 @@ export default function ReportsPage() {
             <RefreshCw size={14} aria-hidden />
             Refresh
           </Button>
-          <a
-            className="btn btn-secondary"
-            href={`${apiUrl}/v1/reports/inventory/on-hand${lowStock ? `?lowStock=${encodeURIComponent(lowStock)}&format=csv` : '?format=csv'}`}
-          >
-            <Download size={14} aria-hidden />
-            Download CSV
-          </a>
+          <CsvButton
+            path={`/v1/reports/inventory/on-hand${lowStock ? `?lowStock=${encodeURIComponent(lowStock)}&format=csv` : '?format=csv'}`}
+            filename="inventory-on-hand.csv"
+          />
         </div>
         {inv ? (
           <div style={{ overflowX: 'auto' }}>
@@ -539,14 +577,11 @@ export default function ReportsPage() {
       </Card>
 
       <Card title="Sales by category">
-        <a
-          className="btn btn-secondary btn-sm"
-          href={`${apiUrl}/v1/reports/sales/by-category?start=${start}&end=${end}&format=csv`}
-          style={{ display: 'inline-flex', marginBottom: 12 }}
-        >
-          <Download size={13} aria-hidden />
-          Download CSV
-        </a>
+        <CsvButton
+          size="sm"
+          path={`/v1/reports/sales/by-category?start=${start}&end=${end}&format=csv`}
+          filename={`sales-by-category-${start}-to-${end}.csv`}
+        />
         {categories ? (
           <div style={{ overflowX: 'auto' }}>
             <table className="table">
@@ -578,14 +613,11 @@ export default function ReportsPage() {
 
       {!financialDenied && (
         <Card title="Tax summary">
-          <a
-            className="btn btn-secondary btn-sm"
-            href={`${apiUrl}/v1/reports/tax/summary?start=${start}&end=${end}&format=csv`}
-            style={{ display: 'inline-flex', marginBottom: 12 }}
-          >
-            <Download size={13} aria-hidden />
-            Download CSV
-          </a>
+          <CsvButton
+            size="sm"
+            path={`/v1/reports/tax/summary?start=${start}&end=${end}&format=csv`}
+            filename={`tax-summary-${start}-to-${end}.csv`}
+          />
           {taxSummary ? (
             <div style={{ overflowX: 'auto' }}>
               <table className="table">
@@ -634,14 +666,11 @@ export default function ReportsPage() {
 
       {!financialDenied && (
         <Card title="Inventory valuation">
-          <a
-            className="btn btn-secondary btn-sm"
-            href={`${apiUrl}/v1/reports/inventory/valuation?format=csv`}
-            style={{ display: 'inline-flex', marginBottom: 12 }}
-          >
-            <Download size={13} aria-hidden />
-            Download CSV
-          </a>
+          <CsvButton
+            size="sm"
+            path="/v1/reports/inventory/valuation?format=csv"
+            filename="inventory-valuation.csv"
+          />
           {valuation ? (
             <>
               <div className="mb-3 grid grid-cols-2 gap-3 sm:max-w-md">

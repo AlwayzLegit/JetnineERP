@@ -38,6 +38,19 @@ interface LocationRow {
   name: string;
 }
 
+/**
+ * Online orders ship from the warehouse, not a showroom — so when the
+ * merchant has a location named like one, default the connector there.
+ * Falls back to an online/web-store location, then the first location.
+ */
+function defaultLandingLocation(locs: LocationRow[]): LocationRow {
+  return (
+    locs.find((l) => /warehouse|distribution|fulfill/i.test(l.name)) ??
+    locs.find((l) => /online|web|e-?comm/i.test(l.name)) ??
+    locs[0]!
+  );
+}
+
 export default function IntegrationsPage() {
   const [providers, setProviders] = useState<Provider[] | null>(null);
   const [locations, setLocations] = useState<LocationRow[]>([]);
@@ -54,7 +67,7 @@ export default function IntegrationsPage() {
       ]);
       setProviders(list);
       setLocations(locs);
-      if (locs[0] && !locationName) setLocationName(locs[0].name);
+      if (locs[0] && !locationName) setLocationName(defaultLandingLocation(locs).name);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err));
     }
@@ -199,6 +212,11 @@ export default function IntegrationsPage() {
                       </option>
                     ))}
                   </Select>
+                  <span className="muted mt-1 block text-[12px] font-normal">
+                    Where imported online orders live for inventory, tax, and reporting — pick your
+                    warehouse (or a dedicated “Online” location) so web sales stay out of showroom
+                    numbers.
+                  </span>
                 </Field>
                 <div className="flex flex-wrap gap-2">
                   <Button

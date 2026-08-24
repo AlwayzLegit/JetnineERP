@@ -58,12 +58,17 @@ export default function TrackOrderPage() {
 
   const accent = order?.accentColor ?? 'var(--brand)';
   const cancelled = order?.status === 'cancelled';
-  const stageIndex = order
+  const statusStage = order
     ? Math.max(
         0,
         JOURNEY.findIndex((s) => s.matches.includes(order.status)),
       )
     : 0;
+  // A booked delivery/pickup advances the journey to "Ready / scheduled"
+  // even while the order status itself is still open — the customer
+  // cares that a date exists, not about internal fulfillment states.
+  const stageIndex =
+    order && order.scheduledDate && !cancelled ? Math.max(statusStage, 2) : statusStage;
 
   if (notFound) {
     return (
@@ -174,13 +179,6 @@ export default function TrackOrderPage() {
               );
             })}
           </ol>
-        )}
-
-        {!cancelled && order.scheduledDate && stageIndex < 2 && (
-          <p style={{ fontSize: 13.5, color: 'var(--text-secondary)', margin: '0 0 8px' }}>
-            {order.fulfillmentType === 'pickup' ? 'Pickup' : 'Delivery'} scheduled for{' '}
-            <strong>{formatDate(order.scheduledDate)}</strong>
-          </p>
         )}
 
         <h2 style={sub}>Items</h2>

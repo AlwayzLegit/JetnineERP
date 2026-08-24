@@ -49,6 +49,8 @@ export default function MarketingPage() {
   const [previews, setPreviews] = useState<Record<string, Preview>>({});
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  /** Campaign id whose Send button is armed for the inline confirm step. */
+  const [armedSendId, setArmedSendId] = useState<string | null>(null);
 
   // Segment form
   const [segName, setSegName] = useState('');
@@ -153,13 +155,14 @@ export default function MarketingPage() {
   }
 
   async function sendCampaign(c: Campaign) {
-    if (
-      !confirm(
-        `Send "${c.name}" to every emailable customer in "${c.segmentName}"? This cannot be undone.`,
-      )
-    ) {
+    // Two-step confirm rendered inline (no native confirm() dialog):
+    // the first click arms this campaign's Send button, the second
+    // actually sends. Anything else disarms.
+    if (armedSendId !== c.id) {
+      setArmedSendId(c.id);
       return;
     }
+    setArmedSendId(null);
     setBusy(true);
     try {
       const res = await api<{ recipientCount: number; sent: number }>(
@@ -372,17 +375,49 @@ export default function MarketingPage() {
                     </td>
                     <td className="num">{c.recipientCount ?? '—'}</td>
                     <td style={{ textAlign: 'right' }}>
-                      {c.status === 'draft' && (
-                        <Button
-                          variant="primary"
-                          size="sm"
-                          disabled={busy}
-                          onClick={() => void sendCampaign(c)}
-                          data-testid={`send-${c.name}`}
-                        >
-                          <Send size={13} aria-hidden /> Send
-                        </Button>
-                      )}
+                      {c.status === 'draft' &&
+                        (armedSendId === c.id ? (
+                          <span
+                            style={{
+                              display: 'inline-flex',
+                              gap: 6,
+                              alignItems: 'center',
+                              flexWrap: 'wrap',
+                              justifyContent: 'flex-end',
+                            }}
+                          >
+                            <span style={{ fontSize: 12, color: 'var(--danger)', fontWeight: 600 }}>
+                              Emails everyone in “{c.segmentName}” — can’t be undone.
+                            </span>
+                            <Button
+                              variant="danger"
+                              size="sm"
+                              disabled={busy}
+                              onClick={() => void sendCampaign(c)}
+                              data-testid={`send-${c.name}`}
+                            >
+                              <Send size={13} aria-hidden /> Really send
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              disabled={busy}
+                              onClick={() => setArmedSendId(null)}
+                            >
+                              Cancel
+                            </Button>
+                          </span>
+                        ) : (
+                          <Button
+                            variant="primary"
+                            size="sm"
+                            disabled={busy}
+                            onClick={() => void sendCampaign(c)}
+                            data-testid={`send-${c.name}`}
+                          >
+                            <Send size={13} aria-hidden /> Send
+                          </Button>
+                        ))}
                     </td>
                   </tr>
                 ))}

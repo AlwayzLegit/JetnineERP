@@ -15,6 +15,8 @@ interface PoLine {
   productName: string;
   variantName: string | null;
   sku: string | null;
+  /** Vendor's part number; shown to the vendor in preference to sku. */
+  vendorSku: string | null;
   quantityOrdered: number;
   quantityReceived: number;
   unitCostCents: number;
@@ -140,9 +142,12 @@ export default function PurchaseOrderDetailPage() {
                       {l.variantName && (
                         <span style={{ color: 'var(--text-secondary)' }}> — {l.variantName}</span>
                       )}
-                      {l.sku && (
+                      {(l.vendorSku ?? l.sku) && (
                         <span style={{ color: 'var(--text-muted)', fontSize: 11, marginLeft: 6 }}>
-                          <code>{l.sku}</code>
+                          <code>{l.vendorSku ?? l.sku}</code>
+                          {l.vendorSku && l.sku && l.vendorSku !== l.sku && (
+                            <span> (ours: {l.sku})</span>
+                          )}
                         </span>
                       )}
                     </td>
