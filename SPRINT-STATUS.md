@@ -300,3 +300,9 @@ _(newest first — sessions append: date · day · what shipped · open flags)_
   all-location sum) by preferred vendor with suggested qty (explicit qty, else top-up to
   2× point); one-click "Draft PO" per vendor group on the Purchasing page; per-variant
   Reorder automation card on product detail. purchasing.int.spec.ts 11→16 tests.
+- **2026-08-24 — Post-checkpoint slice 7 (customer status link):** `orders.public_token`
+  (migration `0028_order_public_token`, unique); `POST /v1/orders/:id/share` (idempotent,
+  audited) + public no-auth `GET /v1/public/orders/:token` serving a narrow projection
+  (journey status, lines, paid/balance, branding accent — no address/notes/ids); branded
+  customer page at `/track/[token]` with a 4-stage journey rail; "Share status link"
+  button on order detail copies the URL. orders.int.spec.ts 22→25 tests.

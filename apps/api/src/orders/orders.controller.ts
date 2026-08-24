@@ -12,6 +12,7 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
+import { randomBytes } from 'node:crypto';
 import { and, desc, eq, inArray, lt, or } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { schema } from '@jetnine/db';
@@ -935,6 +936,40 @@ export class OrdersController {
     const detail = await this.loadDetail(id);
     this.fireOrderEvent('order.completed', tenant.businessId!, detail);
     return detail;
+  }
+
+  /**
+   * Create (or return) the order's customer-facing share token. The
+   * public page at /track/<token> shows a narrow read-only view;
+   * generating is idempotent so re-sharing never invalidates a link a
+   * customer already has.
+   */
+  @Post('orders/:id/share')
+  @RequirePermission('orders.view')
+  async share(
+    @CurrentTenant() _tenant: RequestTenantContext,
+    @Param('id') id: string,
+  ): Promise<{ token: string; path: string }> {
+    const [order] = await this.db
+      .select({ id: schema.orders.id, publicToken: schema.orders.publicToken })
+      .from(schema.orders)
+      .where(eq(schema.orders.id, id))
+      .limit(1);
+    if (!order) throw new NotFoundException('Order not found');
+    let token = order.publicToken;
+    if (!token) {
+      token = randomBytes(24).toString('hex');
+      await this.db
+        .update(schema.orders)
+        .set({ publicToken: token, updatedAt: new Date() })
+        .where(eq(schema.orders.id, id));
+      await this.audit.log({
+        action: 'order.share_link_created',
+        targetType: 'order',
+        targetId: id,
+      });
+    }
+    return { token, path: `/track/${token}` };
   }
 
   @Post('orders/:id/cancel')

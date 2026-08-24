@@ -588,3 +588,68 @@ describe('Day 1 — order pricing rules', () => {
     expect(res.body.depositRequiredCents).toBe(50_000);
   });
 });
+
+describe('Customer-facing status link', () => {
+  let orderId = '';
+  let token = '';
+
+  it('Owner writes an order, takes a deposit, and creates a share link', async () => {
+    const created = await request(app.getHttpServer())
+      .post('/v1/orders')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({
+        locationId,
+        customerId,
+        confirm: true,
+        lines: [{ variantId: sofaVariantId, quantity: 1 }],
+      });
+    expect(created.status).toBe(201);
+    orderId = created.body.id;
+
+    const pay = await request(app.getHttpServer())
+      .post(`/v1/orders/${orderId}/payments`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ method: 'cash', amountCents: 10_000 });
+    expect(pay.status).toBe(201);
+
+    const share = await request(app.getHttpServer())
+      .post(`/v1/orders/${orderId}/share`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId);
+    expect(share.status).toBe(201);
+    expect(share.body.token).toMatch(/^[0-9a-f]{48}$/);
+    expect(share.body.path).toBe(`/track/${share.body.token}`);
+    token = share.body.token;
+
+    // Idempotent: sharing again returns the SAME token — links a
+    // customer already has must keep working.
+    const again = await request(app.getHttpServer())
+      .post(`/v1/orders/${orderId}/share`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId);
+    expect(again.body.token).toBe(token);
+  });
+
+  it('The public endpoint serves a narrow view with NO auth at all', async () => {
+    const res = await request(app.getHttpServer()).get(`/v1/public/orders/${token}`);
+    expect(res.status).toBe(200);
+    expect(res.body.number).toMatch(/^SO-/);
+    expect(res.body.status).toBe('open');
+    expect(res.body.paidCents).toBe(10_000);
+    expect(res.body.balanceCents).toBe(res.body.totalCents - 10_000);
+    expect(res.body.lines.length).toBe(1);
+    // The projection must not leak operational fields.
+    expect(res.body.addressLine1).toBeUndefined();
+    expect(res.body.internalNotes).toBeUndefined();
+    expect(res.body.customerId).toBeUndefined();
+  });
+
+  it('Unknown and malformed tokens 404 without hitting order data', async () => {
+    const wrong = await request(app.getHttpServer()).get(`/v1/public/orders/${'0'.repeat(48)}`);
+    expect(wrong.status).toBe(404);
+    const malformed = await request(app.getHttpServer()).get('/v1/public/orders/short');
+    expect(malformed.status).toBe(404);
+  });
+});
