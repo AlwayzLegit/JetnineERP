@@ -88,6 +88,7 @@ const NAV: NavGroup[] = [
     label: 'Insights',
     items: [
       { href: '/reports', label: 'Reports', icon: BadgePercent },
+      { href: '/commissions', label: 'Commissions', icon: CreditCard },
       { href: '/audit', label: 'Audit log', icon: ScrollText },
     ],
   },

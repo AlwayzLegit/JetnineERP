@@ -195,6 +195,109 @@ export class CommissionsController {
     };
   }
 
+  /**
+   * One associate's printable statement for a payroll period: every
+   * entry with its source document number, plus totals split into
+   * accruals, reversals, and by payout status. Viewing someone else's
+   * statement requires `commissions.view_all`.
+   */
+  @Get('commissions/statement')
+  @RequirePermission('commissions.view_own')
+  async statement(
+    @CurrentTenant() tenant: RequestTenantContext,
+    @CurrentUser() actor: CurrentUserPayload,
+    @Query('period') period?: string,
+    @Query('membershipId') membershipIdParam?: string,
+  ) {
+    if (!period || !/^\d{4}-\d{2}$/.test(period)) {
+      throw new BadRequestException('period must be YYYY-MM');
+    }
+    const [own] = await this.db
+      .select({ id: schema.memberships.id })
+      .from(schema.memberships)
+      .where(
+        and(
+          eq(schema.memberships.userId, actor?.id ?? ''),
+          eq(schema.memberships.businessId, tenant.businessId!),
+        ),
+      )
+      .limit(1);
+    const membershipId = membershipIdParam ?? own?.id;
+    if (!membershipId) throw new ForbiddenException('No membership in this business');
+    if (membershipId !== own?.id && !tenant.permissions.has('commissions.view_all')) {
+      throw new ForbiddenException('commissions.view_all required for other statements');
+    }
+
+    const [member] = await this.db
+      .select({
+        id: schema.memberships.id,
+        name: schema.users.name,
+        email: schema.users.email,
+      })
+      .from(schema.memberships)
+      .leftJoin(schema.users, eq(schema.users.id, schema.memberships.userId))
+      .where(eq(schema.memberships.id, membershipId))
+      .limit(1);
+    if (!member) throw new NotFoundException('Membership not found');
+
+    const entries = await this.db
+      .select({
+        id: schema.commissionEntries.id,
+        orderId: schema.commissionEntries.orderId,
+        saleId: schema.commissionEntries.saleId,
+        orderNumber: schema.orders.number,
+        saleNumber: schema.sales.number,
+        basisCents: schema.commissionEntries.basisCents,
+        amountCents: schema.commissionEntries.amountCents,
+        rateBps: schema.commissionEntries.rateBps,
+        status: schema.commissionEntries.status,
+        accruedAt: schema.commissionEntries.accruedAt,
+        notes: schema.commissionEntries.notes,
+      })
+      .from(schema.commissionEntries)
+      .leftJoin(schema.orders, eq(schema.orders.id, schema.commissionEntries.orderId))
+      .leftJoin(schema.sales, eq(schema.sales.id, schema.commissionEntries.saleId))
+      .where(
+        and(
+          eq(schema.commissionEntries.period, period),
+          eq(schema.commissionEntries.membershipId, membershipId),
+        ),
+      )
+      .orderBy(desc(schema.commissionEntries.accruedAt))
+      .limit(2000);
+
+    let accruedCents = 0;
+    let reversalCents = 0;
+    let pendingCents = 0;
+    let approvedCents = 0;
+    let paidCents = 0;
+    for (const e of entries) {
+      if (e.amountCents >= 0) accruedCents += e.amountCents;
+      else reversalCents += e.amountCents;
+      if (e.status === 'pending') pendingCents += e.amountCents;
+      else if (e.status === 'approved') approvedCents += e.amountCents;
+      else if (e.status === 'paid') paidCents += e.amountCents;
+    }
+
+    return {
+      period,
+      membershipId,
+      salesperson: member.name ?? member.email ?? member.id,
+      entries: entries.map((e) => ({
+        ...e,
+        documentNumber: e.orderNumber ?? e.saleNumber ?? null,
+      })),
+      totals: {
+        accruedCents,
+        reversalCents,
+        netCents: accruedCents + reversalCents,
+        pendingCents,
+        approvedCents,
+        paidCents,
+      },
+    };
+  }
+
   /** Approve or mark-paid a batch of entries (payroll actions). */
   @Post('commissions/entries/set-status')
   @RequirePermission('commissions.manage')

@@ -306,3 +306,9 @@ _(newest first — sessions append: date · day · what shipped · open flags)_
   (journey status, lines, paid/balance, branding accent — no address/notes/ids); branded
   customer page at `/track/[token]` with a 4-stage journey rail; "Share status link"
   button on order detail copies the URL. orders.int.spec.ts 22→25 tests.
+- **2026-08-24 — Post-checkpoint slice 8 (commission statements):** `GET
+/v1/commissions/statement?period&membershipId` (own by default; others behind
+  `commissions.view_all`; entries carry source document numbers; totals split
+  accruals/reversals and pending/approved/paid) + the first Commissions page
+  (Insights nav): monthly by-associate summary, printable per-associate statement,
+  approve/mark-paid payroll actions. money.int.spec.ts 9→12 tests.
