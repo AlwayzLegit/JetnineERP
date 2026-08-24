@@ -5,7 +5,7 @@
 > tracker with the work. **Ops** items are the human's — surface them, don't do them.
 > Slip policy and never-cut list live in the plan §8.
 
-**Sprint state:** Day 1 build track complete · **Current day:** 1 (Ops track open) · **Rehearsal imports done:** 0/2 · **Recon gates passed:** 0/5
+**Sprint state:** Build track COMPLETE through Day 9 + UI overhaul + integrations — checkpoint merged to main 2026-08-24 (PR #26, squash `89763d9`). Remaining build items (Day 7/8 rehearsals, Day 10 final import) are blocked on real STORIS export files; all other unchecked items are **Ops**. · **Rehearsal imports done:** 0/2 (synthetic dry-run passed; real exports pending) · **Recon gates passed:** 0/5 against real data (gates 1–4 pass on synthetic)
 
 ---
 
