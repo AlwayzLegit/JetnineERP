@@ -437,3 +437,12 @@ current staging business. Keep this list current whenever a test session creates
   and disables the button while running; no more false timeout toasts on 7-minute
   pulls. Detached runs write state via ROOT_DRIZZLE and audit with explicit tenant.
   integrations.int.spec.ts 6→7 tests (adds detached-mode completion + idempotency).
+
+## Checkpoint 3 merged (2026-08-25)
+
+PR #27 squash-merged to main as 5b0f522 (eight post-cutover slices, three browser-QA
+rounds, D11/D12, vendor SKU mapping, STORIS import enrichment + rehearsal #1, background
+provider sync; migrations 0025–0030). Branch restarted from main for the next batch.
+Empty invoices-takeout-storis.pdf removed from main (0a4c619). Blocked on Ops: Render
+instance type (still spinning down), Manual Deploy of the merged head, customers +
+invoices exports, location-8 store name, pass-3 QA report.
