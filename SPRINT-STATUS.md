@@ -475,6 +475,65 @@ live cleanup, STORIS stock spot checks per store, toast recheck with a focused t
   remain manual-trigger until then), rotate the owner password shared for the location
   fix, vendor contact fill-in.
 
+## Rehearsal #2 executed on staging (2026-08-25) — customers + sales history
+
+The invoice-register PDF became moot: the owner produced real exports
+(`CUSTOMERBASE_*.xlsx`, 51,298 rows; `ALL_CUSTOMER_PRODUCTS_SALES_*.xlsx`, 220,278
+line rows). Both processed in-session (data never touched the repo) and imported
+through the D7 pipeline via owner-authorized API session.
+
+- **Customers: 51,117/51,117 committed, 0 invalid.** Cleaning: 168 blank-account rows
+  and 13 store/house accounts (ids 01–12, 88 — exactly the STORIS store codes) dropped;
+  0 dupes after that; 43,273 placeholder emails blanked (`no@gmail.com` family + any
+  address shared by 50+ accounts — would have poisoned campaign sends), 7,799 real
+  emails kept; single-field names split (54 business names kept whole); combined
+  City/State/Zip split. Addresses land in `customers.addresses_json` (verified live) —
+  the customer detail UI does not render them yet (UI backlog).
+- **Sales: 71,246/71,246 committed, 0 invalid** — header-level invoices derived by
+  grouping the line rows per ticket `Number` (proven single-date single-customer;
+  48,211 tickets double as the customer's account# with 2000/2000 phone agreement on
+  sample — STORIS mints account# from first ticket). Customer linkage: 48,211 by
+  account + 20,366 by phone + 2,669 walk-ins (blank). **Store ruling (owner, final):**
+  ticket prefix = store code; 01→Koreatown, 02→West LA, 03→La Brea, 04→Studio City;
+  ALL other codes (05/06/08/09/10/11/12, Glendale-as-closed) → `Warehouse` so no
+  history is dropped. Grand total **$61,552,851.98** across 2015-12-14 → 2026-08-23,
+  444 refund invoices with negative totals preserved. Commits ride out the proxy's
+  300s cap via poll-after-disconnect (server finishes on its own; one re-fire needed
+  after a container restart — D7 idempotency made that safe).
+- **Recon after both:** gate 1 all entities match (customer 63,159 = 12,042 Shopify +
+  51,117 STORIS; sale 73,899 = 2,652 Shopify + 71,246 STORIS + 1 QA; inventory 1,507);
+  gate 2 units 3,748/3,748 match; gate 2 valuation off by exactly $50.00
+  (5,769,563.12 vs 5,769,... — source 57,751,312¢ vs db 57,756,312¢): the QA pass-4
+  `warehouse-test.csv` imported 5 TEST-CSVUI-1 units with no UNIT_COST column, so the
+  source side carries no cost for them while the db side prices them at the variant's
+  $10 cost — a test-data artifact, not a pipeline defect. Gates 3–4 0/0 (no order/AR
+  imports). **Rehearsal imports: 2/2 done on real data.**
+- **QA pass 4 (canonical host): flows 1/2/4/5 PASS** — per-store stock ties to the
+  unit; commit guard verified incl. exact hint copy; contrast 5/5 (pass-3's sidebar
+  "1.16" was the agent's oklab()-parsing artifact — corrected tool measures 6.36);
+  toast auto-dismiss 4.25s with a visible tab (pass-3 finding was the hidden-tab
+  timer pause). Flow 3: timezone guard PASS; the three inactive "Koreatown Store"
+  dupes deleted server-side by the build agent (agent declines hard deletes) — 6
+  locations remain. Flow 6 "print template binding bug": **disproven server-side** —
+  the served production chunk renders the vendor block conditionally with correct
+  field names and cannot emit the bare `<br>`s reported; suspected stale
+  service-worker bundle or void-element `textContent` serializer artifact; agent to
+  re-check with SW unregistered + `innerText`. QA extra findings adopted into the UI
+  backlog below.
+- **UI/UX backlog (owner + QA pass 4, next build slices):** (1) list-page controls —
+  pagination/search/sort/filters on Customers, Sales, Products, Inventory first (51k
+  customers + 74k sales make naked tables a P0); (2) vendor edit UI (PATCH endpoint
+  already exists); (3) render + edit customer addresses on the detail page; (4)
+  replace every image-URL field with real file upload (storage decision needed:
+  S3-compatible or Vercel Blob — Render disk is ephemeral); (5) UI/UX audit pass 5
+  dispatched (dedicated brief) to inventory the rest.
+- **Email/invites: currently STUB.** Invite/arrival/reminder/campaign emails go to the
+  in-memory transport — Resend account has no domain and zero sends ever. To go live:
+  verify a sending domain, create an API key, set `RESEND_API_KEY` +
+  `RESEND_FROM_EMAIL` on the Render service (offer standing; needs owner's domain
+  choice + DNS access). **Ops:** rotate the shared owner password; repoint the Render
+  repo URL (auto-deploy still broken).
+
 ## Test-data ledger (D11 — what lives in the QA tenant and never reaches production)
 
 Production cutover creates a **fresh business**; everything below stays behind in the
