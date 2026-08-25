@@ -175,7 +175,11 @@ _Acceptance: layaway order pays off across installments; commission entries matc
       — _2026-08-25: rehearsal #1 surfaced no mismatches to fix. #2's scope is the
       remaining entities: sales history + customers derived from the STORIS invoice
       register (blocked on the export — CSV/Excel preferred, oversized PDF still
-      undelivered) and location-8 inventory (135 held-out rows pending its store name)._
+      undelivered). Location question CLOSED: owner ruled codes 06/08/09 are old
+      stores — their stock (135 rows / 308 units, all at code 8; 06/09 held nothing)
+      is dropped from the migration, holdout file discarded. Side effect: ~25 `-AS`
+      clearance products whose as-is units existed only at code 8 are now stockless
+      in the catalog — harmless, they simply never get counts._
 - [x] **Build:** `business_templates` (snapshot/apply + super-admin UI); `agencies` tier (D9, additive) + agency console basics; white-label branding + subdomain middleware
       — _2026-08-23: templates shipped (0023; snapshot captures custom roles,
       category tree, tax classes, settings, opt-in catalog; apply is additive and
