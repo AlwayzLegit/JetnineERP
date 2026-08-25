@@ -534,6 +534,36 @@ through the D7 pipeline via owner-authorized API session.
   choice + DNS access). **Ops:** rotate the shared owner password; repoint the Render
   repo URL (auto-deploy still broken).
 
+## "Enter a Sales Order" — POS replaced by the STORIS 3-step flow (2026-08-25)
+
+Owner decision (D1 amended in the plan doc): order entry becomes the STORIS-style
+three-step program and is the default POS surface.
+
+- **Schema (0031_order_entry_storis_parity):** orders gain `order_kind`
+  (sales_order|layaway), fulfillment widened to take_with/direct_ship,
+  `delivery_status` (scheduled|estimated|asap|will_call), `delivery_instructions`,
+  `pickup_location_id`, `billing_address_json`, `marketing_code`, and three Step-3 fee
+  buckets (delivery/install/other + label) folded into `total_cents` after tax;
+  order_lines gain per-line `fulfillment_method` + `delivery_date` (split tickets).
+- **API:** create/update validate the new enums + fees; detail echoes everything;
+  `recomputeTotals` includes fees. orders.int.spec 25→27 (fee math asserted to the cent,
+  bad enums rejected).
+- **UI:** new `components/order-entry.tsx` — Step 1 Customer (order type, selling
+  location, salesperson + split % from members, fulfillment, dates/status/instructions,
+  pickup location, customer picker with create-on-the-fly, shipping + optional separate
+  billing address), Step 2 Merchandise (scan/search, qty, register-side price entry per
+  D12, line discounts, special-order lines, per-line fulfillment/date), Step 3 Payment
+  (order discount, fees, marketing code, deposit with suggested 25%, tender incl.
+  financing provider/ref). Submit routing: Quote → unconfirmed order; Sales order /
+  Layaway → confirm + deposit payment (layaway CTA points at the payment-plan flow);
+  **take-with fast lane** — all-stock cart, fully tendered → posts a plain `/v1/sales`
+  register sale (drawer/Z/commissions intact per amended D1). `/pos` now defaults to
+  this flow with the legacy register one tab away (retires after its offline queue +
+  drawer flows are ported); `/orders/new` renders the same component. e2e specs updated
+  to drive the stepper and the register tab. Deferred by owner: warranty/prep codes,
+  configurator, manual numbers, backdating, Multi-Ship Master.
+- Web typecheck/lint/unit green; api 27/27 orders int tests green. Full e2e runs in CI.
+
 ## Test-data ledger (D11 — what lives in the QA tenant and never reaches production)
 
 Production cutover creates a **fresh business**; everything below stays behind in the

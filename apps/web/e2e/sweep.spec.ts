@@ -128,6 +128,7 @@ test.describe('Day 9 — QA sweep', () => {
     await loginAndPickBusiness(page);
 
     await page.goto('/pos');
+    await page.getByTestId('pos-tab-register').click();
     await expect(page.getByRole('heading', { name: 'Register' })).toBeVisible();
     await page.getByPlaceholder(/scan|search/i).fill(variantSku);
     await page.keyboard.press('Enter');
