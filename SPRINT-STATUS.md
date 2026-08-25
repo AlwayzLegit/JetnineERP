@@ -457,3 +457,9 @@ invoices exports, location-8 store name, pass-3 QA report.
   after its failed deploy) and live deploy still 1bbd354 — deploy of 847f310 queued
   behind the Render connector reconnect (auto-retry armed); repoint the Render repo URL
   to LA-Mattress-ERP to restore auto-deploy permanently.
+- **2026-08-25 — File-upload CSV import everywhere (batch 5 slice 1):** the Phase-1
+  paste-box importer on Products is gone; a reusable `CsvImport` component (file picker
+  → staged batch → editable column mapping → validate with per-row error preview →
+  commit, all over the D7 wizard endpoints) now lives on Products (product entity) and
+  Inventory (inventory entity, new — with a products-first hint). Settings → Import
+  remains the full multi-entity wizard on the same pipeline. e2e 9/9.
