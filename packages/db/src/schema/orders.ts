@@ -3,6 +3,7 @@ import {
   date,
   index,
   integer,
+  jsonb,
   pgTable,
   text,
   time,
@@ -82,8 +83,37 @@ export const orders = pgTable(
     // leaves `quote`. Seeded from the business default deposit percentage
     // and editable per order.
     depositRequiredCents: integer('deposit_required_cents').notNull().default(0),
-    /** 'delivery' | 'pickup' */
+    /**
+     * 'sales_order' | 'layaway' — a layaway is an order whose balance is
+     * paid down on an installment plan before it fulfills. Quotes are a
+     * status, not a kind.
+     */
+    orderKind: text('order_kind').notNull().default('sales_order'),
+    /**
+     * 'delivery' | 'pickup' | 'take_with' | 'direct_ship' — the order
+     * default; STORIS split tickets are per-line overrides on
+     * `order_lines.fulfillment_method`.
+     */
     fulfillmentType: text('fulfillment_type').notNull().default('delivery'),
+    /** 'scheduled' | 'estimated' | 'asap' | 'will_call' */
+    deliveryStatus: text('delivery_status'),
+    deliveryInstructions: text('delivery_instructions'),
+    // Pickup orders name which store hands the goods over; NULL means the
+    // order's own selling location.
+    pickupLocationId: uuid('pickup_location_id').references(() => locations.id, {
+      onDelete: 'set null',
+    }),
+    // Billing snapshot when it differs from the shipping snapshot below;
+    // NULL means "same as customer record".
+    billingAddressJson: jsonb('billing_address_json'),
+    // Promotion-source tag ("LABOR-DAY-TV"); free text, reportable later.
+    marketingCode: text('marketing_code'),
+    // Step-3 charges. Kept as three named buckets (STORIS parity) rather
+    // than fee lines; added to total_cents after tax, never taxed (v1).
+    deliveryFeeCents: integer('delivery_fee_cents').notNull().default(0),
+    installFeeCents: integer('install_fee_cents').notNull().default(0),
+    otherFeeCents: integer('other_fee_cents').notNull().default(0),
+    otherFeeLabel: text('other_fee_label'),
     // Address snapshot — the delivery goes where the customer said at
     // write time, even if their customer record changes later.
     addressLine1: text('address_line1'),
@@ -166,6 +196,14 @@ export const orderLines = pgTable(
     taxClassId: uuid('tax_class_id').references(() => taxClasses.id, { onDelete: 'set null' }),
     // Populated at fulfillment for serial-tracked products (G7, Day 4).
     serialUnitIds: uuid('serial_unit_ids').array(),
+    /**
+     * Per-line override of the order's fulfillment method (split ticket):
+     * 'delivery' | 'pickup' | 'take_with' | 'direct_ship'. NULL inherits
+     * the order default.
+     */
+    fulfillmentMethod: text('fulfillment_method'),
+    // Per-line promised date when parts of an order arrive separately.
+    deliveryDate: date('delivery_date'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => ({

@@ -56,7 +56,9 @@ const PAYMENT_METHODS = [
 ] as const;
 type PaymentMethod = (typeof PAYMENT_METHODS)[number];
 
-const FULFILLMENT_TYPES = ['delivery', 'pickup'] as const;
+const FULFILLMENT_TYPES = ['delivery', 'pickup', 'take_with', 'direct_ship'] as const;
+const DELIVERY_STATUSES = ['scheduled', 'estimated', 'asap', 'will_call'] as const;
+const ORDER_KINDS = ['sales_order', 'layaway'] as const;
 const LINE_TYPES = ['stock', 'special_order'] as const;
 
 interface OrderLineInput {
@@ -68,6 +70,10 @@ interface OrderLineInput {
   unitPriceCents?: number;
   lineDiscountCents?: number;
   lineType?: (typeof LINE_TYPES)[number];
+  /** Split-ticket override of the order's fulfillment method. */
+  fulfillmentMethod?: (typeof FULFILLMENT_TYPES)[number] | null;
+  /** Per-line promised date (YYYY-MM-DD) when items arrive separately. */
+  deliveryDate?: string | null;
 }
 
 interface AddressInput {
@@ -79,12 +85,25 @@ interface AddressInput {
   phone?: string | null;
 }
 
-interface CreateOrderBody {
+interface StepThreeFees {
+  deliveryFeeCents?: number;
+  installFeeCents?: number;
+  otherFeeCents?: number;
+  otherFeeLabel?: string | null;
+}
+
+interface CreateOrderBody extends StepThreeFees {
   locationId?: string;
   customerId?: string;
   lines?: OrderLineInput[];
   orderDiscountCents?: number;
+  orderKind?: (typeof ORDER_KINDS)[number];
   fulfillmentType?: (typeof FULFILLMENT_TYPES)[number];
+  deliveryStatus?: (typeof DELIVERY_STATUSES)[number] | null;
+  deliveryInstructions?: string | null;
+  pickupLocationId?: string | null;
+  billingAddress?: AddressInput | null;
+  marketingCode?: string | null;
   requestedDate?: string | null;
   address?: AddressInput;
   notes?: string | null;
@@ -101,8 +120,14 @@ interface CreateOrderBody {
   confirm?: boolean;
 }
 
-interface UpdateOrderBody {
+interface UpdateOrderBody extends StepThreeFees {
   fulfillmentType?: (typeof FULFILLMENT_TYPES)[number];
+  orderKind?: (typeof ORDER_KINDS)[number];
+  deliveryStatus?: (typeof DELIVERY_STATUSES)[number] | null;
+  deliveryInstructions?: string | null;
+  pickupLocationId?: string | null;
+  billingAddress?: AddressInput | null;
+  marketingCode?: string | null;
   requestedDate?: string | null;
   address?: AddressInput;
   notes?: string | null;
@@ -157,6 +182,8 @@ interface OrderLineRow {
   taxCents: number;
   totalCents: number;
   taxRateBps: number;
+  fulfillmentMethod: string | null;
+  deliveryDate: string | null;
 }
 
 interface OrderPaymentRow {
@@ -192,11 +219,46 @@ interface OrderDetail extends OrderListRow {
   salespersonMembershipId: string | null;
   secondSalespersonMembershipId: string | null;
   splitBps: number | null;
+  orderKind: string;
+  deliveryStatus: string | null;
+  deliveryInstructions: string | null;
+  pickupLocationId: string | null;
+  billingAddressJson: unknown;
+  marketingCode: string | null;
+  deliveryFeeCents: number;
+  installFeeCents: number;
+  otherFeeCents: number;
+  otherFeeLabel: string | null;
   legacyNumber: string | null;
   completedAt: Date | null;
   cancelledAt: Date | null;
   lines: OrderLineRow[];
   payments: OrderPaymentRow[];
+}
+
+/** Step-3 fee fields must be non-negative integer cents. */
+function assertFees(body: StepThreeFees): void {
+  for (const [k, v] of [
+    ['deliveryFeeCents', body.deliveryFeeCents],
+    ['installFeeCents', body.installFeeCents],
+    ['otherFeeCents', body.otherFeeCents],
+  ] as const) {
+    if (v !== undefined && (!Number.isInteger(v) || v < 0)) {
+      throw new BadRequestException(`${k} must be a non-negative integer`);
+    }
+  }
+}
+
+/** Validated per-line fulfillment override, or NULL to inherit the order's. */
+function lineFulfillment(line: OrderLineInput | undefined): string | null {
+  const m = line?.fulfillmentMethod;
+  if (m == null) return null;
+  if (!FULFILLMENT_TYPES.includes(m)) {
+    throw new BadRequestException(
+      `line fulfillmentMethod must be one of ${FULFILLMENT_TYPES.join(', ')}`,
+    );
+  }
+  return m;
 }
 
 /**
@@ -296,8 +358,20 @@ export class OrdersController {
     }
     const fulfillmentType = body.fulfillmentType ?? 'delivery';
     if (!FULFILLMENT_TYPES.includes(fulfillmentType)) {
-      throw new BadRequestException("fulfillmentType must be 'delivery' or 'pickup'");
+      throw new BadRequestException(
+        `fulfillmentType must be one of ${FULFILLMENT_TYPES.join(', ')}`,
+      );
     }
+    const orderKind = body.orderKind ?? 'sales_order';
+    if (!ORDER_KINDS.includes(orderKind)) {
+      throw new BadRequestException(`orderKind must be one of ${ORDER_KINDS.join(', ')}`);
+    }
+    if (body.deliveryStatus != null && !DELIVERY_STATUSES.includes(body.deliveryStatus)) {
+      throw new BadRequestException(
+        `deliveryStatus must be one of ${DELIVERY_STATUSES.join(', ')}`,
+      );
+    }
+    assertFees(body);
     if (body.splitBps != null && (body.splitBps < 0 || body.splitBps > 10000)) {
       throw new BadRequestException('splitBps must be between 0 and 10000');
     }
@@ -326,6 +400,15 @@ export class OrdersController {
       .limit(1);
     if (!customer) throw new NotFoundException('Customer not found');
 
+    if (body.pickupLocationId) {
+      const [pickup] = await this.db
+        .select({ id: schema.locations.id })
+        .from(schema.locations)
+        .where(eq(schema.locations.id, body.pickupLocationId))
+        .limit(1);
+      if (!pickup) throw new NotFoundException('Pickup location not found');
+    }
+
     const priced = await this.priceLines(tenant, body.locationId, body.lines);
 
     const number = await this.orders.generateOrderNumber(this.db, tenant.businessId!);
@@ -341,7 +424,17 @@ export class OrdersController {
         secondSalespersonMembershipId: body.secondSalespersonMembershipId ?? null,
         splitBps: body.splitBps ?? null,
         orderDiscountCents,
+        orderKind,
         fulfillmentType,
+        deliveryStatus: body.deliveryStatus ?? null,
+        deliveryInstructions: body.deliveryInstructions ?? null,
+        pickupLocationId: body.pickupLocationId ?? null,
+        billingAddressJson: (body.billingAddress ?? null) as never,
+        marketingCode: body.marketingCode ?? null,
+        deliveryFeeCents: body.deliveryFeeCents ?? 0,
+        installFeeCents: body.installFeeCents ?? 0,
+        otherFeeCents: body.otherFeeCents ?? 0,
+        otherFeeLabel: body.otherFeeLabel ?? null,
         addressLine1: body.address?.line1 ?? null,
         addressLine2: body.address?.line2 ?? null,
         addressCity: body.address?.city ?? null,
@@ -356,7 +449,7 @@ export class OrdersController {
     if (!order) throw new BadRequestException('failed to create order');
 
     await this.db.insert(schema.orderLines).values(
-      priced.map((l) => ({
+      priced.map((l, i) => ({
         businessId: tenant.businessId!,
         orderId: order.id,
         variantId: l.variantId,
@@ -367,6 +460,8 @@ export class OrdersController {
         discountCents: l.lineDiscountCents,
         taxRateBps: l.taxRateBps,
         taxClassId: l.taxClassId,
+        fulfillmentMethod: lineFulfillment(body.lines![i]),
+        deliveryDate: body.lines![i]?.deliveryDate ?? null,
         // Placeholders — recomputeTotals prices every line against the
         // whole cart (the order discount is allocated pro-rata) and
         // writes the real numbers back.
@@ -432,9 +527,40 @@ export class OrdersController {
     const patch: Record<string, unknown> = { updatedAt: new Date() };
     if (body.fulfillmentType !== undefined) {
       if (!FULFILLMENT_TYPES.includes(body.fulfillmentType)) {
-        throw new BadRequestException("fulfillmentType must be 'delivery' or 'pickup'");
+        throw new BadRequestException(
+          `fulfillmentType must be one of ${FULFILLMENT_TYPES.join(', ')}`,
+        );
       }
       patch.fulfillmentType = body.fulfillmentType;
+    }
+    if (body.orderKind !== undefined) {
+      if (!ORDER_KINDS.includes(body.orderKind)) {
+        throw new BadRequestException(`orderKind must be one of ${ORDER_KINDS.join(', ')}`);
+      }
+      patch.orderKind = body.orderKind;
+    }
+    if (body.deliveryStatus !== undefined) {
+      if (body.deliveryStatus != null && !DELIVERY_STATUSES.includes(body.deliveryStatus)) {
+        throw new BadRequestException(
+          `deliveryStatus must be one of ${DELIVERY_STATUSES.join(', ')}`,
+        );
+      }
+      patch.deliveryStatus = body.deliveryStatus;
+    }
+    if (body.deliveryInstructions !== undefined)
+      patch.deliveryInstructions = body.deliveryInstructions;
+    if (body.marketingCode !== undefined) patch.marketingCode = body.marketingCode;
+    if (body.billingAddress !== undefined) patch.billingAddressJson = body.billingAddress as never;
+    if (body.pickupLocationId !== undefined) {
+      if (body.pickupLocationId) {
+        const [pickup] = await this.db
+          .select({ id: schema.locations.id })
+          .from(schema.locations)
+          .where(eq(schema.locations.id, body.pickupLocationId))
+          .limit(1);
+        if (!pickup) throw new NotFoundException('Pickup location not found');
+      }
+      patch.pickupLocationId = body.pickupLocationId;
     }
     if (body.requestedDate !== undefined) patch.requestedDate = body.requestedDate;
     if (body.notes !== undefined) patch.notes = body.notes;
@@ -467,6 +593,19 @@ export class OrdersController {
     }
 
     let repriced = false;
+    if (
+      body.deliveryFeeCents !== undefined ||
+      body.installFeeCents !== undefined ||
+      body.otherFeeCents !== undefined ||
+      body.otherFeeLabel !== undefined
+    ) {
+      assertFees(body);
+      if (body.deliveryFeeCents !== undefined) patch.deliveryFeeCents = body.deliveryFeeCents;
+      if (body.installFeeCents !== undefined) patch.installFeeCents = body.installFeeCents;
+      if (body.otherFeeCents !== undefined) patch.otherFeeCents = body.otherFeeCents;
+      if (body.otherFeeLabel !== undefined) patch.otherFeeLabel = body.otherFeeLabel;
+      repriced = true;
+    }
     if (body.orderDiscountCents !== undefined) {
       if (!Number.isInteger(body.orderDiscountCents) || body.orderDiscountCents < 0) {
         throw new BadRequestException('orderDiscountCents must be a non-negative integer');
@@ -1221,6 +1360,16 @@ export class OrdersController {
       salespersonMembershipId: order.salespersonMembershipId,
       secondSalespersonMembershipId: order.secondSalespersonMembershipId,
       splitBps: order.splitBps,
+      orderKind: order.orderKind,
+      deliveryStatus: order.deliveryStatus,
+      deliveryInstructions: order.deliveryInstructions,
+      pickupLocationId: order.pickupLocationId,
+      billingAddressJson: order.billingAddressJson,
+      marketingCode: order.marketingCode,
+      deliveryFeeCents: order.deliveryFeeCents,
+      installFeeCents: order.installFeeCents,
+      otherFeeCents: order.otherFeeCents,
+      otherFeeLabel: order.otherFeeLabel,
       importedAt: order.importedAt,
       legacyNumber: order.legacyNumber,
       completedAt: order.completedAt,
@@ -1239,6 +1388,8 @@ export class OrdersController {
         taxCents: l.taxCents,
         totalCents: l.totalCents,
         taxRateBps: l.taxRateBps,
+        fulfillmentMethod: l.fulfillmentMethod,
+        deliveryDate: l.deliveryDate,
       })),
       payments: payments.map((p) => ({
         id: p.id,

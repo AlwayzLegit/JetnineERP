@@ -218,6 +218,13 @@
       "when": 1787669334415,
       "tag": "0030_integration_sync_state",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1787699986738,
+      "tag": "0031_order_entry_storis_parity",
+      "breakpoints": true
     }
   ]
 }
