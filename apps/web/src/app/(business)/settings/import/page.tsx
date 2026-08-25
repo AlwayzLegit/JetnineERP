@@ -261,7 +261,11 @@ export default function ImportWizardPage() {
               <Button
                 variant="primary"
                 onClick={() => void run('commit')}
-                disabled={busy || !['validated', 'committed'].includes(active.status)}
+                disabled={
+                  busy ||
+                  !['validated', 'committed'].includes(active.status) ||
+                  active.validRowCount === 0
+                }
                 data-testid="commit-batch"
               >
                 Commit
