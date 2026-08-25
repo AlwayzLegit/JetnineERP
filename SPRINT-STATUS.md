@@ -417,6 +417,25 @@ _(newest first — sessions append: date · day · what shipped · open flags)_
   preview. (4) Vendor contact/email/phone are empty for all 50 auto-created vendors —
   fill in the ones that receive POs so the printable PO's vendor block populates.
 
+- **2026-08-25 — Staging location fix EXECUTED + inventory import LANDED + recon VERIFIED
+  server-side (owner-authorized API session).** With the owner's credentials (supplied for
+  this run), the fix ran against staging over HTTPS: active `* Store` locations renamed to
+  the STORIS names (`Koreatown`, `West LA`, `La Brea`, `Studio City`), `Warehouse` created,
+  every timezone set to `America/Los_Angeles` (including the literal `\` one), the three
+  duplicate Koreatown records left inactive, `Glendale Store` untouched (Shopify's
+  location). The batch list confirmed the diagnosis exactly: `storis_inventory.csv` sat
+  `validated` at **0 valid / 1,505 invalid / 0 committed** (products were committed
+  6,909/6,909). Re-validate of the same staged batch after the fix: **1,505 valid /
+  0 invalid**; commit: **1,505/1,505** (32s). `GET /v1/import/recon`: gate 1 all entities
+  match (product 8,684 = STORIS ∪ Shopify ∪ QA, inventory 1,506 = 1,505 + QA row); gate 2
+  units **3,743/3,743** (= 3,738 STORIS + 5 QA test units) and valuation
+  **$577,513.12 to the cent**; gates 3–4 trivially 0/0 (no order/AR imports yet). Per-store
+  spot check ties the file exactly: Warehouse 2,074 · West LA 527 · La Brea 448 ·
+  Koreatown 387 · Studio City 302 = 3,738. **The "owner-reported, not independently
+  confirmed" caveat above is closed — rehearsal-scope recon gates 1–2 now pass
+  server-side on staging with real data.** Ops: rotate the owner password shared for this
+  session; vendor contact fill-in and canonical-host QA remain from the pass-3 list.
+
 ## Test-data ledger (D11 — what lives in the QA tenant and never reaches production)
 
 Production cutover creates a **fresh business**; everything below stays behind in the
