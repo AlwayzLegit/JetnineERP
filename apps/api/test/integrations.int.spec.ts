@@ -243,7 +243,7 @@ describe('one-click platform integrations', () => {
   });
 
   it('sync pulls customers, products, and paid orders through the import pipeline', async () => {
-    const res = await api().post('/v1/integrations/shopify/sync').send({});
+    const res = await api().post('/v1/integrations/shopify/sync?wait=1').send({});
     expect(res.status).toBe(201);
     const byEntity = Object.fromEntries(
       res.body.results.map((r: { entity: string }) => [r.entity, r]),
@@ -279,7 +279,7 @@ describe('one-click platform integrations', () => {
 
   it('re-sync is idempotent and applies upstream edits in place (D7)', async () => {
     fakeShop.customers[0]!.first_name = 'Almudena';
-    const res = await api().post('/v1/integrations/shopify/sync').send({});
+    const res = await api().post('/v1/integrations/shopify/sync?wait=1').send({});
     expect(res.status).toBe(201);
 
     const customers = await verifyDb
@@ -294,6 +294,30 @@ describe('one-click platform integrations', () => {
       .from(schema.sales)
       .where(eq(schema.sales.businessId, businessId));
     expect(sales).toHaveLength(1);
+  });
+
+  it('default (no wait) sync runs detached: returns started, finishes in the background', async () => {
+    const res = await api().post('/v1/integrations/shopify/sync').send({});
+    expect(res.status).toBe(201);
+    expect(res.body).toMatchObject({ started: true, syncStatus: 'running' });
+
+    // Poll the list until the background job leaves 'running'.
+    let final: { syncStatus?: string; lastResult?: { results?: unknown[] } } | undefined;
+    for (let i = 0; i < 100; i++) {
+      await new Promise((r) => setTimeout(r, 100));
+      const list = await api().get('/v1/integrations');
+      final = list.body.find((p: { provider: string }) => p.provider === 'shopify');
+      if (final?.syncStatus !== 'running') break;
+    }
+    expect(final?.syncStatus).toBe('idle');
+    expect(final?.lastResult?.results).toBeTruthy();
+
+    // Still idempotent when run detached.
+    const customers = await verifyDb
+      .select()
+      .from(schema.customers)
+      .where(eq(schema.customers.businessId, businessId));
+    expect(customers).toHaveLength(2);
   });
 
   it('disconnect wipes credentials and blocks syncs', async () => {

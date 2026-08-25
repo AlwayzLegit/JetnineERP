@@ -31,6 +31,16 @@ export const integrations = pgTable(
     /** Human-readable outcome of the last sync or connection test. */
     lastResultJson: jsonb('last_result_json'),
     lastSyncAt: timestamp('last_sync_at', { withTimezone: true }),
+    /**
+     * Background-sync job state: 'idle' | 'running' | 'error'. A sync
+     * kicked off via POST :provider/sync runs detached (a real store
+     * pull takes minutes — far past proxy timeouts), flips this to
+     * 'running', and streams page-by-page notes into
+     * `sync_progress_json` for the UI to poll.
+     */
+    syncStatus: text('sync_status').notNull().default('idle'),
+    syncProgressJson: jsonb('sync_progress_json'),
+    syncStartedAt: timestamp('sync_started_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },

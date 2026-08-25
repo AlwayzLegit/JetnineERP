@@ -426,3 +426,14 @@ current staging business. Keep this list current whenever a test session creates
   413s a real catalog CSV — main.ts already runs 25mb, the test harness now matches.
   Remaining rehearsal scope: location-8 inventory (pending store name), customers /
   invoices / open-orders entities (pending exports).
+- **2026-08-25 — Background provider sync (post-QA batch):** POST
+  `/v1/integrations/:provider/sync` now runs detached — job state on the integrations
+  row (`sync_status`/`sync_progress_json`/`sync_started_at`, migration
+  `0030_integration_sync_state`), page-by-page progress notes from the connectors,
+  stale-job takeover after 30 min, 409 while running, `?wait=1` preserves the
+  synchronous contract for tests/scripts. Page cap raised 20→400 (100k rows/resource,
+  matching MAX_ROWS) — the old cap truncated the real store at exactly 5,000 customers
+  and cascaded into 1,829 skipped sales. UI polls every 2s with a live progress line
+  and disables the button while running; no more false timeout toasts on 7-minute
+  pulls. Detached runs write state via ROOT_DRIZZLE and audit with explicit tenant.
+  integrations.int.spec.ts 6→7 tests (adds detached-mode completion + idempotency).
