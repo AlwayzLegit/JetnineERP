@@ -78,6 +78,11 @@ interface PoLineRow {
 interface PoDetail extends PoListRow {
   notes: string | null;
   createdByUserId: string | null;
+  /** Ship-to + vendor contact block for the printable vendor document. */
+  locationName: string | null;
+  vendorContactName: string | null;
+  vendorEmail: string | null;
+  vendorPhone: string | null;
   lines: PoLineRow[];
 }
 
@@ -524,7 +529,11 @@ export class PurchaseOrdersController {
         status: schema.purchaseOrders.status,
         vendorId: schema.purchaseOrders.vendorId,
         vendorName: schema.vendors.name,
+        vendorContactName: schema.vendors.contactName,
+        vendorEmail: schema.vendors.email,
+        vendorPhone: schema.vendors.phone,
         locationId: schema.purchaseOrders.locationId,
+        locationName: schema.locations.name,
         expectedAt: schema.purchaseOrders.expectedAt,
         placedAt: schema.purchaseOrders.placedAt,
         closedAt: schema.purchaseOrders.closedAt,
@@ -535,6 +544,7 @@ export class PurchaseOrdersController {
       })
       .from(schema.purchaseOrders)
       .leftJoin(schema.vendors, eq(schema.vendors.id, schema.purchaseOrders.vendorId))
+      .leftJoin(schema.locations, eq(schema.locations.id, schema.purchaseOrders.locationId))
       .where(eq(schema.purchaseOrders.id, id))
       .limit(1);
     if (!po) throw new NotFoundException('Purchase order not found');

@@ -3,10 +3,11 @@
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
-import { PackageCheck } from 'lucide-react';
+import { PackageCheck, Printer } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import { Money } from '@/components/money';
+import { PrintablePurchaseOrder } from '@/components/printable-purchase-order';
 import { Button, Card, Field, Input, LoadingRows, PageHeader, StatusBadge } from '@/components/ui';
 
 interface PoLine {
@@ -28,7 +29,11 @@ interface Po {
   status: string;
   vendorId: string;
   vendorName: string | null;
+  vendorContactName: string | null;
+  vendorEmail: string | null;
+  vendorPhone: string | null;
   locationId: string;
+  locationName: string | null;
   expectedAt: string | null;
   placedAt: string | null;
   closedAt: string | null;
@@ -117,7 +122,14 @@ export default function PurchaseOrderDetailPage() {
             {new Date(po.createdAt).toLocaleString()}
           </>
         }
+        actions={
+          <Button variant="secondary" size="sm" onClick={() => window.print()}>
+            <Printer size={14} aria-hidden />
+            Print for vendor
+          </Button>
+        }
       />
+      <PrintablePurchaseOrder po={po} />
 
       <Card title="Lines" style={{ marginBottom: 16 }}>
         <div className="overflow-x-auto">

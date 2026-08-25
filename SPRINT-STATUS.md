@@ -437,3 +437,23 @@ current staging business. Keep this list current whenever a test session creates
   and disables the button while running; no more false timeout toasts on 7-minute
   pulls. Detached runs write state via ROOT_DRIZZLE and audit with explicit tenant.
   integrations.int.spec.ts 6→7 tests (adds detached-mode completion + idempotency).
+
+## Checkpoint 3 merged (2026-08-25)
+
+PR #27 squash-merged to main as 5b0f522 (eight post-cutover slices, three browser-QA
+rounds, D11/D12, vendor SKU mapping, STORIS import enrichment + rehearsal #1, background
+provider sync; migrations 0025–0030). Branch restarted from main for the next batch.
+Empty invoices-takeout-storis.pdf removed from main (0a4c619). Blocked on Ops: Render
+instance type (still spinning down), Manual Deploy of the merged head, customers +
+invoices exports, location-8 store name, pass-3 QA report.
+
+- **2026-08-25 — Printable vendor purchase order (batch 4 slice 1):** PO detail gained a
+  "Print for vendor" document — clean one-pager (business header, vendor + attn/email/
+  phone, ship-to location, line items led by the VENDOR's part number with our SKU as
+  "ref", subtotal, notes, PO-reference footer) using the receipt print mechanics
+  (hidden on screen, sole visible element in print). API PO detail now returns
+  locationName + vendor contact fields (leftJoin locations). purchasing.int.spec 17/17.
+  Ops note: Render service confirmed still on plan "free" (instance upgrade reverted
+  after its failed deploy) and live deploy still 1bbd354 — deploy of 847f310 queued
+  behind the Render connector reconnect (auto-retry armed); repoint the Render repo URL
+  to LA-Mattress-ERP to restore auto-deploy permanently.
