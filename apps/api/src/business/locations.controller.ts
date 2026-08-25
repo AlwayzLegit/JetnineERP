@@ -39,6 +39,21 @@ interface UpdateBody extends CreateBody {
   isActive?: boolean;
 }
 
+/**
+ * A timezone is only usable if the runtime's Intl database knows it —
+ * everything downstream (close-of-day, Z-report bucketing) formats
+ * through Intl, so this is the exact definition of "valid" we need.
+ */
+function assertValidTimezone(timezone: string): void {
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: timezone });
+  } catch {
+    throw new BadRequestException(
+      `invalid timezone "${timezone}" — use an IANA name like America/Los_Angeles`,
+    );
+  }
+}
+
 @TenantScoped()
 @Controller('v1/business/locations')
 export class LocationsController {
@@ -75,6 +90,7 @@ export class LocationsController {
     const timezone = body.timezone?.trim();
     if (!name) throw new BadRequestException('name is required');
     if (!timezone) throw new BadRequestException('timezone is required');
+    assertValidTimezone(timezone);
     if (body.taxRateBps != null && (!Number.isInteger(body.taxRateBps) || body.taxRateBps < 0)) {
       throw new BadRequestException('taxRateBps must be a non-negative integer');
     }
@@ -122,6 +138,7 @@ export class LocationsController {
       after.name = update.name;
     }
     if (body.timezone !== undefined && body.timezone.trim() !== existing.timezone) {
+      assertValidTimezone(body.timezone.trim());
       update.timezone = body.timezone.trim();
       before.timezone = existing.timezone;
       after.timezone = update.timezone;

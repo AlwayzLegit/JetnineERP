@@ -75,7 +75,7 @@ export default function LocationsPage() {
             <Field label="Timezone">
               <Input
                 name="timezone"
-                defaultValue="America/New_York"
+                defaultValue="America/Los_Angeles"
                 required
                 style={{ width: '100%' }}
               />

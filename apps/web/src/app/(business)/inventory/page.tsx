@@ -18,6 +18,7 @@ import {
 interface Location {
   id: string;
   name: string;
+  isActive: boolean;
 }
 interface Level {
   variantId: string;
@@ -42,8 +43,9 @@ export default function InventoryPage() {
   async function loadLocations() {
     try {
       const rows = await api<Location[]>('/v1/business/locations');
-      setLocations(rows);
-      if (rows[0] && !locationId) setLocationId(rows[0].id);
+      const active = rows.filter((l) => l.isActive);
+      setLocations(active);
+      if (active[0] && !locationId) setLocationId(active[0].id);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }

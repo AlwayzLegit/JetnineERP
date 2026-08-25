@@ -374,6 +374,49 @@ _(newest first — sessions append: date · day · what shipped · open flags)_
   name mapping (codes 1–12 and 88); (3) decision on 1,180 as-is units (import as
   on-hand, separate as-is SKUs, or skip).
 
+- **2026-08-25 — Browser QA pass 3 (checkpoint 5): triage + fixes.** Agent ran 7 flows on the
+  Vercel **branch preview** (not the canonical host — note for next pass) against the staging
+  tenant. Flows 1–2 (CSV upload + mapping guard) PASS; flow 6 (background Shopify sync) PASS
+  end-to-end (~8 min, 12,042 customers / 1,805 products / 2,652 sales, live progress line,
+  no false timeout — the checkpoint-4 fix holding). **Headline finding: the owner's staging
+  INVENTORY import evidently never committed.** The tenant's locations are
+  "Glendale Store / Koreatown Store ×4 / La Brea Store / Studio City Store / West LA Store" —
+  no `Warehouse`, and none matching the CSV's STORIS names — so inventory validation fails
+  `unknown location` (QA reproduced it: 0 valid / 1 invalid on a Warehouse row; substituting
+  an existing location name → 1 valid, committed, stock visible). STORIS products DID land
+  (SAM-18002 family, 254 reorder rows across 14 vendor groups) but stock is zero at every
+  location. The owner-reported "1,505/1,505 · 3,738 units" recon is therefore **contradicted**
+  for inventory — likely staged-row counts read as committed. Flow 5 (vendor PO print)
+  reclassified from "API not live" to **data gap**: checkpoint-4 API was live before the test
+  (18:12Z), and the template renders vendor contact / ship-to / `ref` sub-line conditionally —
+  all 50 auto-created vendors have no contact data, the PO has no location, and that line's
+  variant has no vendorSku. Toast-never-dismisses finding is most likely a harness artifact
+  (sonner pauses its dismiss timer while the page is hidden/unfocused, which CDP-driven
+  browsers often are) — re-verify by hand.
+- **2026-08-25 — QA pass-3 fixes shipped:** (1) Commit now disabled when validation yields
+  0 valid rows (CsvImport + wizard), with a hint that commit imports valid rows only —
+  closes the missing-guard finding; (2) inactive locations filtered out of the Inventory and
+  Receive pickers (`/v1/pos/locations` consumers were already active-only); (3) location
+  timezone is validated as a real IANA name on create/update (the literal `\` timezone can
+  no longer be saved) and defaults are now `America/Los_Angeles` (form + seed);
+  business.int.spec 21/22 → +1 test; (4) contrast sweep: `--text-muted` #9ca3af → #6b7280
+  (AA on white/#f9fafb/green tint — fixes table headers, KPI labels, helper text, empty
+  states, checklist), placeholders split to `--text-faint`, sidebar section headers
+  white/35 → white/60, disabled buttons opacity 0.5 → 0.6 (exempt but kinder), sonner
+  success-toast vars overridden to AA, PO print sub-line #777/10px → #555/10.5px. Lint,
+  typecheck, web unit, business int green.
+- **Ops (from QA pass 3, in order):** (1) **Fix staging locations, then re-run the
+  inventory import** — rename/create so the five STORIS names exist exactly
+  (`Warehouse`, `Koreatown`, `West LA`, `La Brea`, `Studio City`), deactivate the three
+  dead Koreatown duplicates (after the fix they disappear from pickers), fix the `\`
+  timezone via edit (now validated), then re-run the same inventory CSV through the wizard
+  (idempotent, D7) and read the recon report — that closes the 3,738-unit verification for
+  real. (2) Decide whether Shopify's "Glendale Store" mapping and STORIS's location set
+  should be reconciled into one list before cutover (D11 makes production a fresh start
+  either way). (3) Point the next QA pass at the canonical web host, not the branch
+  preview. (4) Vendor contact/email/phone are empty for all 50 auto-created vendors —
+  fill in the ones that receive POs so the printable PO's vendor block populates.
+
 ## Test-data ledger (D11 — what lives in the QA tenant and never reaches production)
 
 Production cutover creates a **fresh business**; everything below stays behind in the
@@ -401,6 +444,12 @@ current staging business. Keep this list current whenever a test session creates
   staff invitations + roles, business settings (tax, receipts, branding), re-run the
   Shopify connector, then run the final STORIS import (D7 pipeline). The QA tenant keeps
   serving as the safe playground for future testing and demos.
+- Browser-agent run 3 (2026-08-25, checkpoint-5 QA): products `TEST-CSVUI-1` ("QA CSV
+  Upload Widget A", $10 cost) and `TEST-CSVUI-2` ("QA CSV Upload Widget B", $20 cost);
+  vendor `QA VENDOR` (auto-created by the products import); inventory level 5 on hand of
+  `TEST-CSVUI-1` at "Glendale Store" (Warehouse substitution); one full Shopify re-sync
+  (12,042 customers / 1,805 products / 2,652 sales). No `TEST-CSVUI-3` (mapping-guard file
+  never committed); no stock at "Warehouse" (location absent).
 - **2026-08-24 — D12 (no retail-price import) + QA run-2 triage:** priceCents is now
   optional on product import — absent means new variants land at $0 and existing
   variants keep their price (Shopify prices survive the STORIS import); POS cart lines

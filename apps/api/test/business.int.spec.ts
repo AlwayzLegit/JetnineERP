@@ -195,6 +195,31 @@ describe('Epic 1.6 — Business admin console', () => {
     expect(res.body.taxRateBps).toBe(1000);
   });
 
+  it('Location timezone must be a real IANA name (create and update)', async () => {
+    const bad = await request(app.getHttpServer())
+      .post('/v1/business/locations')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ name: 'Broken TZ Store', timezone: '\\' });
+    expect(bad.status).toBe(400);
+    expect(bad.body.message).toContain('invalid timezone');
+
+    const ok = await request(app.getHttpServer())
+      .post('/v1/business/locations')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ name: 'TZ Store', timezone: 'America/Los_Angeles' });
+    expect(ok.status).toBe(201);
+
+    const badUpdate = await request(app.getHttpServer())
+      .patch(`/v1/business/locations/${ok.body.id}`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ timezone: 'Not/A_Zone' });
+    expect(badUpdate.status).toBe(400);
+    expect(badUpdate.body.message).toContain('invalid timezone');
+  });
+
   it('Owner invites a cashier — invite captured by memory transport', async () => {
     const inviteRes = await request(app.getHttpServer())
       .post('/v1/business/members/invite')

@@ -9,6 +9,7 @@ import { Button, Card, EmptyState, Field, Input, PageHeader, Select } from '@/co
 interface Location {
   id: string;
   name: string;
+  isActive: boolean;
 }
 interface ProductRow {
   id: string;
@@ -45,8 +46,9 @@ export default function ReceivePage() {
 
   useEffect(() => {
     void api<Location[]>('/v1/business/locations').then((rows) => {
-      setLocations(rows);
-      if (rows[0]) setLocationId(rows[0].id);
+      const active = rows.filter((l) => l.isActive);
+      setLocations(active);
+      if (active[0]) setLocationId(active[0].id);
     });
   }, []);
 
