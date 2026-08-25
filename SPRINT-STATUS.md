@@ -462,9 +462,18 @@ Vercel production READY on main `28b1248`; canonical host confirmed
 `lamattress-erp.vercel.app`. Sprint branch restarted from main. Browser-QA pass 4
 brief handed to the owner (regression on the pass-3 fixes, Koreatown-dupe deletion as
 live cleanup, STORIS stock spot checks per store, toast recheck with a focused tab).
-Ops still open: repoint the Render dashboard repo URL to LA-Mattress-ERP (deploys
-remain manual-trigger until then), rotate the owner password shared for the location
-fix, vendor contact fill-in.
+
+- **2026-08-25 — Production-domain login fixed (owner-reported, root-caused, verified).**
+  `lamattress-erp.vercel.app` couldn't sign in: `CORS_ORIGIN`/`AUTH_TRUSTED_ORIGINS` on the
+  Render service allowed localhost + the `*-alwayzlegits-projects.vercel.app` preview
+  wildcard but not the production domain, and better-auth validates the proxied `Origin`
+  header against that list before checking credentials. Added the domain to both vars
+  (merge update via Render API, `dep-da6vjk8ae00c7385a95g`); verified live — preflight
+  from the prod origin now 204 with the domain echoed, and a dummy-cred POST through the
+  prod proxy returns 401 INVALID_EMAIL_OR_PASSWORD (credential layer reached).
+  Ops still open: repoint the Render dashboard repo URL to LA-Mattress-ERP (deploys
+  remain manual-trigger until then), rotate the owner password shared for the location
+  fix, vendor contact fill-in.
 
 ## Test-data ledger (D11 — what lives in the QA tenant and never reaches production)
 
