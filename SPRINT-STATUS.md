@@ -414,3 +414,15 @@ current staging business. Keep this list current whenever a test session creates
   the whole sidebar rendered brand-blue on navy. The anchor default now lives in
   `@layer base`, restoring utility overrides (bare content links keep the brand color).
   Watch for the same pattern if other element defaults ever fight a utility. e2e 9/9.
+- **2026-08-25 — STORIS import REHEARSAL #1 (real data): PASS, all gates.** New committed
+  runner `apps/api/test/rehearsal.storis.int.spec.ts` (self-skips unless
+  STORIS_REHEARSAL_DIR points at the local CSVs — no data in the repo) drove the real
+  export through stage→map→validate→commit→recon on a throwaway DB seeded with the five
+  mapped stores. Results: products 6,909/6,909 committed with 0 invalid rows (incl. 552
+  as-is companions); inventory 1,505/1,505 → 3,738 units on hand, tying the file to the
+  unit; 48 vendors auto-created; 4,255 vendor SKUs and 252 reorder points landed; all
+  variants at $0 per D12. Full re-run of both batches: zero duplicates, counts identical
+  (D7). End-to-end runtime ~105s. One harness finding: the default 100kb json body limit
+  413s a real catalog CSV — main.ts already runs 25mb, the test harness now matches.
+  Remaining rehearsal scope: location-8 inventory (pending store name), customers /
+  invoices / open-orders entities (pending exports).
