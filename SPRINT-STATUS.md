@@ -487,4 +487,20 @@ invoices exports, location-8 store name, pass-3 QA report.
   Render connector reconnect. Render instance re-upgraded and CONFIRMED on Starter
   (no more spin-downs); API deploy of the merged head still queued (auto-retry armed);
   Ops: repoint the Render repo URL to LA-Mattress-ERP for auto-deploy. PR #29
-  (batch 5) opened, CI fully green, awaiting merge word.
+  (batch 5) opened, CI fully green.
+
+## Checkpoint 5 merged (2026-08-25) — session handoff
+
+PR #29 squash-merged to main as 138ba82 (file-upload CSV import + tracker updates:
+rehearsal #1 done on real data, owner staging imports in the D11 ledger, old stores
+06/08/09 dropped). Working branch restarted from main. Vercel auto-deploys main → the
+CSV upload UI is live on the prod web app. **API deploy branch
+`claude/fix-latent-int-spec-failures` topped up to 596b8d4** (= main + deploy merges) —
+the live Render API is still 1bbd354, so the NEXT session's first job (Render MCP
+required): trigger deploy of 596b8d4 on srv-da4tua3m8hqs73apsflg (workspace
+tea-da4l4hgjo6nc73db7i10), watch to live, verify /health + migrations 0029/0030 in boot
+logs, then server-side-verify the owner's two staging imports (recon gates: product
+6,909 · inventory 1,505 · units 3,738). Until that deploy: printable-PO vendor/ship-to
+header fields and background-sync progress are NOT live. Then: browser-QA the batch-4/5
+surfaces, and rehearsal #2 once the STORIS invoice register (CSV/Excel) arrives from
+the owner.
