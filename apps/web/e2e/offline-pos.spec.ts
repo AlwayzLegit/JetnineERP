@@ -125,6 +125,7 @@ test.describe('Phase 2.16 — offline POS', () => {
 
     await loginAndPickBusiness(page);
     await page.goto('/pos');
+    await page.getByTestId('pos-tab-register').click();
     await expect(page.getByRole('heading', { name: 'Register' })).toBeVisible();
 
     // Wait for the service worker to actually control this page. It is
@@ -144,6 +145,7 @@ test.describe('Phase 2.16 — offline POS', () => {
     await expect(page.getByRole('heading', { name: /Pending sales/i })).toBeVisible();
 
     await page.goto('/pos');
+    await page.getByTestId('pos-tab-register').click();
     await expect(page.getByRole('heading', { name: 'Register' })).toBeVisible();
 
     // First (online) sale: search for the seeded variant SKU and ring it up.

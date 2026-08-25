@@ -217,6 +217,81 @@ afterAll(async () => {
   if (app) await app.close();
 });
 
+describe('Enter a Sales Order — STORIS 3-step parity fields', () => {
+  it('Order carries kind, fulfillment, delivery status, fees; total includes fees', async () => {
+    const res = await request(app.getHttpServer())
+      .post('/v1/orders')
+      .set('Cookie', cashierCookie)
+      .set('X-Business-Id', businessId)
+      .send({
+        locationId,
+        customerId,
+        orderKind: 'layaway',
+        fulfillmentType: 'take_with',
+        deliveryStatus: 'will_call',
+        deliveryInstructions: 'Call ahead 30 min',
+        marketingCode: 'LABOR-DAY',
+        deliveryFeeCents: 9900,
+        installFeeCents: 2500,
+        otherFeeCents: 500,
+        otherFeeLabel: 'Recycling fee',
+        billingAddress: { line1: '1 Billing Way', city: 'LA', region: 'CA', postalCode: '90001' },
+        lines: [
+          { variantId: sofaVariantId, quantity: 1 },
+          {
+            variantId: sofaVariantId,
+            quantity: 1,
+            fulfillmentMethod: 'delivery',
+            deliveryDate: '2026-09-15',
+          },
+        ],
+      });
+    expect(res.status).toBe(201);
+    const o = res.body;
+    expect(o.orderKind).toBe('layaway');
+    expect(o.fulfillmentType).toBe('take_with');
+    expect(o.deliveryStatus).toBe('will_call');
+    expect(o.marketingCode).toBe('LABOR-DAY');
+    expect(o.deliveryFeeCents).toBe(9900);
+    expect(o.otherFeeLabel).toBe('Recycling fee');
+    // total = taxed cart + the three fee buckets
+    expect(o.totalCents).toBe(o.subtotalCents - o.discountCents + o.taxCents + 9900 + 2500 + 500);
+    expect(o.balanceDueCents).toBe(o.totalCents);
+    // split-ticket line overrides round-trip
+    expect(o.lines[0].fulfillmentMethod).toBeNull();
+    expect(o.lines[1].fulfillmentMethod).toBe('delivery');
+    expect(o.lines[1].deliveryDate).toBe('2026-09-15');
+
+    // fees are editable and reprice the total
+    const upd = await request(app.getHttpServer())
+      .patch(`/v1/orders/${o.id}`)
+      .set('Cookie', cashierCookie)
+      .set('X-Business-Id', businessId)
+      .send({ deliveryFeeCents: 0, deliveryStatus: 'scheduled' });
+    expect(upd.status).toBe(200);
+    expect(upd.body.totalCents).toBe(o.totalCents - 9900);
+    expect(upd.body.deliveryStatus).toBe('scheduled');
+  });
+
+  it('Bad enums and negative fees are rejected', async () => {
+    const base = { locationId, customerId, lines: [{ variantId: sofaVariantId, quantity: 1 }] };
+    for (const bad of [
+      { ...base, fulfillmentType: 'teleport' },
+      { ...base, orderKind: 'club' },
+      { ...base, deliveryStatus: 'whenever' },
+      { ...base, deliveryFeeCents: -5 },
+      { ...base, lines: [{ variantId: sofaVariantId, quantity: 1, fulfillmentMethod: 'nope' }] },
+    ]) {
+      const res = await request(app.getHttpServer())
+        .post('/v1/orders')
+        .set('Cookie', cashierCookie)
+        .set('X-Business-Id', businessId)
+        .send(bad);
+      expect(res.status).toBe(400);
+    }
+  });
+});
+
 describe('Day 1 — order spine: write, deposit, reserve', () => {
   let orderId = '';
   let orderNumber = '';

@@ -90,21 +90,26 @@ test.describe('Day 2 — order writer', () => {
 
     // --- Write the order ---
     await page.goto('/orders/new');
-    const scan = page.getByPlaceholder('Scan barcode or type to search…');
-    await scan.fill(variantSku);
-    await scan.press('Enter');
-    const result = page.locator('button:has(strong)').first();
-    await expect(result).toBeVisible();
-    await result.click();
-
+    // Step 1 — customer first (STORIS order of operations).
     await page.getByRole('button', { name: 'Attach customer' }).click();
     await page.getByRole('button', { name: '+ New customer' }).click();
     await page.getByPlaceholder('First name').fill('Dana');
     await page.getByPlaceholder('Last name').fill('Buyer');
     await page.getByRole('button', { name: 'Create & attach' }).click();
     await expect(page.getByTestId('order-customer')).toContainText('Dana Buyer');
+    await page.getByTestId('to-step-2').click();
 
-    await page.getByTestId('confirm-order').click();
+    // Step 2 — merchandise.
+    const scan = page.getByTestId('order-entry-scan');
+    await scan.fill(variantSku);
+    await scan.press('Enter');
+    const result = page.getByTestId('lookup-result').first();
+    await expect(result).toBeVisible();
+    await result.click();
+    await page.getByTestId('to-step-3').click();
+
+    // Step 3 — confirm without money down (deposit is taken on the detail page).
+    await page.getByTestId('order-entry-submit').click();
     await page.waitForURL(/\/orders\/[0-9a-f-]{36}$/);
 
     // --- Detail: open, line reserved, no money yet ---
@@ -146,19 +151,21 @@ test.describe('Day 2 — order writer', () => {
 
     // Write and confirm a fresh order for 1 unit.
     await page.goto('/orders/new');
-    const scan = page.getByPlaceholder('Scan barcode or type to search…');
-    await scan.fill(variantSku);
-    await scan.press('Enter');
-    const result = page.locator('button:has(strong)').first();
-    await expect(result).toBeVisible();
-    await result.click();
     await page.getByRole('button', { name: 'Attach customer' }).click();
     await page.getByRole('button', { name: '+ New customer' }).click();
     await page.getByPlaceholder('First name').fill('Del');
     await page.getByPlaceholder('Last name').fill('Ivery');
     await page.getByRole('button', { name: 'Create & attach' }).click();
     await expect(page.getByTestId('order-customer')).toContainText('Del Ivery');
-    await page.getByTestId('confirm-order').click();
+    await page.getByTestId('to-step-2').click();
+    const scan = page.getByTestId('order-entry-scan');
+    await scan.fill(variantSku);
+    await scan.press('Enter');
+    const result = page.getByTestId('lookup-result').first();
+    await expect(result).toBeVisible();
+    await result.click();
+    await page.getByTestId('to-step-3').click();
+    await page.getByTestId('order-entry-submit').click();
     await page.waitForURL(/\/orders\/[0-9a-f-]{36}$/);
     await expect(page.getByTestId('order-status')).toHaveText(/open/i);
 
@@ -196,6 +203,7 @@ test.describe('Day 2 — order writer', () => {
     await loginAndPickBusiness(page);
 
     await page.goto('/pos');
+    await page.getByTestId('pos-tab-register').click();
     const scan = page.getByPlaceholder('Scan barcode or type to search…');
     await scan.fill(variantSku);
     await scan.press('Enter');
