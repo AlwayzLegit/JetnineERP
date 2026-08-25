@@ -446,3 +446,14 @@ provider sync; migrations 0025–0030). Branch restarted from main for the next 
 Empty invoices-takeout-storis.pdf removed from main (0a4c619). Blocked on Ops: Render
 instance type (still spinning down), Manual Deploy of the merged head, customers +
 invoices exports, location-8 store name, pass-3 QA report.
+
+- **2026-08-25 — Printable vendor purchase order (batch 4 slice 1):** PO detail gained a
+  "Print for vendor" document — clean one-pager (business header, vendor + attn/email/
+  phone, ship-to location, line items led by the VENDOR's part number with our SKU as
+  "ref", subtotal, notes, PO-reference footer) using the receipt print mechanics
+  (hidden on screen, sole visible element in print). API PO detail now returns
+  locationName + vendor contact fields (leftJoin locations). purchasing.int.spec 17/17.
+  Ops note: Render service confirmed still on plan "free" (instance upgrade reverted
+  after its failed deploy) and live deploy still 1bbd354 — deploy of 847f310 queued
+  behind the Render connector reconnect (auto-retry armed); repoint the Render repo URL
+  to LA-Mattress-ERP to restore auto-deploy permanently.

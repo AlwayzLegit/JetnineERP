@@ -491,6 +491,11 @@ describe('Reorder automation', () => {
     expect(detail.status).toBe(200);
     expect(detail.body.lines[0].vendorSku).toBe('RC-PLW-0099');
     expect(detail.body.lines[0].sku).toBe('PILLOW-1');
+    // The printable vendor document's header block.
+    expect(detail.body.vendorName).toBe('Restock Co');
+    expect(detail.body.locationName).toBeTruthy();
+    expect(detail.body).toHaveProperty('vendorEmail');
+    expect(detail.body).toHaveProperty('vendorPhone');
 
     // Explicit null clears it; empty/oversized strings are rejected.
     const cleared = await request(app.getHttpServer())
