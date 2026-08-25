@@ -532,6 +532,15 @@ none (already up to date).` — or the explicit list of tags on a run that appli
   D12 now records the exclusion as final, including that dropped-store rows are filtered
   during CSV prep and anything that slips through fails validation as `unknown location`
   rather than landing on a placeholder location.
+- **2026-08-25 — Rehearsal #2 unblocking: Cowork runbook for the invoice register.** The
+  sales-history export turns out to be a ~4 GB print-to-PDF invoice register. Since the
+  wizard's `sale` entity is header-level (one row per invoice — no line items), the PDF is
+  parseable locally: `docs/COWORK-INVOICE-REGISTER.md` is a complete runbook for a Cowork
+  session with folder access to the PDF — text-layer probe, streamed `pdftotext` extraction,
+  deterministic parser → `customers.csv` + `sales.csv` (exact wizard headers, store-code →
+  name mapping, 06/08/09 dropped and counted), and five pass/fail verification gates anchored
+  on the register's own printed grand totals. Data never leaves the local folder (D11/D8
+  restated in the doc). **Ops:** put the PDF in a folder, point Cowork at it + this runbook.
 - **Ops / blocked — server-side verification of the owner's two staging imports is NOT
   done, and the blocker is now root-caused.** The Render MCP connector itself is fine;
   `query_render_postgres` executes from the Claude remote session's sandbox, whose egress
