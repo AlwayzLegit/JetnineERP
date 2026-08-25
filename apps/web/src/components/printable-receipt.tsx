@@ -1,6 +1,7 @@
 'use client';
 
 import { formatMoney } from '@jetnine/shared';
+import { code128Svg } from '@/lib/code128';
 
 export interface ReceiptLine {
   description: string;
@@ -24,6 +25,12 @@ export interface ReceiptSale {
   totalCents: number;
   lines: ReceiptLine[];
   payments: ReceiptPayment[];
+  /**
+   * Cash change handed back at the register. The server never stores
+   * this (recorded cash is capped at the total), so it only exists on
+   * the just-completed sale — omit when reprinting from history.
+   */
+  changeDueCents?: number;
 }
 
 export interface ReceiptBusiness {
@@ -100,12 +107,27 @@ export function PrintableReceipt({
               <td className="r-amt">{formatMoney(p.amountCents)}</td>
             </tr>
           ))}
+          {(sale.changeDueCents ?? 0) > 0 && (
+            <tr className="r-pay">
+              <td>Change</td>
+              <td className="r-amt">{formatMoney(sale.changeDueCents!)}</td>
+            </tr>
+          )}
         </tbody>
       </table>
 
       {business?.receiptFooter && <pre className="r-pre r-foot">{business.receiptFooter}</pre>}
+
+      {/* Scannable document number — a return starts by scanning this. */}
+      <ReceiptBarcode text={sale.number} />
     </div>
   );
+}
+
+function ReceiptBarcode({ text }: { text: string }) {
+  const svg = code128Svg(text, { height: 36 });
+  if (!svg) return null;
+  return <div className="r-barcode" dangerouslySetInnerHTML={{ __html: svg }} />;
 }
 
 function labelFor(method: string): string {
@@ -145,6 +167,8 @@ const RECEIPT_CSS = `
   .receipt .r-total td { font-weight: 700; padding-top: 4px; border-top: 1px dashed #999; }
   .receipt .r-pay td { color: #555; padding-top: 2px; }
   .receipt .r-foot { text-align: center; margin-top: 12px; }
+  .receipt .r-barcode { margin: 10px auto 0; width: 80%; }
+  .receipt .r-barcode svg { width: 100%; height: 36px; }
   @page { margin: 8mm; }
 }
 `;

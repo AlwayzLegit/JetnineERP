@@ -12,6 +12,7 @@ import {
 } from 'drizzle-orm/pg-core';
 import { businesses } from './platform';
 import { taxClasses } from './taxes';
+import { vendors } from './purchasing';
 import { tsvector } from '../types';
 
 export const categories = pgTable(
@@ -85,6 +86,24 @@ export const productVariants = pgTable(
     priceCents: integer('price_cents').notNull(),
     costCents: integer('cost_cents'),
     barcode: text('barcode'),
+    /**
+     * Reorder automation. NULL reorderPoint = not managed. Trigger:
+     * available (on-hand − reserved, summed across locations) at or
+     * below the point. Suggested order = reorderQty when set, else
+     * top-up to 2× the point (a simple min/max heuristic).
+     */
+    reorderPoint: integer('reorder_point'),
+    reorderQty: integer('reorder_qty'),
+    preferredVendorId: uuid('preferred_vendor_id').references(() => vendors.id, {
+      onDelete: 'set null',
+    }),
+    /**
+     * The vendor's own part number for this variant, when it differs
+     * from our selling `sku` (e.g. Shopify-synced SKUs vs supplier
+     * catalogs). Purchasing surfaces (reorder suggestions, PO lines)
+     * print this to the vendor, falling back to `sku` when unset.
+     */
+    vendorSku: text('vendor_sku'),
     isActive: boolean('is_active').notNull().default(true),
     searchTsv: tsvector('search_tsv'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),

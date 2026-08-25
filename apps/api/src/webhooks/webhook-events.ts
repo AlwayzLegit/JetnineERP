@@ -21,6 +21,8 @@ export const WEBHOOK_EVENT_TYPES = [
   'inventory.adjusted',
   'purchase_order.received',
   'stock_transfer.received',
+  // Payload: { campaignId, name, segmentId, recipientCount }
+  'campaign.sent',
 ] as const;
 
 export type WebhookEventType = (typeof WEBHOOK_EVENT_TYPES)[number];

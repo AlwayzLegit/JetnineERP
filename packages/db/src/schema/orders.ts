@@ -95,6 +95,13 @@ export const orders = pgTable(
     requestedDate: date('requested_date'),
     notes: text('notes'),
     internalNotes: text('internal_notes'),
+    /**
+     * Opaque token for the customer-facing status page (/track/<token>).
+     * NULL until staff share the order; the token is 48 hex chars of
+     * crypto randomness, so possession of the link IS the authorization
+     * — the public endpoint exposes only customer-safe fields.
+     */
+    publicToken: text('public_token'),
     // D8: legacy history imports carry these and are excluded from the
     // cash drawer, commission accrual, and webhook emission.
     importedAt: timestamp('imported_at', { withTimezone: true }),
@@ -106,6 +113,7 @@ export const orders = pgTable(
   },
   (t) => ({
     businessNumberUnique: uniqueIndex('orders_business_number_uniq').on(t.businessId, t.number),
+    publicTokenUnique: uniqueIndex('orders_public_token_uniq').on(t.publicToken),
     businessIdx: index('orders_business_id_idx').on(t.businessId),
     locationIdx: index('orders_location_id_idx').on(t.locationId),
     customerIdx: index('orders_customer_id_idx').on(t.customerId),

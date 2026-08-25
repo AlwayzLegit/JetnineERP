@@ -1,10 +1,13 @@
 'use client';
 
 import Link from 'next/link';
+import { RefreshCw } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import { Money } from '@/components/money';
 import {
+  Button,
   Card,
   EmptyState,
   LinkButton,
@@ -23,19 +26,71 @@ interface PoRow {
   createdAt: string;
 }
 
+interface SuggestionLine {
+  variantId: string;
+  productName: string;
+  variantName: string | null;
+  sku: string | null;
+  vendorSku: string | null;
+  available: number;
+  reorderPoint: number;
+  suggestedQty: number;
+  unitCostCents: number | null;
+}
+interface SuggestionGroup {
+  vendorId: string | null;
+  vendorName: string | null;
+  lines: SuggestionLine[];
+}
+
 export default function PurchaseOrdersPage() {
   const [rows, setRows] = useState<PoRow[] | null>(null);
+  const [suggestions, setSuggestions] = useState<SuggestionGroup[] | null>(null);
+  const [drafting, setDrafting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  async function load() {
+    try {
+      setRows(await api<PoRow[]>('/v1/purchase-orders'));
+      const s = await api<{ vendors: SuggestionGroup[] }>(
+        '/v1/purchase-orders/reorder-suggestions',
+      );
+      setSuggestions(s.vendors);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
   useEffect(() => {
-    void (async () => {
-      try {
-        setRows(await api<PoRow[]>('/v1/purchase-orders'));
-      } catch (err) {
-        setError(err instanceof Error ? err.message : String(err));
-      }
-    })();
+    void load();
   }, []);
+
+  async function draftPo(group: SuggestionGroup) {
+    if (!group.vendorId) return;
+    setDrafting(true);
+    try {
+      const locations = await api<{ id: string }[]>('/v1/business/locations');
+      if (locations.length === 0) throw new Error('Create a location first');
+      const po = await api<{ id: string; number: string }>('/v1/purchase-orders', {
+        method: 'POST',
+        body: JSON.stringify({
+          vendorId: group.vendorId,
+          locationId: locations[0]!.id,
+          place: false,
+          lines: group.lines.map((l) => ({
+            variantId: l.variantId,
+            quantity: l.suggestedQty,
+            unitCostCents: l.unitCostCents ?? 0,
+          })),
+        }),
+      });
+      toast.success(`Draft ${po.number} created`);
+      await load();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDrafting(false);
+    }
+  }
 
   return (
     <div>
@@ -48,6 +103,98 @@ export default function PurchaseOrdersPage() {
         }
       />
       {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
+
+      {suggestions != null && suggestions.length > 0 && (
+        <Card
+          title="Reorder suggestions"
+          actions={
+            <Button size="sm" onClick={() => void load()} aria-label="Refresh suggestions">
+              <RefreshCw size={13} aria-hidden />
+            </Button>
+          }
+          data-testid="reorder-suggestions"
+        >
+          <p className="muted" style={{ fontSize: 12.5, marginTop: 0 }}>
+            Items at or below their reorder point (available = on hand − committed, all locations).
+            Set points on each product&apos;s variants.
+          </p>
+          {suggestions.map((g) => (
+            <div key={g.vendorId ?? 'unassigned'} style={{ marginBottom: 14 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
+                <strong style={{ fontSize: 13.5 }}>
+                  {g.vendorName ?? 'No preferred vendor set'}
+                </strong>
+                {g.vendorId ? (
+                  <Button
+                    size="sm"
+                    variant="primary"
+                    disabled={drafting}
+                    onClick={() => void draftPo(g)}
+                    data-testid={`draft-po-${g.vendorName}`}
+                  >
+                    Draft PO ({g.lines.length} item{g.lines.length === 1 ? '' : 's'})
+                  </Button>
+                ) : (
+                  <span className="muted" style={{ fontSize: 12 }}>
+                    <Link href="/vendors" style={{ color: 'inherit' }}>
+                      create a vendor
+                    </Link>{' '}
+                    and assign it on the variant to draft automatically
+                  </span>
+                )}
+              </div>
+              <div className="overflow-x-auto">
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Product</th>
+                      <th>SKU</th>
+                      <th className="num">Available</th>
+                      <th className="num">Point</th>
+                      <th className="num">Suggested</th>
+                      <th className="num">Unit cost</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {g.lines.map((l) => (
+                      <tr key={l.variantId}>
+                        <td>
+                          {l.productName}
+                          {l.variantName && (
+                            <span style={{ color: 'var(--text-secondary)' }}>
+                              {' '}
+                              — {l.variantName}
+                            </span>
+                          )}
+                        </td>
+                        <td>
+                          <code>{l.vendorSku ?? l.sku ?? '—'}</code>
+                          {l.vendorSku && l.sku && l.vendorSku !== l.sku && (
+                            <span className="muted" style={{ fontSize: 11, display: 'block' }}>
+                              ours: {l.sku}
+                            </span>
+                          )}
+                        </td>
+                        <td className="num" style={{ color: 'var(--danger)', fontWeight: 600 }}>
+                          {l.available}
+                        </td>
+                        <td className="num">{l.reorderPoint}</td>
+                        <td className="num">
+                          <strong>{l.suggestedQty}</strong>
+                        </td>
+                        <td className="num">
+                          {l.unitCostCents != null ? <Money cents={l.unitCostCents} /> : '—'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ))}
+        </Card>
+      )}
+
       <Card style={{ padding: 0 }}>
         {rows == null ? (
           <div style={{ padding: 16 }}>

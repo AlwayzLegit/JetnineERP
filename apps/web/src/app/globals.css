@@ -112,8 +112,13 @@ h4 {
   letter-spacing: -0.01em;
 }
 
-a {
-  color: var(--brand);
+/* In @layer base so Tailwind color utilities (layered) can override it.
+   Unlayered, this rule beats every `text-*` class regardless of
+   specificity — which painted the sidebar nav brand-on-navy. */
+@layer base {
+  a {
+    color: var(--brand);
+  }
 }
 
 code {

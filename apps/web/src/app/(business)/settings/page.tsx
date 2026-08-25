@@ -6,6 +6,12 @@ import { CURRENCY_LABELS, SUPPORTED_CURRENCIES } from '@jetnine/shared';
 import { Button, Field, Input, LinkButton, LoadingRows, PageHeader, Select } from '@/components/ui';
 import { api } from '@/lib/api';
 
+interface Branding {
+  accentColor?: string | null;
+  logoUrl?: string | null;
+  publicName?: string | null;
+}
+
 interface Settings {
   id: string;
   slug: string;
@@ -15,6 +21,7 @@ interface Settings {
   defaultTaxRateBps: number;
   receiptHeader: string | null;
   receiptFooter: string | null;
+  branding: Branding | null;
 }
 
 export default function SettingsPage() {
@@ -172,6 +179,116 @@ export default function SettingsPage() {
           {saving ? 'Saving…' : 'Save'}
         </Button>
       </form>
+
+      <BrandingCard settings={settings} onSaved={setSettings} />
     </div>
+  );
+}
+
+/**
+ * White-label branding. Saved separately from the main form so a
+ * branding tweak can't accidentally resubmit tax/currency, and vice
+ * versa. Changes apply on the next page load (the shell reads branding
+ * once per session).
+ */
+function BrandingCard({
+  settings,
+  onSaved,
+}: {
+  settings: Settings;
+  onSaved: (s: Settings) => void;
+}) {
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const b = settings.branding ?? {};
+
+  async function submit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    setSaving(true);
+    setMessage(null);
+    setErrorMsg(null);
+    try {
+      const data = new FormData(e.currentTarget);
+      const accentEnabled = data.get('accentEnabled') === 'on';
+      const branding: Branding = {
+        accentColor: accentEnabled ? String(data.get('accentColor') || '#4f46e5') : null,
+        logoUrl: String(data.get('logoUrl') ?? '').trim() || null,
+        publicName: String(data.get('publicName') ?? '').trim() || null,
+      };
+      const updated = await api<Settings>('/v1/business/settings', {
+        method: 'PATCH',
+        body: JSON.stringify({ branding }),
+      });
+      onSaved(updated);
+      setMessage('Saved — reload to see the new look everywhere.');
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <form onSubmit={submit} className="card mt-4 grid max-w-[640px] gap-3 sm:grid-cols-2">
+      <h3 className="card-title sm:col-span-2" style={{ margin: 0 }}>
+        Branding
+      </h3>
+      <p className="muted sm:col-span-2" style={{ fontSize: 12.5, margin: 0 }}>
+        Make the app yours: the accent color re-themes buttons and navigation, the logo shows in the
+        sidebar, and the display name appears on the shell and printed receipts (your legal business
+        name above stays on record).
+      </p>
+      <Field label="Display name (optional)">
+        <Input
+          name="publicName"
+          defaultValue={b.publicName ?? ''}
+          placeholder={settings.name}
+          style={{ width: '100%' }}
+        />
+      </Field>
+      <Field label="Logo URL (https, optional)">
+        <Input
+          name="logoUrl"
+          type="url"
+          defaultValue={b.logoUrl ?? ''}
+          placeholder="https://…/logo.png"
+          style={{ width: '100%' }}
+        />
+      </Field>
+      <Field label="Accent color">
+        <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12.5 }}>
+            <input type="checkbox" name="accentEnabled" defaultChecked={Boolean(b.accentColor)} />
+            Use custom color
+          </label>
+          <Input
+            name="accentColor"
+            type="color"
+            defaultValue={b.accentColor ?? '#4f46e5'}
+            style={{ width: 48, height: 32, padding: 2 }}
+            data-testid="branding-accent"
+          />
+        </span>
+      </Field>
+      {errorMsg && (
+        <p className="sm:col-span-2" style={{ color: 'var(--danger)', fontSize: 13, margin: 0 }}>
+          {errorMsg}
+        </p>
+      )}
+      {message && (
+        <p
+          data-testid="branding-success"
+          className="sm:col-span-2"
+          style={{ color: 'var(--success)', fontSize: 13, margin: 0 }}
+        >
+          {message}
+        </p>
+      )}
+      <Button type="submit" variant="primary" disabled={saving} style={{ width: 'fit-content' }}>
+        <Save size={14} aria-hidden />
+        {saving ? 'Saving…' : 'Save branding'}
+      </Button>
+    </form>
   );
 }

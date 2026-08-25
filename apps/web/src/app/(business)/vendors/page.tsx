@@ -47,8 +47,11 @@ export default function VendorsPage() {
   async function create(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setError(null);
+    // React nulls the synthetic event's currentTarget once the handler
+    // yields — grab the form element before any await or reset() throws.
+    const form = e.currentTarget;
     try {
-      const data = new FormData(e.currentTarget);
+      const data = new FormData(form);
       await api('/v1/vendors', {
         method: 'POST',
         body: JSON.stringify({
@@ -59,7 +62,7 @@ export default function VendorsPage() {
           notes: String(data.get('notes') ?? '') || null,
         }),
       });
-      e.currentTarget.reset();
+      form.reset();
       setCreating(false);
       void load();
     } catch (err) {

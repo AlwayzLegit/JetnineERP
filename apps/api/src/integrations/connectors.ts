@@ -31,6 +31,8 @@ export interface ConnectorContext {
   credentials: Record<string, string>;
   config: { locationName?: string };
   fetchImpl: FetchImpl;
+  /** Called as pages arrive so a background sync can report progress. */
+  onProgress?: (note: string) => void;
 }
 
 export interface Connector {
@@ -42,7 +44,11 @@ export interface Connector {
   pull(ctx: ConnectorContext): Promise<ConnectorPull[]>;
 }
 
-const MAX_PAGES = 20;
+// 400 pages × 250 = 100k rows per resource — aligned with the import
+// pipeline's MAX_ROWS stage limit. (The old cap of 20 truncated a real
+// store at exactly 5,000 customers, which then cascaded into skipped
+// sales whose customers were beyond the cap.)
+const MAX_PAGES = 400;
 
 function centsString(v: unknown): string {
   // Providers send money as dollar strings ("19.99") or numbers; the
@@ -85,6 +91,7 @@ async function shopifyPaged(
     const { body, nextPageInfo } = await shopifyGet(ctx, `${resource}.json?${qs}`);
     const items = (body as Record<string, unknown[]>)[resource] ?? [];
     out.push(...items);
+    ctx.onProgress?.(`pulling ${resource}: ${out.length} so far`);
     if (!nextPageInfo) break;
     pageInfo = nextPageInfo;
   }
@@ -112,13 +119,22 @@ const shopify: Connector = {
       '&status=any&financial_status=paid',
     )) as Record<string, unknown>[];
 
-    const customerRows = customers.map((c) => ({
-      accountNo: `shp-${s(c.id)}`,
-      firstName: s(c.first_name),
-      lastName: s(c.last_name),
-      email: s(c.email),
-      phone: s(c.phone),
-    }));
+    const customerRows = customers.map((c) => {
+      const email = s(c.email);
+      let firstName = s(c.first_name);
+      // Shopify guest checkouts often carry no name at all — fall back
+      // to the email's local part so CRM lists aren't rows of "—".
+      if (!firstName && !s(c.last_name) && email.includes('@')) {
+        firstName = email.split('@')[0]!;
+      }
+      return {
+        accountNo: `shp-${s(c.id)}`,
+        firstName,
+        lastName: s(c.last_name),
+        email,
+        phone: s(c.phone),
+      };
+    });
 
     const productRows = products.flatMap((p) => {
       const variants = (p.variants as Record<string, unknown>[] | undefined) ?? [];
@@ -170,6 +186,7 @@ async function wooPaged(ctx: ConnectorContext, path: string): Promise<Record<str
   for (let page = 1; page <= MAX_PAGES; page++) {
     const items = (await wooGet(ctx, path, page)) as Record<string, unknown>[];
     out.push(...items);
+    ctx.onProgress?.(`pulling ${path}: ${out.length} so far`);
     if (items.length < 100) break;
   }
   return out;

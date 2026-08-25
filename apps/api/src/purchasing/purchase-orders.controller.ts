@@ -67,6 +67,8 @@ interface PoLineRow {
   productName: string;
   variantName: string | null;
   sku: string | null;
+  /** Vendor's part number when it differs from our sku (null = same). */
+  vendorSku: string | null;
   quantityOrdered: number;
   quantityReceived: number;
   unitCostCents: number;
@@ -118,6 +120,109 @@ export class PurchaseOrdersController {
       .orderBy(desc(schema.purchaseOrders.createdAt))
       .limit(limit);
     return rows;
+  }
+
+  /**
+   * Reorder suggestions: every managed variant (non-null reorder_point)
+   * whose available stock — on-hand minus reserved, summed across all
+   * locations — is at or below its point, grouped by preferred vendor
+   * so each group can become one PO. Suggested quantity is the variant's
+   * reorder_qty when set, else a top-up to 2× the point (min/max).
+   * Declared before the ':id' route so the static path wins.
+   */
+  @Get('reorder-suggestions')
+  @RequirePermission('purchase_orders.view')
+  async reorderSuggestions(@CurrentTenant() _tenant: RequestTenantContext): Promise<{
+    vendors: {
+      vendorId: string | null;
+      vendorName: string | null;
+      lines: {
+        variantId: string;
+        productName: string;
+        variantName: string | null;
+        sku: string | null;
+        vendorSku: string | null;
+        available: number;
+        reorderPoint: number;
+        suggestedQty: number;
+        unitCostCents: number | null;
+      }[];
+    }[];
+  }> {
+    const rows = await this.db
+      .select({
+        variantId: schema.productVariants.id,
+        productName: schema.products.name,
+        variantName: schema.productVariants.name,
+        sku: schema.productVariants.sku,
+        vendorSku: schema.productVariants.vendorSku,
+        reorderPoint: schema.productVariants.reorderPoint,
+        reorderQty: schema.productVariants.reorderQty,
+        costCents: schema.productVariants.costCents,
+        vendorId: schema.productVariants.preferredVendorId,
+        vendorName: schema.vendors.name,
+        available: sql<number>`COALESCE(SUM(${schema.inventoryLevels.onHand} - ${schema.inventoryLevels.reserved}), 0)::int`,
+      })
+      .from(schema.productVariants)
+      .innerJoin(schema.products, eq(schema.products.id, schema.productVariants.productId))
+      .leftJoin(
+        schema.inventoryLevels,
+        eq(schema.inventoryLevels.variantId, schema.productVariants.id),
+      )
+      .leftJoin(schema.vendors, eq(schema.vendors.id, schema.productVariants.preferredVendorId))
+      .where(
+        and(
+          sql`${schema.productVariants.reorderPoint} IS NOT NULL`,
+          eq(schema.productVariants.isActive, true),
+          eq(schema.products.isActive, true),
+        ),
+      )
+      .groupBy(
+        schema.productVariants.id,
+        schema.products.name,
+        schema.productVariants.name,
+        schema.productVariants.sku,
+        schema.productVariants.vendorSku,
+        schema.productVariants.reorderPoint,
+        schema.productVariants.reorderQty,
+        schema.productVariants.costCents,
+        schema.productVariants.preferredVendorId,
+        schema.vendors.name,
+      )
+      .having(
+        sql`COALESCE(SUM(${schema.inventoryLevels.onHand} - ${schema.inventoryLevels.reserved}), 0) <= ${schema.productVariants.reorderPoint}`,
+      );
+
+    const byVendor = new Map<
+      string,
+      { vendorId: string | null; vendorName: string | null; lines: unknown[] }
+    >();
+    for (const r of rows) {
+      const point = r.reorderPoint!;
+      const suggestedQty = r.reorderQty ?? Math.max(1, point * 2 - r.available);
+      const key = r.vendorId ?? 'unassigned';
+      const group = byVendor.get(key) ?? {
+        vendorId: r.vendorId ?? null,
+        vendorName: r.vendorName ?? null,
+        lines: [],
+      };
+      group.lines.push({
+        variantId: r.variantId,
+        productName: r.productName,
+        variantName: r.variantName,
+        sku: r.sku,
+        vendorSku: r.vendorSku,
+        available: r.available,
+        reorderPoint: point,
+        suggestedQty,
+        unitCostCents: r.costCents ?? null,
+      });
+      byVendor.set(key, group);
+    }
+    const vendors = [...byVendor.values()].sort((a, b) =>
+      (a.vendorName ?? 'zzz').localeCompare(b.vendorName ?? 'zzz'),
+    ) as Awaited<ReturnType<PurchaseOrdersController['reorderSuggestions']>>['vendors'];
+    return { vendors };
   }
 
   @Get(':id')
@@ -441,6 +546,7 @@ export class PurchaseOrdersController {
         productName: schema.products.name,
         variantName: schema.productVariants.name,
         sku: schema.productVariants.sku,
+        vendorSku: schema.productVariants.vendorSku,
         quantityOrdered: schema.purchaseOrderLines.quantityOrdered,
         quantityReceived: schema.purchaseOrderLines.quantityReceived,
         unitCostCents: schema.purchaseOrderLines.unitCostCents,

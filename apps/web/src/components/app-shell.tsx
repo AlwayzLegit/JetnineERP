@@ -10,9 +10,11 @@ import {
   CalendarDays,
   ClipboardList,
   CreditCard,
+  Factory,
   Gift,
   LayoutDashboard,
   MapPin,
+  Megaphone,
   Menu,
   Monitor,
   Package,
@@ -30,6 +32,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { ActiveBusinessBadge } from '@/components/active-business-badge';
+import { useBusinessBranding, useBusinessName } from '@/lib/business-settings';
 
 /**
  * The (business) application shell: grouped sidebar + slim topbar.
@@ -69,6 +72,7 @@ const NAV: NavGroup[] = [
       { href: '/categories', label: 'Categories', icon: Tags },
       { href: '/inventory', label: 'Inventory', icon: Boxes },
       { href: '/purchase-orders', label: 'Purchasing', icon: ClipboardList },
+      { href: '/vendors', label: 'Vendors', icon: Factory },
       { href: '/transfers', label: 'Transfers', icon: ArrowLeftRight },
       { href: '/gift-cards', label: 'Gift cards', icon: Gift },
     ],
@@ -77,6 +81,7 @@ const NAV: NavGroup[] = [
     label: 'People',
     items: [
       { href: '/customers', label: 'Customers', icon: Users },
+      { href: '/marketing', label: 'Marketing', icon: Megaphone },
       { href: '/members', label: 'Members', icon: UserCog },
       { href: '/roles', label: 'Roles', icon: ShieldCheck },
     ],
@@ -85,6 +90,7 @@ const NAV: NavGroup[] = [
     label: 'Insights',
     items: [
       { href: '/reports', label: 'Reports', icon: BadgePercent },
+      { href: '/commissions', label: 'Commissions', icon: CreditCard },
       { href: '/audit', label: 'Audit log', icon: ScrollText },
     ],
   },
@@ -122,18 +128,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           open ? 'translate-x-0' : '-translate-x-full'
         } md:translate-x-0`}
       >
-        <Link
-          href="/dashboard"
-          className="mb-2 flex items-center gap-2 px-2.5 pb-3 text-[15px] font-bold tracking-tight text-white no-underline"
-        >
-          <span
-            aria-hidden
-            className="inline-flex h-[26px] w-[26px] items-center justify-center rounded-[7px] bg-brand text-[13px]"
-          >
-            LA
-          </span>
-          Mattress ERP
-        </Link>
+        <BrandHeader />
         {NAV.map((group) => (
           <div key={group.label} className="mb-3.5">
             <p className="mb-1 px-2.5 text-[10.5px] font-bold uppercase tracking-[0.08em] text-white/35">
@@ -184,5 +179,43 @@ export function AppShell({ children }: { children: ReactNode }) {
         <main className="mx-auto max-w-[1200px] px-4 pb-12 pt-5 md:px-6 md:pt-6">{children}</main>
       </div>
     </div>
+  );
+}
+
+/**
+ * Sidebar brand block. White-label aware: a business with branding
+ * shows its own logo/name; otherwise the platform default. The
+ * two-letter monogram falls back to the first letters of the name.
+ */
+function BrandHeader() {
+  const branding = useBusinessBranding();
+  const name = useBusinessName() ?? 'Mattress ERP';
+  const monogram = name
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((w) => w[0]?.toUpperCase() ?? '')
+    .join('');
+  return (
+    <Link
+      href="/dashboard"
+      className="mb-2 flex items-center gap-2 px-2.5 pb-3 text-[15px] font-bold tracking-tight text-white no-underline"
+    >
+      {branding?.logoUrl ? (
+        // eslint-disable-next-line @next/next/no-img-element -- tenant-supplied remote URL; next/image needs domain allow-listing per tenant
+        <img
+          src={branding.logoUrl}
+          alt=""
+          className="h-[26px] w-[26px] rounded-[7px] object-contain"
+        />
+      ) : (
+        <span
+          aria-hidden
+          className="inline-flex h-[26px] w-[26px] items-center justify-center rounded-[7px] bg-brand text-[13px]"
+        >
+          {monogram || 'ERP'}
+        </span>
+      )}
+      <span className="truncate">{name}</span>
+    </Link>
   );
 }

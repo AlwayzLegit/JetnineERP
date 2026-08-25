@@ -2,9 +2,40 @@
 
 import { Download, RefreshCw } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import { toast } from 'sonner';
 import { Button, Card, Field, Input, LoadingRows, PageHeader } from '@/components/ui';
-import { api, apiUrl } from '@/lib/api';
+import { api } from '@/lib/api';
+import { downloadFile } from '@/lib/download';
 import { Money } from '@/components/money';
+
+/**
+ * Export button that downloads via an in-page fetch (see lib/download)
+ * so failures surface as a toast instead of a silent dead click.
+ */
+function CsvButton({ path, filename, size }: { path: string; filename: string; size?: 'sm' }) {
+  const [busy, setBusy] = useState(false);
+  return (
+    <Button
+      variant="secondary"
+      size={size}
+      disabled={busy}
+      style={size === 'sm' ? { display: 'inline-flex', marginBottom: 12 } : undefined}
+      onClick={async () => {
+        setBusy(true);
+        try {
+          await downloadFile(path, filename);
+        } catch (err) {
+          toast.error(`CSV download failed: ${err instanceof Error ? err.message : String(err)}`);
+        } finally {
+          setBusy(false);
+        }
+      }}
+    >
+      <Download size={size === 'sm' ? 13 : 14} aria-hidden />
+      {busy ? 'Preparing…' : 'Download CSV'}
+    </Button>
+  );
+}
 
 interface DailyTotalRow {
   day: string;
@@ -52,6 +83,61 @@ interface InventoryRow {
   available: number;
 }
 
+interface ZReport {
+  date: string;
+  saleCount: number;
+  grossCents: number;
+  subtotalCents: number;
+  discountCents: number;
+  taxCents: number;
+  refundCount: number;
+  refundsCents: number;
+  netCents: number;
+  tenders: { method: string; amountCents: number; count: number }[];
+  orderPaymentsCents: number;
+  shifts: {
+    id: string;
+    openedAt: string;
+    closedAt: string | null;
+    openingFloatCents: number;
+    expectedCashCents: number | null;
+    countedCashCents: number | null;
+    varianceCents: number | null;
+  }[];
+}
+interface CategoryRow {
+  categoryId: string | null;
+  categoryName: string;
+  quantity: number;
+  revenueCents: number;
+}
+interface TaxSummary {
+  rows: {
+    taxClassId: string | null;
+    taxClassName: string;
+    lineCount: number;
+    netSalesCents: number;
+    taxCents: number;
+  }[];
+  totalTaxCents: number;
+}
+interface Valuation {
+  rows: {
+    variantId: string;
+    locationId: string;
+    locationName: string | null;
+    productName: string;
+    variantName: string | null;
+    sku: string | null;
+    onHand: number;
+    costCents: number | null;
+    costValueCents: number | null;
+    retailValueCents: number;
+  }[];
+  totalCostValueCents: number;
+  totalRetailValueCents: number;
+}
+
 export default function ReportsPage() {
   const today = new Date().toISOString().slice(0, 10);
   const sevenDaysAgo = new Date(Date.now() - 6 * 86400_000).toISOString().slice(0, 10);
@@ -61,6 +147,14 @@ export default function ReportsPage() {
   const [daily, setDaily] = useState<DailyReport | null>(null);
   const [products, setProducts] = useState<ProductRow[] | null>(null);
   const [inv, setInv] = useState<InventoryRow[] | null>(null);
+  const [zDate, setZDate] = useState(today);
+  const [z, setZ] = useState<ZReport | null>(null);
+  const [categories, setCategories] = useState<CategoryRow[] | null>(null);
+  const [taxSummary, setTaxSummary] = useState<TaxSummary | null>(null);
+  // Valuation + tax are cost/financial reports — 403 for roles without
+  // reports.financial.view. We hide those cards instead of erroring.
+  const [financialDenied, setFinancialDenied] = useState(false);
+  const [valuation, setValuation] = useState<Valuation | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   async function loadDaily() {
@@ -91,10 +185,40 @@ export default function ReportsPage() {
     }
   }
 
+  async function loadZ(date: string) {
+    try {
+      setZ(await api<ZReport>(`/v1/reports/z?date=${date}`));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
+  async function loadCategories() {
+    try {
+      setCategories(
+        await api<CategoryRow[]>(`/v1/reports/sales/by-category?start=${start}&end=${end}`),
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
+  async function loadFinancial() {
+    try {
+      setTaxSummary(await api<TaxSummary>(`/v1/reports/tax/summary?start=${start}&end=${end}`));
+      setValuation(await api<Valuation>(`/v1/reports/inventory/valuation`));
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (/403|forbidden/i.test(msg)) setFinancialDenied(true);
+      else setError(msg);
+    }
+  }
+
   useEffect(() => {
     void loadDaily();
     void loadProducts();
     void loadInv();
+    void loadZ(zDate);
+    void loadCategories();
+    void loadFinancial();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -102,6 +226,123 @@ export default function ReportsPage() {
     <div>
       <PageHeader title="Reports" />
       {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
+
+      <Card title="Z-report (daily close-out)" data-testid="z-report">
+        <div className="mb-3 flex flex-wrap items-end gap-2">
+          <Field label="Day">
+            <Input
+              type="date"
+              value={zDate}
+              onChange={(e) => {
+                setZDate(e.target.value);
+                void loadZ(e.target.value);
+              }}
+            />
+          </Field>
+          <Button variant="secondary" onClick={() => window.print()}>
+            Print
+          </Button>
+        </div>
+        {z ? (
+          <>
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+              <Stat label="Sales" value={String(z.saleCount)} />
+              <Stat label="Gross" value={<Money cents={z.grossCents} />} />
+              <Stat label="Tax" value={<Money cents={z.taxCents} />} />
+              <Stat label="Refunds" value={<Money cents={z.refundsCents} />} tone="danger" />
+              <Stat label="Net" value={<Money cents={z.netCents} />} strong />
+              <Stat label="Order money" value={<Money cents={z.orderPaymentsCents} />} />
+            </div>
+
+            <h3 style={subhead}>Tenders</h3>
+            <div style={{ overflowX: 'auto' }}>
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Method</th>
+                    <th className="num">Count</th>
+                    <th className="num">Amount</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {z.tenders.length === 0 && <Empty colSpan={3} />}
+                  {z.tenders.map((t) => (
+                    <tr key={t.method}>
+                      <td>{t.method}</td>
+                      <td className="num">{t.count}</td>
+                      <td className="num">
+                        <Money cents={t.amountCents} />
+                      </td>
+                    </tr>
+                  ))}
+                  {z.refundsCents > 0 && (
+                    <tr style={{ color: 'var(--danger)' }}>
+                      <td>refunds (all tenders)</td>
+                      <td className="num">{z.refundCount}</td>
+                      <td className="num">
+                        <Money cents={-z.refundsCents} />
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+            {z.refundsCents > 0 && (
+              <p className="muted" style={{ fontSize: 12, margin: '6px 0 0' }}>
+                Tender rows are money taken in; refunds aren&apos;t attributed to a specific tender,
+                so the drawer count should be reconciled against the refund line above.
+              </p>
+            )}
+
+            <h3 style={subhead}>Cash drawers</h3>
+            <div style={{ overflowX: 'auto' }}>
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Opened</th>
+                    <th>Closed</th>
+                    <th className="num">Float</th>
+                    <th className="num">Expected</th>
+                    <th className="num">Counted</th>
+                    <th className="num">Variance</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {z.shifts.length === 0 && <Empty colSpan={6} />}
+                  {z.shifts.map((s) => (
+                    <tr key={s.id}>
+                      <td>{new Date(s.openedAt).toLocaleTimeString()}</td>
+                      <td>{s.closedAt ? new Date(s.closedAt).toLocaleTimeString() : 'open'}</td>
+                      <td className="num">
+                        <Money cents={s.openingFloatCents} />
+                      </td>
+                      <td className="num">
+                        {s.expectedCashCents != null ? <Money cents={s.expectedCashCents} /> : '—'}
+                      </td>
+                      <td className="num">
+                        {s.countedCashCents != null ? <Money cents={s.countedCashCents} /> : '—'}
+                      </td>
+                      <td
+                        className="num"
+                        style={{
+                          color:
+                            s.varianceCents != null && s.varianceCents !== 0
+                              ? 'var(--danger)'
+                              : undefined,
+                        }}
+                      >
+                        {s.varianceCents != null ? <Money cents={s.varianceCents} /> : '—'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
+        ) : (
+          <LoadingRows />
+        )}
+      </Card>
 
       <Card title="Daily sales">
         <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
@@ -116,20 +357,20 @@ export default function ReportsPage() {
             onClick={() => {
               void loadDaily();
               void loadProducts();
+              void loadCategories();
+              void loadFinancial();
             }}
             style={{ alignSelf: 'flex-end' }}
           >
             <RefreshCw size={14} aria-hidden />
             Refresh
           </Button>
-          <a
-            className="btn btn-secondary"
-            href={`${apiUrl}/v1/reports/sales/daily?start=${start}&end=${end}&format=csv`}
-            style={{ alignSelf: 'flex-end' }}
-          >
-            <Download size={14} aria-hidden />
-            Download CSV
-          </a>
+          <div style={{ alignSelf: 'flex-end' }}>
+            <CsvButton
+              path={`/v1/reports/sales/daily?start=${start}&end=${end}&format=csv`}
+              filename={`daily-sales-${start}-to-${end}.csv`}
+            />
+          </div>
         </div>
 
         {daily ? (
@@ -229,14 +470,11 @@ export default function ReportsPage() {
       </Card>
 
       <Card title="Sales by product">
-        <a
-          className="btn btn-secondary btn-sm"
-          href={`${apiUrl}/v1/reports/sales/by-product?start=${start}&end=${end}&format=csv`}
-          style={{ display: 'inline-flex', marginBottom: 12 }}
-        >
-          <Download size={13} aria-hidden />
-          Download CSV
-        </a>
+        <CsvButton
+          size="sm"
+          path={`/v1/reports/sales/by-product?start=${start}&end=${end}&format=csv`}
+          filename={`sales-by-product-${start}-to-${end}.csv`}
+        />
         {products ? (
           <div style={{ overflowX: 'auto' }}>
             <table className="table">
@@ -293,13 +531,10 @@ export default function ReportsPage() {
             <RefreshCw size={14} aria-hidden />
             Refresh
           </Button>
-          <a
-            className="btn btn-secondary"
-            href={`${apiUrl}/v1/reports/inventory/on-hand${lowStock ? `?lowStock=${encodeURIComponent(lowStock)}&format=csv` : '?format=csv'}`}
-          >
-            <Download size={14} aria-hidden />
-            Download CSV
-          </a>
+          <CsvButton
+            path={`/v1/reports/inventory/on-hand${lowStock ? `?lowStock=${encodeURIComponent(lowStock)}&format=csv` : '?format=csv'}`}
+            filename="inventory-on-hand.csv"
+          />
         </div>
         {inv ? (
           <div style={{ overflowX: 'auto' }}>
@@ -340,6 +575,193 @@ export default function ReportsPage() {
           <LoadingRows />
         )}
       </Card>
+
+      <Card title="Sales by category">
+        <CsvButton
+          size="sm"
+          path={`/v1/reports/sales/by-category?start=${start}&end=${end}&format=csv`}
+          filename={`sales-by-category-${start}-to-${end}.csv`}
+        />
+        {categories ? (
+          <div style={{ overflowX: 'auto' }}>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Category</th>
+                  <th className="num">Qty</th>
+                  <th className="num">Revenue</th>
+                </tr>
+              </thead>
+              <tbody>
+                {categories.length === 0 && <Empty colSpan={3} />}
+                {categories.map((c) => (
+                  <tr key={c.categoryId ?? 'none'}>
+                    <td>{c.categoryName}</td>
+                    <td className="num">{c.quantity}</td>
+                    <td className="num">
+                      <Money cents={c.revenueCents} />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <LoadingRows />
+        )}
+      </Card>
+
+      {!financialDenied && (
+        <Card title="Tax summary">
+          <CsvButton
+            size="sm"
+            path={`/v1/reports/tax/summary?start=${start}&end=${end}&format=csv`}
+            filename={`tax-summary-${start}-to-${end}.csv`}
+          />
+          {taxSummary ? (
+            <div style={{ overflowX: 'auto' }}>
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Tax class</th>
+                    <th className="num">Lines</th>
+                    <th className="num">Net sales</th>
+                    <th className="num">Tax collected</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {taxSummary.rows.length === 0 && <Empty colSpan={4} />}
+                  {taxSummary.rows.map((r) => (
+                    <tr key={r.taxClassId ?? 'default'}>
+                      <td>{r.taxClassName}</td>
+                      <td className="num">{r.lineCount}</td>
+                      <td className="num">
+                        <Money cents={r.netSalesCents} />
+                      </td>
+                      <td className="num">
+                        <Money cents={r.taxCents} />
+                      </td>
+                    </tr>
+                  ))}
+                  {taxSummary.rows.length > 0 && (
+                    <tr>
+                      <td colSpan={3}>
+                        <strong>Total tax</strong>
+                      </td>
+                      <td className="num">
+                        <strong>
+                          <Money cents={taxSummary.totalTaxCents} />
+                        </strong>
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <LoadingRows />
+          )}
+        </Card>
+      )}
+
+      {!financialDenied && (
+        <Card title="Inventory valuation">
+          <CsvButton
+            size="sm"
+            path="/v1/reports/inventory/valuation?format=csv"
+            filename="inventory-valuation.csv"
+          />
+          {valuation ? (
+            <>
+              <div className="mb-3 grid grid-cols-2 gap-3 sm:max-w-md">
+                <Stat label="At cost" value={<Money cents={valuation.totalCostValueCents} />} />
+                <Stat label="At retail" value={<Money cents={valuation.totalRetailValueCents} />} />
+              </div>
+              <div style={{ overflowX: 'auto' }}>
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Product</th>
+                      <th>SKU</th>
+                      <th>Location</th>
+                      <th className="num">On hand</th>
+                      <th className="num">Unit cost</th>
+                      <th className="num">Cost value</th>
+                      <th className="num">Retail value</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {valuation.rows.length === 0 && <Empty colSpan={7} />}
+                    {valuation.rows.map((r) => (
+                      <tr key={`${r.variantId}-${r.locationId}`}>
+                        <td>
+                          {r.productName}
+                          {r.variantName && (
+                            <span style={{ color: 'var(--text-secondary)' }}>
+                              {' '}
+                              — {r.variantName}
+                            </span>
+                          )}
+                        </td>
+                        <td>
+                          <code>{r.sku ?? '—'}</code>
+                        </td>
+                        <td>{r.locationName ?? '—'}</td>
+                        <td className="num">{r.onHand}</td>
+                        <td className="num">
+                          {r.costCents != null ? <Money cents={r.costCents} /> : '—'}
+                        </td>
+                        <td className="num">
+                          {r.costValueCents != null ? <Money cents={r.costValueCents} /> : '—'}
+                        </td>
+                        <td className="num">
+                          <Money cents={r.retailValueCents} />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          ) : (
+            <LoadingRows />
+          )}
+        </Card>
+      )}
+    </div>
+  );
+}
+
+function Stat({
+  label,
+  value,
+  strong,
+  tone,
+}: {
+  label: string;
+  value: React.ReactNode;
+  strong?: boolean;
+  tone?: 'danger';
+}) {
+  return (
+    <div
+      style={{
+        background: 'var(--surface-muted)',
+        border: '1px solid var(--border)',
+        borderRadius: 'var(--radius-sm)',
+        padding: '10px 12px',
+      }}
+    >
+      <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)' }}>{label}</div>
+      <div
+        style={{
+          fontSize: 16,
+          fontWeight: strong ? 700 : 600,
+          color: tone === 'danger' ? 'var(--danger)' : 'var(--text)',
+        }}
+      >
+        {value}
+      </div>
     </div>
   );
 }

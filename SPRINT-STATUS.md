@@ -5,7 +5,7 @@
 > tracker with the work. **Ops** items are the human's — surface them, don't do them.
 > Slip policy and never-cut list live in the plan §8.
 
-**Sprint state:** Day 1 build track complete · **Current day:** 1 (Ops track open) · **Rehearsal imports done:** 0/2 · **Recon gates passed:** 0/5
+**Sprint state:** Build track COMPLETE through Day 9 + UI overhaul + integrations — checkpoint merged to main 2026-08-24 (PR #26, squash `89763d9`). Remaining build items (Day 7/8 rehearsals, Day 10 final import) are blocked on real STORIS export files; all other unchecked items are **Ops**. · **Rehearsal imports done:** 0/2 (synthetic dry-run passed; real exports pending) · **Recon gates passed:** 0/5 against real data (gates 1–4 pass on synthetic)
 
 ---
 
@@ -260,3 +260,180 @@ _(newest first — sessions append: date · day · what shipped · open flags)_
   The orders suite was verified 22/22 by bypassing that shim locally; the shim itself is
   unchanged in the commit.
 - 2026-08-22 · pre-sprint · Plan + handoff docs written (`PLAN-STORIS-CUTOVER.md`, `CLAUDE.md`, this tracker). Sprint not started.
+
+- **2026-08-24 — Post-checkpoint slice 1 (reports parity):** `/v1/reports/z` (daily
+  close-out: gross/refunds/net, tender mix across sale+order+service money, drawer
+  variances; D8-excluded), `/v1/reports/sales/by-category`, `/v1/reports/inventory/valuation`
+  (financial-gated, cost+retail), `/v1/reports/tax/summary` (net-sales caveat documented) —
+  all with CSV export; reports hub UI gained Z-report, category, tax, valuation cards.
+  reports.int.spec.ts 9→14 tests incl. refund-day Z math.
+- **2026-08-24 — Post-checkpoint slice 2 (printing):** dependency-free Code 128B SVG
+  encoder (`apps/web/src/lib/code128.ts`, 5 unit tests incl. checksum math); barcode
+  label sheets at `(business)/products/labels` (Avery 5160 30-up + 2.25×1.25" roll,
+  copy counts, print-only CSS grid); receipts now print a scannable document-number
+  barcode for returns.
+- **2026-08-24 — Post-checkpoint slice 3 (white-label + agency):** `businesses.branding_json`
+  (migration `0025_business_branding`: accentColor/logoUrl/publicName, merge-PATCH with
+  validation) re-themes the whole app per tenant (`--brand` override + shell logo/name +
+  receipt display name); `GET /v1/agency/overview` (auth/me pattern, membership-scoped,
+  money nulled where the caller's role lacks reports.sales.view) + `(business)/agency`
+  roll-up cards; topbar badge became a one-click business switcher. business.int.spec.ts
+  14→20 tests.
+- **2026-08-24 — Post-checkpoint slice 4 (marketing):** `customer_segments` + `campaigns`
+  (migration `0026_marketing`, RLS'd); `/v1/marketing/*` behind existing
+  `crm.campaigns.manage` — segments are stored filters over CRM tags resolved at
+  preview/send (email-holders only; imported customers included — D8 covers money flows,
+  not outreach), campaigns are one-shot (marked sent before the send loop so a crash
+  can't double-blast), `campaign.sent` webhook event; Marketing page in the People nav.
+  marketing.int.spec.ts (8 tests) + MARKETING_TEST_DATABASE_URL in CI.
+- **2026-08-24 — Post-checkpoint slice 5 (dashboard analytics):** `/dashboard` moved into
+  the (business) shell (same URL) and rebuilt as the analytics home — today's KPI row
+  from the Z-report, 30-day revenue trend (inline SVG line, crosshair tooltip, sr-only
+  table; palette validated), receivables + open orders + low-stock cards, each hiding
+  itself when the role lacks the report permission. Also fixed the auth.spec CI flake:
+  a business-less user's /dashboard → /welcome redirect detached the Sign out button
+  mid-click; /welcome now carries its own Sign out and the test waits for the redirect.
+  Full local e2e 9/9 green.
+- **2026-08-24 — Post-checkpoint slice 6 (reorder automation):** `product_variants` gained
+  `reorder_point`/`reorder_qty`/`preferred_vendor_id` (migration `0027_reorder_points`);
+  `GET /v1/purchase-orders/reorder-suggestions` groups shortfalls (available ≤ point,
+  all-location sum) by preferred vendor with suggested qty (explicit qty, else top-up to
+  2× point); one-click "Draft PO" per vendor group on the Purchasing page; per-variant
+  Reorder automation card on product detail. purchasing.int.spec.ts 11→16 tests.
+- **2026-08-24 — Post-checkpoint slice 7 (customer status link):** `orders.public_token`
+  (migration `0028_order_public_token`, unique); `POST /v1/orders/:id/share` (idempotent,
+  audited) + public no-auth `GET /v1/public/orders/:token` serving a narrow projection
+  (journey status, lines, paid/balance, branding accent — no address/notes/ids); branded
+  customer page at `/track/[token]` with a 4-stage journey rail; "Share status link"
+  button on order detail copies the URL. orders.int.spec.ts 22→25 tests.
+- **2026-08-24 — Post-checkpoint slice 8 (commission statements):** `GET
+/v1/commissions/statement?period&membershipId` (own by default; others behind
+  `commissions.view_all`; entries carry source document numbers; totals split
+  accruals/reversals and pending/approved/paid) + the first Commissions page
+  (Insights nav): monthly by-associate summary, printable per-associate statement,
+  approve/mark-paid payroll actions. money.int.spec.ts 9→12 tests.
+- **2026-08-24 — Post-checkpoint review fixes (self code-review of PR #27, 10 findings):**
+  campaign sent-flip moved to the root pool so it commits before the mail loop (the RLS
+  tx would have rolled it back on a crash → double-blast); Z-report tender mix now joins
+  service_orders (location filter dropped every service payment; D8 exclusion now applies);
+  public tracking shows only the next ACTIVE delivery; share-token write is race-guarded
+  (WHERE public_token IS NULL); statement totals aggregate in SQL over all entries (not a
+  truncated page) + entriesTruncated flag; segment tag filter is a subquery (no 65k-param
+  blowup) and sinceDays capped at 3650; valuation rows/CSV/UI carry the location; dashboard
+  reuses readActiveBusinessId; agency dead code removed.
+- **2026-08-24 — Browser-agent QA triage (14-flow staging run: 12 pass / 1 fail / 1 skip):**
+  fixes pushed to PR #27 for every finding. CSV exports no longer use `<a href>`
+  navigations (they 503'd through the proxy and failed silently) — all six report
+  export buttons download via in-page fetch → blob (`lib/download.ts`) with busy state
+  and an error toast. Vendors page existed but was unreachable: added Vendors to the
+  Catalog nav plus create-vendor links from the New PO empty dropdown and the reorder
+  "no preferred vendor" hint. POS now surfaces cash change: the payment forms pass
+  `changeDueCents` up, the Sale complete screen shows a "Change due" banner + totals
+  row, and the printed receipt gets a Change line (server still stores applied cash
+  only — change exists client-side by design). Campaign send confirm is an inline
+  arm/confirm step instead of a native `confirm()`. Public tracking advances to
+  "Ready / scheduled" as soon as a delivery/pickup date is booked. Z-report tenders
+  table shows a negative "refunds (all tenders)" row + reconciliation note — refunds
+  carry no tender method column, so per-method attribution is deferred (design
+  decision if drawer-level attribution is ever needed). Delivery calendar chips show
+  the customer's city. Logged-out shell flash fixed earlier the same day (AuthGate,
+  fail-open for offline POS). Earlier: Shopify/Woo/Wix connect dialog defaults its
+  landing location to a Warehouse-named location and explains the choice. Remaining
+  from the run: flow 14 (permissions) untested — needs a second non-owner login.
+- **2026-08-24 — Vendor SKU mapping (post-QA batch 2):** `product_variants.vendor_sku`
+  (migration `0029_variant_vendor_sku`) holds the vendor's part number when it differs
+  from our selling SKU (the exact discrepancy Shopify-synced catalogs create). PATCH
+  `variants/:id/reorder` accepts/validates/audits it; reorder suggestions and PO detail
+  lines return it; purchasing UIs print the vendor SKU with an "ours: …" hint when the
+  two differ; Reorder automation card gains a Vendor SKU field. Shopify sync keeps
+  filling the selling SKU only — vendor part numbers stay merchant-entered.
+  purchasing.int.spec.ts 16→17 tests. Also verified in Render logs: the first real
+  Shopify sync succeeded server-side (201 in ~7.3 min) — the browser toast errors
+  because proxies cut the response at ~100s. Follow-up queued: make provider sync a
+  background job with progress polling.
+- **2026-08-24 — Real STORIS inventory export received + import-pipeline enrichment:**
+  first real export analyzed (14,247 rows / 6,357 SKUs / 12 locations, clean — no dupes
+  or cost conflicts; file kept OUT of the repo). Product import now understands the
+  STORIS columns directly: `REPLACE_COST` as cost, `VENDOR_MODEL_NUMBER` → variant
+  vendor_sku, `VENDOR` → find-or-create vendor + preferred vendor, `MIN_STOCK` →
+  reorder point (all only-when-present, so re-imports never wipe merchant edits).
+  import.int.spec.ts 9→10 tests. Pipeline-ready CSVs staged outside the repo.
+  **Blocked on (Ops):** (1) a retail-price export (SKU → selling price) — the inventory
+  report has cost only and product import requires price; (2) the location code → store
+  name mapping (codes 1–12 and 88); (3) decision on 1,180 as-is units (import as
+  on-hand, separate as-is SKUs, or skip).
+
+## Test-data ledger (D11 — what lives in the QA tenant and never reaches production)
+
+Production cutover creates a **fresh business**; everything below stays behind in the
+current staging business. Keep this list current whenever a test session creates data.
+
+- Browser-agent run 1 (2026-08-24): product "Cloud Comfort Mattress — Queen" ($899.99);
+  sale INV-2026-000001 + full refund; customer "Maria Testerson" (fake email + "gate
+  code" note); order SO-2026-000001 with $200 cash deposit + public share token +
+  delivery scheduled 8/25; segment "Test VIPs"; campaign "Browser test" (sent to 2 test
+  recipients via the memory outbox); branding round-trip (reverted); reorder settings
+  (cleared).
+- Browser-agent run 2 (2026-08-24, retest): more of the same shapes — additional POS
+  sale(s) + refund, an order + track link + delivery, a vendor + draft PO, a campaign,
+  vendor-SKU entries; whatever its report lists.
+- Shopify sync (2026-08-24, ~19:59Z): the REAL store catalog/customers/orders landed in
+  the QA tenant mapped to location "Glendale". This is real data but in the test tenant —
+  the sync will be re-run into the production business at cutover (with the proper
+  location mapping), not migrated.
+- At cutover into the fresh production business: recreate locations (real store list),
+  staff invitations + roles, business settings (tax, receipts, branding), re-run the
+  Shopify connector, then run the final STORIS import (D7 pipeline). The QA tenant keeps
+  serving as the safe playground for future testing and demos.
+- **2026-08-24 — D12 (no retail-price import) + QA run-2 triage:** priceCents is now
+  optional on product import — absent means new variants land at $0 and existing
+  variants keep their price (Shopify prices survive the STORIS import); POS cart lines
+  gained a register-side unit-price input (negotiated pricing) plus live type-to-search
+  (350ms debounce; scanner Enter flow unchanged); vendor-create form no longer throws
+  on success (React currentTarget-after-await bug); Shopify sync falls back to the
+  email local part when a customer has no name. import.int.spec.ts 10→11. STORIS CSVs
+  regenerated with real location names (88=Warehouse, 1=Koreatown, 2=West LA,
+  3=La Brea, 4=Studio City) and 552 as-is companion SKUs (`-AS`, 1,180 units);
+  location code 8 (186+122 units) held out pending its store name. QA run-2 "vendor
+  SKU FAIL" was a deploy lag — the live API is still 80ad9bd and the 18:23 auto
+  redeploy from the instance upgrade FAILED; Ops: Manual Deploy latest on jetnine-api.
+- **2026-08-24 — QA run-2 final: 10 PASS / 1 FAIL (vendor SKU = the deploy gap, since
+  closed by the 20:43Z manual deploy of 1bbd354; migrations incl. 0029 applied clean).**
+  Z-report refunds row verified live (−$968.99 ties out), Avery 5160 geometry confirmed
+  from print DOM, dashboard KPIs agree with the Z. Adopted the agent's hardening
+  suggestion: the reorder card now asserts the PATCH response echoes vendorSku before
+  showing success — a stale backend now produces an explicit error instead of a false
+  "saved". Flow-8 incognito caveat closed by server-side evidence: /v1/public/orders/:token
+  is @Public and answers unauthenticated (verified by curl on staging). Test-data ledger
+  additions from run 2: INV-2026-000002 ($1,949 Aviada, change $151), INV-2026-000003
+  ($69 protector + refund), vendor "Bedrock Bedding Supply", PO-2026-000001 (draft),
+  campaign send to 4,575 recipients (memory outbox), order + delivery + track link.
+- **2026-08-24 — Sidebar blue-on-navy fix (user-reported):** the Tailwind v4 pass left
+  `a { color: var(--brand) }` UNLAYERED in globals.css; unlayered CSS outranks every
+  layered utility, so `text-[var(--sidebar-text)]`/`text-white` on nav links lost and
+  the whole sidebar rendered brand-blue on navy. The anchor default now lives in
+  `@layer base`, restoring utility overrides (bare content links keep the brand color).
+  Watch for the same pattern if other element defaults ever fight a utility. e2e 9/9.
+- **2026-08-25 — STORIS import REHEARSAL #1 (real data): PASS, all gates.** New committed
+  runner `apps/api/test/rehearsal.storis.int.spec.ts` (self-skips unless
+  STORIS_REHEARSAL_DIR points at the local CSVs — no data in the repo) drove the real
+  export through stage→map→validate→commit→recon on a throwaway DB seeded with the five
+  mapped stores. Results: products 6,909/6,909 committed with 0 invalid rows (incl. 552
+  as-is companions); inventory 1,505/1,505 → 3,738 units on hand, tying the file to the
+  unit; 48 vendors auto-created; 4,255 vendor SKUs and 252 reorder points landed; all
+  variants at $0 per D12. Full re-run of both batches: zero duplicates, counts identical
+  (D7). End-to-end runtime ~105s. One harness finding: the default 100kb json body limit
+  413s a real catalog CSV — main.ts already runs 25mb, the test harness now matches.
+  Remaining rehearsal scope: location-8 inventory (pending store name), customers /
+  invoices / open-orders entities (pending exports).
+- **2026-08-25 — Background provider sync (post-QA batch):** POST
+  `/v1/integrations/:provider/sync` now runs detached — job state on the integrations
+  row (`sync_status`/`sync_progress_json`/`sync_started_at`, migration
+  `0030_integration_sync_state`), page-by-page progress notes from the connectors,
+  stale-job takeover after 30 min, 409 while running, `?wait=1` preserves the
+  synchronous contract for tests/scripts. Page cap raised 20→400 (100k rows/resource,
+  matching MAX_ROWS) — the old cap truncated the real store at exactly 5,000 customers
+  and cascaded into 1,829 skipped sales. UI polls every 2s with a live progress line
+  and disables the button while running; no more false timeout toasts on 7-minute
+  pulls. Detached runs write state via ROOT_DRIZZLE and audit with explicit tenant.
+  integrations.int.spec.ts 6→7 tests (adds detached-mode completion + idempotency).

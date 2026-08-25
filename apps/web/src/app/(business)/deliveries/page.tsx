@@ -198,7 +198,10 @@ export default function DeliveriesPage() {
                     }}
                   >
                     <div style={{ fontWeight: 600 }}>{r.orderNumber}</div>
-                    <div style={{ color: 'var(--text-secondary)' }}>{r.customerName ?? '—'}</div>
+                    <div style={{ color: 'var(--text-secondary)' }}>
+                      {r.customerName ?? '—'}
+                      {r.addressCity ? ` · ${r.addressCity}` : ''}
+                    </div>
                     {(r.windowStart || r.windowEnd) && (
                       <div style={{ color: 'var(--text-secondary)' }}>
                         {r.windowStart?.slice(0, 5)}–{r.windowEnd?.slice(0, 5)}

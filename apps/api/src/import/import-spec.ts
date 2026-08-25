@@ -88,15 +88,37 @@ export const ENTITY_SPECS: EntitySpec[] = [
       },
       { name: 'category', type: 'string', headers: ['CATEGORY', 'CAT', 'PRODUCT_GROUP', 'GROUP'] },
       {
+        // Optional by decision D12: STORIS exports carry cost only and the
+        // merchant prices at the register. Absent → new variants land at 0
+        // (unsellable until priced) and existing variants keep their price
+        // (a Shopify-synced price survives the STORIS import).
         name: 'priceCents',
         type: 'money',
-        required: true,
         headers: ['RETAIL', 'PRICE', 'SELL_PRICE', 'RETAIL_PRICE'],
       },
-      { name: 'costCents', type: 'money', headers: ['COST', 'UNIT_COST', 'AVG_COST'] },
+      {
+        name: 'costCents',
+        type: 'money',
+        headers: ['COST', 'UNIT_COST', 'AVG_COST', 'REPLACE_COST'],
+      },
       { name: 'serialTracked', type: 'bool', headers: ['SERIALIZED', 'SERIAL_FLAG', 'SERIAL'] },
       { name: 'barcode', type: 'string', headers: ['UPC', 'BARCODE'] },
       { name: 'description', type: 'string', headers: ['LONG_DESC', 'LONG_DESCRIPTION'] },
+      // Purchasing enrichment (STORIS inventory exports carry all three):
+      // the vendor's own part number when it differs from our SKU, the
+      // vendor to buy from (created on the fly), and the min-stock level
+      // that becomes the variant's reorder point.
+      {
+        name: 'vendorSku',
+        type: 'string',
+        headers: ['VENDOR_MODEL', 'VENDOR_MODEL_NUMBER', 'VENDOR_MODEL#', 'MFG_MODEL', 'MFR_MODEL'],
+      },
+      { name: 'vendorName', type: 'string', headers: ['VENDOR', 'SUPPLIER', 'VENDOR_NAME'] },
+      {
+        name: 'reorderPoint',
+        type: 'int',
+        headers: ['MIN_STOCK', 'REORDER_POINT', 'MIN_QTY', 'MIN'],
+      },
     ],
   },
   {

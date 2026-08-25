@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { AuthGate } from '@/components/auth-gate';
 import { ImpersonationBanner } from '@/components/impersonation-banner';
 import { AppShell } from '@/components/app-shell';
 import { BusinessSettingsProvider } from '@/lib/business-settings';
@@ -11,9 +12,11 @@ export const dynamic = 'force-dynamic';
 
 export default function BusinessLayout({ children }: { children: ReactNode }) {
   return (
-    <BusinessSettingsProvider>
-      <ImpersonationBanner />
-      <AppShell>{children}</AppShell>
-    </BusinessSettingsProvider>
+    <AuthGate>
+      <BusinessSettingsProvider>
+        <ImpersonationBanner />
+        <AppShell>{children}</AppShell>
+      </BusinessSettingsProvider>
+    </AuthGate>
   );
 }

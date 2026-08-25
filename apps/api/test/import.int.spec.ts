@@ -284,6 +284,56 @@ describe('entity importers (D7 idempotency throughout)', () => {
     expect(cats.map((c) => c.name).sort()).toEqual(['Accessories', 'Bases', 'Mattresses']);
   });
 
+  it('enriches variants with vendor SKU / vendor / reorder point from STORIS-style columns', async () => {
+    const csv = `SKU,DESCRIPTION,CATEGORY,RETAIL,REPLACE_COST,VENDOR_MODEL_NUMBER,VENDOR,MIN_STOCK
+4163,Ireland Black Nightstand,Bedroom,199.00,83.00,04163,ACME,2
+SAM-18002-ET-K,E King Franklin Mattress,Mattresses,3299.00,1684.00,,CANN,
+SAM-18002-ET-Q,Queen Franklin Mattress,Mattresses,2499.00,1070.00,SAM18002Q,CANN,1`;
+    await runBatch('product', csv);
+
+    const variants = await verifyDb
+      .select()
+      .from(schema.productVariants)
+      .where(eq(schema.productVariants.businessId, businessId));
+    const nightstand = variants.find((v) => v.sku === '4163');
+    expect(nightstand?.vendorSku).toBe('04163');
+    expect(nightstand?.reorderPoint).toBe(2);
+    const king = variants.find((v) => v.sku === 'SAM-18002-ET-K');
+    expect(king?.vendorSku).toBeNull(); // blank column leaves it unset
+    expect(king?.reorderPoint).toBeNull();
+
+    // Both CANN rows share one vendor row, created on the fly; the ACME
+    // row gets its own. Preferred vendor lands on the variant.
+    const vendorRows = await verifyDb
+      .select()
+      .from(schema.vendors)
+      .where(eq(schema.vendors.businessId, businessId));
+    const cann = vendorRows.filter((v) => v.name.toLowerCase() === 'cann');
+    expect(cann).toHaveLength(1);
+    expect(vendorRows.some((v) => v.name.toLowerCase() === 'acme')).toBe(true);
+    expect(nightstand?.preferredVendorId).toBe(
+      vendorRows.find((v) => v.name.toLowerCase() === 'acme')?.id,
+    );
+    expect(king?.preferredVendorId).toBe(cann[0]!.id);
+  });
+
+  it('D12: import without a RETAIL column keeps existing prices, new SKUs land at 0', async () => {
+    const csv = `SKU,DESCRIPTION,CATEGORY,COST
+PILLOW-STD,Standard Pillow,Accessories,30.25
+NOPRICE-1,Unpriced Import Item,Accessories,12.00`;
+    await runBatch('product', csv);
+
+    const variants = await verifyDb
+      .select()
+      .from(schema.productVariants)
+      .where(eq(schema.productVariants.businessId, businessId));
+    // Pre-existing variant (priced 99.50 in the earlier product batch)
+    // keeps its price — the price-less re-import must not clobber it.
+    expect(variants.find((v) => v.sku === 'PILLOW-STD')?.priceCents).toBe(9950);
+    // Brand-new SKU with no price lands at 0 (unsellable until priced).
+    expect(variants.find((v) => v.sku === 'NOPRICE-1')?.priceCents).toBe(0);
+  });
+
   it('sets on-hand with an audit movement; re-run is a no-op', async () => {
     await runBatch('inventory', INVENTORY_CSV);
     const levels = await verifyDb
