@@ -157,18 +157,29 @@ _Acceptance: layaway order pays off across installments; commission entries matc
       `(business)/settings/import` (upload → map → validate → commit → recon panel).
       9-test int spec (`jetnine_import` DB) wired into CI; JSON body limit raised to
       25 MB for CSV upload._
-- [ ] **Build:** Full rehearsal import into throwaway `migration-rehearsal` tenant
+- [x] **Build:** Full rehearsal import into throwaway `migration-rehearsal` tenant
       — _2026-08-23: the synthetic rehearsal (fixtures shaped like STORIS report-writer
       exports) runs end-to-end in `apps/api/test/import.int.spec.ts` with all recon
-      gates matching. The real rehearsal is blocked on the actual STORIS export files
-      (Ops, flagged) — once delivered, create the `migration-rehearsal` tenant and walk
-      the wizard top-to-bottom; **do not commit the export files to the repo**._
+      gates matching. **2026-08-25: done on real data** —
+      `apps/api/test/rehearsal.storis.int.spec.ts` drove the real inventory export
+      (products 6,909 · inventory 1,505 · 3,738 units) through the full pipeline on a
+      throwaway DB, all gates + idempotent re-run PASS (see Log); the owner then ran the
+      same two CSVs through the staging wizard (server-side verification pending the
+      Render connector). Scope so far: products + inventory; customers/invoices ride
+      rehearsal #2. **Export files stay out of the repo.**_
 - [ ] **Ops:** Review recon report line-by-line vs STORIS reports; log every mismatch
 
 ## Day 8 — Rehearsal #2 + platform layer
 
 - [ ] **Build:** Fix import mismatches → rehearsal #2
-      — _blocked on real STORIS exports (same as rehearsal #1)._
+      — _2026-08-25: rehearsal #1 surfaced no mismatches to fix. #2's scope is the
+      remaining entities: sales history + customers derived from the STORIS invoice
+      register (blocked on the export — CSV/Excel preferred, oversized PDF still
+      undelivered). Location question CLOSED: owner ruled codes 06/08/09 are old
+      stores — their stock (135 rows / 308 units, all at code 8; 06/09 held nothing)
+      is dropped from the migration, holdout file discarded. Side effect: ~25 `-AS`
+      clearance products whose as-is units existed only at code 8 are now stockless
+      in the catalog — harmless, they simply never get counts._
 - [x] **Build:** `business_templates` (snapshot/apply + super-admin UI); `agencies` tier (D9, additive) + agency console basics; white-label branding + subdomain middleware
       — _2026-08-23: templates shipped (0023; snapshot captures custom roles,
       category tree, tax classes, settings, opt-in catalog; apply is additive and
@@ -381,6 +392,11 @@ current staging business. Keep this list current whenever a test session creates
   the QA tenant mapped to location "Glendale". This is real data but in the test tenant —
   the sync will be re-run into the production business at cutover (with the proper
   location mapping), not migrated.
+- STORIS staging imports (2026-08-25, run by the owner via the wizard): the real product
+  catalog (6,909 rows incl. 552 `-AS`) and inventory counts (1,505 rows / 3,738 units)
+  now live in the QA tenant too. Same treatment as the Shopify sync — re-imported fresh
+  into the production business at cutover (D7 makes that a clean final run), never
+  migrated across.
 - At cutover into the fresh production business: recreate locations (real store list),
   staff invitations + roles, business settings (tax, receipts, branding), re-run the
   Shopify connector, then run the final STORIS import (D7 pipeline). The QA tenant keeps
@@ -457,3 +473,18 @@ invoices exports, location-8 store name, pass-3 QA report.
   after its failed deploy) and live deploy still 1bbd354 — deploy of 847f310 queued
   behind the Render connector reconnect (auto-retry armed); repoint the Render repo URL
   to LA-Mattress-ERP to restore auto-deploy permanently.
+- **2026-08-25 — File-upload CSV import everywhere (batch 5 slice 1):** the Phase-1
+  paste-box importer on Products is gone; a reusable `CsvImport` component (file picker
+  → staged batch → editable column mapping → validate with per-row error preview →
+  commit, all over the D7 wizard endpoints) now lives on Products (product entity) and
+  Inventory (inventory entity, new — with a products-first hint). Settings → Import
+  remains the full multi-entity wizard on the same pipeline. e2e 9/9.
+- **2026-08-25 — Owner ran the staging imports; Render instance fixed:** the owner
+  pushed the two prepared STORIS CSVs through the staging wizard themselves (products
+  then inventory — the first real end-user run of the D7 pipeline). Verification
+  criteria on record: products 6,909/6,909 · inventory 1,505/1,505 · recon product
+  6,909 / inventory 1,505 / units 3,738; server-side confirmation queued behind the
+  Render connector reconnect. Render instance re-upgraded and CONFIRMED on Starter
+  (no more spin-downs); API deploy of the merged head still queued (auto-retry armed);
+  Ops: repoint the Render repo URL to LA-Mattress-ERP for auto-deploy. PR #29
+  (batch 5) opened, CI fully green, awaiting merge word.
