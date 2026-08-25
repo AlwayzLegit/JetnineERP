@@ -211,6 +211,13 @@
       "when": 1787601595957,
       "tag": "0029_variant_vendor_sku",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1787669334415,
+      "tag": "0030_integration_sync_state",
+      "breakpoints": true
     }
   ]
 }

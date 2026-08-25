@@ -31,6 +31,9 @@ interface Provider {
   lastSyncAt: string | null;
   lastResult: SyncResult | null;
   config: { locationName?: string } | null;
+  /** 'idle' | 'running' | 'error' — background sync job state. */
+  syncStatus: string;
+  syncProgress: { note?: string; at?: string } | null;
 }
 
 interface LocationRow {
@@ -95,22 +98,44 @@ export default function IntegrationsPage() {
     }
   }
 
+  /**
+   * Sync runs as a background job server-side (a real store pull takes
+   * minutes). Kick it off, then poll the list until the job leaves
+   * 'running' and report the outcome.
+   */
   async function sync(p: Provider) {
     setBusy(p.provider);
     try {
-      const res = await api<SyncResult>(`/v1/integrations/${p.provider}/sync`, {
+      await api<{ started: boolean }>(`/v1/integrations/${p.provider}/sync`, {
         method: 'POST',
         body: '{}',
       });
-      const parts = (res.results ?? []).map(
-        (r) => `${r.committed} ${r.entity}${r.committed === 1 ? '' : 's'}`,
-      );
-      toast.success(`Synced ${parts.join(', ')}`);
-      await load();
+      toast.success('Sync started — progress shows below.');
+      for (let i = 0; i < 600; i++) {
+        await new Promise((r) => setTimeout(r, 2000));
+        const list = await api<Provider[]>('/v1/integrations');
+        setProviders(list);
+        const mine = list.find((x) => x.provider === p.provider);
+        if (!mine || mine.syncStatus !== 'running') {
+          if (mine?.syncStatus === 'error') {
+            toast.error(
+              `Sync failed: ${(mine.lastResult as { error?: string } | null)?.error ?? 'unknown error'}`,
+            );
+          } else {
+            const parts = ((mine?.lastResult?.results ?? []) as SyncResult['results'])!.map(
+              (r) => `${r.committed} ${r.entity}${r.committed === 1 ? '' : 's'}`,
+            );
+            toast.success(parts.length ? `Synced ${parts.join(', ')}` : 'Sync finished');
+          }
+          return;
+        }
+      }
+      toast.error('Sync is still running after 20 minutes — check back later.');
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err));
     } finally {
       setBusy(null);
+      void load();
     }
   }
 
@@ -165,16 +190,26 @@ export default function IntegrationsPage() {
                     ))}
                   </ul>
                 )}
+                {p.syncStatus === 'running' && (
+                  <p
+                    className="mb-2 text-[12.5px]"
+                    style={{ color: 'var(--brand)' }}
+                    data-testid={`sync-progress-${p.provider}`}
+                  >
+                    <RefreshCw size={12} className="mr-1 inline animate-spin" aria-hidden />
+                    {p.syncProgress?.note ?? 'Sync running…'}
+                  </p>
+                )}
                 <div className="flex flex-wrap gap-2">
                   <Button
                     variant="primary"
                     size="sm"
-                    disabled={busy === p.provider}
+                    disabled={busy === p.provider || p.syncStatus === 'running'}
                     onClick={() => void sync(p)}
                     data-testid={`sync-${p.provider}`}
                   >
                     <RefreshCw size={13} aria-hidden />
-                    {busy === p.provider ? 'Syncing…' : 'Sync now'}
+                    {busy === p.provider || p.syncStatus === 'running' ? 'Syncing…' : 'Sync now'}
                   </Button>
                   <Button
                     variant="danger"

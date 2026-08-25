@@ -312,15 +312,30 @@ function ReorderSettingsCard({
     const d = valueFor(v);
     setSavingId(v.id);
     try {
-      await api(`/v1/products/variants/${v.id}/reorder`, {
-        method: 'PATCH',
-        body: JSON.stringify({
-          reorderPoint: d.point === '' ? null : Number(d.point),
-          reorderQty: d.qty === '' ? null : Number(d.qty),
-          preferredVendorId: d.vendorId === '' ? null : d.vendorId,
-          vendorSku: d.vendorSku.trim() === '' ? null : d.vendorSku.trim(),
-        }),
-      });
+      const sentVendorSku = d.vendorSku.trim() === '' ? null : d.vendorSku.trim();
+      const res = await api<{ vendorSku?: string | null }>(
+        `/v1/products/variants/${v.id}/reorder`,
+        {
+          method: 'PATCH',
+          body: JSON.stringify({
+            reorderPoint: d.point === '' ? null : Number(d.point),
+            reorderQty: d.qty === '' ? null : Number(d.qty),
+            preferredVendorId: d.vendorId === '' ? null : d.vendorId,
+            vendorSku: sentVendorSku,
+          }),
+        },
+      );
+      // Trust but verify: only claim success if the server echoed the
+      // vendor SKU back. A backend that predates the field returns 200
+      // without the key while silently dropping it — a false "saved"
+      // here would tell a buyer the part number reached the PO.
+      if (sentVendorSku !== null && (res.vendorSku ?? null) !== sentVendorSku) {
+        toast.error(
+          'Reorder point saved, but the server did not store the vendor SKU — the API may need an update.',
+        );
+        await onSaved();
+        return;
+      }
       toast.success('Reorder settings saved');
       await onSaved();
       setDraft((cur) => {

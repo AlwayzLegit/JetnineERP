@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   Body,
+  ConflictException,
   Controller,
   Delete,
   Get,
@@ -8,17 +9,21 @@ import {
   NotFoundException,
   Param,
   Post,
+  Query,
 } from '@nestjs/common';
 import { and, eq } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { schema } from '@jetnine/db';
 import { AuditService } from '../audit/audit.service';
 import { CurrentTenant } from '../auth/current-user.decorator';
-import { DRIZZLE } from '../database/database.module';
+import { DRIZZLE, ROOT_DRIZZLE } from '../database/database.module';
 import { ImportService } from '../import/import.service';
 import { RequirePermission, TenantScoped } from '../tenancy/decorators';
-import type { RequestTenantContext } from '../tenancy/request-context';
-import { CONNECTORS, INTEGRATION_FETCH, type FetchImpl } from './connectors';
+import { tryGetRequestContext, type RequestTenantContext } from '../tenancy/request-context';
+import { CONNECTORS, INTEGRATION_FETCH, type Connector, type FetchImpl } from './connectors';
+
+/** A 'running' sync older than this is presumed dead (restart mid-job). */
+const SYNC_STALE_MS = 30 * 60 * 1000;
 
 /**
  * One-click platform integrations (Shopify, WooCommerce, Wix): connect
@@ -34,6 +39,7 @@ import { CONNECTORS, INTEGRATION_FETCH, type FetchImpl } from './connectors';
 export class IntegrationsController {
   constructor(
     @Inject(DRIZZLE) private readonly db: PostgresJsDatabase,
+    @Inject(ROOT_DRIZZLE) private readonly rootDb: PostgresJsDatabase,
     @Inject(AuditService) private readonly audit: AuditService,
     @Inject(ImportService) private readonly importService: ImportService,
     @Inject(INTEGRATION_FETCH) private readonly fetchImpl: FetchImpl,
@@ -56,6 +62,9 @@ export class IntegrationsController {
         lastSyncAt: row?.lastSyncAt ?? null,
         lastResult: row?.lastResultJson ?? null,
         config: row?.configJson ?? null,
+        syncStatus: row?.syncStatus ?? 'idle',
+        syncProgress: row?.syncProgressJson ?? null,
+        syncStartedAt: row?.syncStartedAt ?? null,
       };
     });
   }
@@ -118,12 +127,19 @@ export class IntegrationsController {
 
   /**
    * Pull everything from the provider and land it through the import
-   * pipeline. Returns per-entity batch outcomes so the UI can show
-   * "synced 214 customers, 87 products, 1,032 orders (3 skipped)".
+   * pipeline. A real store pull takes minutes — far past the proxies'
+   * response timeouts — so by default this kicks off a DETACHED job
+   * (state on the integrations row: sync_status/sync_progress_json,
+   * polled via GET /v1/integrations) and returns immediately.
+   * `?wait=1` keeps the old synchronous contract for tests and scripts.
    */
   @Post(':provider/sync')
   @RequirePermission('integrations.manage')
-  async sync(@CurrentTenant() tenant: RequestTenantContext, @Param('provider') provider: string) {
+  async sync(
+    @CurrentTenant() tenant: RequestTenantContext,
+    @Param('provider') provider: string,
+    @Query('wait') wait?: string,
+  ) {
     const connector = CONNECTORS[provider];
     if (!connector) throw new NotFoundException(`Unknown provider "${provider}"`);
     const [row] = await this.db
@@ -134,71 +150,147 @@ export class IntegrationsController {
     if (!row || row.status === 'disconnected') {
       throw new BadRequestException(`${connector.label} is not connected`);
     }
-
-    const ctx = {
-      credentials: row.credentialsJson as Record<string, string>,
-      config: (row.configJson ?? {}) as { locationName?: string },
-      fetchImpl: this.fetchImpl,
-    };
-    let pulls;
-    try {
-      pulls = await connector.pull(ctx);
-    } catch (e) {
-      const detail = e instanceof Error ? e.message : String(e);
-      await this.db
-        .update(schema.integrations)
-        .set({ status: 'error', lastResultJson: { error: detail }, updatedAt: new Date() })
-        .where(eq(schema.integrations.id, row.id));
-      throw new BadRequestException(`Sync failed: ${detail}`);
+    const staleAt = Date.now() - SYNC_STALE_MS;
+    if (row.syncStatus === 'running' && (row.syncStartedAt?.getTime() ?? 0) > staleAt) {
+      throw new ConflictException('A sync is already running for this provider');
     }
 
-    const results: {
-      entity: string;
-      pulled: number;
-      committed: number;
-      skipped: number;
-    }[] = [];
-    for (const pull of pulls) {
-      if (pull.rows.length === 0) {
-        results.push({ entity: pull.entity, pulled: 0, committed: 0, skipped: 0 });
-        continue;
+    // Flip to running on the ROOT connection so the state commits now —
+    // the tenant transaction only commits when this handler returns.
+    await this.rootDb
+      .update(schema.integrations)
+      .set({
+        syncStatus: 'running',
+        syncStartedAt: new Date(),
+        syncProgressJson: { note: 'starting…' },
+        updatedAt: new Date(),
+      })
+      .where(eq(schema.integrations.id, row.id));
+
+    const businessId = tenant.businessId!;
+    const userId = tenant.userId ?? undefined;
+
+    if (wait) {
+      return this.runSyncJob(row.id, businessId, userId, provider, connector, false);
+    }
+    // Detached: the DRIZZLE proxy falls through to the root connection
+    // once this request's context closes, so ImportService keeps working
+    // (every query it makes carries an explicit business_id).
+    void this.runSyncJob(row.id, businessId, userId, provider, connector, true).catch(() => {
+      /* terminal state is persisted inside the job */
+    });
+    return { started: true, syncStatus: 'running' as const };
+  }
+
+  /** The sync job body; state transitions always go through rootDb. */
+  private async runSyncJob(
+    rowId: string,
+    businessId: string,
+    userId: string | undefined,
+    provider: string,
+    connector: Connector,
+    detached: boolean,
+  ) {
+    if (detached) {
+      // Wait for the originating request's RLS transaction to close so
+      // the DRIZZLE proxy routes onto the root connection, not a
+      // committed (dead) transaction.
+      for (let i = 0; i < 400; i++) {
+        const ctx = tryGetRequestContext();
+        if (!ctx || ctx.closed) break;
+        await new Promise((r) => setTimeout(r, 25));
       }
-      const batch = await this.importService.stageStructured(
-        tenant.businessId!,
-        tenant.userId ?? undefined,
-        {
+    }
+
+    const setProgress = (() => {
+      let last = 0;
+      return (note: string, force = false) => {
+        const now = Date.now();
+        if (!force && now - last < 750) return;
+        last = now;
+        void this.rootDb
+          .update(schema.integrations)
+          .set({ syncProgressJson: { note, at: new Date().toISOString() } })
+          .where(eq(schema.integrations.id, rowId))
+          .catch(() => {});
+      };
+    })();
+
+    try {
+      const [row] = await this.rootDb
+        .select()
+        .from(schema.integrations)
+        .where(eq(schema.integrations.id, rowId))
+        .limit(1);
+      if (!row) throw new Error('integration row vanished');
+
+      const pulls = await connector.pull({
+        credentials: row.credentialsJson as Record<string, string>,
+        config: (row.configJson ?? {}) as { locationName?: string },
+        fetchImpl: this.fetchImpl,
+        onProgress: (note) => setProgress(note),
+      });
+
+      const results: { entity: string; pulled: number; committed: number; skipped: number }[] = [];
+      for (const pull of pulls) {
+        if (pull.rows.length === 0) {
+          results.push({ entity: pull.entity, pulled: 0, committed: 0, skipped: 0 });
+          continue;
+        }
+        setProgress(`importing ${pull.rows.length} ${pull.entity} rows…`, true);
+        const batch = await this.importService.stageStructured(businessId, userId, {
           entity: pull.entity,
           source: provider,
           filename: `${provider} sync`,
           rows: pull.rows,
-        },
-      );
-      await this.importService.validate(tenant.businessId!, batch.id);
-      const commit = await this.importService.commit(tenant.businessId!, batch.id);
-      results.push({
-        entity: pull.entity,
-        pulled: pull.rows.length,
-        committed: commit.committed,
-        skipped: pull.rows.length - commit.committed,
-      });
-    }
+        });
+        await this.importService.validate(businessId, batch.id);
+        const commit = await this.importService.commit(businessId, batch.id);
+        results.push({
+          entity: pull.entity,
+          pulled: pull.rows.length,
+          committed: commit.committed,
+          skipped: pull.rows.length - commit.committed,
+        });
+      }
 
-    const summary = { syncedAt: new Date().toISOString(), results };
-    await this.db
-      .update(schema.integrations)
-      .set({
-        status: 'connected',
-        lastSyncAt: new Date(),
-        lastResultJson: summary,
-        updatedAt: new Date(),
-      })
-      .where(eq(schema.integrations.id, row.id));
-    await this.audit.log({
-      action: 'integration.sync',
-      targetType: 'integration',
-      metadata: { provider, results },
-    });
-    return summary;
+      const summary = { syncedAt: new Date().toISOString(), results };
+      await this.rootDb
+        .update(schema.integrations)
+        .set({
+          status: 'connected',
+          syncStatus: 'idle',
+          syncProgressJson: null,
+          lastSyncAt: new Date(),
+          lastResultJson: summary,
+          updatedAt: new Date(),
+        })
+        .where(eq(schema.integrations.id, rowId));
+      await this.audit.log({
+        action: 'integration.sync',
+        targetType: 'integration',
+        metadata: { provider, results },
+        // Detached runs have a closed request context; the audit row
+        // then takes its tenant/actor from the input.
+        businessId,
+        actorUserId: userId ?? null,
+      });
+      return summary;
+    } catch (e) {
+      const detail = e instanceof Error ? e.message : String(e);
+      await this.rootDb
+        .update(schema.integrations)
+        .set({
+          status: 'error',
+          syncStatus: 'error',
+          syncProgressJson: null,
+          lastResultJson: { error: detail },
+          updatedAt: new Date(),
+        })
+        .where(eq(schema.integrations.id, rowId));
+      if (!detached) throw new BadRequestException(`Sync failed: ${detail}`);
+      return undefined;
+    }
   }
 
   @Delete(':provider')

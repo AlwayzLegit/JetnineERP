@@ -397,3 +397,43 @@ current staging business. Keep this list current whenever a test session creates
   location code 8 (186+122 units) held out pending its store name. QA run-2 "vendor
   SKU FAIL" was a deploy lag — the live API is still 80ad9bd and the 18:23 auto
   redeploy from the instance upgrade FAILED; Ops: Manual Deploy latest on jetnine-api.
+- **2026-08-24 — QA run-2 final: 10 PASS / 1 FAIL (vendor SKU = the deploy gap, since
+  closed by the 20:43Z manual deploy of 1bbd354; migrations incl. 0029 applied clean).**
+  Z-report refunds row verified live (−$968.99 ties out), Avery 5160 geometry confirmed
+  from print DOM, dashboard KPIs agree with the Z. Adopted the agent's hardening
+  suggestion: the reorder card now asserts the PATCH response echoes vendorSku before
+  showing success — a stale backend now produces an explicit error instead of a false
+  "saved". Flow-8 incognito caveat closed by server-side evidence: /v1/public/orders/:token
+  is @Public and answers unauthenticated (verified by curl on staging). Test-data ledger
+  additions from run 2: INV-2026-000002 ($1,949 Aviada, change $151), INV-2026-000003
+  ($69 protector + refund), vendor "Bedrock Bedding Supply", PO-2026-000001 (draft),
+  campaign send to 4,575 recipients (memory outbox), order + delivery + track link.
+- **2026-08-24 — Sidebar blue-on-navy fix (user-reported):** the Tailwind v4 pass left
+  `a { color: var(--brand) }` UNLAYERED in globals.css; unlayered CSS outranks every
+  layered utility, so `text-[var(--sidebar-text)]`/`text-white` on nav links lost and
+  the whole sidebar rendered brand-blue on navy. The anchor default now lives in
+  `@layer base`, restoring utility overrides (bare content links keep the brand color).
+  Watch for the same pattern if other element defaults ever fight a utility. e2e 9/9.
+- **2026-08-25 — STORIS import REHEARSAL #1 (real data): PASS, all gates.** New committed
+  runner `apps/api/test/rehearsal.storis.int.spec.ts` (self-skips unless
+  STORIS_REHEARSAL_DIR points at the local CSVs — no data in the repo) drove the real
+  export through stage→map→validate→commit→recon on a throwaway DB seeded with the five
+  mapped stores. Results: products 6,909/6,909 committed with 0 invalid rows (incl. 552
+  as-is companions); inventory 1,505/1,505 → 3,738 units on hand, tying the file to the
+  unit; 48 vendors auto-created; 4,255 vendor SKUs and 252 reorder points landed; all
+  variants at $0 per D12. Full re-run of both batches: zero duplicates, counts identical
+  (D7). End-to-end runtime ~105s. One harness finding: the default 100kb json body limit
+  413s a real catalog CSV — main.ts already runs 25mb, the test harness now matches.
+  Remaining rehearsal scope: location-8 inventory (pending store name), customers /
+  invoices / open-orders entities (pending exports).
+- **2026-08-25 — Background provider sync (post-QA batch):** POST
+  `/v1/integrations/:provider/sync` now runs detached — job state on the integrations
+  row (`sync_status`/`sync_progress_json`/`sync_started_at`, migration
+  `0030_integration_sync_state`), page-by-page progress notes from the connectors,
+  stale-job takeover after 30 min, 409 while running, `?wait=1` preserves the
+  synchronous contract for tests/scripts. Page cap raised 20→400 (100k rows/resource,
+  matching MAX_ROWS) — the old cap truncated the real store at exactly 5,000 customers
+  and cascaded into 1,829 skipped sales. UI polls every 2s with a live progress line
+  and disables the button while running; no more false timeout toasts on 7-minute
+  pulls. Detached runs write state via ROOT_DRIZZLE and audit with explicit tenant.
+  integrations.int.spec.ts 6→7 tests (adds detached-mode completion + idempotency).
