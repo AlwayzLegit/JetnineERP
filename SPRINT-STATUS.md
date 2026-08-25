@@ -449,6 +449,121 @@ _(newest first — sessions append: date · day · what shipped · open flags)_
   records qualify (inactive, referenced by nothing) — deletable in the UI once this
   checkpoint deploys.
 
+## Checkpoint 6 merged + deployed (2026-08-25)
+
+PR #30 squash-merged to main as `28b1248` (QA pass-3 fixes, location hard-delete,
+migration-naming boot log, Cowork invoice-register runbook, server-verified recon).
+Deploy branch merged (`ff654aa`) and deployed to Render via API trigger
+(`dep-da6va4s9v7es739km770`, live 20:05Z): `/health` + `/ready` 200 on the fresh
+instance, and the boot log now prints the instrumented line —
+`Schema migrations: 31/31 applied, head=0030_integration_sync_state; this run applied
+none (already up to date).` (no schema changes in this batch, no pending warning).
+Vercel production READY on main `28b1248`; canonical host confirmed
+`lamattress-erp.vercel.app`. Sprint branch restarted from main. Browser-QA pass 4
+brief handed to the owner (regression on the pass-3 fixes, Koreatown-dupe deletion as
+live cleanup, STORIS stock spot checks per store, toast recheck with a focused tab).
+
+- **2026-08-25 — Production-domain login fixed (owner-reported, root-caused, verified).**
+  `lamattress-erp.vercel.app` couldn't sign in: `CORS_ORIGIN`/`AUTH_TRUSTED_ORIGINS` on the
+  Render service allowed localhost + the `*-alwayzlegits-projects.vercel.app` preview
+  wildcard but not the production domain, and better-auth validates the proxied `Origin`
+  header against that list before checking credentials. Added the domain to both vars
+  (merge update via Render API, `dep-da6vjk8ae00c7385a95g`); verified live — preflight
+  from the prod origin now 204 with the domain echoed, and a dummy-cred POST through the
+  prod proxy returns 401 INVALID_EMAIL_OR_PASSWORD (credential layer reached).
+  Ops still open: repoint the Render dashboard repo URL to LA-Mattress-ERP (deploys
+  remain manual-trigger until then), rotate the owner password shared for the location
+  fix, vendor contact fill-in.
+
+## Rehearsal #2 executed on staging (2026-08-25) — customers + sales history
+
+The invoice-register PDF became moot: the owner produced real exports
+(`CUSTOMERBASE_*.xlsx`, 51,298 rows; `ALL_CUSTOMER_PRODUCTS_SALES_*.xlsx`, 220,278
+line rows). Both processed in-session (data never touched the repo) and imported
+through the D7 pipeline via owner-authorized API session.
+
+- **Customers: 51,117/51,117 committed, 0 invalid.** Cleaning: 168 blank-account rows
+  and 13 store/house accounts (ids 01–12, 88 — exactly the STORIS store codes) dropped;
+  0 dupes after that; 43,273 placeholder emails blanked (`no@gmail.com` family + any
+  address shared by 50+ accounts — would have poisoned campaign sends), 7,799 real
+  emails kept; single-field names split (54 business names kept whole); combined
+  City/State/Zip split. Addresses land in `customers.addresses_json` (verified live) —
+  the customer detail UI does not render them yet (UI backlog).
+- **Sales: 71,246/71,246 committed, 0 invalid** — header-level invoices derived by
+  grouping the line rows per ticket `Number` (proven single-date single-customer;
+  48,211 tickets double as the customer's account# with 2000/2000 phone agreement on
+  sample — STORIS mints account# from first ticket). Customer linkage: 48,211 by
+  account + 20,366 by phone + 2,669 walk-ins (blank). **Store ruling (owner, final):**
+  ticket prefix = store code; 01→Koreatown, 02→West LA, 03→La Brea, 04→Studio City;
+  ALL other codes (05/06/08/09/10/11/12, Glendale-as-closed) → `Warehouse` so no
+  history is dropped. Grand total **$61,552,851.98** across 2015-12-14 → 2026-08-23,
+  444 refund invoices with negative totals preserved. Commits ride out the proxy's
+  300s cap via poll-after-disconnect (server finishes on its own; one re-fire needed
+  after a container restart — D7 idempotency made that safe).
+- **Recon after both:** gate 1 all entities match (customer 63,159 = 12,042 Shopify +
+  51,117 STORIS; sale 73,899 = 2,652 Shopify + 71,246 STORIS + 1 QA; inventory 1,507);
+  gate 2 units 3,748/3,748 match; gate 2 valuation off by exactly $50.00
+  (5,769,563.12 vs 5,769,... — source 57,751,312¢ vs db 57,756,312¢): the QA pass-4
+  `warehouse-test.csv` imported 5 TEST-CSVUI-1 units with no UNIT_COST column, so the
+  source side carries no cost for them while the db side prices them at the variant's
+  $10 cost — a test-data artifact, not a pipeline defect. Gates 3–4 0/0 (no order/AR
+  imports). **Rehearsal imports: 2/2 done on real data.**
+- **QA pass 4 (canonical host): flows 1/2/4/5 PASS** — per-store stock ties to the
+  unit; commit guard verified incl. exact hint copy; contrast 5/5 (pass-3's sidebar
+  "1.16" was the agent's oklab()-parsing artifact — corrected tool measures 6.36);
+  toast auto-dismiss 4.25s with a visible tab (pass-3 finding was the hidden-tab
+  timer pause). Flow 3: timezone guard PASS; the three inactive "Koreatown Store"
+  dupes deleted server-side by the build agent (agent declines hard deletes) — 6
+  locations remain. Flow 6 "print template binding bug": **disproven server-side** —
+  the served production chunk renders the vendor block conditionally with correct
+  field names and cannot emit the bare `<br>`s reported; suspected stale
+  service-worker bundle or void-element `textContent` serializer artifact; agent to
+  re-check with SW unregistered + `innerText`. QA extra findings adopted into the UI
+  backlog below.
+- **UI/UX backlog (owner + QA pass 4, next build slices):** (1) list-page controls —
+  pagination/search/sort/filters on Customers, Sales, Products, Inventory first (51k
+  customers + 74k sales make naked tables a P0); (2) vendor edit UI (PATCH endpoint
+  already exists); (3) render + edit customer addresses on the detail page; (4)
+  replace every image-URL field with real file upload (storage decision needed:
+  S3-compatible or Vercel Blob — Render disk is ephemeral); (5) UI/UX audit pass 5
+  dispatched (dedicated brief) to inventory the rest.
+- **Email/invites: currently STUB.** Invite/arrival/reminder/campaign emails go to the
+  in-memory transport — Resend account has no domain and zero sends ever. To go live:
+  verify a sending domain, create an API key, set `RESEND_API_KEY` +
+  `RESEND_FROM_EMAIL` on the Render service (offer standing; needs owner's domain
+  choice + DNS access). **Ops:** rotate the shared owner password; repoint the Render
+  repo URL (auto-deploy still broken).
+
+## "Enter a Sales Order" — POS replaced by the STORIS 3-step flow (2026-08-25)
+
+Owner decision (D1 amended in the plan doc): order entry becomes the STORIS-style
+three-step program and is the default POS surface.
+
+- **Schema (0031_order_entry_storis_parity):** orders gain `order_kind`
+  (sales_order|layaway), fulfillment widened to take_with/direct_ship,
+  `delivery_status` (scheduled|estimated|asap|will_call), `delivery_instructions`,
+  `pickup_location_id`, `billing_address_json`, `marketing_code`, and three Step-3 fee
+  buckets (delivery/install/other + label) folded into `total_cents` after tax;
+  order_lines gain per-line `fulfillment_method` + `delivery_date` (split tickets).
+- **API:** create/update validate the new enums + fees; detail echoes everything;
+  `recomputeTotals` includes fees. orders.int.spec 25→27 (fee math asserted to the cent,
+  bad enums rejected).
+- **UI:** new `components/order-entry.tsx` — Step 1 Customer (order type, selling
+  location, salesperson + split % from members, fulfillment, dates/status/instructions,
+  pickup location, customer picker with create-on-the-fly, shipping + optional separate
+  billing address), Step 2 Merchandise (scan/search, qty, register-side price entry per
+  D12, line discounts, special-order lines, per-line fulfillment/date), Step 3 Payment
+  (order discount, fees, marketing code, deposit with suggested 25%, tender incl.
+  financing provider/ref). Submit routing: Quote → unconfirmed order; Sales order /
+  Layaway → confirm + deposit payment (layaway CTA points at the payment-plan flow);
+  **take-with fast lane** — all-stock cart, fully tendered → posts a plain `/v1/sales`
+  register sale (drawer/Z/commissions intact per amended D1). `/pos` now defaults to
+  this flow with the legacy register one tab away (retires after its offline queue +
+  drawer flows are ported); `/orders/new` renders the same component. e2e specs updated
+  to drive the stepper and the register tab. Deferred by owner: warranty/prep codes,
+  configurator, manual numbers, backdating, Multi-Ship Master.
+- Web typecheck/lint/unit green; api 27/27 orders int tests green. Full e2e runs in CI.
+
 ## Test-data ledger (D11 — what lives in the QA tenant and never reaches production)
 
 Production cutover creates a **fresh business**; everything below stays behind in the

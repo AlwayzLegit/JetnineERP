@@ -254,10 +254,20 @@ export class OrdersService {
    */
   async recomputeTotals(db: PostgresJsDatabase, orderId: string): Promise<OrderTotalsSnapshot> {
     const [order] = await db
-      .select({ orderDiscountCents: schema.orders.orderDiscountCents })
+      .select({
+        orderDiscountCents: schema.orders.orderDiscountCents,
+        deliveryFeeCents: schema.orders.deliveryFeeCents,
+        installFeeCents: schema.orders.installFeeCents,
+        otherFeeCents: schema.orders.otherFeeCents,
+      })
       .from(schema.orders)
       .where(eq(schema.orders.id, orderId))
       .limit(1);
+    // Step-3 charges (delivery/install/misc) ride on top of the taxed
+    // cart: they join total_cents (and therefore the balance due) but are
+    // not taxed themselves (v1 policy, documented in the plan doc).
+    const feesCents =
+      (order?.deliveryFeeCents ?? 0) + (order?.installFeeCents ?? 0) + (order?.otherFeeCents ?? 0);
 
     const lines = await db
       .select({
@@ -278,7 +288,7 @@ export class OrdersService {
         subtotalCents: 0,
         discountCents: 0,
         taxCents: 0,
-        totalCents: 0,
+        totalCents: feesCents,
       };
       await db
         .update(schema.orders)
@@ -315,7 +325,7 @@ export class OrdersService {
       subtotalCents: totals.subtotalCents,
       discountCents: totals.discountCents,
       taxCents: totals.taxCents,
-      totalCents: totals.totalCents,
+      totalCents: totals.totalCents + feesCents,
     };
     await db
       .update(schema.orders)
