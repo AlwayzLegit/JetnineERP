@@ -449,6 +449,23 @@ _(newest first — sessions append: date · day · what shipped · open flags)_
   records qualify (inactive, referenced by nothing) — deletable in the UI once this
   checkpoint deploys.
 
+## Checkpoint 6 merged + deployed (2026-08-25)
+
+PR #30 squash-merged to main as `28b1248` (QA pass-3 fixes, location hard-delete,
+migration-naming boot log, Cowork invoice-register runbook, server-verified recon).
+Deploy branch merged (`ff654aa`) and deployed to Render via API trigger
+(`dep-da6va4s9v7es739km770`, live 20:05Z): `/health` + `/ready` 200 on the fresh
+instance, and the boot log now prints the instrumented line —
+`Schema migrations: 31/31 applied, head=0030_integration_sync_state; this run applied
+none (already up to date).` (no schema changes in this batch, no pending warning).
+Vercel production READY on main `28b1248`; canonical host confirmed
+`lamattress-erp.vercel.app`. Sprint branch restarted from main. Browser-QA pass 4
+brief handed to the owner (regression on the pass-3 fixes, Koreatown-dupe deletion as
+live cleanup, STORIS stock spot checks per store, toast recheck with a focused tab).
+Ops still open: repoint the Render dashboard repo URL to LA-Mattress-ERP (deploys
+remain manual-trigger until then), rotate the owner password shared for the location
+fix, vendor contact fill-in.
+
 ## Test-data ledger (D11 — what lives in the QA tenant and never reaches production)
 
 Production cutover creates a **fresh business**; everything below stays behind in the
