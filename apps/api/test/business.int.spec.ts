@@ -220,6 +220,86 @@ describe('Epic 1.6 — Business admin console', () => {
     expect(badUpdate.body.message).toContain('invalid timezone');
   });
 
+  it('Location delete: active blocked, referenced blocked, clean inactive deleted', async () => {
+    const server = app.getHttpServer();
+    const mk = async (name: string) => {
+      const res = await request(server)
+        .post('/v1/business/locations')
+        .set('Cookie', ownerCookie)
+        .set('X-Business-Id', businessId)
+        .send({ name, timezone: 'America/Los_Angeles' });
+      expect(res.status).toBe(201);
+      return res.body.id as string;
+    };
+    const deactivate = (id: string) =>
+      request(server)
+        .patch(`/v1/business/locations/${id}`)
+        .set('Cookie', ownerCookie)
+        .set('X-Business-Id', businessId)
+        .send({ isActive: false });
+
+    // Still active → 400.
+    const activeId = await mk('Delete Guard Active');
+    const activeDel = await request(server)
+      .delete(`/v1/business/locations/${activeId}`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId);
+    expect(activeDel.status).toBe(400);
+    expect(activeDel.body.message).toContain('Deactivate');
+
+    // Referenced (an inventory movement via receive) → 409, and the
+    // cascade-linked rows survive.
+    const referencedId = await mk('Delete Guard Referenced');
+    let refVariantId: string;
+    {
+      const sql = postgres(TEST_DB_URL, { max: 1, prepare: false });
+      const db = drizzle(sql);
+      try {
+        const [p] = await db
+          .insert(schema.products)
+          .values({ businessId, sku: 'DELGUARD-1', name: 'Delete Guard Product' })
+          .returning();
+        const [v] = await db
+          .insert(schema.productVariants)
+          .values({ businessId, productId: p!.id, sku: 'DELGUARD-1-V1', priceCents: 1000 })
+          .returning();
+        refVariantId = v!.id;
+      } finally {
+        await sql.end({ timeout: 5 });
+      }
+    }
+    const receive = await request(server)
+      .post('/v1/inventory/receive')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ locationId: referencedId, lines: [{ variantId: refVariantId, quantity: 1 }] });
+    expect(receive.status).toBe(201);
+    await deactivate(referencedId).expect(200);
+    const refDel = await request(server)
+      .delete(`/v1/business/locations/${referencedId}`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId);
+    expect(refDel.status).toBe(409);
+    expect(refDel.body.message).toContain('inventory');
+
+    // Clean + inactive → deleted and gone from the list.
+    const cleanId = await mk('Delete Guard Clean');
+    await deactivate(cleanId).expect(200);
+    const cleanDel = await request(server)
+      .delete(`/v1/business/locations/${cleanId}`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId);
+    expect(cleanDel.status).toBe(200);
+    expect(cleanDel.body.deleted).toBe(true);
+    const list = await request(server)
+      .get('/v1/business/locations')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId);
+    const names = (list.body as { name: string }[]).map((l) => l.name);
+    expect(names).not.toContain('Delete Guard Clean');
+    expect(names).toContain('Delete Guard Referenced');
+  });
+
   it('Owner invites a cashier — invite captured by memory transport', async () => {
     const inviteRes = await request(app.getHttpServer())
       .post('/v1/business/members/invite')

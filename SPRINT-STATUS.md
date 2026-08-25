@@ -436,6 +436,19 @@ _(newest first — sessions append: date · day · what shipped · open flags)_
   server-side on staging with real data.** Ops: rotate the owner password shared for this
   session; vendor contact fill-in and canonical-host QA remain from the pass-3 list.
 
+- **2026-08-25 — Location hard-delete for mistake records (owner request).** There was no
+  delete button because there was no DELETE endpoint — deactivate-only by design. Now:
+  `DELETE /v1/business/locations/:id` (permission `locations.delete`, already in every
+  Owner/Manager role) with two guards — the location must already be inactive, and an
+  explicit reference probe across all 12 location-FK tables must come back empty (explicit
+  rather than FK-error-driven because inventory levels/movements, tax rates and staff
+  scopes cascade — a bare DELETE would silently take that data along). 409 names what
+  references it; deletes are audit-logged. Locations page shows a Delete button on
+  inactive rows with a confirm. business.int.spec 22→23 (active→400, referenced→409 with
+  cascade rows surviving, clean inactive→deleted). The three duplicate "Koreatown Store"
+  records qualify (inactive, referenced by nothing) — deletable in the UI once this
+  checkpoint deploys.
+
 ## Test-data ledger (D11 — what lives in the QA tenant and never reaches production)
 
 Production cutover creates a **fresh business**; everything below stays behind in the

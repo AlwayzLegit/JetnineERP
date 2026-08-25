@@ -63,6 +63,23 @@ export default function LocationsPage() {
     }
   }
 
+  async function remove(loc: Location) {
+    if (
+      !window.confirm(
+        `Delete "${loc.name}" permanently? Only possible while nothing references it.`,
+      )
+    )
+      return;
+    try {
+      await api(`/v1/business/locations/${loc.id}`, { method: 'DELETE' });
+      toast.success(`Deleted "${loc.name}"`);
+      await load();
+    } catch (err) {
+      // 409 = has history; the server message says what references it.
+      toast.error(err instanceof Error ? err.message : String(err));
+    }
+  }
+
   return (
     <div>
       <PageHeader title="Locations" />
@@ -133,9 +150,16 @@ export default function LocationsPage() {
                     </span>
                   </td>
                   <td>
-                    <Button size="sm" variant="ghost" onClick={() => toggle(l)}>
-                      {l.isActive ? 'Deactivate' : 'Activate'}
-                    </Button>
+                    <div className="flex gap-1">
+                      <Button size="sm" variant="ghost" onClick={() => toggle(l)}>
+                        {l.isActive ? 'Deactivate' : 'Activate'}
+                      </Button>
+                      {!l.isActive && (
+                        <Button size="sm" variant="danger" onClick={() => void remove(l)}>
+                          Delete
+                        </Button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}
