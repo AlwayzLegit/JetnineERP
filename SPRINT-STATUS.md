@@ -5,7 +5,7 @@
 > tracker with the work. **Ops** items are the human's — surface them, don't do them.
 > Slip policy and never-cut list live in the plan §8.
 
-**Sprint state:** Build track COMPLETE through Day 9 + UI overhaul + integrations — checkpoint merged to main 2026-08-24 (PR #26, squash `89763d9`). Remaining build items (Day 7/8 rehearsals, Day 10 final import) are blocked on real STORIS export files; all other unchecked items are **Ops**. · **Rehearsal imports done:** 0/2 (synthetic dry-run passed; real exports pending) · **Recon gates passed:** 0/5 against real data (gates 1–4 pass on synthetic)
+**Sprint state:** Build track COMPLETE through Day 9 + UI overhaul + integrations + five post-checkpoint batches — checkpoint 5 merged to main 2026-08-25 (PR #29, squash `138ba82`) and live on staging (`596b8d4`). Remaining build items (rehearsal #2 = sales history + customers from the STORIS invoice register, Day 10 final import) are blocked on that export; all other unchecked items are **Ops**. Old stores 06/08/09 are out of migration scope (final). · **Rehearsal imports done:** 1/2 (products + inventory, real data, PASS) · **Recon gates passed:** gates 1–2 on the real product/inventory export; 3–5 need the invoice/customer export
 
 ---
 
@@ -374,6 +374,81 @@ _(newest first — sessions append: date · day · what shipped · open flags)_
   name mapping (codes 1–12 and 88); (3) decision on 1,180 as-is units (import as
   on-hand, separate as-is SKUs, or skip).
 
+- **2026-08-25 — Browser QA pass 3 (checkpoint 5): triage + fixes.** Agent ran 7 flows on the
+  Vercel **branch preview** (not the canonical host — note for next pass) against the staging
+  tenant. Flows 1–2 (CSV upload + mapping guard) PASS; flow 6 (background Shopify sync) PASS
+  end-to-end (~8 min, 12,042 customers / 1,805 products / 2,652 sales, live progress line,
+  no false timeout — the checkpoint-4 fix holding). **Headline finding: the owner's staging
+  INVENTORY import evidently never committed.** The tenant's locations are
+  "Glendale Store / Koreatown Store ×4 / La Brea Store / Studio City Store / West LA Store" —
+  no `Warehouse`, and none matching the CSV's STORIS names — so inventory validation fails
+  `unknown location` (QA reproduced it: 0 valid / 1 invalid on a Warehouse row; substituting
+  an existing location name → 1 valid, committed, stock visible). STORIS products DID land
+  (SAM-18002 family, 254 reorder rows across 14 vendor groups) but stock is zero at every
+  location. The owner-reported "1,505/1,505 · 3,738 units" recon is therefore **contradicted**
+  for inventory — likely staged-row counts read as committed. Flow 5 (vendor PO print)
+  reclassified from "API not live" to **data gap**: checkpoint-4 API was live before the test
+  (18:12Z), and the template renders vendor contact / ship-to / `ref` sub-line conditionally —
+  all 50 auto-created vendors have no contact data, the PO has no location, and that line's
+  variant has no vendorSku. Toast-never-dismisses finding is most likely a harness artifact
+  (sonner pauses its dismiss timer while the page is hidden/unfocused, which CDP-driven
+  browsers often are) — re-verify by hand.
+- **2026-08-25 — QA pass-3 fixes shipped:** (1) Commit now disabled when validation yields
+  0 valid rows (CsvImport + wizard), with a hint that commit imports valid rows only —
+  closes the missing-guard finding; (2) inactive locations filtered out of the Inventory and
+  Receive pickers (`/v1/pos/locations` consumers were already active-only); (3) location
+  timezone is validated as a real IANA name on create/update (the literal `\` timezone can
+  no longer be saved) and defaults are now `America/Los_Angeles` (form + seed);
+  business.int.spec 21/22 → +1 test; (4) contrast sweep: `--text-muted` #9ca3af → #6b7280
+  (AA on white/#f9fafb/green tint — fixes table headers, KPI labels, helper text, empty
+  states, checklist), placeholders split to `--text-faint`, sidebar section headers
+  white/35 → white/60, disabled buttons opacity 0.5 → 0.6 (exempt but kinder), sonner
+  success-toast vars overridden to AA, PO print sub-line #777/10px → #555/10.5px. Lint,
+  typecheck, web unit, business int green.
+- **Ops (from QA pass 3, in order):** (1) **Fix staging locations, then re-run the
+  inventory import** — rename/create so the five STORIS names exist exactly
+  (`Warehouse`, `Koreatown`, `West LA`, `La Brea`, `Studio City`), deactivate the three
+  dead Koreatown duplicates (after the fix they disappear from pickers), fix the `\`
+  timezone via edit (now validated), then re-run the same inventory CSV through the wizard
+  (idempotent, D7) and read the recon report — that closes the 3,738-unit verification for
+  real. (2) Decide whether Shopify's "Glendale Store" mapping and STORIS's location set
+  should be reconciled into one list before cutover (D11 makes production a fresh start
+  either way). (3) Point the next QA pass at the canonical web host, not the branch
+  preview. (4) Vendor contact/email/phone are empty for all 50 auto-created vendors —
+  fill in the ones that receive POs so the printable PO's vendor block populates.
+
+- **2026-08-25 — Staging location fix EXECUTED + inventory import LANDED + recon VERIFIED
+  server-side (owner-authorized API session).** With the owner's credentials (supplied for
+  this run), the fix ran against staging over HTTPS: active `* Store` locations renamed to
+  the STORIS names (`Koreatown`, `West LA`, `La Brea`, `Studio City`), `Warehouse` created,
+  every timezone set to `America/Los_Angeles` (including the literal `\` one), the three
+  duplicate Koreatown records left inactive, `Glendale Store` untouched (Shopify's
+  location). The batch list confirmed the diagnosis exactly: `storis_inventory.csv` sat
+  `validated` at **0 valid / 1,505 invalid / 0 committed** (products were committed
+  6,909/6,909). Re-validate of the same staged batch after the fix: **1,505 valid /
+  0 invalid**; commit: **1,505/1,505** (32s). `GET /v1/import/recon`: gate 1 all entities
+  match (product 8,684 = STORIS ∪ Shopify ∪ QA, inventory 1,506 = 1,505 + QA row); gate 2
+  units **3,743/3,743** (= 3,738 STORIS + 5 QA test units) and valuation
+  **$577,513.12 to the cent**; gates 3–4 trivially 0/0 (no order/AR imports yet). Per-store
+  spot check ties the file exactly: Warehouse 2,074 · West LA 527 · La Brea 448 ·
+  Koreatown 387 · Studio City 302 = 3,738. **The "owner-reported, not independently
+  confirmed" caveat above is closed — rehearsal-scope recon gates 1–2 now pass
+  server-side on staging with real data.** Ops: rotate the owner password shared for this
+  session; vendor contact fill-in and canonical-host QA remain from the pass-3 list.
+
+- **2026-08-25 — Location hard-delete for mistake records (owner request).** There was no
+  delete button because there was no DELETE endpoint — deactivate-only by design. Now:
+  `DELETE /v1/business/locations/:id` (permission `locations.delete`, already in every
+  Owner/Manager role) with two guards — the location must already be inactive, and an
+  explicit reference probe across all 12 location-FK tables must come back empty (explicit
+  rather than FK-error-driven because inventory levels/movements, tax rates and staff
+  scopes cascade — a bare DELETE would silently take that data along). 409 names what
+  references it; deletes are audit-logged. Locations page shows a Delete button on
+  inactive rows with a confirm. business.int.spec 22→23 (active→400, referenced→409 with
+  cascade rows surviving, clean inactive→deleted). The three duplicate "Koreatown Store"
+  records qualify (inactive, referenced by nothing) — deletable in the UI once this
+  checkpoint deploys.
+
 ## Test-data ledger (D11 — what lives in the QA tenant and never reaches production)
 
 Production cutover creates a **fresh business**; everything below stays behind in the
@@ -401,6 +476,12 @@ current staging business. Keep this list current whenever a test session creates
   staff invitations + roles, business settings (tax, receipts, branding), re-run the
   Shopify connector, then run the final STORIS import (D7 pipeline). The QA tenant keeps
   serving as the safe playground for future testing and demos.
+- Browser-agent run 3 (2026-08-25, checkpoint-5 QA): products `TEST-CSVUI-1` ("QA CSV
+  Upload Widget A", $10 cost) and `TEST-CSVUI-2` ("QA CSV Upload Widget B", $20 cost);
+  vendor `QA VENDOR` (auto-created by the products import); inventory level 5 on hand of
+  `TEST-CSVUI-1` at "Glendale Store" (Warehouse substitution); one full Shopify re-sync
+  (12,042 customers / 1,805 products / 2,652 sales). No `TEST-CSVUI-3` (mapping-guard file
+  never committed); no stock at "Warehouse" (location absent).
 - **2026-08-24 — D12 (no retail-price import) + QA run-2 triage:** priceCents is now
   optional on product import — absent means new variants land at $0 and existing
   variants keep their price (Shopify prices survive the STORIS import); POS cart lines
@@ -488,3 +569,71 @@ invoices exports, location-8 store name, pass-3 QA report.
   (no more spin-downs); API deploy of the merged head still queued (auto-retry armed);
   Ops: repoint the Render repo URL to LA-Mattress-ERP for auto-deploy. PR #29
   (batch 5) opened, CI fully green, awaiting merge word.
+
+## Checkpoint 5 merged (2026-08-25)
+
+PR #28 (printable vendor PO) squash-merged to main as `e860ec2`; PR #29 (file-upload CSV
+import on Products + Inventory) squash-merged as `138ba82` — the "awaiting merge word" note
+above is settled. Deploy branch `claude/fix-latent-int-spec-failures` carries `596b8d4`
+(merge of checkpoint 5 into the deploy branch).
+
+- **2026-08-25 — Staging deploy of checkpoint 5 is LIVE and verified.** Manual deploy
+  triggered on `srv-da4tua3m8hqs73apsflg` (jetnine-api) via the Render API →
+  `dep-da6u86jl550s73fepsn0`, commit `596b8d4`, build 18:51Z → **live 18:52:49Z**, no
+  build or update failures. Post-deploy checks against `https://jetnine-api.onrender.com`:
+  `GET /health` → `200 {"status":"ok"}` on a fresh instance (uptime 44s), `GET /ready` →
+  `200 {"status":"ok"}`. Boot log shows `pnpm --filter @jetnine/db migrate` completing with
+  only idempotent NOTICEs (citext / drizzle schema / `__drizzle_migrations` already exist)
+  then `Migrations applied (schema + RLS).`, followed by a clean Nest boot (all modules
+  initialized, routes mapped, Stripe in STUB mode as expected on staging). **Caveat on the
+  0029/0030 check:** the old migrate script never named the migrations it applied, so the
+  boot log proves "schema is at journal head, nothing pending" rather than naming
+  `0029_variant_vendor_sku` / `0030_integration_sync_state` — both of which were in fact
+  already applied by the 18:10Z deploy of `fe34e0a` (checkpoint 4) and are no-ops now.
+  Fixed for every future deploy by the next item.
+- **2026-08-25 — Deploy-log migration visibility (ops tooling):** `packages/db/src/migrate.ts`
+  now counts `drizzle.__drizzle_migrations` rows before and after `migrate()` and maps the
+  count into `drizzle/meta/_journal.json` tags, so each boot prints
+  `Schema migrations: 31/31 applied, head=0030_integration_sync_state; this run applied
+none (already up to date).` — or the explicit list of tags on a run that applies work —
+  plus a `WARNING: N migration(s) still pending: …` line if the folder is ever ahead of the
+  database. Verified against a throwaway Postgres 16 both ways (empty DB → all 31 named;
+  re-run → "already up to date"); `packages/db` lint + typecheck + 14 RLS tests green.
+- **2026-08-25 — Render service posture confirmed:** plan `starter` (`buildPlan: starter`,
+  `numInstances: 1`, region oregon) — the spin-down problem stays fixed; `autoDeploy: yes`
+  on branch `claude/fix-latent-int-spec-failures`. **Ops (unchanged, now the only reason
+  deploys need a manual trigger):** the dashboard repo URL is still
+  `https://github.com/AlwayzLegit/JetnineERP` — clones still resolve through GitHub's
+  rename redirect (this deploy proves it), but the push webhook does not, so auto-deploy
+  is dead until the URL is repointed to `AlwayzLegit/LA-Mattress-ERP` in
+  Settings → Build & Deploy → Repository.
+- **2026-08-25 — Old-store scope decision carried into the plan doc.** The Day 8 note above
+  (codes 06/08/09 are closed stores; their 135 rows / 308 units are dropped, holdout file
+  discarded) was tracker-only; D12 in `PLAN-STORIS-CUTOVER.md` still read "code 8 pending".
+  D12 now records the exclusion as final, including that dropped-store rows are filtered
+  during CSV prep and anything that slips through fails validation as `unknown location`
+  rather than landing on a placeholder location.
+- **2026-08-25 — Rehearsal #2 unblocking: Cowork runbook for the invoice register.** The
+  sales-history export turns out to be a ~4 GB print-to-PDF invoice register. Since the
+  wizard's `sale` entity is header-level (one row per invoice — no line items), the PDF is
+  parseable locally: `docs/COWORK-INVOICE-REGISTER.md` is a complete runbook for a Cowork
+  session with folder access to the PDF — text-layer probe, streamed `pdftotext` extraction,
+  deterministic parser → `customers.csv` + `sales.csv` (exact wizard headers, store-code →
+  name mapping, 06/08/09 dropped and counted), and five pass/fail verification gates anchored
+  on the register's own printed grand totals. Data never leaves the local folder (D11/D8
+  restated in the doc). **Ops:** put the PDF in a folder, point Cowork at it + this runbook.
+- **Ops / blocked — server-side verification of the owner's two staging imports is NOT
+  done, and the blocker is now root-caused.** The Render MCP connector itself is fine;
+  `query_render_postgres` executes from the Claude remote session's sandbox, whose egress
+  policy allows HTTPS:443 through the agent proxy only — raw-TCP database connections are
+  explicitly unsupported (proxy docs: "Not supported through the proxy … raw-TCP
+  databases"). Hence the signature: the TLS attempt's handshake is killed (`unexpected
+EOF`) and the plaintext fallback reaches Postgres and is refused (`FATAL: SSL/TLS
+required`). A raw-TCP probe to `dpg-da4ttsm417fc73di57eg-a.oregon-postgres.render.com:5432`
+  from the sandbox confirms the block. The API-login fallback (seeded staging admin +
+  `GET /v1/import/recon` over HTTPS) was denied by the session's permission classifier, so
+  it needs an explicit user go-ahead. The recon numbers on record (product 6,909 ·
+  inventory 1,505 · units 3,738) remain **owner-reported, not independently confirmed**.
+  Fastest paths: (a) run `query_render_postgres` from a local Claude session (raw TCP
+  works there), (b) paste the recon report JSON from Settings → Import during the QA
+  pass, or (c) approve the staging-login curl in this session.

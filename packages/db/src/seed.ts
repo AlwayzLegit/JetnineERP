@@ -121,7 +121,7 @@ async function main() {
       .values({
         businessId: demo.id,
         name: 'Main Store',
-        timezone: 'America/New_York',
+        timezone: 'America/Los_Angeles',
         addressJson: { line1: '100 Main St', city: 'Springfield', state: 'IL', postal: '62701' },
       })
       .returning();

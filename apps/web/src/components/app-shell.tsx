@@ -131,7 +131,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         <BrandHeader />
         {NAV.map((group) => (
           <div key={group.label} className="mb-3.5">
-            <p className="mb-1 px-2.5 text-[10.5px] font-bold uppercase tracking-[0.08em] text-white/35">
+            <p className="mb-1 px-2.5 text-[10.5px] font-bold uppercase tracking-[0.08em] text-white/60">
               {group.label}
             </p>
             {group.items.map((item) => {

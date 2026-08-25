@@ -1,7 +1,9 @@
 import {
   BadRequestException,
   Body,
+  ConflictException,
   Controller,
+  Delete,
   Get,
   Inject,
   NotFoundException,
@@ -9,7 +11,8 @@ import {
   Patch,
   Post,
 } from '@nestjs/common';
-import { and, asc, eq } from 'drizzle-orm';
+import { and, asc, eq, sql } from 'drizzle-orm';
+import type { PgColumn, PgTable } from 'drizzle-orm/pg-core';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { schema } from '@jetnine/db';
 import { AuditService } from '../audit/audit.service';
@@ -37,6 +40,21 @@ interface CreateBody {
 
 interface UpdateBody extends CreateBody {
   isActive?: boolean;
+}
+
+/**
+ * A timezone is only usable if the runtime's Intl database knows it —
+ * everything downstream (close-of-day, Z-report bucketing) formats
+ * through Intl, so this is the exact definition of "valid" we need.
+ */
+function assertValidTimezone(timezone: string): void {
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: timezone });
+  } catch {
+    throw new BadRequestException(
+      `invalid timezone "${timezone}" — use an IANA name like America/Los_Angeles`,
+    );
+  }
 }
 
 @TenantScoped()
@@ -75,6 +93,7 @@ export class LocationsController {
     const timezone = body.timezone?.trim();
     if (!name) throw new BadRequestException('name is required');
     if (!timezone) throw new BadRequestException('timezone is required');
+    assertValidTimezone(timezone);
     if (body.taxRateBps != null && (!Number.isInteger(body.taxRateBps) || body.taxRateBps < 0)) {
       throw new BadRequestException('taxRateBps must be a non-negative integer');
     }
@@ -122,6 +141,7 @@ export class LocationsController {
       after.name = update.name;
     }
     if (body.timezone !== undefined && body.timezone.trim() !== existing.timezone) {
+      assertValidTimezone(body.timezone.trim());
       update.timezone = body.timezone.trim();
       before.timezone = existing.timezone;
       after.timezone = update.timezone;
@@ -163,6 +183,88 @@ export class LocationsController {
     });
 
     return toRow(updated);
+  }
+
+  /**
+   * Hard delete, for mistake records only. Two guards: the location must
+   * already be deactivated (forces a deliberate two-step), and nothing may
+   * reference it. The reference check is explicit rather than relying on FK
+   * errors because several FKs cascade (inventory levels/movements, tax
+   * rates, membership scopes) — a bare DELETE would silently take that data
+   * with it instead of failing.
+   */
+  @Delete(':id')
+  @RequirePermission('locations.delete')
+  async remove(
+    @CurrentTenant() tenant: RequestTenantContext,
+    @Param('id') id: string,
+  ): Promise<{ deleted: true }> {
+    const [existing] = await this.db
+      .select()
+      .from(schema.locations)
+      .where(and(eq(schema.locations.id, id), eq(schema.locations.businessId, tenant.businessId!)))
+      .limit(1);
+    if (!existing) throw new NotFoundException('Location not found');
+    if (existing.isActive) {
+      throw new BadRequestException('Deactivate the location before deleting it');
+    }
+
+    const referencedBy: string[] = [];
+    for (const { label, exists } of await this.locationReferences(id)) {
+      if (exists) referencedBy.push(label);
+    }
+    if (referencedBy.length > 0) {
+      throw new ConflictException(
+        `Location has history and cannot be deleted (referenced by: ${referencedBy.join(', ')}). Keep it deactivated instead.`,
+      );
+    }
+
+    await this.db.delete(schema.locations).where(eq(schema.locations.id, id));
+    await this.audit.log({
+      action: 'location.delete',
+      targetType: 'location',
+      targetId: existing.id,
+      before: { name: existing.name, timezone: existing.timezone, isActive: existing.isActive },
+    });
+    return { deleted: true };
+  }
+
+  /** One existence probe per table that carries a location FK. */
+  private async locationReferences(locationId: string) {
+    const probe = async (label: string, table: PgTable, ...columns: PgColumn[]) => {
+      for (const column of columns) {
+        const rows = await this.db
+          .select({ one: sql`1` })
+          .from(table)
+          .where(eq(column, locationId))
+          .limit(1);
+        if (rows.length > 0) return { label, exists: true };
+      }
+      return { label, exists: false };
+    };
+    return Promise.all([
+      probe('inventory levels', schema.inventoryLevels, schema.inventoryLevels.locationId),
+      probe('inventory movements', schema.inventoryMovements, schema.inventoryMovements.locationId),
+      probe('serial units', schema.serialUnits, schema.serialUnits.locationId),
+      probe('cash shifts', schema.cashShifts, schema.cashShifts.locationId),
+      probe('sales', schema.sales, schema.sales.locationId),
+      probe('orders', schema.orders, schema.orders.locationId),
+      probe('deliveries', schema.deliveries, schema.deliveries.locationId),
+      probe('service orders', schema.serviceOrders, schema.serviceOrders.locationId),
+      probe('purchase orders', schema.purchaseOrders, schema.purchaseOrders.locationId),
+      probe(
+        'stock transfers',
+        schema.stockTransfers,
+        schema.stockTransfers.fromLocationId,
+        schema.stockTransfers.toLocationId,
+      ),
+      probe(
+        'staff location scopes',
+        schema.membershipLocationScopes,
+        schema.membershipLocationScopes.locationId,
+      ),
+      probe('tax class rates', schema.taxClassRates, schema.taxClassRates.locationId),
+    ]);
   }
 }
 

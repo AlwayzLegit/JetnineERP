@@ -3,6 +3,34 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createClient } from './client';
 
+const MIGRATIONS_FOLDER = join(__dirname, '..', 'drizzle');
+
+type Journal = { entries: { idx: number; tag: string }[] };
+
+/**
+ * Migration tags in journal order. Drizzle inserts one `__drizzle_migrations`
+ * row per applied file in exactly this order, so a row count is an index into
+ * this list — which is what lets the boot log name the migrations by tag.
+ */
+function journalTags(): string[] {
+  const journal = JSON.parse(
+    readFileSync(join(MIGRATIONS_FOLDER, 'meta', '_journal.json'), 'utf8'),
+  ) as Journal;
+  return journal.entries.map((e) => e.tag);
+}
+
+/** Rows in drizzle's bookkeeping table; 0 before the first migration ever runs. */
+async function appliedCount(sql: ReturnType<typeof createClient>['sql']): Promise<number> {
+  try {
+    const rows = await sql.unsafe<{ n: number }[]>(
+      'select count(*)::int as n from drizzle.__drizzle_migrations',
+    );
+    return rows[0]?.n ?? 0;
+  } catch {
+    return 0;
+  }
+}
+
 async function main() {
   const url = process.env.DATABASE_URL;
   if (!url) {
@@ -17,9 +45,26 @@ async function main() {
     await sql.unsafe('CREATE EXTENSION IF NOT EXISTS citext');
 
     // 2. Drizzle-managed schema migrations.
-    await migrate(db, { migrationsFolder: join(__dirname, '..', 'drizzle') });
+    const before = await appliedCount(sql);
+    await migrate(db, { migrationsFolder: MIGRATIONS_FOLDER });
+    const after = await appliedCount(sql);
 
-    // 3. RLS / roles / policies. Idempotent; safe to re-run on every deploy.
+    // 3. Name what happened. A deploy log that only says "applied" cannot
+    //    answer "is migration 00NN live?" after the fact — this can.
+    const tags = journalTags();
+    const newly = tags.slice(before, after);
+    const head = tags[after - 1] ?? 'none';
+    console.error(
+      `Schema migrations: ${after}/${tags.length} applied, head=${head}; ` +
+        `this run applied ${newly.length ? newly.join(', ') : 'none (already up to date)'}.`,
+    );
+    if (after < tags.length) {
+      console.error(
+        `WARNING: ${tags.length - after} migration(s) still pending: ${tags.slice(after).join(', ')}`,
+      );
+    }
+
+    // 4. RLS / roles / policies. Idempotent; safe to re-run on every deploy.
     const rlsPath = join(__dirname, 'migrations', 'rls.sql');
     const rls = readFileSync(rlsPath, 'utf8');
     await sql.unsafe(rls);

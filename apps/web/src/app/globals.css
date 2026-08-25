@@ -46,7 +46,8 @@
   --border-strong: #d1d5db;
   --text: #111827;
   --text-secondary: #4b5563;
-  --text-muted: #9ca3af;
+  --text-muted: #6b7280; /* AA on white/#f9fafb — QA contrast sweep 2026-08-25 */
+  --text-faint: #9ca3af; /* placeholders + decorative only; below AA by design */
 
   /* Status */
   --success: #16a34a;
@@ -161,7 +162,9 @@ code {
 }
 
 .btn:disabled {
-  opacity: 0.5;
+  /* Disabled controls are exempt from WCAG contrast, but 0.6 keeps the
+     label readable while still clearly inert (QA sweep flagged 0.5). */
+  opacity: 0.6;
   cursor: not-allowed;
 }
 
@@ -227,7 +230,7 @@ code {
 }
 
 .input::placeholder {
-  color: var(--text-muted);
+  color: var(--text-faint);
 }
 
 .input:focus,
@@ -391,6 +394,14 @@ code {
 
 .muted {
   color: var(--text-muted);
+}
+
+/* Sonner richColors success toast text measured 4.26:1 on its green tint
+   (QA contrast sweep); sonner exposes these vars for exactly this override. */
+[data-sonner-toast][data-rich-colors='true'][data-type='success'] {
+  --success-bg: #f0fdf4;
+  --success-text: #166534;
+  --success-border: #bbf7d0;
 }
 
 .empty-state {

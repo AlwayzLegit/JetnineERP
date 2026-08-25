@@ -156,7 +156,7 @@ export function CsvImport({
                 variant="primary"
                 size="sm"
                 onClick={() => void run('commit')}
-                disabled={busy || batch.status !== 'validated'}
+                disabled={busy || batch.status !== 'validated' || batch.validationJson?.valid === 0}
                 data-testid={`csv-commit-${entity}`}
               >
                 Commit
@@ -216,6 +216,10 @@ export function CsvImport({
                   {batch.validationJson.invalid}
                 </strong>{' '}
                 invalid
+                {batch.validationJson.invalid > 0 &&
+                  (batch.validationJson.valid === 0
+                    ? ' — nothing to commit; fix the rows below and re-validate'
+                    : ' — Commit imports the valid rows only; invalid rows are skipped')}
               </p>
               {batch.validationJson.errors.length > 0 && (
                 <div

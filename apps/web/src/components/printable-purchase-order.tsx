@@ -167,7 +167,7 @@ const PO_CSS = `
   .po-doc td { padding: 5px 6px; border-bottom: 1px solid #ddd; vertical-align: top; }
   .po-doc .num { text-align: right; white-space: nowrap; }
   .po-doc code { font-family: ui-monospace, Consolas, monospace; font-size: 11.5px; }
-  .po-doc .po-oursku { display: block; font-size: 10px; color: #777; }
+  .po-doc .po-oursku { display: block; font-size: 10.5px; color: #555; }
   .po-doc tfoot td { border-bottom: none; border-top: 2px solid #111; font-weight: 700;
     padding-top: 6px; }
   .po-doc .po-notes { margin-top: 14px; }
