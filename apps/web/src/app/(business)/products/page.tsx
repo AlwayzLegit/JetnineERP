@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useEffect, useState, type FormEvent } from 'react';
 import { Plus } from 'lucide-react';
 import { api } from '@/lib/api';
+import { CsvImport } from '@/components/csv-import';
 import {
   Button,
   Card,
@@ -25,9 +26,6 @@ export default function ProductsPage() {
   const [rows, setRows] = useState<ProductRow[] | null>(null);
   const [q, setQ] = useState('');
   const [error, setError] = useState<string | null>(null);
-  const [csv, setCsv] = useState('name,sku,price,barcode\n');
-  const [csvBusy, setCsvBusy] = useState(false);
-  const [csvResult, setCsvResult] = useState<string | null>(null);
 
   async function load(query: string) {
     setError(null);
@@ -49,23 +47,6 @@ export default function ProductsPage() {
   function search(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     void load(q);
-  }
-
-  async function importCsv(action: 'preview' | 'commit') {
-    setCsvBusy(true);
-    setCsvResult(null);
-    try {
-      const result = await api<unknown>(`/v1/products/import/${action}`, {
-        method: 'POST',
-        body: JSON.stringify({ csv }),
-      });
-      setCsvResult(JSON.stringify(result, null, 2));
-      if (action === 'commit') void load(q);
-    } catch (err) {
-      setCsvResult(err instanceof Error ? err.message : String(err));
-    } finally {
-      setCsvBusy(false);
-    }
   }
 
   return (
@@ -154,44 +135,13 @@ export default function ProductsPage() {
         )}
       </Card>
 
-      <details style={{ marginTop: 24 }}>
-        <summary style={{ cursor: 'pointer', fontSize: 14, fontWeight: 500 }}>CSV import</summary>
-        <Card style={{ marginTop: 8 }}>
-          <p style={{ color: 'var(--text-secondary)', fontSize: 13, marginTop: 0 }}>
-            Headers: <code>name,sku,price,barcode</code>. Price is in dollars (e.g. 12.50).
-          </p>
-          <textarea
-            className="textarea"
-            value={csv}
-            onChange={(e) => setCsv(e.target.value)}
-            rows={8}
-            style={{ width: '100%', fontFamily: 'var(--font-mono)', fontSize: 12 }}
-          />
-          <div style={{ marginTop: 8 }} className="flex flex-wrap gap-2">
-            <Button variant="primary" onClick={() => importCsv('preview')} disabled={csvBusy}>
-              Preview
-            </Button>
-            <Button variant="primary" onClick={() => importCsv('commit')} disabled={csvBusy}>
-              Commit
-            </Button>
-          </div>
-          {csvResult && (
-            <pre
-              style={{
-                background: 'var(--surface-muted)',
-                border: '1px solid var(--border)',
-                padding: 8,
-                borderRadius: 'var(--radius-sm)',
-                marginTop: 8,
-                marginBottom: 0,
-                fontSize: 12,
-                whiteSpace: 'pre-wrap',
-              }}
-            >
-              {csvResult}
-            </pre>
-          )}
-        </Card>
+      <details style={{ marginTop: 24 }} data-testid="products-csv-import">
+        <summary style={{ cursor: 'pointer', fontSize: 14, fontWeight: 500 }}>
+          Import products from a CSV file
+        </summary>
+        <div style={{ marginTop: 8 }}>
+          <CsvImport entity="product" onCommitted={() => load(q)} />
+        </div>
       </details>
     </div>
   );

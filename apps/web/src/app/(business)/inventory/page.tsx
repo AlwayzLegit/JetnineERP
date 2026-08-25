@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { PackageCheck } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '@/lib/api';
+import { CsvImport } from '@/components/csv-import';
 import {
   Button,
   Card,
@@ -175,6 +176,21 @@ export default function InventoryPage() {
           </div>
         )}
       </Card>
+
+      <details style={{ marginTop: 24 }} data-testid="inventory-csv-import">
+        <summary style={{ cursor: 'pointer', fontSize: 14, fontWeight: 500 }}>
+          Import on-hand counts from a CSV file
+        </summary>
+        <p style={{ color: 'var(--text-secondary)', fontSize: 12.5, margin: '6px 0 8px' }}>
+          One row per SKU per location (columns like SKU, LOCATION, ON_HAND, UNIT_COST — the
+          location must match a store name exactly). Products must exist first; import the product
+          file on the Products page if they don&apos;t.
+        </p>
+        <CsvImport
+          entity="inventory"
+          onCommitted={() => (locationId ? loadLevels(locationId) : undefined)}
+        />
+      </details>
     </div>
   );
 }
