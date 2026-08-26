@@ -771,6 +771,69 @@ is live on `lamattress-erp.vercel.app`.** P9 (commissions, dashboards, auto-clos
 remains. Ops unchanged: repoint Render repo URL (deploys still manual-trigger), rotate
 the shared owner password, Resend domain when ready, sample invoices into `docs/`.
 
+## Checkpoint 10 merged + deployed — QA pass fixes (2026-08-26)
+
+First browser QA pass over the deployed gap-closure surface produced 15 findings.
+PR #34 squash-merged to main as `f72a3db`, CI 4/4 green first try. Render deploy
+`dep-da7i1u7avr4c73fub8o0` **live 17:24Z** — boot log: `Schema migrations: 49/49 applied,
+head=0048_sale_line_order_discount_share; this run applied
+0048_sale_line_order_discount_share.` `/health` + `/ready` 200; Vercel production READY on
+main `f72a3db`; `/v1/audit-logs` answers 401 through the prod proxy (the D8 proof).
+
+**D1 — refunds overpaid by the whole discount (real money).** `sale_lines.discount_cents`
+holds only a line's _own_ discount; a cart-level discount lives on the sale header and the
+refund never consulted it, so a $1,000 line sold for $700 under a 30% cart discount
+refunded $1,000 — true of **every** refund against a discounted sale, not one invoice.
+Fix: the line's share of the sale discount is computed at sale time and **persisted**
+(`order_discount_share_cents`, migration 0048) rather than re-derived — the pro-rata
+rounding residue cannot be reconstructed afterwards because line order was never stored,
+and pennies of ambiguity do not belong in a refund. Legacy rows fall back to
+`reconstructOrderDiscountShares` (exact in total). Second half of the same bug: sale
+refunds returned **pre-tax** amounts while the order-return path returned tax; both now
+return what was collected.
+
+**D2 — the register bypassed the price-variance gate.** `POST /v1/sales` never called it,
+and New Sale's fully-paid take-with fast lane posts a register sale, so the hole was
+reachable from the order screen too — that is how the D1 invoice was written. The gate
+moved out of `OrdersController` into a shared `PriceVarianceService` both doors call.
+**Discount codes are exempt**: a coupon is a pre-authorized instrument created by someone
+holding `discounts.manage`; demanding a reason per redemption would only teach staff to
+type junk. (Exempting them also fixed the 3 discount-code specs the gate first broke.)
+
+**D4** all five `window.prompt` calls (pull-off-run, cancel-return, as-is price, vendor
+R/A, vendor credit) replaced with the in-app dialog, which gained typed `fields` — a
+native prompt can carry neither a coded reason nor a manager challenge, and it froze the
+QA browser. **D6** the over-capacity confirm matched the substring `'at capacity'`; the
+G12 multi-dimension rewrite changed the message and silently disabled the documented
+override — now a structured `OVER_CAPACITY` code. **D7** commission plans had API support
+since G5 but no UI, so nobody was ever on a plan, `planFor()` returned null for everyone
+and nothing accrued; added a Plans card. **D8** `/audit` hand-rolled `fetch` against its
+own `NEXT_PUBLIC_API_URL` default and so called `http://localhost:4000` in production;
+switched to the shared `api()` helper.
+
+**Three QA findings corrected rather than fixed:** (a) _D5 — the run lock does work_;
+`assertNotOnOpenRun` was already enforced on every edit path. What was missing is that the
+order detail never reported run membership, so the page showed no banner and left controls
+live — enforced but invisible. Detail now returns `onOpenRun`. (I first "fixed" this by
+duplicating the existing guard, then reverted.) (b) _Tier 3 collapsing to "needs a reason"
+is by design_ — the QA tested as owner, who holds `orders.price_override`, so no second
+signature is demanded; the below-cost CRITICAL never appeared only because the exception
+records _after_ a reason is supplied. (c) _D10 two-`/pos`-screens is deployment skew, not
+code_ — no `order-entry` file, no "Enter a Sales Order" string, one `/pos` route, sidebar
+label hardcoded to "New Sale"; a stale cached build was being served.
+
+**Not fixed:** D9 (variants Price/Cost) is not reproducible from code — both the API
+projection and the table map the fields correctly, and the two symptoms conflict ($1,255
+under Price cannot land on an order at $0.00). Needs the raw `GET /v1/products/<id>`
+payload for Q-MOS10; suspect the STORIS import wrote cost into `price_cents`. A real
+adjacent ambiguity was confirmed: the Cost column renders "hidden" both when the viewer
+lacks `products.cost.view` and when cost is genuinely null.
+
+API suite 489→**500 passing** (+11 covering the D1 numbers and all three D2 tiers); e2e
+8/8 run locally before the push and green in CI. Ops unchanged, plus: **the cashier and
+manager accounts still need creating** (Settings → Users → Invite) — the QA agent cannot
+type passwords, and step 2's override flow needs a second, non-owner identity.
+
 ## Checkpoint 9 merged + deployed (2026-08-26)
 
 PR #33 (the whole STORIS gap closure G1–G15 + §2 append-only audit + P9) squash-merged to
