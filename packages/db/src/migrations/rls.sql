@@ -44,6 +44,15 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public
 ALTER DEFAULT PRIVILEGES IN SCHEMA public
   GRANT USAGE, SELECT ON SEQUENCES TO app_user;
 
+-- PLAN-STORIS-GAP §2: the audit trail and the override register are
+-- append-only for the app role — otherwise the audit is worth exactly
+-- as much as the admin's self-restraint. (exception_events keeps UPDATE
+-- for acknowledge; write_offs is append-only too.)
+REVOKE UPDATE, DELETE ON audit_logs FROM app_user;
+REVOKE UPDATE, DELETE ON security_overrides FROM app_user;
+REVOKE UPDATE, DELETE ON write_offs FROM app_user;
+REVOKE DELETE ON exception_events FROM app_user;
+
 -- ============================================================================
 -- Context helpers
 -- ============================================================================

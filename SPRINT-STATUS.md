@@ -964,22 +964,30 @@ commission-clawback + digest requirements.
       (inventory.adjust; {days, dryRun}) frees reservations on open orders promised >N
       days ago with nothing on a truck and no lock — each release audited + registered
       (`auto_stock_release`); P9's nightly job will call it. `GET
-    /v1/orders/reservation-drift` (reports.inventory.view): SUM(line reserved) vs
+  /v1/orders/reservation-drift` (reports.inventory.view): SUM(line reserved) vs
       level reserved per variant+location, drift rows only. orders.int.spec 52→56. —
       _2026-08-26. Conventions: past-due keyed on requestedDate (scheduled-trip lateness
       shows via Scheduled status + date already); per-line Hold, credit hold, EST-vs-SCH
       date distinction, and manual reservation re-assignment still open (rolled into the
       backlog); postponement counter still deferred to P9._
 - [x] **G14 — Duplicate-order prompt + ATP-vs-promise warning:** `GET
-    /v1/customers/:id/open-orders` (open orders w/ promised + next-trip dates); New
+  /v1/customers/:id/open-orders` (open orders w/ promised + next-trip dates); New
       Sale shows a warning banner when the picked customer already has open orders
       ("consider one truck"), and completing with a promised date EARLIER than any
       line's ATP date demands an explicit confirm naming the late lines. —
       _2026-08-26. Conventions: the consolidate prompt is advisory (banner), not a
       blocking dialog; credit-application gate for Synchrony/Acima still open (needs a
       credit-app entity)._
-- [ ] **§2 audit coverage:** log line qty/discount/date/salesperson/customer-swap/
-      tax-exempt/fee-removal/tender-void/deposit-transfer events; append-only audit table
+- [x] **§2 audit coverage:** `audit_logs`, `security_overrides`, and `write_offs` are
+      now **append-only at the DB level** (UPDATE/DELETE revoked from app*user in
+      rls.sql; exception_events keeps UPDATE for acknowledge). Field-level coverage
+      audit: line add/remove/qty ✓ (endpoint audits), price + discount changes ✓ (G6
+      exceptions + order.update diffs), delivery date changes ✓ (order.update /
+      delivery PATCH diffs), salesperson change ✓ (order.update diff), recycling-fee
+      removal ✓ (G6 exception), route/date-after-print ✓ (G7 run lock + audits),
+      customer-swap N/A (no endpoint can change an order's customer), tax-exempt /
+      tender-void / deposit-transfer N/A (those routines don't exist yet — each gets
+      its control when built). — \_2026-08-26.*
 - [ ] **Build P9 (pre-existing):** commissions (equal-split, exchange clawback per gap §8),
       owner + manager dashboards, 22:00 auto-close job
 
