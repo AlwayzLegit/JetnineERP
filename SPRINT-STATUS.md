@@ -576,6 +576,29 @@ main. **"Enter a Sales Order" is live on `lamattress-erp.vercel.app` → POS.**
 Ops unchanged: repoint Render repo URL (deploys still manual-trigger), rotate the
 shared owner password, Resend domain when ready.
 
+## POS / Operations build (PLAN-POS-OPERATIONS.md) — phase tracker
+
+Owner handoff spec committed as `PLAN-POS-OPERATIONS.md` with amendments A1–A4
+(batch print doesn't lock; LB=La Brea keeps its name+history; single-screen New Sale
+supersedes the checkpoint-7 wizard; legacy register + its offline mode retire).
+
+- [ ] **Build P1:** Schema — store prefixes + per-store order sequences, ops settings
+      (recycling rate, doc header/footer note, unlock roles, delivery cap), permission
+      matrix per-user overrides, exchange link + draft status support
+- [ ] **Build P2:** New Sale screen (single-screen; replaces wizard + register)
+- [ ] **Build P3:** Orders list + slide-over + change-history timeline + notifications feed
+- [ ] **Build P4:** Documents — invoice (sample layout), delivery ticket + individual-print
+      lock, batch print (no lock, A1)
+- [ ] **Build P5:** Delivery dispatch table + 15-stop capacity + zip routes
+- [ ] **Build P6:** Purchasing — PO builder suggestions, PDF/email, receiving
+      Received→Inspected→Accepted, partial receipts, vendor-invoice matching
+- [ ] **Build P7:** Transfers with ticket + sign + receive-confirm workflow
+- [ ] **Build P8:** Returns/exchanges/service, As-Is review flow, store credit
+- [ ] **Build P9:** Commissions (equal-split default, exchange clawback), owner +
+      manager dashboards, 22:00 auto-close job
+- [ ] **Ops:** Provide the two sample invoices into `docs/` for the document templates
+      (P4); confirm PO reply-to address; pick unlock-capable roles in settings once P1 ships
+
 ## Test-data ledger (D11 — what lives in the QA tenant and never reaches production)
 
 Production cutover creates a **fresh business**; everything below stays behind in the
