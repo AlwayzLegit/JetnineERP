@@ -73,6 +73,8 @@ jobs:
       OPENAPI_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/jetnine_openapi
       GIFT_CARDS_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/jetnine_gift_cards
       ONBOARDING_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/jetnine_onboarding
+      CONTROLS_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/jetnine_controls
+      CLOSEOUT_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/jetnine_closeout
       REDIS_URL: redis://localhost:6379
 
     steps:
@@ -122,6 +124,8 @@ jobs:
           createdb -h localhost -U postgres jetnine_openapi
           createdb -h localhost -U postgres jetnine_gift_cards
           createdb -h localhost -U postgres jetnine_onboarding
+          createdb -h localhost -U postgres jetnine_controls
+          createdb -h localhost -U postgres jetnine_closeout
 
       - name: Format check
         run: pnpm format:check
