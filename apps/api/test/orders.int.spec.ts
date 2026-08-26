@@ -13,7 +13,7 @@ import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { hashPassword } from 'better-auth/crypto';
 import { drizzle } from 'drizzle-orm/postgres-js';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import postgres from 'postgres';
 import request from 'supertest';
 import { Test } from '@nestjs/testing';
@@ -595,6 +595,9 @@ describe('Documents + A1 print lock (PLAN-POS-OPERATIONS P4)', () => {
         locationId,
         customerId,
         confirm: true,
+        // Pickup + promised date satisfies the G9 print preconditions
+        // without needing a scheduled truck in this suite.
+        fulfillmentType: 'pickup',
         requestedDate: '2026-09-10',
         lines: [{ variantId: p4VariantId, quantity: 1 }],
       });
@@ -629,13 +632,20 @@ describe('Documents + A1 print lock (PLAN-POS-OPERATIONS P4)', () => {
     expect(printed.status).toBe(201);
     expect(printed.body.lockedAt).toBeTruthy();
 
-    // All edit surfaces refuse while locked.
+    // All guarded edit surfaces refuse while locked…
     await request(app.getHttpServer())
       .patch(`/v1/orders/${order.id}`)
       .set('Cookie', cashierCookie)
       .set('X-Business-Id', businessId)
-      .send({ notes: 'sneaky edit' })
+      .send({ requestedDate: '2026-09-12' })
       .expect(409);
+    // …but the G9 allowlist lets contact/notes fixes through the lock.
+    await request(app.getHttpServer())
+      .patch(`/v1/orders/${order.id}`)
+      .set('Cookie', cashierCookie)
+      .set('X-Business-Id', businessId)
+      .send({ notes: 'gate code 4411' })
+      .expect(200);
     await request(app.getHttpServer())
       .post(`/v1/orders/${order.id}/lines`)
       .set('Cookie', cashierCookie)
@@ -1047,14 +1057,17 @@ describe('Day 1 — partial stock, line edits, and cancellation', () => {
 
 describe('Day 1 — order pricing rules', () => {
   it('An order-level discount is allocated across lines before tax', async () => {
+    // Deep negotiated prices — since G6 that takes the owner (who holds
+    // orders.price_override) plus a reason; the tax math is unchanged.
     const res = await request(app.getHttpServer())
       .post('/v1/orders')
-      .set('Cookie', cashierCookie)
+      .set('Cookie', ownerCookie)
       .set('X-Business-Id', businessId)
       .send({
         locationId,
         customerId,
         orderDiscountCents: 10_000,
+        priceReason: 'negotiated floor deal',
         lines: [
           { variantId: sofaVariantId, quantity: 1, unitPriceCents: 90_000 },
           { variantId: chairVariantId, quantity: 1, unitPriceCents: 10_000 },
@@ -1416,5 +1429,646 @@ describe('Returns, As-Is, store credit, exchanges (PLAN-POS-OPERATIONS P8)', () 
     const lv = await owner().get('/v1/orders/list-view?limit=100');
     const row = lv.body.data.find((r: { id: string }) => r.id === original.id);
     expect(row.displayStatus).toBe('Exchanged');
+  });
+});
+
+describe('Return lifecycle — refund gated on goods receipt (PLAN-STORIS-GAP G3)', () => {
+  let g3VariantId = '';
+
+  function as(cookie: string) {
+    return {
+      post: (url: string) =>
+        request(app.getHttpServer())
+          .post(url)
+          .set('Cookie', cookie)
+          .set('X-Business-Id', businessId),
+      get: (url: string) =>
+        request(app.getHttpServer())
+          .get(url)
+          .set('Cookie', cookie)
+          .set('X-Business-Id', businessId),
+    };
+  }
+  const owner = () => as(ownerCookie);
+
+  beforeAll(async () => {
+    const sql2 = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    const db = drizzle(sql2);
+    try {
+      const [p] = await db
+        .insert(schema.products)
+        .values({ businessId, sku: 'G3-BED', name: 'Lifecycle Fixture Bed' })
+        .returning();
+      const [v] = await db
+        .insert(schema.productVariants)
+        .values({ businessId, productId: p!.id, sku: 'G3-BED-V1', priceCents: 50000 })
+        .returning();
+      g3VariantId = v!.id;
+      await db.insert(schema.inventoryLevels).values({
+        businessId,
+        variantId: g3VariantId,
+        locationId,
+        onHand: 30,
+        reserved: 0,
+      });
+    } finally {
+      await sql2.end({ timeout: 5 });
+    }
+  });
+
+  async function fulfilledPaidOrder(quantity: number): Promise<{
+    id: string;
+    number: string;
+    lineId: string;
+    totalCents: number;
+  }> {
+    const created = await owner()
+      .post('/v1/orders')
+      .send({
+        locationId,
+        customerId,
+        fulfillmentType: 'pickup',
+        confirm: true,
+        lines: [{ variantId: g3VariantId, quantity }],
+      });
+    expect(created.status).toBe(201);
+    await owner()
+      .post(`/v1/orders/${created.body.id}/payments`)
+      .send({ method: 'cash', amountCents: created.body.totalCents })
+      .expect(201);
+    await owner().post(`/v1/orders/${created.body.id}/fulfill`).send({}).expect(201);
+    return {
+      id: created.body.id,
+      number: created.body.number,
+      lineId: created.body.lines[0].id,
+      totalCents: created.body.totalCents,
+    };
+  }
+
+  it('pickup return: authorization moves no money and no goods; receipt fires both', async () => {
+    const order = await fulfilledPaidOrder(2);
+    const perUnit = Math.round(order.totalCents / 2);
+
+    const auth = await owner()
+      .post(`/v1/orders/${order.id}/return`)
+      .send({
+        lines: [{ lineId: order.lineId, quantity: 1 }],
+        fulfillment: 'pickup',
+        reason: 'sagging',
+      });
+    expect(auth.status).toBe(201);
+    // Nothing moved yet: full payment stands, nothing marked returned.
+    expect(auth.body.paidCents).toBe(order.totalCents);
+    expect(auth.body.lines[0].qtyReturned).toBe(0);
+
+    const listed = await owner().get(`/v1/order-returns?orderId=${order.id}`);
+    expect(listed.status).toBe(200);
+    expect(listed.body).toHaveLength(1);
+    const ret = listed.body[0];
+    expect(ret.status).toBe('authorized');
+    expect(ret.rmaNumber).toBe(`RMA-${order.number}-1`);
+    expect(ret.amountCents).toBe(perUnit);
+    expect(ret.lines[0].quantity).toBe(1);
+
+    // The order now reads "Awaiting Return Pickup" on the list view.
+    const lv = await owner().get('/v1/orders/list-view?limit=100');
+    const row = lv.body.data.find((r: { id: string }) => r.id === order.id);
+    expect(row.displayStatus).toBe('Awaiting Return Pickup');
+
+    // Units on an open authorization are no longer returnable again.
+    const over = await owner()
+      .post(`/v1/orders/${order.id}/return`)
+      .send({ lines: [{ lineId: order.lineId, quantity: 2 }], fulfillment: 'pickup' });
+    expect(over.status).toBe(400);
+
+    // No As-Is row yet.
+    const queueBefore = await owner().get('/v1/as-is?status=pending_review');
+    expect(
+      queueBefore.body.filter((r: { referenceId: string | null }) => r.referenceId === order.id),
+    ).toHaveLength(0);
+
+    // Goods received → refund row + As-Is + qtyReturned, return completed.
+    await owner().post(`/v1/order-returns/${ret.id}/receive`).send({}).expect(201);
+    const detail = await owner().get(`/v1/orders/${order.id}`);
+    expect(detail.body.paidCents).toBe(order.totalCents - perUnit);
+    expect(detail.body.lines[0].qtyReturned).toBe(1);
+    const refundRow = detail.body.payments.find((p: { kind: string }) => p.kind === 'refund');
+    expect(refundRow.amountCents).toBe(-perUnit);
+    const queueAfter = await owner().get('/v1/as-is?status=pending_review');
+    expect(
+      queueAfter.body.filter((r: { referenceId: string | null }) => r.referenceId === order.id),
+    ).toHaveLength(1);
+    const after = await owner().get(`/v1/order-returns?orderId=${order.id}`);
+    expect(after.body[0].status).toBe('completed');
+    expect(after.body[0].goodsReceivedAt).toBeTruthy();
+
+    // Receiving twice is refused.
+    await owner().post(`/v1/order-returns/${ret.id}/receive`).send({}).expect(409);
+  });
+
+  it('cancelling an authorized return frees the units and moves no money', async () => {
+    const order = await fulfilledPaidOrder(1);
+    const auth = await owner()
+      .post(`/v1/orders/${order.id}/return`)
+      .send({ lines: [{ lineId: order.lineId, quantity: 1 }], fulfillment: 'pickup' });
+    expect(auth.status).toBe(201);
+    const [ret] = (await owner().get(`/v1/order-returns?orderId=${order.id}`)).body;
+
+    await owner()
+      .post(`/v1/order-returns/${ret.id}/cancel`)
+      .send({ reason: 'customer kept it' })
+      .expect(201);
+    const detail = await owner().get(`/v1/orders/${order.id}`);
+    expect(detail.body.paidCents).toBe(order.totalCents);
+    expect(detail.body.lines[0].qtyReturned).toBe(0);
+
+    // The unit is returnable again (drop-off completes immediately).
+    const again = await owner()
+      .post(`/v1/orders/${order.id}/return`)
+      .send({ lines: [{ lineId: order.lineId, quantity: 1 }] });
+    expect(again.status).toBe(201);
+    expect(again.body.lines[0].qtyReturned).toBe(1);
+    expect(again.body.paidCents).toBe(0);
+    // A cancelled and a completed return both carry order-scoped RMAs.
+    const all = await owner().get(`/v1/order-returns?orderId=${order.id}`);
+    expect(all.body.map((r: { rmaNumber: string }) => r.rmaNumber).sort()).toEqual([
+      `RMA-${order.number}-1`,
+      `RMA-${order.number}-2`,
+    ]);
+  });
+
+  it('receiving is warehouse-gated: a cashier (no inventory.receive) is refused', async () => {
+    const order = await fulfilledPaidOrder(1);
+    await owner()
+      .post(`/v1/orders/${order.id}/return`)
+      .send({ lines: [{ lineId: order.lineId, quantity: 1 }], fulfillment: 'pickup' })
+      .expect(201);
+    const [ret] = (await owner().get(`/v1/order-returns?orderId=${order.id}`)).body;
+    await as(cashierCookie).post(`/v1/order-returns/${ret.id}/receive`).send({}).expect(403);
+  });
+});
+
+describe('Price variance 3-tier + §5 gates (PLAN-STORIS-GAP G6)', () => {
+  let pvVariantId = '';
+
+  function as(cookie: string) {
+    return {
+      post: (url: string) =>
+        request(app.getHttpServer())
+          .post(url)
+          .set('Cookie', cookie)
+          .set('X-Business-Id', businessId),
+      get: (url: string) =>
+        request(app.getHttpServer())
+          .get(url)
+          .set('Cookie', cookie)
+          .set('X-Business-Id', businessId),
+    };
+  }
+
+  beforeAll(async () => {
+    const sql2 = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    const db = drizzle(sql2);
+    try {
+      const [p] = await db
+        .insert(schema.products)
+        .values({ businessId, sku: 'G6-MATT', name: 'Variance Test Mattress' })
+        .returning();
+      const [v] = await db
+        .insert(schema.productVariants)
+        .values({
+          businessId,
+          productId: p!.id,
+          sku: 'G6-MATT-Q',
+          priceCents: 100_000,
+          costCents: 60_000,
+        })
+        .returning();
+      pvVariantId = v!.id;
+      await db.insert(schema.inventoryLevels).values({
+        businessId,
+        variantId: pvVariantId,
+        locationId,
+        onHand: 50,
+        reserved: 0,
+      });
+    } finally {
+      await sql2.end({ timeout: 5 });
+    }
+  });
+
+  function orderBody(unitPriceCents: number, extra: Record<string, unknown> = {}) {
+    return {
+      locationId,
+      customerId,
+      confirm: true,
+      lines: [
+        { variantId: pvVariantId, quantity: 1, unitPriceCents },
+        // The recycling fee keeps the pass-through exception quiet here.
+        { lineType: 'custom', description: 'Recycling Fee', quantity: 1, unitPriceCents: 1050 },
+      ],
+      ...extra,
+    };
+  }
+
+  it('tier 1: a small discount sails through with no reason', async () => {
+    const res = await as(cashierCookie).post('/v1/orders').send(orderBody(96_000));
+    expect(res.status).toBe(201);
+  });
+
+  it('tier 2: a 10% discount needs a reason (REASON_REQUIRED), then passes', async () => {
+    const refused = await as(cashierCookie).post('/v1/orders').send(orderBody(90_000));
+    expect(refused.status).toBe(400);
+    expect(refused.body.code).toBe('REASON_REQUIRED');
+
+    const ok = await as(cashierCookie)
+      .post('/v1/orders')
+      .send(orderBody(90_000, { priceReason: 'competitor price match' }));
+    expect(ok.status).toBe(201);
+
+    const register = await as(ownerCookie).get('/v1/exceptions?type=price_override');
+    expect(register.status).toBe(200);
+    expect(register.body.length).toBeGreaterThan(0);
+  });
+
+  it('tier 3: a 30% discount from a cashier needs a manager override; below cost is critical', async () => {
+    const refused = await as(cashierCookie)
+      .post('/v1/orders')
+      .send(orderBody(70_000, { priceReason: 'trying anyway' }));
+    expect(refused.status).toBe(403);
+    expect(refused.body.code).toBe('OVERRIDE_REQUIRED');
+    expect(refused.body.permission).toBe('orders.price_override');
+
+    const ok = await as(cashierCookie)
+      .post('/v1/orders')
+      .send(
+        orderBody(50_000, {
+          override: {
+            email: 'owner@orders-test.local',
+            password: PASSWORD,
+            reason: 'clearance unit',
+          },
+        }),
+      );
+    expect(ok.status).toBe(201);
+
+    // $500 < $600 cost → the exception is critical.
+    const register = await as(ownerCookie).get(
+      '/v1/exceptions?type=price_override&severity=critical',
+    );
+    expect(register.body.length).toBeGreaterThan(0);
+    expect(register.body[0].summary).toMatch(/BELOW COST/);
+  });
+
+  it('the owner passes tier 3 directly with a reason (holds orders.price_override)', async () => {
+    const res = await as(ownerCookie)
+      .post('/v1/orders')
+      .send(orderBody(70_000, { priceReason: 'floor model' }));
+    expect(res.status).toBe(201);
+  });
+
+  it('layaway deposits below $100 need a manager; the exception is registered', async () => {
+    const order = await as(ownerCookie)
+      .post('/v1/orders')
+      .send(orderBody(100_000, { orderKind: 'layaway' }));
+    expect(order.status).toBe(201);
+
+    const small = await as(cashierCookie)
+      .post(`/v1/orders/${order.body.id}/payments`)
+      .send({ method: 'cash', amountCents: 5_000 });
+    expect(small.status).toBe(403);
+    expect(small.body.code).toBe('OVERRIDE_REQUIRED');
+
+    // The owner (orders.complete_with_balance) can open it small.
+    await as(ownerCookie)
+      .post(`/v1/orders/${order.body.id}/payments`)
+      .send({ method: 'cash', amountCents: 5_000 })
+      .expect(201);
+    const register = await as(ownerCookie).get('/v1/exceptions?type=layaway_min_deposit_override');
+    expect(register.body.length).toBeGreaterThan(0);
+  });
+
+  it('a qualifying order without the recycling fee registers the pass-through exception', async () => {
+    const res = await as(ownerCookie)
+      .post('/v1/orders')
+      .send({
+        locationId,
+        customerId,
+        confirm: true,
+        lines: [{ variantId: pvVariantId, quantity: 1 }],
+      });
+    expect(res.status).toBe(201);
+    const register = await as(ownerCookie).get('/v1/exceptions?type=recycling_fee_removed');
+    expect(register.body.some((e: { entityId: string | null }) => e.entityId === res.body.id)).toBe(
+      true,
+    );
+  });
+});
+
+describe('Print preconditions + reprint counter + unlock expiry (PLAN-STORIS-GAP G9)', () => {
+  function as(cookie: string) {
+    return {
+      post: (url: string) =>
+        request(app.getHttpServer())
+          .post(url)
+          .set('Cookie', cookie)
+          .set('X-Business-Id', businessId),
+      patch: (url: string) =>
+        request(app.getHttpServer())
+          .patch(url)
+          .set('Cookie', cookie)
+          .set('X-Business-Id', businessId),
+      get: (url: string) =>
+        request(app.getHttpServer())
+          .get(url)
+          .set('Cookie', cookie)
+          .set('X-Business-Id', businessId),
+    };
+  }
+
+  async function makeOrder(over: Record<string, unknown> = {}): Promise<{
+    id: string;
+    number: string;
+    totalCents: number;
+  }> {
+    const res = await as(ownerCookie)
+      .post('/v1/orders')
+      .send({
+        locationId,
+        customerId,
+        confirm: true,
+        fulfillmentType: 'pickup',
+        requestedDate: '2026-10-01',
+        lines: [{ variantId: sofaVariantId, quantity: 1 }],
+        ...over,
+      });
+    expect(res.status).toBe(201);
+    return res.body;
+  }
+
+  it('a delivery order with no scheduled trip cannot print — checklist names why', async () => {
+    const order = await makeOrder({ fulfillmentType: 'delivery', requestedDate: null });
+    const res = await as(ownerCookie).post(`/v1/orders/${order.id}/delivery-ticket-print`).send({});
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe('PRINT_BLOCKED');
+    const failed = res.body.checks.filter((c: { ok: boolean }) => !c.ok);
+    expect(failed.map((c: { check: string }) => c.check)).toContain('scheduled_date');
+  });
+
+  it('the balance cap blocks the ticket for a cashier; a manager releases it', async () => {
+    await as(ownerCookie)
+      .patch('/v1/business/settings')
+      .send({ ops: { maxBalanceForTicketPrintCents: 1000 } })
+      .expect(200);
+    try {
+      const order = await makeOrder();
+      // Fully unpaid — way over the $10 cap.
+      const refused = await as(cashierCookie)
+        .post(`/v1/orders/${order.id}/delivery-ticket-print`)
+        .send({});
+      expect(refused.status).toBe(403);
+      expect(refused.body.code).toBe('OVERRIDE_REQUIRED');
+      expect(refused.body.permission).toBe('orders.complete_with_balance');
+
+      // The owner holds the permission — the ticket releases.
+      const ok = await as(ownerCookie)
+        .post(`/v1/orders/${order.id}/delivery-ticket-print`)
+        .send({});
+      expect(ok.status).toBe(201);
+      expect(ok.body.copyNumber).toBe(1);
+    } finally {
+      await as(ownerCookie)
+        .patch('/v1/business/settings')
+        .send({ ops: { maxBalanceForTicketPrintCents: null } })
+        .expect(200);
+    }
+  });
+
+  it('reprints count copies and land on the exception register', async () => {
+    const order = await makeOrder();
+    await as(ownerCookie)
+      .post(`/v1/orders/${order.id}/payments`)
+      .send({ method: 'cash', amountCents: order.totalCents })
+      .expect(201);
+    const first = await as(ownerCookie)
+      .post(`/v1/orders/${order.id}/delivery-ticket-print`)
+      .send({});
+    expect(first.status).toBe(201);
+    expect(first.body.copyNumber).toBe(1);
+    const second = await as(ownerCookie)
+      .post(`/v1/orders/${order.id}/delivery-ticket-print`)
+      .send({});
+    expect(second.body.copyNumber).toBe(2);
+    const reprints = await as(ownerCookie).get('/v1/exceptions?type=ticket_reprint');
+    expect(reprints.body.some((e: { entityId: string | null }) => e.entityId === order.id)).toBe(
+      true,
+    );
+  });
+
+  it('an unlock is a 15-minute window — past it the lock re-engages', async () => {
+    const order = await makeOrder();
+    await as(ownerCookie).post(`/v1/orders/${order.id}/delivery-ticket-print`).send({}).expect(201);
+    await as(ownerCookie)
+      .post(`/v1/orders/${order.id}/unlock`)
+      .send({ reason: 'fix a size' })
+      .expect(201);
+    // Inside the window guarded edits work.
+    await as(ownerCookie)
+      .patch(`/v1/orders/${order.id}`)
+      .send({ requestedDate: '2026-10-02' })
+      .expect(200);
+
+    // Simulate the window passing.
+    const sql2 = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    const db = drizzle(sql2);
+    try {
+      await db
+        .update(schema.orders)
+        .set({ relockAt: new Date(Date.now() - 60_000) })
+        .where(eq(schema.orders.id, order.id));
+    } finally {
+      await sql2.end({ timeout: 5 });
+    }
+    const relocked = await as(ownerCookie)
+      .patch(`/v1/orders/${order.id}`)
+      .send({ requestedDate: '2026-10-03' });
+    expect(relocked.status).toBe(409);
+    expect(relocked.body.message).toMatch(/re-engaged/);
+    // A fresh unlock (with reason) reopens the window.
+    await as(ownerCookie)
+      .post(`/v1/orders/${order.id}/unlock`)
+      .send({ reason: 'still fixing' })
+      .expect(201);
+    await as(ownerCookie)
+      .patch(`/v1/orders/${order.id}`)
+      .send({ requestedDate: '2026-10-04' })
+      .expect(200);
+  });
+});
+
+describe('Line roll-up, Past Due, auto stock release, drift, duplicate prompt (PLAN-STORIS-GAP G13+G14)', () => {
+  let g13VariantId = '';
+
+  beforeAll(async () => {
+    const sql2 = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    const db = drizzle(sql2);
+    try {
+      const [p] = await db
+        .insert(schema.products)
+        .values({ businessId, sku: 'G13-BED', name: 'Rollup Fixture Bed' })
+        .returning();
+      const [v] = await db
+        .insert(schema.productVariants)
+        .values({ businessId, productId: p!.id, sku: 'G13-BED-V1', priceCents: 40000 })
+        .returning();
+      g13VariantId = v!.id;
+      await db.insert(schema.inventoryLevels).values({
+        businessId,
+        variantId: g13VariantId,
+        locationId,
+        onHand: 50,
+        reserved: 0,
+      });
+    } finally {
+      await sql2.end({ timeout: 5 });
+    }
+  });
+
+  function as(cookie: string) {
+    return {
+      post: (url: string) =>
+        request(app.getHttpServer())
+          .post(url)
+          .set('Cookie', cookie)
+          .set('X-Business-Id', businessId),
+      get: (url: string) =>
+        request(app.getHttpServer())
+          .get(url)
+          .set('Cookie', cookie)
+          .set('X-Business-Id', businessId),
+    };
+  }
+
+  it('the list view rolls up line state and filters Past Due', async () => {
+    const created = await as(ownerCookie)
+      .post('/v1/orders')
+      .send({
+        locationId,
+        customerId,
+        confirm: true,
+        fulfillmentType: 'delivery',
+        requestedDate: '2020-01-15', // long past due
+        lines: [
+          { variantId: g13VariantId, quantity: 2 },
+          { variantId: g13VariantId, quantity: 1, lineType: 'special_order' },
+        ],
+      });
+    expect(created.status).toBe(201);
+
+    const pastDue = await as(ownerCookie).get('/v1/orders/list-view?view=past_due&limit=100');
+    expect(pastDue.status).toBe(200);
+    const row = pastDue.body.data.find((r: { id: string }) => r.id === created.body.id);
+    expect(row).toBeTruthy();
+    // 3 units total, 2 reserved (the SO line reserves nothing), 1 SO.
+    expect(row.lineSummary).toMatchObject({ units: 3, reserved: 2, specialOrder: 1 });
+
+    // The default view also carries the roll-up.
+    const all = await as(ownerCookie).get('/v1/orders/list-view?limit=100');
+    const same = all.body.data.find((r: { id: string }) => r.id === created.body.id);
+    expect(same.lineSummary.units).toBe(3);
+  });
+
+  it('auto stock release frees reservations on stale orders and registers each', async () => {
+    const created = await as(ownerCookie)
+      .post('/v1/orders')
+      .send({
+        locationId,
+        customerId,
+        confirm: true,
+        fulfillmentType: 'delivery',
+        requestedDate: '2020-02-01',
+        lines: [{ variantId: g13VariantId, quantity: 1 }],
+      });
+    expect(created.status).toBe(201);
+    expect(created.body.lines[0].qtyReserved).toBe(1);
+
+    // Dry run reports without touching anything.
+    const dry = await as(ownerCookie)
+      .post('/v1/orders/auto-stock-release')
+      .send({ days: 30, dryRun: true });
+    expect(dry.status).toBe(201);
+    expect(dry.body.dryRun).toBe(true);
+    expect(dry.body.released.some((r: { id: string }) => r.id === created.body.id)).toBe(true);
+    const still = await as(ownerCookie).get(`/v1/orders/${created.body.id}`);
+    expect(still.body.lines[0].qtyReserved).toBe(1);
+
+    // The real run releases and registers.
+    const run = await as(ownerCookie).post('/v1/orders/auto-stock-release').send({ days: 30 });
+    expect(run.status).toBe(201);
+    expect(run.body.released.some((r: { id: string }) => r.id === created.body.id)).toBe(true);
+    const after = await as(ownerCookie).get(`/v1/orders/${created.body.id}`);
+    expect(after.body.lines[0].qtyReserved).toBe(0);
+    const register = await as(ownerCookie).get('/v1/exceptions?type=auto_stock_release');
+    expect(
+      register.body.some((e: { entityId: string | null }) => e.entityId === created.body.id),
+    ).toBe(true);
+  });
+
+  it('reservation drift shows up on the reconciliation report', async () => {
+    const clean = await as(ownerCookie).get('/v1/orders/reservation-drift');
+    expect(clean.status).toBe(200);
+
+    // Introduce drift by hand: bump the level's reserved without an order.
+    const sql2 = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    const db = drizzle(sql2);
+    try {
+      await db
+        .update(schema.inventoryLevels)
+        .set({ reserved: sql`${schema.inventoryLevels.reserved} + 5` })
+        .where(
+          and(
+            eq(schema.inventoryLevels.variantId, g13VariantId),
+            eq(schema.inventoryLevels.locationId, locationId),
+          ),
+        );
+      const drifted = await as(ownerCookie).get('/v1/orders/reservation-drift');
+      expect(drifted.status).toBe(200);
+      const hit = drifted.body.find(
+        (r: { variantId: string; locationId: string }) =>
+          r.variantId === g13VariantId && r.locationId === locationId,
+      );
+      expect(hit).toBeTruthy();
+      expect(hit.driftUnits).toBe(-5);
+    } finally {
+      await db
+        .update(schema.inventoryLevels)
+        .set({ reserved: sql`${schema.inventoryLevels.reserved} - 5` })
+        .where(
+          and(
+            eq(schema.inventoryLevels.variantId, g13VariantId),
+            eq(schema.inventoryLevels.locationId, locationId),
+          ),
+        );
+      await sql2.end({ timeout: 5 });
+    }
+  });
+
+  it('open-orders summary powers the duplicate-order prompt', async () => {
+    const created = await as(ownerCookie)
+      .post('/v1/orders')
+      .send({
+        locationId,
+        customerId,
+        confirm: true,
+        fulfillmentType: 'delivery',
+        requestedDate: '2027-08-01',
+        lines: [{ variantId: g13VariantId, quantity: 1 }],
+      });
+    expect(created.status).toBe(201);
+    const open = await as(ownerCookie).get(`/v1/customers/${customerId}/open-orders`);
+    expect(open.status).toBe(200);
+    const hit = open.body.find((o: { id: string }) => o.id === created.body.id);
+    expect(hit).toBeTruthy();
+    expect(hit.requestedDate).toBe('2027-08-01');
   });
 });

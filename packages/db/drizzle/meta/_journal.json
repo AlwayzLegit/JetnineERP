@@ -267,6 +267,76 @@
       "when": 1787726348016,
       "tag": "0037_returns_as_is_store_credit",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1787735141212,
+      "tag": "0038_reason_codes_security_overrides",
+      "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1787735960574,
+      "tag": "0039_order_returns",
+      "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1787736415352,
+      "tag": "0040_write_offs_exceptions",
+      "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1787737570425,
+      "tag": "0041_delivery_runs",
+      "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1787737990793,
+      "tag": "0042_transfer_variance",
+      "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1787738306563,
+      "tag": "0043_print_preconditions",
+      "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1787738648579,
+      "tag": "0044_as_is_pieces",
+      "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1787739049058,
+      "tag": "0045_purchasing_controls",
+      "breakpoints": true
+    },
+    {
+      "idx": 46,
+      "version": "7",
+      "when": 1787739533268,
+      "tag": "0046_capacity_units",
+      "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1787740868614,
+      "tag": "0047_daily_closeouts",
+      "breakpoints": true
     }
   ]
 }

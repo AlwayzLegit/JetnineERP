@@ -15,6 +15,8 @@ import { and, asc, eq, gte, inArray, lte, sql } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { schema } from '@jetnine/db';
 import { AuditService } from '../audit/audit.service';
+import { ExceptionsService } from '../controls/exceptions.service';
+import { SecurityOverrideService } from '../controls/security-override.service';
 import { CurrentTenant, CurrentUser } from '../auth/current-user.decorator';
 import type { CurrentUserPayload } from '../auth/current-user.decorator';
 import { DRIZZLE } from '../database/database.module';
@@ -39,9 +41,21 @@ function isoToday(): string {
  * ("900xx", "913xx"). Free text after that — the dispatcher renames and
  * regroups at will.
  */
-function suggestRoute(postalCode: string | null): string | null {
+function suggestRoute(
+  postalCode: string | null,
+  zipRoutes?: Record<string, string> | null,
+): string | null {
   const zip = postalCode?.trim().match(/^(\d{5})/)?.[1];
-  return zip ? `${zip.slice(0, 3)}xx` : null;
+  if (!zip) return null;
+  // G12: an explicit zip→route map wins (longest prefix first) — the
+  // dispatcher pre-declares geography instead of the salesperson picking.
+  if (zipRoutes) {
+    const prefixes = Object.keys(zipRoutes).sort((a, b) => b.length - a.length);
+    for (const p of prefixes) {
+      if (zip.startsWith(p)) return zipRoutes[p]!;
+    }
+  }
+  return `${zip.slice(0, 3)}xx`;
 }
 
 type DeliveryStatus =
@@ -106,6 +120,7 @@ interface DeliveryRow {
   driverMembershipId: string | null;
   routePosition: number | null;
   route: string | null;
+  runId: string | null;
   notes: string | null;
   completedAt: Date | null;
   createdAt: Date;
@@ -147,6 +162,8 @@ export class DeliveriesController {
     @Inject(AuditService) private readonly audit: AuditService,
     @Inject(OrdersService) private readonly orders: OrdersService,
     @Inject(WebhookDispatcher) private readonly webhooks: WebhookDispatcher,
+    @Inject(ExceptionsService) private readonly exceptions: ExceptionsService,
+    @Inject(SecurityOverrideService) private readonly overrides: SecurityOverrideService,
   ) {}
 
   /**
@@ -203,7 +220,18 @@ export class DeliveriesController {
     @CurrentTenant() tenant: RequestTenantContext,
     @Query('from') from?: string,
     @Query('to') to?: string,
-  ): Promise<{ cap: number; days: { date: string; booked: number; remaining: number }[] }> {
+  ): Promise<{
+    cap: number;
+    pieceCap: number | null;
+    unitCap: number | null;
+    days: {
+      date: string;
+      booked: number;
+      remaining: number;
+      pieces: number;
+      capacityUnits: number;
+    }[];
+  }> {
     const start = from && !Number.isNaN(new Date(from).getTime()) ? from : isoToday();
     const end = to && !Number.isNaN(new Date(to).getTime()) ? to : start;
     if (end < start) throw new BadRequestException('to must not be before from');
@@ -212,13 +240,19 @@ export class DeliveriesController {
       86_400_000;
     if (span > 62) throw new BadRequestException('range too large (max 62 days)');
 
-    const cap = await this.dailyCap(tenant.businessId!);
+    const config = await this.capacityConfig(tenant.businessId!);
+    const cap = config.stopCap;
     const rows = await this.db
       .select({
         date: schema.deliveries.scheduledDate,
-        booked: sql<number>`count(*)::int`,
+        booked: sql<number>`count(distinct ${schema.deliveries.id})::int`,
+        pieces: sql<number>`coalesce(sum(${schema.deliveryLines.quantity}), 0)::int`,
+        units: sql<number>`coalesce(sum(${schema.deliveryLines.quantity} * coalesce(${schema.productVariants.capacityUnits}, 1)), 0)::int`,
       })
       .from(schema.deliveries)
+      .leftJoin(schema.deliveryLines, eq(schema.deliveryLines.deliveryId, schema.deliveries.id))
+      .leftJoin(schema.orderLines, eq(schema.orderLines.id, schema.deliveryLines.orderLineId))
+      .leftJoin(schema.productVariants, eq(schema.productVariants.id, schema.orderLines.variantId))
       .where(
         and(
           gte(schema.deliveries.scheduledDate, start),
@@ -227,17 +261,30 @@ export class DeliveriesController {
         ),
       )
       .groupBy(schema.deliveries.scheduledDate);
-    const byDate = new Map(rows.map((r) => [r.date, r.booked]));
+    const byDate = new Map(rows.map((r) => [r.date, r]));
 
-    const days: { date: string; booked: number; remaining: number }[] = [];
+    const days: {
+      date: string;
+      booked: number;
+      remaining: number;
+      pieces: number;
+      capacityUnits: number;
+    }[] = [];
     for (let i = 0; i <= span; i++) {
       const date = new Date(new Date(`${start}T00:00:00Z`).getTime() + i * 86_400_000)
         .toISOString()
         .slice(0, 10);
-      const booked = byDate.get(date) ?? 0;
-      days.push({ date, booked, remaining: Math.max(0, cap - booked) });
+      const row = byDate.get(date);
+      const booked = row?.booked ?? 0;
+      days.push({
+        date,
+        booked,
+        remaining: Math.max(0, cap - booked),
+        pieces: row?.pieces ?? 0,
+        capacityUnits: row?.units ?? 0,
+      });
     }
-    return { cap, days };
+    return { cap, pieceCap: config.pieceCap, unitCap: config.unitCap, days };
   }
 
   @Get('deliveries/:id')
@@ -315,22 +362,50 @@ export class DeliveriesController {
     const plan = planFulfillment(schedulable, requests);
     if (plan.errors.length > 0) throw new BadRequestException(plan.errors.join('; '));
 
-    // §7 soft cap: the day can be over-booked, but only deliberately —
-    // and every override lands in the owner notifications feed.
-    const cap = await this.dailyCap(tenant.businessId!);
-    const [{ booked }] = (await this.db
-      .select({ booked: sql<number>`count(*)::int` })
-      .from(schema.deliveries)
-      .where(
-        and(
-          eq(schema.deliveries.scheduledDate, body.scheduledDate),
-          inArray(schema.deliveries.status, ['scheduled', 'loaded', 'out_for_delivery']),
-        ),
-      )) as [{ booked: number }];
-    const overCapacity = booked >= cap;
+    // §7/G12 soft cap, now multi-dimensional: stops always, pieces and
+    // capacity units when ops sets budgets. The refusal names WHICH
+    // dimension is over; overrides stay deliberate and logged.
+    const config = await this.capacityConfig(tenant.businessId!);
+    const cap = config.stopCap;
+    const load = await this.dayLoad(body.scheduledDate);
+    const booked = load.stops;
+
+    // What this delivery adds, in pieces and capacity units.
+    const stepVariantIds = plan.steps
+      .map((step) => orderLines.find((l) => l.id === step.orderLineId)?.variantId)
+      .filter((v): v is string => Boolean(v));
+    const capUnitsByVariant = new Map<string, number>();
+    if (stepVariantIds.length > 0) {
+      const variants = await this.db
+        .select({
+          id: schema.productVariants.id,
+          capacityUnits: schema.productVariants.capacityUnits,
+        })
+        .from(schema.productVariants)
+        .where(inArray(schema.productVariants.id, stepVariantIds));
+      for (const v of variants) capUnitsByVariant.set(v.id, v.capacityUnits ?? 1);
+    }
+    let incomingPieces = 0;
+    let incomingUnits = 0;
+    for (const step of plan.steps) {
+      const line = orderLines.find((l) => l.id === step.orderLineId);
+      incomingPieces += step.quantity;
+      incomingUnits +=
+        step.quantity * (line?.variantId ? (capUnitsByVariant.get(line.variantId) ?? 1) : 1);
+    }
+
+    const overDimensions: string[] = [];
+    if (booked >= cap) overDimensions.push(`stops (${booked}/${cap})`);
+    if (config.pieceCap != null && load.pieces + incomingPieces > config.pieceCap) {
+      overDimensions.push(`pieces (${load.pieces} + ${incomingPieces} > ${config.pieceCap})`);
+    }
+    if (config.unitCap != null && load.units + incomingUnits > config.unitCap) {
+      overDimensions.push(`capacity units (${load.units} + ${incomingUnits} > ${config.unitCap})`);
+    }
+    const overCapacity = overDimensions.length > 0;
     if (overCapacity && !body.confirmOverCapacity) {
       throw new ConflictException(
-        `${body.scheduledDate} is at capacity (${booked}/${cap} stops). Confirm to book beyond the cap.`,
+        `${body.scheduledDate} is over capacity on ${overDimensions.join(' and ')}. Confirm to book beyond the cap.`,
       );
     }
 
@@ -357,7 +432,7 @@ export class DeliveriesController {
         windowEnd: body.windowEnd ?? null,
         driverMembershipId: body.driverMembershipId ?? null,
         routePosition: nextPosition,
-        route: body.route?.trim() || suggestRoute(order.addressPostalCode),
+        route: body.route?.trim() || suggestRoute(order.addressPostalCode, config.zipRoutes),
         notes: body.notes ?? null,
       })
       .returning();
@@ -375,6 +450,14 @@ export class DeliveriesController {
           cap,
           orderNumber: order.number,
         },
+      });
+      await this.exceptions.record({
+        type: 'delivery_cap_override',
+        severity: 'warning',
+        entityType: 'order',
+        entityId: orderId,
+        summary: `Order ${order.number} booked over capacity on ${body.scheduledDate} (${booked + 1}/${cap})`,
+        metadata: { deliveryId: delivery.id, scheduledDate: body.scheduledDate, cap },
       });
     }
 
@@ -582,18 +665,464 @@ export class DeliveriesController {
   }
 
   // ---------------------------------------------------------------------
+  // Delivery runs (PLAN-STORIS-GAP §4 / G7 — the manifest)
+  // ---------------------------------------------------------------------
+
+  /**
+   * Build a run from scheduled deliveries. Membership on the run is the
+   * A5 hard lock on the underlying orders; the run carries the COD the
+   * driver must collect.
+   */
+  @Post('delivery-runs')
+  @RequirePermission('deliveries.schedule')
+  async createRun(
+    @CurrentTenant() tenant: RequestTenantContext,
+    @CurrentUser() actor: CurrentUserPayload,
+    @Body()
+    body: {
+      runDate?: string;
+      route?: string | null;
+      truck?: string | null;
+      driverMembershipId?: string | null;
+      notes?: string | null;
+      deliveryIds?: string[];
+    },
+  ): Promise<{ id: string }> {
+    if (!body.runDate || Number.isNaN(new Date(body.runDate).getTime())) {
+      throw new BadRequestException('runDate (YYYY-MM-DD) is required');
+    }
+    if (!body.deliveryIds || body.deliveryIds.length === 0) {
+      throw new BadRequestException('deliveryIds must contain at least one delivery');
+    }
+    const stops = await this.db
+      .select()
+      .from(schema.deliveries)
+      .where(inArray(schema.deliveries.id, body.deliveryIds));
+    if (stops.length !== body.deliveryIds.length) {
+      throw new NotFoundException('One or more deliveries were not found');
+    }
+    for (const d of stops) {
+      if (!['scheduled', 'loaded'].includes(d.status)) {
+        throw new BadRequestException(`Delivery ${d.id} is ${d.status} — not loadable`);
+      }
+      if (d.runId) throw new ConflictException(`Delivery ${d.id} is already on a run`);
+      if (d.scheduledDate !== body.runDate) {
+        throw new BadRequestException(
+          `Delivery ${d.id} is scheduled ${d.scheduledDate}, not ${body.runDate}`,
+        );
+      }
+    }
+    const codDueCents = await this.codDueFor(stops.map((d) => d.orderId));
+
+    const [run] = await this.db
+      .insert(schema.deliveryRuns)
+      .values({
+        businessId: tenant.businessId!,
+        locationId: stops[0]!.locationId,
+        runDate: body.runDate,
+        route: body.route ?? stops[0]!.route ?? null,
+        truck: body.truck ?? null,
+        driverMembershipId: body.driverMembershipId ?? stops[0]!.driverMembershipId ?? null,
+        notes: body.notes ?? null,
+        codDueCents,
+        createdByUserId: actor?.id ?? null,
+      })
+      .returning();
+    await this.db
+      .update(schema.deliveries)
+      .set({ runId: run!.id, updatedAt: new Date() })
+      .where(inArray(schema.deliveries.id, body.deliveryIds));
+    await this.audit.log({
+      action: 'delivery_run.create',
+      targetType: 'delivery_run',
+      targetId: run!.id,
+      after: { runDate: body.runDate, stops: stops.length, codDueCents },
+    });
+    return { id: run!.id };
+  }
+
+  @Get('delivery-runs')
+  @RequirePermission('deliveries.view')
+  async listRuns(
+    @CurrentTenant() tenant: RequestTenantContext,
+    @Query('date') date?: string,
+    @Query('status') status?: string,
+  ): Promise<unknown[]> {
+    const runs = await this.db
+      .select()
+      .from(schema.deliveryRuns)
+      .where(
+        and(
+          eq(schema.deliveryRuns.businessId, tenant.businessId!),
+          date ? eq(schema.deliveryRuns.runDate, date) : undefined,
+          status ? eq(schema.deliveryRuns.status, status) : undefined,
+        ),
+      )
+      .orderBy(asc(schema.deliveryRuns.runDate), asc(schema.deliveryRuns.createdAt))
+      .limit(100);
+    return Promise.all(runs.map((r) => this.hydrateRun(r)));
+  }
+
+  @Get('delivery-runs/:id')
+  @RequirePermission('deliveries.view')
+  async getRun(
+    @CurrentTenant() _tenant: RequestTenantContext,
+    @Param('id') id: string,
+  ): Promise<unknown> {
+    return this.hydrateRun(await this.loadRun(id));
+  }
+
+  /** The truck leaves: every stop flips to out_for_delivery. */
+  @Post('delivery-runs/:id/depart')
+  @RequirePermission('deliveries.complete')
+  async departRun(
+    @CurrentTenant() _tenant: RequestTenantContext,
+    @Param('id') id: string,
+  ): Promise<{ status: string }> {
+    const run = await this.loadRun(id);
+    if (run.status !== 'open') throw new ConflictException(`Run is ${run.status}`);
+    await this.db
+      .update(schema.deliveryRuns)
+      .set({ status: 'out' })
+      .where(eq(schema.deliveryRuns.id, id));
+    await this.db
+      .update(schema.deliveries)
+      .set({ status: 'out_for_delivery', updatedAt: new Date() })
+      .where(
+        and(
+          eq(schema.deliveries.runId, id),
+          inArray(schema.deliveries.status, ['scheduled', 'loaded']),
+        ),
+      );
+    await this.audit.log({
+      action: 'delivery_run.depart',
+      targetType: 'delivery_run',
+      targetId: id,
+    });
+    return { status: 'out' };
+  }
+
+  /**
+   * Pulling an order off a run needs a coded reason and writes the
+   * manifest-removal exception (STORIS S$TE_MAINIF_RMV).
+   */
+  @Post('delivery-runs/:id/remove-delivery')
+  @RequirePermission('deliveries.schedule')
+  async removeFromRun(
+    @CurrentTenant() _tenant: RequestTenantContext,
+    @Param('id') id: string,
+    @Body() body: { deliveryId?: string; reasonCodeId?: string; reason?: string },
+  ): Promise<{ removed: string }> {
+    const run = await this.loadRun(id);
+    if (run.status === 'completed') throw new ConflictException('Run is already completed');
+    if (!body.deliveryId) throw new BadRequestException('deliveryId is required');
+    const [d] = await this.db
+      .select()
+      .from(schema.deliveries)
+      .where(eq(schema.deliveries.id, body.deliveryId))
+      .limit(1);
+    if (!d || d.runId !== id) throw new NotFoundException('Delivery is not on this run');
+    const reason = await this.overrides.resolveReason('manifest_removal', {
+      reasonCodeId: body.reasonCodeId,
+      reason: body.reason,
+    });
+    await this.db
+      .update(schema.deliveries)
+      .set({
+        runId: null,
+        status: d.status === 'out_for_delivery' ? 'loaded' : d.status,
+        updatedAt: new Date(),
+      })
+      .where(eq(schema.deliveries.id, body.deliveryId));
+    await this.db
+      .update(schema.deliveryRuns)
+      .set({ codDueCents: await this.codDueForRun(id) })
+      .where(eq(schema.deliveryRuns.id, id));
+    await this.audit.log({
+      action: 'delivery_run.remove',
+      targetType: 'delivery',
+      targetId: body.deliveryId,
+      metadata: { runId: id, reason: reason.reasonText, reasonCode: reason.reasonCode },
+    });
+    await this.exceptions.record({
+      type: 'manifest_removal',
+      severity: 'warning',
+      entityType: 'order',
+      entityId: d.orderId,
+      summary: `Delivery pulled off run ${run.runDate}${run.route ? ` (${run.route})` : ''}`,
+      metadata: {
+        runId: id,
+        deliveryId: d.id,
+        reason: reason.reasonText,
+        reasonCode: reason.reasonCode,
+      },
+    });
+    return { removed: body.deliveryId };
+  }
+
+  /**
+   * Close-out (STORIS "Complete the Delivery Manifest Process"): the
+   * mandatory reconciliation. Every open stop needs an outcome —
+   * delivered (goods leave: stock, reservations, order status) or
+   * failed (coded reason, optional auto-reschedule). COD due vs
+   * collected is compared and a variance is registered, never dropped.
+   */
+  @Post('delivery-runs/:id/close')
+  @RequirePermission('deliveries.complete')
+  async closeRun(
+    @CurrentTenant() tenant: RequestTenantContext,
+    @CurrentUser() actor: CurrentUserPayload,
+    @Param('id') id: string,
+    @Body()
+    body: {
+      outcomes?: {
+        deliveryId?: string;
+        outcome?: 'delivered' | 'failed';
+        reasonCodeId?: string;
+        reason?: string;
+        rescheduleDate?: string;
+      }[];
+      codCollectedCents?: number;
+      codReceivedBy?: string | null;
+    },
+  ): Promise<unknown> {
+    const run = await this.loadRun(id);
+    if (run.status === 'completed') throw new ConflictException('Run is already completed');
+
+    const stops = await this.db
+      .select()
+      .from(schema.deliveries)
+      .where(eq(schema.deliveries.runId, id));
+    const open = stops.filter((d) => !['delivered', 'failed', 'cancelled'].includes(d.status));
+    const outcomes = new Map((body.outcomes ?? []).map((o) => [o.deliveryId, o]));
+    const missing = open.filter((d) => !outcomes.get(d.id)?.outcome);
+    if (missing.length > 0) {
+      throw new BadRequestException(
+        `Every stop needs an outcome — missing: ${missing.map((d) => d.id).join(', ')}`,
+      );
+    }
+
+    for (const d of open) {
+      const o = outcomes.get(d.id)!;
+      if (o.outcome === 'delivered') {
+        await this.complete(tenant, actor, d.id, {});
+      } else {
+        const reason = await this.overrides.resolveReason('delivery_failure', {
+          reasonCodeId: o.reasonCodeId,
+          reason: o.reason,
+        });
+        await this.complete(tenant, actor, d.id, {
+          failed: true,
+          notes: reason.reasonText ?? reason.reasonCode ?? 'failed',
+        });
+        await this.db
+          .update(schema.deliveries)
+          .set({ failureReasonCodeId: reason.reasonCodeId })
+          .where(eq(schema.deliveries.id, d.id));
+        await this.exceptions.record({
+          type: 'delivery_failed',
+          severity: 'warning',
+          entityType: 'order',
+          entityId: d.orderId,
+          summary: `Stop failed on run ${run.runDate}: ${reason.reasonText ?? reason.reasonCode ?? '—'}`,
+          metadata: { deliveryId: d.id, reasonCode: reason.reasonCode, reason: reason.reasonText },
+        });
+        if (o.rescheduleDate) {
+          const lines = await this.db
+            .select()
+            .from(schema.deliveryLines)
+            .where(eq(schema.deliveryLines.deliveryId, d.id));
+          const [redo] = await this.db
+            .insert(schema.deliveries)
+            .values({
+              businessId: tenant.businessId!,
+              locationId: d.locationId,
+              orderId: d.orderId,
+              scheduledDate: o.rescheduleDate,
+              route: d.route,
+              notes: `Rescheduled after failed stop (${reason.reasonCode ?? reason.reasonText ?? ''})`,
+            })
+            .returning();
+          if (lines.length > 0) {
+            await this.db.insert(schema.deliveryLines).values(
+              lines.map((l) => ({
+                businessId: tenant.businessId!,
+                deliveryId: redo!.id,
+                orderLineId: l.orderLineId,
+                quantity: l.quantity,
+              })),
+            );
+          }
+        }
+      }
+    }
+
+    // COD reconciliation: what the driver owes the drawer vs what came
+    // back. The due side counts the stops that actually delivered.
+    const deliveredOrderIds = open
+      .filter((d) => outcomes.get(d.id)!.outcome === 'delivered')
+      .map((d) => d.orderId);
+    const codDue = await this.codDueFor(deliveredOrderIds);
+    const collected = body.codCollectedCents ?? 0;
+    if (!Number.isInteger(collected) || collected < 0) {
+      throw new BadRequestException('codCollectedCents must be a non-negative integer');
+    }
+    if (codDue !== collected) {
+      await this.exceptions.record({
+        type: 'cod_variance',
+        severity: 'warning',
+        entityType: 'delivery_run',
+        entityId: id,
+        summary: `Run ${run.runDate}: COD due $${(codDue / 100).toFixed(2)}, collected $${(collected / 100).toFixed(2)}`,
+        metadata: {
+          codDueCents: codDue,
+          codCollectedCents: collected,
+          receivedBy: body.codReceivedBy ?? null,
+        },
+      });
+    }
+
+    await this.db
+      .update(schema.deliveryRuns)
+      .set({
+        status: 'completed',
+        codDueCents: codDue,
+        codCollectedCents: collected,
+        codReceivedBy: body.codReceivedBy ?? null,
+        completedAt: new Date(),
+        completedByUserId: actor?.id ?? null,
+      })
+      .where(eq(schema.deliveryRuns.id, id));
+    await this.audit.log({
+      action: 'delivery_run.close',
+      targetType: 'delivery_run',
+      targetId: id,
+      after: {
+        delivered: deliveredOrderIds.length,
+        failed: open.length - deliveredOrderIds.length,
+        codDueCents: codDue,
+        codCollectedCents: collected,
+      },
+    });
+    return this.hydrateRun(await this.loadRun(id));
+  }
+
+  private async loadRun(id: string) {
+    const [run] = await this.db
+      .select()
+      .from(schema.deliveryRuns)
+      .where(eq(schema.deliveryRuns.id, id))
+      .limit(1);
+    if (!run) throw new NotFoundException('Delivery run not found');
+    return run;
+  }
+
+  /** Balance still owed across a set of orders — the COD the run carries. */
+  private async codDueFor(orderIds: string[]): Promise<number> {
+    if (orderIds.length === 0) return 0;
+    const unique = [...new Set(orderIds)];
+    const orders = await this.db
+      .select({ id: schema.orders.id, totalCents: schema.orders.totalCents })
+      .from(schema.orders)
+      .where(inArray(schema.orders.id, unique));
+    const payments = await this.db
+      .select({
+        orderId: schema.payments.orderId,
+        amountCents: schema.payments.amountCents,
+        status: schema.payments.status,
+      })
+      .from(schema.payments)
+      .where(inArray(schema.payments.orderId, unique));
+    const paidBy = new Map<string, number>();
+    for (const p of payments) {
+      if (p.status !== 'succeeded' || !p.orderId) continue;
+      paidBy.set(p.orderId, (paidBy.get(p.orderId) ?? 0) + p.amountCents);
+    }
+    return orders.reduce((sum, o) => sum + Math.max(0, o.totalCents - (paidBy.get(o.id) ?? 0)), 0);
+  }
+
+  private async codDueForRun(runId: string): Promise<number> {
+    const stops = await this.db
+      .select({ orderId: schema.deliveries.orderId })
+      .from(schema.deliveries)
+      .where(eq(schema.deliveries.runId, runId));
+    return this.codDueFor(stops.map((s) => s.orderId));
+  }
+
+  private async hydrateRun(run: typeof schema.deliveryRuns.$inferSelect) {
+    const stops = await this.db
+      .select()
+      .from(schema.deliveries)
+      .where(eq(schema.deliveries.runId, run.id))
+      .orderBy(asc(schema.deliveries.routePosition), asc(schema.deliveries.createdAt));
+    const detailed = await Promise.all(stops.map((s) => this.hydrate(s)));
+    return { ...run, stops: detailed };
+  }
+
+  // ---------------------------------------------------------------------
   // Internals
   // ---------------------------------------------------------------------
 
   /** ops.deliveryDailyCap, defaulting to the spec's 15 stops/day. */
   private async dailyCap(businessId: string): Promise<number> {
+    return (await this.capacityConfig(businessId)).stopCap;
+  }
+
+  /**
+   * G12 multi-dimensional capacity: stops (always), pieces and capacity
+   * units (opt-in via ops). A truck fills by volume, not stop count —
+   * fifteen twins and fifteen king sets are not the same day.
+   */
+  private async capacityConfig(businessId: string): Promise<{
+    stopCap: number;
+    pieceCap: number | null;
+    unitCap: number | null;
+    zipRoutes: Record<string, string> | null;
+  }> {
     const [biz] = await this.db
       .select({ opsSettingsJson: schema.businesses.opsSettingsJson })
       .from(schema.businesses)
       .where(eq(schema.businesses.id, businessId))
       .limit(1);
-    const ops = (biz?.opsSettingsJson ?? {}) as { deliveryDailyCap?: number };
-    return ops.deliveryDailyCap && ops.deliveryDailyCap > 0 ? ops.deliveryDailyCap : 15;
+    const ops = (biz?.opsSettingsJson ?? {}) as {
+      deliveryDailyCap?: number;
+      deliveryDailyPieceCap?: number | null;
+      deliveryDailyCapacityUnits?: number | null;
+      zipRoutes?: Record<string, string> | null;
+    };
+    return {
+      stopCap: ops.deliveryDailyCap && ops.deliveryDailyCap > 0 ? ops.deliveryDailyCap : 15,
+      pieceCap:
+        ops.deliveryDailyPieceCap && ops.deliveryDailyPieceCap > 0
+          ? ops.deliveryDailyPieceCap
+          : null,
+      unitCap:
+        ops.deliveryDailyCapacityUnits && ops.deliveryDailyCapacityUnits > 0
+          ? ops.deliveryDailyCapacityUnits
+          : null,
+      zipRoutes: ops.zipRoutes ?? null,
+    };
+  }
+
+  /** Booked load for one day: stops, pieces, and capacity units. */
+  private async dayLoad(date: string): Promise<{ stops: number; pieces: number; units: number }> {
+    const [row] = await this.db
+      .select({
+        stops: sql<number>`count(distinct ${schema.deliveries.id})::int`,
+        pieces: sql<number>`coalesce(sum(${schema.deliveryLines.quantity}), 0)::int`,
+        units: sql<number>`coalesce(sum(${schema.deliveryLines.quantity} * coalesce(${schema.productVariants.capacityUnits}, 1)), 0)::int`,
+      })
+      .from(schema.deliveries)
+      .leftJoin(schema.deliveryLines, eq(schema.deliveryLines.deliveryId, schema.deliveries.id))
+      .leftJoin(schema.orderLines, eq(schema.orderLines.id, schema.deliveryLines.orderLineId))
+      .leftJoin(schema.productVariants, eq(schema.productVariants.id, schema.orderLines.variantId))
+      .where(
+        and(
+          eq(schema.deliveries.scheduledDate, date),
+          inArray(schema.deliveries.status, ['scheduled', 'loaded', 'out_for_delivery']),
+        ),
+      );
+    return row ?? { stops: 0, pieces: 0, units: 0 };
   }
 
   private async load(id: string): Promise<DeliveryRow> {

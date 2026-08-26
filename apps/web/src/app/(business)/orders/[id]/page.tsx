@@ -9,6 +9,7 @@ import { formatMoney } from '@jetnine/shared';
 import { api } from '@/lib/api';
 import { Money } from '@/components/money';
 import { Button, Card, Input, LinkButton, LoadingRows, Select, StatusBadge } from '@/components/ui';
+import { SecurityOverrideDialog } from '@/components/security-override-dialog';
 
 /**
  * Order detail (STORIS cutover Day 2): the working view of one sales
@@ -159,6 +160,7 @@ export default function OrderDetailPage() {
   const [deliveries, setDeliveries] = useState<DeliveryRow[]>([]);
   const [deliveryDate, setDeliveryDate] = useState('');
   const [dayCapacity, setDayCapacity] = useState<{ booked: number; cap: number } | null>(null);
+  const [unlockOpen, setUnlockOpen] = useState(false);
 
   // §7: the associate sees the day's remaining capacity while booking.
   useEffect(() => {
@@ -284,6 +286,15 @@ export default function OrderDetailPage() {
           >
             <Printer size={13} aria-hidden /> Delivery ticket
           </LinkButton>
+          <LinkButton
+            href={`/print/orders/${id}/pick-list`}
+            variant="secondary"
+            size="sm"
+            target="_blank"
+            data-testid="print-pick-list"
+          >
+            <Printer size={13} aria-hidden /> Pick list
+          </LinkButton>
           <Button
             size="sm"
             variant="secondary"
@@ -340,18 +351,26 @@ export default function OrderDetailPage() {
             variant="secondary"
             data-testid="unlock-order"
             disabled={busy}
-            onClick={async () => {
-              const reason = window.prompt(
-                'Unlocking is logged to the owner dashboard. Reason for unlocking:',
-              );
-              if (reason == null) return;
-              await act('/unlock', { reason });
-            }}
+            onClick={() => setUnlockOpen(true)}
           >
             Unlock…
           </Button>
         </div>
       )}
+
+      <SecurityOverrideDialog
+        open={unlockOpen}
+        title={`Unlock order ${order.number}`}
+        usageClass="exception"
+        submitLabel="Unlock order"
+        perform={(payload) =>
+          api(`/v1/orders/${id}/unlock`, { method: 'POST', body: JSON.stringify(payload) }).then(
+            () => undefined,
+          )
+        }
+        onClose={() => setUnlockOpen(false)}
+        onSuccess={() => void load()}
+      />
 
       <div className="grid gap-4 lg:grid-cols-[2fr_1fr]">
         <div className="min-w-0">
@@ -987,9 +1006,54 @@ function ReturnsCard({
 }) {
   const [qty, setQty] = useState<Record<string, number>>({});
   const [method, setMethod] = useState<'original' | 'store_credit'>('original');
+  const [fulfillment, setFulfillment] = useState<'drop_off' | 'pickup'>('drop_off');
   const [reason, setReason] = useState('');
   const [adjustAmount, setAdjustAmount] = useState('');
   const [working, setWorking] = useState(false);
+  // A7 lifecycle: authorized returns wait here for the goods; receiving
+  // fires the refund. Completed/cancelled returns stay as history.
+  const [returns, setReturns] = useState<
+    {
+      id: string;
+      rmaNumber: string;
+      status: string;
+      fulfillment: string;
+      refundMethod: string;
+      amountCents: number;
+      authorizedAt: string;
+    }[]
+  >([]);
+  const [returnCodes, setReturnCodes] = useState<
+    { id: string; code: string; description: string }[]
+  >([]);
+  const [returnCodeId, setReturnCodeId] = useState('');
+  async function loadReturns() {
+    try {
+      setReturns(await api(`/v1/order-returns?orderId=${order.id}`));
+    } catch {
+      setReturns([]);
+    }
+  }
+  useEffect(() => {
+    void loadReturns();
+    api<{ id: string; code: string; description: string }[]>('/v1/reason-codes?usageClass=return')
+      .then(setReturnCodes)
+      .catch(() => setReturnCodes([]));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [order.id]);
+  // Coded adjustment reasons (gap sprint G2). While the business has no
+  // codes of class `adjustment`, the shared free-text reason is sent.
+  const [adjustCodes, setAdjustCodes] = useState<
+    { id: string; code: string; description: string }[]
+  >([]);
+  const [adjustCodeId, setAdjustCodeId] = useState('');
+  useEffect(() => {
+    api<{ id: string; code: string; description: string }[]>(
+      '/v1/reason-codes?usageClass=adjustment',
+    )
+      .then(setAdjustCodes)
+      .catch(() => setAdjustCodes([]));
+  }, []);
 
   const returnable = order.lines.filter((l) => l.qtyFulfilled - l.qtyReturned > 0);
   if (returnable.length === 0 && !order.originalOrderId && order.paidCents === 0) return null;
@@ -997,21 +1061,71 @@ function ReturnsCard({
   async function processReturn() {
     const lines = Object.entries(qty)
       .filter(([, q]) => q > 0)
-      .map(([lineId, quantity]) => ({ lineId, quantity }));
+      .map(([lineId, quantity]) => ({
+        lineId,
+        quantity,
+        ...(returnCodeId ? { reasonCodeId: returnCodeId } : {}),
+      }));
     if (lines.length === 0) {
       toast.error('Enter a quantity on at least one line.');
+      return;
+    }
+    if (returnCodes.length > 0 && !returnCodeId) {
+      toast.error('Select a return reason.');
       return;
     }
     setWorking(true);
     try {
       await api(`/v1/orders/${order.id}/return`, {
         method: 'POST',
-        body: JSON.stringify({ lines, refundMethod: method, reason: reason || null }),
+        body: JSON.stringify({
+          lines,
+          refundMethod: method,
+          fulfillment,
+          reason: reason || null,
+        }),
       });
-      toast.success('Return processed — goods staged in As-Is review.');
+      toast.success(
+        fulfillment === 'drop_off'
+          ? 'Return processed — goods staged in As-Is review.'
+          : 'Return authorized — the refund fires when the goods are received back.',
+      );
       setQty({});
       setReason('');
       await onChanged();
+      await loadReturns();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function receiveReturn(id: string) {
+    setWorking(true);
+    try {
+      await api(`/v1/order-returns/${id}/receive`, { method: 'POST' });
+      toast.success('Goods received — refund issued.');
+      await onChanged();
+      await loadReturns();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function cancelReturn(id: string) {
+    const why = window.prompt('Reason for cancelling this return authorization:');
+    if (why == null || !why.trim()) return;
+    setWorking(true);
+    try {
+      await api(`/v1/order-returns/${id}/cancel`, {
+        method: 'POST',
+        body: JSON.stringify({ reason: why.trim() }),
+      });
+      await onChanged();
+      await loadReturns();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err));
     } finally {
@@ -1021,7 +1135,8 @@ function ReturnsCard({
 
   async function processAdjustment() {
     const cents = Math.round(Number(adjustAmount) * 100);
-    if (!Number.isFinite(cents) || cents <= 0 || !reason.trim()) {
+    const hasReason = adjustCodes.length > 0 ? Boolean(adjustCodeId) : Boolean(reason.trim());
+    if (!Number.isFinite(cents) || cents <= 0 || !hasReason) {
       toast.error('Enter an adjustment amount and a reason.');
       return;
     }
@@ -1029,7 +1144,12 @@ function ReturnsCard({
     try {
       await api(`/v1/orders/${order.id}/price-adjustment`, {
         method: 'POST',
-        body: JSON.stringify({ amountCents: cents, reason: reason.trim(), refundMethod: method }),
+        body: JSON.stringify({
+          amountCents: cents,
+          ...(adjustCodeId ? { reasonCodeId: adjustCodeId } : {}),
+          ...(reason.trim() ? { reason: reason.trim() } : {}),
+          refundMethod: method,
+        }),
       });
       toast.success('Price adjustment recorded.');
       setAdjustAmount('');
@@ -1044,6 +1164,58 @@ function ReturnsCard({
 
   return (
     <Card title="Returns & exchange" style={{ marginBottom: 16 }}>
+      {returns.length > 0 && (
+        <table className="table" style={{ marginBottom: 12 }} data-testid="returns-table">
+          <thead>
+            <tr>
+              <th>RMA</th>
+              <th>Status</th>
+              <th>Refund</th>
+              <th className="num">Amount</th>
+              <th />
+            </tr>
+          </thead>
+          <tbody>
+            {returns.map((r) => (
+              <tr key={r.id}>
+                <td style={{ fontWeight: 600 }}>{r.rmaNumber}</td>
+                <td>
+                  {r.status === 'authorized'
+                    ? `awaiting ${r.fulfillment === 'pickup' ? 'pickup' : 'drop-off'}`
+                    : r.status}
+                </td>
+                <td>{r.refundMethod === 'store_credit' ? 'store credit' : 'original tenders'}</td>
+                <td className="num">
+                  <Money cents={r.amountCents} />
+                </td>
+                <td style={{ whiteSpace: 'nowrap' }}>
+                  {r.status === 'authorized' && (
+                    <>
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        disabled={working}
+                        data-testid="receive-return"
+                        onClick={() => void receiveReturn(r.id)}
+                      >
+                        Goods received
+                      </Button>{' '}
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        disabled={working}
+                        onClick={() => void cancelReturn(r.id)}
+                      >
+                        Cancel
+                      </Button>
+                    </>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
       {order.originalOrderId && (
         <p style={{ fontSize: 13, marginTop: 0 }}>
           This is an <strong>Exchange Order</strong> —{' '}
@@ -1109,6 +1281,36 @@ function ReturnsCard({
             <option value="store_credit">Store credit</option>
           </select>
         </label>
+        <label style={{ display: 'grid', gap: 2, fontSize: 12 }}>
+          Goods come back by
+          <select
+            className="select"
+            value={fulfillment}
+            data-testid="return-fulfillment"
+            onChange={(e) => setFulfillment(e.target.value as 'drop_off' | 'pickup')}
+          >
+            <option value="drop_off">Customer drop-off (refund now)</option>
+            <option value="pickup">Truck pickup (refund on receipt)</option>
+          </select>
+        </label>
+        {returnCodes.length > 0 && (
+          <label style={{ display: 'grid', gap: 2, fontSize: 12 }}>
+            Return reason
+            <select
+              className="select"
+              value={returnCodeId}
+              data-testid="return-reason-code"
+              onChange={(e) => setReturnCodeId(e.target.value)}
+            >
+              <option value="">Select…</option>
+              {returnCodes.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.code} — {c.description}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         <label style={{ display: 'grid', gap: 2, fontSize: 12, flex: 1, minWidth: 160 }}>
           Reason
           <Input value={reason} onChange={(e) => setReason(e.target.value)} />
@@ -1135,6 +1337,24 @@ function ReturnsCard({
             style={{ width: 110 }}
           />
         </label>
+        {adjustCodes.length > 0 && (
+          <label style={{ display: 'grid', gap: 2, fontSize: 12 }}>
+            Adjustment reason
+            <select
+              className="select"
+              value={adjustCodeId}
+              data-testid="adjust-reason-code"
+              onChange={(e) => setAdjustCodeId(e.target.value)}
+            >
+              <option value="">Select…</option>
+              {adjustCodes.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.code} — {c.description}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         <Button
           variant="secondary"
           disabled={busy || working}

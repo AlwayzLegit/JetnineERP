@@ -6,6 +6,7 @@ import { useParams } from 'next/navigation';
 import { PackageCheck, Printer, Truck } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '@/lib/api';
+import { SecurityOverrideDialog } from '@/components/security-override-dialog';
 import {
   Button,
   Card,
@@ -58,6 +59,8 @@ export default function TransferDetailPage() {
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
+
+  const [closeShortOpen, setCloseShortOpen] = useState(false);
 
   async function ship() {
     setBusy(true);
@@ -231,7 +234,41 @@ export default function TransferDetailPage() {
             {busy ? 'Receiving…' : 'Record receipt'}
           </Button>
         )}
+        {isInTransit && t.lines.some((l) => l.quantityShipped > l.quantityReceived) && (
+          <Button
+            variant="danger"
+            disabled={busy}
+            data-testid="close-short"
+            onClick={() => setCloseShortOpen(true)}
+          >
+            Close short…
+          </Button>
+        )}
       </div>
+      {isInTransit && (
+        <p className="muted" style={{ fontSize: 12, marginTop: 8 }}>
+          Sent units that never arrive can&apos;t be dismissed — &quot;Close short&quot; writes the
+          shortfall off at cost (manager approval + coded reason) and registers the variance.
+        </p>
+      )}
+
+      <SecurityOverrideDialog
+        open={closeShortOpen}
+        title={`Close ${t.number} short — write off the missing units`}
+        usageClass="transfer_variance"
+        submitLabel="Close short"
+        perform={(payload) =>
+          api(`/v1/stock-transfers/${id}/close-short`, {
+            method: 'POST',
+            body: JSON.stringify(payload),
+          }).then(() => undefined)
+        }
+        onClose={() => setCloseShortOpen(false)}
+        onSuccess={() => {
+          toast.success('Closed short — variance registered.');
+          void load();
+        }}
+      />
     </div>
   );
 }

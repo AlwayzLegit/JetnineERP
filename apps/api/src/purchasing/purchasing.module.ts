@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { AuditModule } from '../audit/audit.module';
+import { ControlsModule } from '../controls/controls.module';
 import { EmailModule } from '../email/email.module';
 import { SpecialOrdersModule } from '../special-orders/special-orders.module';
 import { AuthModule } from '../auth/auth.module';
@@ -9,7 +10,14 @@ import { VendorInvoicesController } from './vendor-invoices.controller';
 import { VendorsController } from './vendors.controller';
 
 @Module({
-  imports: [AuthModule, TenancyModule, AuditModule, SpecialOrdersModule, EmailModule],
+  imports: [
+    AuthModule,
+    TenancyModule,
+    AuditModule,
+    SpecialOrdersModule,
+    EmailModule,
+    ControlsModule,
+  ],
   controllers: [VendorsController, PurchaseOrdersController, VendorInvoicesController],
 })
 export class PurchasingModule {}

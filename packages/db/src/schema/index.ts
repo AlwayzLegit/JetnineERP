@@ -25,6 +25,7 @@ export * from './templates';
 export * from './integrations';
 export * from './marketing';
 export * from './returns';
+export * from './controls';
 
 // List of tables that carry a `business_id` and need RLS. Kept in sync with
 // the migration script in src/migrations/rls.sql — when you add a new
@@ -93,4 +94,12 @@ export const TENANT_SCOPED_TABLES = [
   'vendor_invoices',
   'as_is_items',
   'store_credit_entries',
+  'reason_codes',
+  'security_overrides',
+  'order_returns',
+  'order_return_lines',
+  'exception_events',
+  'write_offs',
+  'daily_closeouts',
+  'delivery_runs',
 ] as const;

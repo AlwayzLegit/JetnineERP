@@ -47,6 +47,45 @@ interface LowStockRow {
 interface AgencyOverview {
   businesses: { businessId: string; openOrdersCount: number | null }[];
 }
+interface MorningBrief {
+  date: string;
+  today: string;
+  salesByStore: {
+    locationId: string;
+    locationName: string | null;
+    saleCount: number;
+    saleTotalCents: number;
+    orderCount: number;
+    orderTotalCents: number;
+  }[];
+  salesByAssociate: {
+    userId: string | null;
+    name: string | null;
+    email: string | null;
+    saleTotalCents: number;
+    orderTotalCents: number;
+    totalCents: number;
+  }[];
+  deliveriesToday: { booked: number; cap: number; byStatus: Record<string, number> };
+  refundsCancellations: {
+    id: string;
+    action: string;
+    actorEmail: string | null;
+    orderNumber: string | null;
+    createdAt: string;
+  }[];
+  modifiedOrders: {
+    orderId: string;
+    orderNumber: string | null;
+    changeCount: number;
+    actorEmails: string[];
+  }[];
+  openExceptions: {
+    count: number;
+    latest: { id: string; type: string; severity: string; summary: string; createdAt: string }[];
+  };
+}
+
 interface NotificationRow {
   id: string;
   action: string;
@@ -76,6 +115,7 @@ export default function DashboardClient() {
   const [openOrders, setOpenOrders] = useState<number | null>(null);
   const [salesDenied, setSalesDenied] = useState(false);
   const [notifications, setNotifications] = useState<NotificationRow[] | null>(null);
+  const [morning, setMorning] = useState<MorningBrief | null>(null);
 
   useEffect(() => {
     if (!session.data) return;
@@ -131,6 +171,10 @@ export default function DashboardClient() {
     void api<{ data: NotificationRow[]; nextCursor: string | null }>('/v1/notifications?limit=10')
       .then((r) => setNotifications(r.data))
       .catch(() => setNotifications(null));
+    // P9 morning brief (reports.sales.view; a 403 hides the card).
+    void api<MorningBrief>('/v1/dashboard/morning')
+      .then(setMorning)
+      .catch(() => setMorning(null));
     // Open orders for the active business, via the membership overview.
     void api<AgencyOverview>('/v1/agency/overview')
       .then((res) => {
@@ -219,6 +263,8 @@ export default function DashboardClient() {
           />
         </div>
       )}
+
+      {businessActive && morning != null && <MorningBriefCard brief={morning} />}
 
       {businessActive && !salesDenied && (
         <Card title="Revenue — last 30 days">
@@ -317,6 +363,134 @@ export default function DashboardClient() {
         </Card>
       )}
     </div>
+  );
+}
+
+/**
+ * The P9 morning brief (PLAN-POS-OPERATIONS §12): yesterday by store
+ * and associate, today's truck load, refunds/cancellations with names,
+ * the modification log, and the open exception count.
+ */
+function MorningBriefCard({ brief }: { brief: MorningBrief }) {
+  const usd = (c: number) =>
+    `$${(c / 100).toLocaleString(undefined, { minimumFractionDigits: 2 })}`;
+  const over = brief.deliveriesToday.booked > brief.deliveriesToday.cap;
+  return (
+    <Card
+      title={`Morning brief — ${brief.date}`}
+      actions={
+        <Link href="/exceptions" style={{ fontSize: 12.5 }}>
+          {brief.openExceptions.count > 0
+            ? `${brief.openExceptions.count} open exception${brief.openExceptions.count === 1 ? '' : 's'} →`
+            : 'Exception register →'}
+        </Link>
+      }
+      data-testid="morning-brief"
+    >
+      <div className="grid gap-4 lg:grid-cols-2" style={{ fontSize: 13 }}>
+        <div className="min-w-0">
+          <h4 style={{ margin: '0 0 6px', fontSize: 12.5 }}>Yesterday by store</h4>
+          {brief.salesByStore.length === 0 ? (
+            <p className="muted" style={{ margin: 0 }}>
+              No business written.
+            </p>
+          ) : (
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Store</th>
+                  <th className="num">Orders</th>
+                  <th className="num">Written</th>
+                  <th className="num">Register</th>
+                </tr>
+              </thead>
+              <tbody>
+                {brief.salesByStore.map((s) => (
+                  <tr key={s.locationId}>
+                    <td>{s.locationName ?? '—'}</td>
+                    <td className="num">{s.orderCount}</td>
+                    <td className="num">{usd(s.orderTotalCents)}</td>
+                    <td className="num">{usd(s.saleTotalCents)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          <h4 style={{ margin: '12px 0 6px', fontSize: 12.5 }}>By associate</h4>
+          {brief.salesByAssociate.length === 0 ? (
+            <p className="muted" style={{ margin: 0 }}>
+              Nothing attributed.
+            </p>
+          ) : (
+            <table className="table">
+              <tbody>
+                {brief.salesByAssociate.map((a) => (
+                  <tr key={a.userId ?? 'none'}>
+                    <td>{a.name ?? a.email ?? '—'}</td>
+                    <td className="num">{usd(a.totalCents)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+        <div className="min-w-0">
+          <p style={{ margin: '0 0 8px' }}>
+            <strong>Today&apos;s deliveries:</strong>{' '}
+            <span style={{ color: over ? 'var(--danger)' : undefined }}>
+              {brief.deliveriesToday.booked} of {brief.deliveriesToday.cap} booked
+            </span>
+            {Object.entries(brief.deliveriesToday.byStatus).map(([k, v]) => (
+              <span key={k} className="muted">
+                {' '}
+                · {v} {k.replace(/_/g, ' ')}
+              </span>
+            ))}{' '}
+            <Link href="/deliveries/dispatch">Dispatch →</Link>
+          </p>
+          <h4 style={{ margin: '0 0 6px', fontSize: 12.5 }}>Refunds & cancellations</h4>
+          {brief.refundsCancellations.length === 0 ? (
+            <p className="muted" style={{ margin: '0 0 10px' }}>
+              None yesterday.
+            </p>
+          ) : (
+            <ul style={{ margin: '0 0 10px', padding: 0, listStyle: 'none' }}>
+              {brief.refundsCancellations.slice(0, 8).map((r) => (
+                <li
+                  key={r.id}
+                  style={{ padding: '3px 0', borderBottom: '1px solid var(--border)' }}
+                >
+                  <strong>{r.action.replace(/[._]/g, ' ')}</strong>
+                  {r.orderNumber ? ` — ${r.orderNumber}` : ''}
+                  <span className="muted"> · {r.actorEmail ?? 'system'}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+          <h4 style={{ margin: '0 0 6px', fontSize: 12.5 }}>Modified orders</h4>
+          {brief.modifiedOrders.length === 0 ? (
+            <p className="muted" style={{ margin: 0 }}>
+              No post-creation edits yesterday.
+            </p>
+          ) : (
+            <ul style={{ margin: 0, padding: 0, listStyle: 'none' }}>
+              {brief.modifiedOrders.slice(0, 8).map((m) => (
+                <li
+                  key={m.orderId}
+                  style={{ padding: '3px 0', borderBottom: '1px solid var(--border)' }}
+                >
+                  <Link href={`/orders/${m.orderId}`}>{m.orderNumber ?? 'order'}</Link>{' '}
+                  <span className="muted">
+                    {m.changeCount} change{m.changeCount === 1 ? '' : 's'} ·{' '}
+                    {m.actorEmails.join(', ') || 'system'}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
+    </Card>
   );
 }
 

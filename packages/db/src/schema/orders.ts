@@ -12,8 +12,9 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
-import { businesses } from './platform';
+import { businesses, users } from './platform';
 import { locations, memberships } from './tenancy';
+import { reasonCodes } from './controls';
 import { customers } from './customers';
 import { productVariants } from './catalog';
 import { taxClasses } from './taxes';
@@ -144,6 +145,18 @@ export const orders = pgTable(
      * this). NULL = unlocked.
      */
     lockedAt: timestamp('locked_at', { withTimezone: true }),
+    /**
+     * G9: how many times the delivery ticket has printed — reprints are
+     * how merchandise walks out twice, so copy 2+ is logged and
+     * registered.
+     */
+    ticketPrintCount: integer('ticket_print_count').notNull().default(0),
+    /**
+     * G9: an unlock is a 15-minute window, not a permanent state. Set
+     * to now()+15min at unlock; past it, a printed order counts as
+     * locked again (lazily — no job needed).
+     */
+    relockAt: timestamp('relock_at', { withTimezone: true }),
     // D8: legacy history imports carry these and are excluded from the
     // cash drawer, commission accrual, and webhook emission.
     importedAt: timestamp('imported_at', { withTimezone: true }),
@@ -240,6 +253,54 @@ export const orderLines = pgTable(
 );
 
 /**
+ * A delivery run / manifest (PLAN-STORIS-GAP §4 / G7, STORIS "Build a
+ * Delivery Manifest"): the truck's day as a real object. Membership on
+ * an open run is the HARD lock on the underlying orders (amendment A5);
+ * close-out is the mandatory reconciliation — every stop ends
+ * delivered, failed (coded reason, auto-reschedule), and the COD due
+ * vs collected variance is registered.
+ */
+export const deliveryRuns = pgTable(
+  'delivery_runs',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    businessId: uuid('business_id')
+      .notNull()
+      .references(() => businesses.id, { onDelete: 'cascade' }),
+    locationId: uuid('location_id')
+      .notNull()
+      .references(() => locations.id, { onDelete: 'restrict' }),
+    runDate: date('run_date').notNull(),
+    route: text('route'),
+    /** Free truck label until a truck entity exists ("Box truck 1"). */
+    truck: text('truck'),
+    driverMembershipId: uuid('driver_membership_id').references(() => memberships.id, {
+      onDelete: 'set null',
+    }),
+    /** 'open' | 'out' | 'completed' */
+    status: text('status').notNull().default('open'),
+    notes: text('notes'),
+    codDueCents: integer('cod_due_cents').notNull().default(0),
+    codCollectedCents: integer('cod_collected_cents'),
+    /** Who the driver handed the money to, from the close-out screen. */
+    codReceivedBy: text('cod_received_by'),
+    createdByUserId: uuid('created_by_user_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    completedAt: timestamp('completed_at', { withTimezone: true }),
+    completedByUserId: uuid('completed_by_user_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+  },
+  (t) => ({
+    businessIdx: index('delivery_runs_business_id_idx').on(t.businessId),
+    dateIdx: index('delivery_runs_date_idx').on(t.businessId, t.runDate),
+    statusIdx: index('delivery_runs_status_idx').on(t.businessId, t.status),
+  }),
+);
+
+/**
  * A scheduled trip that moves some or all of an order's lines to the
  * customer (G2). An order can need several — the sofa is in stock today,
  * the matching chair arrives next month.
@@ -282,6 +343,12 @@ export const deliveries = pgTable(
      * scheduling ("900xx"), freely editable by the dispatcher.
      */
     route: text('route'),
+    /** G7: membership on an open run hard-locks the order (A5). */
+    runId: uuid('run_id').references(() => deliveryRuns.id, { onDelete: 'set null' }),
+    /** G7: coded reason (class `delivery_failure`) when the stop fails. */
+    failureReasonCodeId: uuid('failure_reason_code_id').references(() => reasonCodes.id, {
+      onDelete: 'set null',
+    }),
     notes: text('notes'),
     completedAt: timestamp('completed_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -289,6 +356,7 @@ export const deliveries = pgTable(
   },
   (t) => ({
     businessIdx: index('deliveries_business_id_idx').on(t.businessId),
+    runIdx: index('deliveries_run_id_idx').on(t.runId),
     orderIdx: index('deliveries_order_id_idx').on(t.orderId),
     // The calendar's primary query: one location's board for a date range.
     calendarIdx: index('deliveries_location_scheduled_date_idx').on(t.locationId, t.scheduledDate),

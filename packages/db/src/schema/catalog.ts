@@ -94,6 +94,12 @@ export const productVariants = pgTable(
      */
     reorderPoint: integer('reorder_point'),
     reorderQty: integer('reorder_qty'),
+    /**
+     * G12 (STORIS Product Group Capacity Units): how much of a truck-day
+     * one unit consumes — a king set with an adjustable base is not a
+     * twin. Arbitrary units; ops sets the per-day budget.
+     */
+    capacityUnits: integer('capacity_units').notNull().default(1),
     preferredVendorId: uuid('preferred_vendor_id').references(() => vendors.id, {
       onDelete: 'set null',
     }),

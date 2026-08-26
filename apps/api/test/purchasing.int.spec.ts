@@ -36,6 +36,7 @@ let variantAId = '';
 let variantBId = '';
 let clerkCookie = '';
 let cashierCookie = '';
+let managerCookie = '';
 let ownerCookie = '';
 
 async function resetTestDb() {
@@ -98,6 +99,7 @@ async function seed() {
     await makeUser('owner@purch-test.local', 'Owner');
     await makeUser('clerk@purch-test.local', 'Inventory Clerk');
     await makeUser('cashier@purch-test.local', 'Cashier');
+    await makeUser('manager@purch-test.local', 'Manager');
 
     const [loc] = await db
       .insert(schema.locations)
@@ -178,6 +180,7 @@ beforeAll(async () => {
   ownerCookie = await captureCookie('owner@purch-test.local');
   clerkCookie = await captureCookie('clerk@purch-test.local');
   cashierCookie = await captureCookie('cashier@purch-test.local');
+  managerCookie = await captureCookie('manager@purch-test.local');
 });
 
 afterAll(async () => {
@@ -650,7 +653,12 @@ describe('Receiving stages + PO email + invoice matching (PLAN-POS-OPERATIONS P6
     expect(listed.status).toBe(200);
     expect(listed.body).toHaveLength(1);
 
-    const approved = await owner().post(`/v1/vendor-invoices/${recorded.body.id}/approve`).send({});
+    // G11 SoD: the recorder can't self-approve — the manager signs off.
+    const approved = await request(app.getHttpServer())
+      .post(`/v1/vendor-invoices/${recorded.body.id}/approve`)
+      .set('Cookie', managerCookie)
+      .set('X-Business-Id', businessId)
+      .send({});
     expect(approved.status).toBe(201);
     expect(approved.body.status).toBe('approved');
 
@@ -669,5 +677,159 @@ describe('Receiving stages + PO email + invoice matching (PLAN-POS-OPERATIONS P6
     const approve = await owner().post(`/v1/vendor-invoices/${res.body.id}/approve`).send({});
     expect(approve.status).toBe(400);
     expect(approve.body.message).toMatch(/Match the invoice/);
+  });
+});
+
+describe('Purchasing controls: reject bucket, SoD, auto-clear, remit-to alert (PLAN-STORIS-GAP G11)', () => {
+  function as(cookie: string) {
+    return {
+      post: (url: string) =>
+        request(app.getHttpServer())
+          .post(url)
+          .set('Cookie', cookie)
+          .set('X-Business-Id', businessId),
+      get: (url: string) =>
+        request(app.getHttpServer())
+          .get(url)
+          .set('Cookie', cookie)
+          .set('X-Business-Id', businessId),
+      patch: (url: string) =>
+        request(app.getHttpServer())
+          .patch(url)
+          .set('Cookie', cookie)
+          .set('X-Business-Id', businessId),
+    };
+  }
+
+  let g11VendorId = '';
+
+  it('rejected units go to As-Is review as pieces; the PO still completes', async () => {
+    const vendor = await as(ownerCookie)
+      .post('/v1/vendors')
+      .send({ name: 'G11 Vendor', email: 'ap@g11vendor.test' });
+    expect(vendor.status).toBe(201);
+    g11VendorId = vendor.body.id;
+
+    const po = await as(ownerCookie)
+      .post('/v1/purchase-orders')
+      .send({
+        vendorId: g11VendorId,
+        locationId,
+        lines: [{ variantId: variantAId, quantity: 5, unitCostCents: 1000 }],
+      });
+    expect(po.status).toBe(201);
+    const lineId = po.body.lines[0].id as string;
+    const stockBefore = await levelOf(variantAId);
+
+    // Received 5, inspected 5 — 3 good, 2 damaged.
+    const staged = await as(clerkCookie)
+      .post(`/v1/purchase-orders/${po.body.id}/receiving`)
+      .send({ lines: [{ lineId, received: 5, inspected: 5, accepted: 3, rejected: 2 }] });
+    expect(staged.status).toBe(201);
+    expect(staged.body.status).toBe('received'); // fully dispositioned
+    expect(staged.body.lines[0].quantityAccepted).toBe(3);
+    expect(staged.body.lines[0].quantityRejected).toBe(2);
+
+    // Only accepted units became stock; the rejects are As-Is pieces.
+    expect(await levelOf(variantAId)).toBe(stockBefore + 3);
+    const queue = await as(ownerCookie).get('/v1/as-is?status=pending_review');
+    const pieces = queue.body.filter(
+      (r: { referenceId: string | null; referenceType: string | null }) =>
+        r.referenceType === 'purchase_order' && r.referenceId === po.body.id,
+    );
+    expect(pieces).toHaveLength(2);
+    expect(pieces[0].quantity).toBe(1);
+    const exceptions = await as(ownerCookie).get('/v1/exceptions?type=po_reject');
+    expect(
+      exceptions.body.some((e: { entityId: string | null }) => e.entityId === po.body.id),
+    ).toBe(true);
+
+    // Over-disposition is refused: nothing remains to accept.
+    await as(clerkCookie)
+      .post(`/v1/purchase-orders/${po.body.id}/receiving`)
+      .send({ lines: [{ lineId, accepted: 1 }] })
+      .expect(403); // status is 'received' — receiving is closed
+  });
+
+  it('a matched invoice inside the tolerance auto-clears; outside it needs a second signer', async () => {
+    await as(ownerCookie)
+      .patch('/v1/business/settings')
+      .send({ ops: { invoiceVarianceToleranceCents: 500 } })
+      .expect(200);
+    try {
+      const po = await as(ownerCookie)
+        .post('/v1/purchase-orders')
+        .send({
+          vendorId: g11VendorId,
+          locationId,
+          lines: [{ variantId: variantAId, quantity: 2, unitCostCents: 10_000 }],
+        });
+      expect(po.status).toBe(201); // subtotal 20_000
+
+      // $3 variance ≤ $5 tolerance → auto-approved on record.
+      const auto = await as(ownerCookie).post('/v1/vendor-invoices').send({
+        vendorId: g11VendorId,
+        number: 'G11-AUTO-1',
+        totalCents: 20_300,
+        poNumber: po.body.number,
+      });
+      expect(auto.status).toBe(201);
+      expect(auto.body.status).toBe('approved');
+
+      // $50 variance → stays matched; the recorder cannot self-approve.
+      const po2 = await as(ownerCookie)
+        .post('/v1/purchase-orders')
+        .send({
+          vendorId: g11VendorId,
+          locationId,
+          lines: [{ variantId: variantAId, quantity: 1, unitCostCents: 10_000 }],
+        });
+      const manual = await as(ownerCookie).post('/v1/vendor-invoices').send({
+        vendorId: g11VendorId,
+        number: 'G11-MAN-1',
+        totalCents: 15_000,
+        poNumber: po2.body.number,
+      });
+      expect(manual.status).toBe(201);
+      expect(manual.body.status).toBe('matched');
+
+      const selfApprove = await as(ownerCookie)
+        .post(`/v1/vendor-invoices/${manual.body.id}/approve`)
+        .send({});
+      expect(selfApprove.status).toBe(403);
+      expect(selfApprove.body.code).toBe('OVERRIDE_REQUIRED');
+
+      // A different authorized user signs off through the override.
+      const signed = await as(ownerCookie)
+        .post(`/v1/vendor-invoices/${manual.body.id}/approve`)
+        .send({
+          override: {
+            email: 'manager@purch-test.local',
+            password: PASSWORD,
+            reason: 'checked against packing slip',
+          },
+        });
+      expect(signed.status).toBe(201);
+      expect(signed.body.status).toBe('approved');
+    } finally {
+      await as(ownerCookie)
+        .patch('/v1/business/settings')
+        .send({ ops: { invoiceVarianceToleranceCents: null } })
+        .expect(200);
+    }
+  });
+
+  it('changing a vendor remit-to raises a critical owner alert', async () => {
+    const changed = await as(ownerCookie)
+      .patch(`/v1/vendors/${g11VendorId}`)
+      .send({ remitTo: 'PO Box 999, Reno NV — Acct 12345' });
+    expect(changed.status).toBe(200);
+    expect(changed.body.remitTo).toMatch(/Reno/);
+    const exceptions = await as(ownerCookie).get(
+      '/v1/exceptions?type=vendor_remit_change&severity=critical',
+    );
+    expect(
+      exceptions.body.some((e: { entityId: string | null }) => e.entityId === g11VendorId),
+    ).toBe(true);
   });
 });

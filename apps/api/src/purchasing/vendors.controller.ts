@@ -14,6 +14,7 @@ import { asc, eq } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { schema } from '@jetnine/db';
 import { AuditService } from '../audit/audit.service';
+import { ExceptionsService } from '../controls/exceptions.service';
 import { CurrentTenant } from '../auth/current-user.decorator';
 import { DRIZZLE } from '../database/database.module';
 import { RequirePermission, TenantScoped } from '../tenancy/decorators';
@@ -26,6 +27,7 @@ interface VendorRow {
   email: string | null;
   phone: string | null;
   addressJson: unknown;
+  remitTo: string | null;
   notes: string | null;
   isActive: boolean;
   createdAt: Date;
@@ -38,6 +40,7 @@ interface CreateBody {
   email?: string | null;
   phone?: string | null;
   addressJson?: unknown;
+  remitTo?: string | null;
   notes?: string | null;
 }
 
@@ -49,6 +52,7 @@ export class VendorsController {
   constructor(
     @Inject(DRIZZLE) private readonly db: PostgresJsDatabase,
     @Inject(AuditService) private readonly audit: AuditService,
+    @Inject(ExceptionsService) private readonly exceptions: ExceptionsService,
   ) {}
 
   @Get()
@@ -91,6 +95,7 @@ export class VendorsController {
           email: body.email?.trim() || null,
           phone: body.phone?.trim() || null,
           addressJson: (body.addressJson ?? null) as never,
+          remitTo: body.remitTo?.trim() || null,
           notes: body.notes?.trim() || null,
         })
         .returning(SELECT_COLS);
@@ -136,7 +141,7 @@ export class VendorsController {
     const update: Partial<typeof schema.vendors.$inferInsert> = { updatedAt: new Date() };
     const before: Record<string, unknown> = {};
     const after: Record<string, unknown> = {};
-    for (const key of ['name', 'contactName', 'email', 'phone', 'notes'] as const) {
+    for (const key of ['name', 'contactName', 'email', 'phone', 'remitTo', 'notes'] as const) {
       const v = body[key as keyof UpdateBody];
       if (v !== undefined) {
         const next = typeof v === 'string' ? v.trim() || null : v;
@@ -180,6 +185,19 @@ export class VendorsController {
       before,
       after,
     });
+    // G11: remit-to changes are the classic vendor-master fraud —
+    // someone quietly redirects payments. Every change is a critical
+    // exception the owner sees.
+    if ('remitTo' in after) {
+      await this.exceptions.record({
+        type: 'vendor_remit_change',
+        severity: 'critical',
+        entityType: 'vendor',
+        entityId: id,
+        summary: `Remit-to changed on vendor ${existing.name}`,
+        metadata: { before: before.remitTo ?? null, after: after.remitTo ?? null },
+      });
+    }
     return updated;
   }
 
@@ -245,6 +263,7 @@ const SELECT_COLS = {
   email: schema.vendors.email,
   phone: schema.vendors.phone,
   addressJson: schema.vendors.addressJson,
+  remitTo: schema.vendors.remitTo,
   notes: schema.vendors.notes,
   isActive: schema.vendors.isActive,
   createdAt: schema.vendors.createdAt,

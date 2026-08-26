@@ -81,6 +81,8 @@ const bookkeeperPermissions: Permission[] = [
   'reports.export',
   'sales.view',
   'audit.view',
+  // Gap sprint §0.3: the books read the override/exception register.
+  'security_overrides.view',
   // §6: the books record and approve vendor invoices against POs.
   'vendor_invoices.manage',
   'purchase_orders.view',

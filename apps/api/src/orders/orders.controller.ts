@@ -34,6 +34,12 @@ import { RequirePermission, TenantScoped } from '../tenancy/decorators';
 import type { RequestTenantContext } from '../tenancy/request-context';
 import { CommissionsService } from '../money/commissions.service';
 import { StoreCreditService } from '../returns/store-credit.service';
+import { OrderReturnsService } from '../returns/order-returns.service';
+import {
+  SecurityOverrideService,
+  type OverrideCredentials,
+} from '../controls/security-override.service';
+import { ExceptionsService } from '../controls/exceptions.service';
 import { WebhookDispatcher } from '../webhooks/webhook-dispatcher.service';
 import {
   balanceDueCents,
@@ -138,6 +144,10 @@ interface CreateOrderBody extends StepThreeFees {
    * reservation, resumable by any associate, listed under status=draft.
    */
   draft?: boolean;
+  /** G6 price-variance controls: coded reason + optional manager override. */
+  priceReasonCodeId?: string;
+  priceReason?: string;
+  override?: OverrideCredentials;
 }
 
 interface UpdateOrderBody extends StepThreeFees {
@@ -159,6 +169,10 @@ interface UpdateOrderBody extends StepThreeFees {
   orderDiscountCents?: number;
   /** 'quote' → 'open' only; every other transition has its own endpoint. */
   status?: 'open';
+  /** G6 price-variance controls: coded reason + optional manager override. */
+  priceReasonCodeId?: string;
+  priceReason?: string;
+  override?: OverrideCredentials;
 }
 
 interface OrderPaymentBody {
@@ -337,6 +351,9 @@ export class OrdersController {
     @Inject(WebhookDispatcher) private readonly webhooks: WebhookDispatcher,
     @Inject(CommissionsService) private readonly commissions: CommissionsService,
     @Inject(StoreCreditService) private readonly storeCredit: StoreCreditService,
+    @Inject(SecurityOverrideService) private readonly overrides: SecurityOverrideService,
+    @Inject(OrderReturnsService) private readonly orderReturns: OrderReturnsService,
+    @Inject(ExceptionsService) private readonly exceptions: ExceptionsService,
   ) {}
 
   @Get('orders')
@@ -401,6 +418,7 @@ export class OrdersController {
     @Query('cursor') cursorStr?: string,
     @Query('status') status?: string,
     @Query('q') q?: string,
+    @Query('view') view?: string,
   ): Promise<
     PageResponse<{
       id: string;
@@ -413,12 +431,27 @@ export class OrdersController {
       salespersonName: string | null;
       totalCents: number;
       createdAt: Date;
+      lineSummary: {
+        units: number;
+        reserved: number;
+        fulfilled: number;
+        specialOrder: number;
+      } | null;
     }>
   > {
     const limit = clampLimit(limitStr);
     const cursor = decodeCursor(cursorStr);
     const filters = [];
     if (status) filters.push(eq(schema.orders.status, status));
+    // G13 saved view: "Past Due" — the most useful list in the building.
+    // Undelivered orders whose promised date has passed.
+    if (view === 'past_due') {
+      const today = new Date().toISOString().slice(0, 10);
+      filters.push(
+        inArray(schema.orders.status, ['open', 'partially_fulfilled']),
+        sql`${schema.orders.requestedDate} < ${today}`,
+      );
+    }
     if (q?.trim()) {
       const like = `%${q.trim()}%`;
       filters.push(
@@ -460,6 +493,11 @@ export class OrdersController {
     const reservedShort = new Set<string>();
     const fullyReturned = new Set<string>();
     const exchangedOriginals = new Set<string>();
+    const awaitingPickup = new Set<string>();
+    const lineSummaryByOrder = new Map<
+      string,
+      { units: number; reserved: number; fulfilled: number; specialOrder: number }
+    >();
     if (ids.length > 0) {
       const pays = await this.db
         .select({
@@ -546,6 +584,46 @@ export class OrdersController {
         if (r.originalOrderId) exchangedOriginals.add(r.originalOrderId);
       }
 
+      // G13 line-level roll-up: a 5-line order isn't one status. The
+      // list shows "3 of 5 reserved · 1 SO" style summaries per row.
+      const lineAgg = await this.db
+        .select({
+          orderId: schema.orderLines.orderId,
+          units: sql<number>`coalesce(sum(${schema.orderLines.quantity}), 0)::int`,
+          reserved: sql<number>`coalesce(sum(${schema.orderLines.qtyReserved}), 0)::int`,
+          fulfilled: sql<number>`coalesce(sum(${schema.orderLines.qtyFulfilled}), 0)::int`,
+          specialOrder: sql<number>`coalesce(sum(${schema.orderLines.quantity}) filter (where ${schema.orderLines.lineType} = 'special_order'), 0)::int`,
+        })
+        .from(schema.orderLines)
+        .where(
+          and(
+            inArray(schema.orderLines.orderId, ids),
+            sql`${schema.orderLines.lineType} != 'custom'`,
+          ),
+        )
+        .groupBy(schema.orderLines.orderId);
+      for (const a of lineAgg) {
+        lineSummaryByOrder.set(a.orderId, {
+          units: a.units,
+          reserved: a.reserved,
+          fulfilled: a.fulfilled,
+          specialOrder: a.specialOrder,
+        });
+      }
+
+      // Gap §1/§8: an authorized return whose goods haven't come back
+      // shows as "Awaiting Return Pickup" — the truck still owes a stop.
+      const openReturns = await this.db
+        .select({ orderId: schema.orderReturns.orderId })
+        .from(schema.orderReturns)
+        .where(
+          and(
+            inArray(schema.orderReturns.orderId, ids),
+            eq(schema.orderReturns.status, 'authorized'),
+          ),
+        );
+      for (const r of openReturns) awaitingPickup.add(r.orderId);
+
       // Stock lines not yet fully reserved → still "Pending".
       const shorts = await this.db
         .select({ orderId: schema.orderLines.orderId })
@@ -567,6 +645,7 @@ export class OrdersController {
       if (r.status === 'draft') displayStatus = 'Draft';
       else if (r.status === 'quote') displayStatus = 'Quote';
       else if (r.status === 'cancelled') displayStatus = 'Cancelled';
+      else if (awaitingPickup.has(r.id)) displayStatus = 'Awaiting Return Pickup';
       else if (fullyReturned.has(r.id)) displayStatus = 'Returned';
       else if (exchangedOriginals.has(r.id)) displayStatus = 'Exchanged';
       else if (r.status === 'completed' || r.status === 'fulfilled') displayStatus = 'Delivered';
@@ -585,6 +664,7 @@ export class OrdersController {
         deliveryDate: trip?.date ?? r.requestedDate,
         balanceDueCents: balance,
         salespersonName: r.salespersonName ?? null,
+        lineSummary: lineSummaryByOrder.get(r.id) ?? null,
         totalCents: r.totalCents,
         createdAt: r.createdAt,
       };
@@ -595,6 +675,193 @@ export class OrdersController {
       data: enriched,
       nextCursor: hasMore && last ? encodeCursor(last.createdAt, last.id) : null,
     };
+  }
+
+  /**
+   * G13 Auto Stock Release (STORIS "Automatic Stock Release"): dead
+   * orders sitting past their promised date stop tying up real
+   * mattresses. Releases reservations on open orders promised more than
+   * `days` ago with nothing on a truck; every release is registered.
+   * P9's scheduler will run this nightly; until then it's a button.
+   */
+  @Post('orders/auto-stock-release')
+  @RequirePermission('inventory.adjust')
+  async autoStockRelease(
+    @CurrentTenant() tenant: RequestTenantContext,
+    @CurrentUser() actor: CurrentUserPayload,
+    @Body() body: { days?: number; dryRun?: boolean },
+  ): Promise<{ released: { id: string; number: string }[]; dryRun: boolean }> {
+    const days = Number.isInteger(body.days) && (body.days ?? 0) > 0 ? (body.days as number) : 30;
+    const cutoff = new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
+    const stale = await this.db
+      .select({
+        id: schema.orders.id,
+        number: schema.orders.number,
+        locationId: schema.orders.locationId,
+      })
+      .from(schema.orders)
+      .where(
+        and(
+          eq(schema.orders.businessId, tenant.businessId!),
+          inArray(schema.orders.status, ['open', 'partially_fulfilled']),
+          sql`${schema.orders.requestedDate} < ${cutoff}`,
+          sql`${schema.orders.lockedAt} IS NULL`,
+        ),
+      )
+      .limit(50);
+
+    const released: { id: string; number: string }[] = [];
+    for (const o of stale) {
+      // Anything on a live truck stays committed.
+      const [trip] = await this.db
+        .select({ id: schema.deliveries.id })
+        .from(schema.deliveries)
+        .where(
+          and(
+            eq(schema.deliveries.orderId, o.id),
+            inArray(schema.deliveries.status, ['scheduled', 'loaded', 'out_for_delivery']),
+          ),
+        )
+        .limit(1);
+      if (trip) continue;
+      const [holding] = await this.db
+        .select({ id: schema.orderLines.id })
+        .from(schema.orderLines)
+        .where(and(eq(schema.orderLines.orderId, o.id), sql`${schema.orderLines.qtyReserved} > 0`))
+        .limit(1);
+      if (!holding) continue;
+
+      if (!body.dryRun) {
+        await this.orders.releaseOrder(this.db, {
+          businessId: tenant.businessId!,
+          orderId: o.id,
+          locationId: o.locationId,
+          actorUserId: actor?.id ?? null,
+          updateLines: true,
+        });
+        await this.audit.log({
+          action: 'order.auto_stock_release',
+          targetType: 'order',
+          targetId: o.id,
+          metadata: { days, cutoff },
+        });
+        await this.exceptions.record({
+          type: 'auto_stock_release',
+          severity: 'info',
+          entityType: 'order',
+          entityId: o.id,
+          summary: `Order ${o.number} released its stock — promised over ${days} days ago with no truck booked`,
+        });
+      }
+      released.push({ id: o.id, number: o.number });
+    }
+    return { released, dryRun: Boolean(body.dryRun) };
+  }
+
+  /**
+   * G13 reservation-drift reconciliation: phantom reservations are
+   * silent and they compound. SUM(order_lines.qty_reserved) per
+   * variant+location must equal inventory_levels.reserved; anything
+   * else is drift worth an alert.
+   */
+  @Get('orders/reservation-drift')
+  @RequirePermission('reports.inventory.view')
+  async reservationDrift(@CurrentTenant() tenant: RequestTenantContext): Promise<
+    {
+      variantId: string;
+      sku: string | null;
+      locationId: string;
+      lineReserved: number;
+      levelReserved: number;
+      driftUnits: number;
+    }[]
+  > {
+    const rows = await this.db.execute(sql`
+      WITH line_side AS (
+        SELECT o.location_id, ol.variant_id, SUM(ol.qty_reserved)::int AS line_reserved
+        FROM order_lines ol
+        JOIN orders o ON o.id = ol.order_id
+        WHERE ol.business_id = ${tenant.businessId}
+          AND ol.variant_id IS NOT NULL
+        GROUP BY o.location_id, ol.variant_id
+      )
+      SELECT
+        COALESCE(ls.variant_id, il.variant_id) AS variant_id,
+        pv.sku,
+        COALESCE(ls.location_id, il.location_id) AS location_id,
+        COALESCE(ls.line_reserved, 0) AS line_reserved,
+        COALESCE(il.reserved, 0) AS level_reserved
+      FROM line_side ls
+      FULL OUTER JOIN inventory_levels il
+        ON il.variant_id = ls.variant_id AND il.location_id = ls.location_id
+        AND il.business_id = ${tenant.businessId}
+      LEFT JOIN product_variants pv ON pv.id = COALESCE(ls.variant_id, il.variant_id)
+      WHERE COALESCE(ls.line_reserved, 0) != COALESCE(il.reserved, 0)
+    `);
+    return (rows as unknown as Record<string, unknown>[]).map((r) => ({
+      variantId: String(r.variant_id),
+      sku: (r.sku as string | null) ?? null,
+      locationId: String(r.location_id),
+      lineReserved: Number(r.line_reserved),
+      levelReserved: Number(r.level_reserved),
+      driftUnits: Number(r.line_reserved) - Number(r.level_reserved),
+    }));
+  }
+
+  /**
+   * G14 duplicate-order detection (STORIS: prompts to consolidate
+   * delivery dates): the customer's open orders with their promised /
+   * scheduled dates, so New Sale can warn "this house already has a
+   * truck coming" before a second one gets booked.
+   */
+  @Get('customers/:customerId/open-orders')
+  @RequirePermission('orders.view')
+  async openOrdersFor(
+    @CurrentTenant() _tenant: RequestTenantContext,
+    @Param('customerId') customerId: string,
+  ): Promise<
+    { id: string; number: string; requestedDate: string | null; deliveryDate: string | null }[]
+  > {
+    const rows = await this.db
+      .select({
+        id: schema.orders.id,
+        number: schema.orders.number,
+        requestedDate: schema.orders.requestedDate,
+      })
+      .from(schema.orders)
+      .where(
+        and(
+          eq(schema.orders.customerId, customerId),
+          inArray(schema.orders.status, ['open', 'partially_fulfilled']),
+        ),
+      )
+      .orderBy(desc(schema.orders.createdAt))
+      .limit(20);
+    if (rows.length === 0) return [];
+    const trips = await this.db
+      .select({
+        orderId: schema.deliveries.orderId,
+        scheduledDate: schema.deliveries.scheduledDate,
+      })
+      .from(schema.deliveries)
+      .where(
+        and(
+          inArray(
+            schema.deliveries.orderId,
+            rows.map((r) => r.id),
+          ),
+          inArray(schema.deliveries.status, ['scheduled', 'loaded', 'out_for_delivery']),
+        ),
+      );
+    const tripByOrder = new Map<string, string>();
+    for (const t of trips) {
+      const cur = tripByOrder.get(t.orderId);
+      if (!cur || t.scheduledDate < cur) tripByOrder.set(t.orderId, t.scheduledDate);
+    }
+    return rows.map((r) => ({
+      ...r,
+      deliveryDate: tripByOrder.get(r.id) ?? null,
+    }));
   }
 
   @Get('orders/:id')
@@ -678,6 +945,14 @@ export class OrdersController {
     }
 
     const priced = await this.priceLines(tenant, body.locationId, body.lines);
+    // Drafts skip the variance gate; it re-runs when the draft is
+    // completed through this endpoint again (drafts are superseded by a
+    // fresh create, never confirmed in place).
+    if (!body.draft) {
+      await this.enforcePriceVariance(tenant, priced, orderDiscountCents, body, {
+        action: 'Write order below list price',
+      });
+    }
 
     const number = await this.orders.generateOrderNumber(
       this.db,
@@ -781,6 +1056,28 @@ export class OrdersController {
       },
     });
 
+    // G6 (§5): the CA recycling fee is a state-mandated pass-through. A
+    // qualifying order written without one registers an exception — the
+    // removal shows up in the digest whether or not the UI prompted.
+    if (!body.draft) {
+      const RECYCLING_KEYWORDS = /mattress|foundation|adjustable base|box spring/i;
+      const qualifies = priced.some(
+        (l) => l.lineType !== 'custom' && RECYCLING_KEYWORDS.test(l.description),
+      );
+      const hasFee = priced.some(
+        (l) => l.lineType === 'custom' && /recycling/i.test(l.description),
+      );
+      if (qualifies && !hasFee) {
+        await this.exceptions.record({
+          type: 'recycling_fee_removed',
+          severity: 'info',
+          entityType: 'order',
+          entityId: order.id,
+          summary: `Order ${order.number} has qualifying units but no recycling fee`,
+        });
+      }
+    }
+
     const detail = await this.loadDetail(order.id);
     this.fireOrderEvent('order.created', tenant.businessId!, detail);
     return detail;
@@ -795,7 +1092,20 @@ export class OrdersController {
     @Body() body: UpdateOrderBody,
   ): Promise<OrderDetail> {
     const order = await this.requireLiveOrder(id);
-    this.assertUnlocked(order);
+    // G9 (§3): the locked-state allowlist. If staff must unlock to fix
+    // a phone number, unlocking becomes routine and the lock is
+    // worthless — contact/notes fixes pass through the lock.
+    const SAFE_WHILE_LOCKED = new Set([
+      'deliveryInstructions',
+      'notes',
+      'internalNotes',
+      'address',
+    ]);
+    const touchesGuardedFields = Object.keys(body).some((k) => !SAFE_WHILE_LOCKED.has(k));
+    if (touchesGuardedFields) {
+      this.assertUnlocked(order);
+      await this.assertNotOnOpenRun(id);
+    }
 
     const patch: Record<string, unknown> = { updatedAt: new Date() };
     if (body.fulfillmentType !== undefined) {
@@ -887,6 +1197,23 @@ export class OrdersController {
       repriced = true;
     }
 
+    // G6: a raised order discount, or completing a parked draft/quote,
+    // re-runs the price-variance gate against catalog list prices.
+    if (
+      (body.orderDiscountCents !== undefined &&
+        body.orderDiscountCents > order.orderDiscountCents) ||
+      (body.status === 'open' && (order.status === 'draft' || order.status === 'quote'))
+    ) {
+      const lines = await this.varianceLinesFor(id);
+      await this.enforcePriceVariance(
+        tenant,
+        lines,
+        body.orderDiscountCents ?? order.orderDiscountCents,
+        body,
+        { action: `Discount order ${order.number}`, entityType: 'order', entityId: id },
+      );
+    }
+
     await this.db.update(schema.orders).set(patch).where(eq(schema.orders.id, id));
     if (repriced) await this.orders.recomputeTotals(this.db, id);
 
@@ -926,11 +1253,24 @@ export class OrdersController {
     @CurrentTenant() tenant: RequestTenantContext,
     @CurrentUser() actor: CurrentUserPayload,
     @Param('id') id: string,
-    @Body() body: OrderLineInput,
+    @Body()
+    body: OrderLineInput & {
+      priceReasonCodeId?: string;
+      priceReason?: string;
+      override?: OverrideCredentials;
+    },
   ): Promise<OrderDetail> {
     const order = await this.requireLiveOrder(id);
     this.assertUnlocked(order);
+    await this.assertNotOnOpenRun(id);
     const [priced] = await this.priceLines(tenant, order.locationId, [body]);
+    if (order.status !== 'draft') {
+      await this.enforcePriceVariance(tenant, [priced!], 0, body, {
+        action: `Add discounted line to ${order.number}`,
+        entityType: 'order',
+        entityId: id,
+      });
+    }
 
     const [line] = await this.db
       .insert(schema.orderLines)
@@ -984,6 +1324,7 @@ export class OrdersController {
   ): Promise<OrderDetail> {
     const order = await this.requireLiveOrder(id);
     this.assertUnlocked(order);
+    await this.assertNotOnOpenRun(id);
     const [line] = await this.db
       .select()
       .from(schema.orderLines)
@@ -1139,6 +1480,31 @@ export class OrdersController {
     // Infer the kind: the first money in is the deposit, the rest is
     // balance. An explicit kind (an installment against a plan) wins.
     const kind = body.kind ?? (paidCents(existing) === 0 ? 'deposit' : 'balance');
+
+    // G6 (§5): the layaway minimum deposit ($100, or the full balance if
+    // smaller) is enforced at save, not just in the UI. A manager can
+    // authorize a smaller deposit at the point of action.
+    const LAYAWAY_MIN_DEPOSIT_CENTS = 10000;
+    if (
+      order.orderKind === 'layaway' &&
+      kind === 'deposit' &&
+      body.amountCents < Math.min(LAYAWAY_MIN_DEPOSIT_CENTS, due)
+    ) {
+      await this.overrides.require({
+        permission: 'orders.complete_with_balance',
+        action: `Layaway deposit below the $100 minimum on ${order.number}`,
+        entityType: 'order',
+        entityId: id,
+        override: (body as { override?: OverrideCredentials }).override,
+      });
+      await this.exceptions.record({
+        type: 'layaway_min_deposit_override',
+        severity: 'info',
+        entityType: 'order',
+        entityId: id,
+        summary: `Layaway ${order.number} opened with a $${(body.amountCents / 100).toFixed(2)} deposit (min $100)`,
+      });
+    }
 
     // Money down means the customer committed, so a quote becomes an open
     // order and commits its stock here. Taking a deposit is one action at
@@ -1433,6 +1799,7 @@ export class OrdersController {
       throw new BadRequestException('A completed order cannot be cancelled — refund it instead');
     }
     this.assertUnlocked(order);
+    await this.assertNotOnOpenRun(id);
 
     const payments = await this.db
       .select({ amountCents: schema.payments.amountCents, status: schema.payments.status })
@@ -1484,9 +1851,10 @@ export class OrdersController {
   @Post('orders/:id/delivery-ticket-print')
   @RequirePermission('orders.update')
   async deliveryTicketPrint(
-    @CurrentTenant() _tenant: RequestTenantContext,
+    @CurrentTenant() tenant: RequestTenantContext,
     @Param('id') id: string,
-  ): Promise<{ lockedAt: Date | null }> {
+    @Body() body: { override?: OverrideCredentials },
+  ): Promise<{ lockedAt: Date | null; copyNumber: number }> {
     const [order] = await this.db
       .select()
       .from(schema.orders)
@@ -1494,65 +1862,225 @@ export class OrdersController {
       .limit(1);
     if (!order) throw new NotFoundException('Order not found');
 
-    if (!isLiveOrderStatus(order.status)) return { lockedAt: order.lockedAt };
+    if (!isLiveOrderStatus(order.status)) {
+      return { lockedAt: order.lockedAt, copyNumber: order.ticketPrintCount };
+    }
+
+    // G9 / STORIS print preconditions — enforced server-side, reported
+    // as a pass/fail checklist so the blocked user knows exactly why.
+    const checks: { check: string; ok: boolean; detail: string }[] = [];
+    const lines = await this.db
+      .select({
+        lineType: schema.orderLines.lineType,
+        quantity: schema.orderLines.quantity,
+        qtyReserved: schema.orderLines.qtyReserved,
+        qtyFulfilled: schema.orderLines.qtyFulfilled,
+        description: schema.orderLines.description,
+      })
+      .from(schema.orderLines)
+      .where(eq(schema.orderLines.orderId, id));
+    const shortLines = lines.filter(
+      (l) => l.lineType === 'stock' && l.qtyReserved + l.qtyFulfilled < l.quantity,
+    );
+    checks.push({
+      check: 'merchandise_reserved',
+      ok: shortLines.length === 0,
+      detail:
+        shortLines.length === 0
+          ? 'All stock lines reserved'
+          : `Not reserved: ${shortLines.map((l) => l.description).join(', ')}`,
+    });
+
+    if (order.fulfillmentType === 'delivery') {
+      const [trip] = await this.db
+        .select({ id: schema.deliveries.id })
+        .from(schema.deliveries)
+        .where(
+          and(
+            eq(schema.deliveries.orderId, id),
+            inArray(schema.deliveries.status, ['scheduled', 'loaded', 'out_for_delivery']),
+          ),
+        )
+        .limit(1);
+      checks.push({
+        check: 'scheduled_date',
+        ok: Boolean(trip),
+        detail: trip ? 'Delivery scheduled' : 'No scheduled delivery on this order',
+      });
+    } else {
+      checks.push({
+        check: 'scheduled_date',
+        ok: Boolean(order.requestedDate),
+        detail: order.requestedDate ? `Promised ${order.requestedDate}` : 'No promised date set',
+      });
+    }
+
+    const payments = await this.db
+      .select({ amountCents: schema.payments.amountCents, status: schema.payments.status })
+      .from(schema.payments)
+      .where(eq(schema.payments.orderId, id));
+    const balance = Math.max(0, order.totalCents - paidCents(payments));
+    const [biz] = await this.db
+      .select({ opsSettingsJson: schema.businesses.opsSettingsJson })
+      .from(schema.businesses)
+      .where(eq(schema.businesses.id, tenant.businessId!))
+      .limit(1);
+    const maxBalance = (
+      (biz?.opsSettingsJson ?? {}) as { maxBalanceForTicketPrintCents?: number | null }
+    ).maxBalanceForTicketPrintCents;
+    const overBalance = maxBalance != null && balance > maxBalance;
+    checks.push({
+      check: 'balance_cap',
+      ok: !overBalance,
+      detail: overBalance
+        ? `Balance due $${(balance / 100).toFixed(2)} exceeds the $${((maxBalance ?? 0) / 100).toFixed(2)} ticket cap`
+        : `Balance due $${(balance / 100).toFixed(2)}`,
+    });
+
+    const hardBlocked = checks.some((c) => !c.ok && c.check !== 'balance_cap');
+    if (hardBlocked) {
+      throw new ConflictException({
+        statusCode: 409,
+        code: 'PRINT_BLOCKED',
+        message: 'The delivery ticket cannot print yet',
+        checks,
+      });
+    }
+    if (overBalance) {
+      // The balance cap alone has an override path — a manager can
+      // release the ticket (STORIS Maximum Balance behavior).
+      await this.overrides.require({
+        permission: 'orders.complete_with_balance',
+        action: `Print delivery ticket for ${order.number} with $${(balance / 100).toFixed(2)} still due`,
+        entityType: 'order',
+        entityId: id,
+        override: body.override,
+      });
+    }
 
     const lockedAt = new Date();
+    const copyNumber = order.ticketPrintCount + 1;
     await this.db
       .update(schema.orders)
-      .set({ lockedAt, updatedAt: lockedAt })
+      .set({ lockedAt, ticketPrintCount: copyNumber, relockAt: null, updatedAt: lockedAt })
       .where(eq(schema.orders.id, id));
     await this.audit.log({
       action: 'order.lock',
       targetType: 'order',
       targetId: id,
-      metadata: { trigger: 'delivery_ticket_print' },
+      metadata: { trigger: 'delivery_ticket_print', copyNumber },
     });
-    return { lockedAt };
+    if (copyNumber > 1) {
+      // Reprints are how goods walk out twice — every copy 2+ is on
+      // the register.
+      await this.exceptions.record({
+        type: 'ticket_reprint',
+        severity: 'info',
+        entityType: 'order',
+        entityId: id,
+        summary: `Delivery ticket for ${order.number} printed again (copy ${copyNumber})`,
+        metadata: { copyNumber },
+      });
+    }
+    return { lockedAt, copyNumber };
   }
 
   /**
-   * Clear the A1 print lock. Its own permission (`orders.unlock`, Owner
-   * and Manager by default — the §2 matrix and per-user overrides let
-   * the owner choose exactly who) and a typed reason are both required;
-   * the reason lands in the audit log and therefore in the owner
-   * dashboard notifications feed.
+   * Clear the A1 print lock. Gated on `orders.unlock` at the point of
+   * action (PLAN-STORIS-GAP §0.1): a user holding the permission
+   * proceeds; a user without it gets 403 OVERRIDE_REQUIRED and can
+   * retry under an authorized user's credentials — the override is
+   * stamped in the security_overrides register with both identities.
+   * The reason is coded (class `exception`) once the business has codes
+   * defined; free text is the transitional fallback (A9).
    */
   @Post('orders/:id/unlock')
-  @RequirePermission('orders.unlock')
   async unlock(
     @CurrentTenant() _tenant: RequestTenantContext,
     @Param('id') id: string,
-    @Body() body: { reason?: string },
+    @Body() body: { reason?: string; reasonCodeId?: string; override?: OverrideCredentials },
   ): Promise<OrderDetail> {
-    const reason = body.reason?.trim();
-    if (!reason) throw new BadRequestException('A reason is required to unlock an order');
     const [order] = await this.db
       .select()
       .from(schema.orders)
       .where(eq(schema.orders.id, id))
       .limit(1);
     if (!order) throw new NotFoundException('Order not found');
-    if (!order.lockedAt) throw new BadRequestException('Order is not locked');
+    const relockEngaged =
+      order.ticketPrintCount > 0 && order.relockAt != null && order.relockAt.getTime() < Date.now();
+    if (!order.lockedAt && !relockEngaged) {
+      throw new BadRequestException('Order is not locked');
+    }
+    // A5: while manifested on an open run there is no unlock — the run
+    // is the hard lock; pull the order off the run first.
+    await this.assertNotOnOpenRun(id);
+
+    const overrideResult = await this.overrides.require({
+      permission: 'orders.unlock',
+      action: `Unlock printed order ${order.number}`,
+      entityType: 'order',
+      entityId: id,
+      before: { lockedAt: order.lockedAt?.toISOString() ?? 'relock_engaged' },
+      after: { lockedAt: null },
+      override: body.override,
+    });
+    const reason = await this.overrides.resolveReason('exception', {
+      reasonCodeId: body.reasonCodeId ?? body.override?.reasonCodeId,
+      reason: body.reason ?? body.override?.reason,
+    });
 
     await this.db
       .update(schema.orders)
-      .set({ lockedAt: null, updatedAt: new Date() })
+      // G9: the unlock is a 15-minute window — past relockAt the lock
+      // lazily re-engages (assertUnlocked derives it, no cron).
+      .set({
+        lockedAt: null,
+        relockAt: new Date(Date.now() + 15 * 60 * 1000),
+        updatedAt: new Date(),
+      })
       .where(eq(schema.orders.id, id));
     await this.audit.log({
       action: 'order.unlock',
       targetType: 'order',
       targetId: id,
-      metadata: { reason },
+      metadata: {
+        reason: reason.reasonText,
+        reasonCode: reason.reasonCode,
+        ...(overrideResult.overridden
+          ? { authorizingUserId: overrideResult.authorizingUserId }
+          : {}),
+      },
+    });
+    // G9 escalation: the 3rd unlock on the same order stops being
+    // routine — it goes to the register as critical.
+    const [unlockCountRow] = await this.db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(schema.auditLogs)
+      .where(and(eq(schema.auditLogs.targetId, id), eq(schema.auditLogs.action, 'order.unlock')));
+    const unlockCount = unlockCountRow?.count ?? 1;
+    await this.exceptions.record({
+      type: 'order_unlock',
+      severity: unlockCount >= 3 ? 'critical' : 'warning',
+      entityType: 'order',
+      entityId: id,
+      summary:
+        unlockCount >= 3
+          ? `Order ${order.number} unlocked for the ${unlockCount}th time — review this order`
+          : `Order ${order.number} unlocked after ticket print`,
+      metadata: { reason: reason.reasonText, reasonCode: reason.reasonCode, unlockCount },
     });
     return this.loadDetail(id);
   }
 
   /**
-   * §10 return: goods come back, money goes out, and every returned
-   * unit lands in the As-Is queue — never straight back to sellable
-   * stock. No restocking fee. Refunds reverse the original tenders
-   * proportionally (negative payment rows, newest tender first) or land
-   * on the customer's store-credit ledger.
+   * §10 / gap A7 return authorization: the return document is written
+   * here — lines, per-line coded reasons (class `return`), refund
+   * method, RMA number — but no money moves and no inventory changes.
+   * The refund fires when the goods are physically received back
+   * (`POST /v1/order-returns/:id/receive`). The one exception is a
+   * counter drop-off (`fulfillment: 'drop_off'`, the default — goods in
+   * hand): authorization and receipt happen in the same request and the
+   * refund is immediate, flagged as drop-off on the record.
    */
   @Post('orders/:id/return')
   @RequirePermission('pos.refund.create')
@@ -1562,13 +2090,18 @@ export class OrdersController {
     @Param('id') id: string,
     @Body()
     body: {
-      lines?: { lineId?: string; quantity?: number }[];
+      lines?: { lineId?: string; quantity?: number; reasonCodeId?: string; reason?: string }[];
       refundMethod?: 'original' | 'store_credit';
+      fulfillment?: 'drop_off' | 'pickup';
       reason?: string | null;
     },
   ): Promise<OrderDetail> {
     if (!body.lines || body.lines.length === 0) {
       throw new BadRequestException('lines must contain at least one entry');
+    }
+    const fulfillment = body.fulfillment ?? 'drop_off';
+    if (!['drop_off', 'pickup'].includes(fulfillment)) {
+      throw new BadRequestException('fulfillment must be drop_off or pickup');
     }
     const [order] = await this.db
       .select()
@@ -1586,8 +2119,31 @@ export class OrdersController {
       .where(eq(schema.orderLines.orderId, id));
     const byId = new Map(lines.map((l) => [l.id, l]));
 
+    // Units already spoken for by open (authorized) returns count
+    // against what's still returnable.
+    const openReturns = await this.db
+      .select({
+        orderLineId: schema.orderReturnLines.orderLineId,
+        quantity: schema.orderReturnLines.quantity,
+      })
+      .from(schema.orderReturnLines)
+      .innerJoin(schema.orderReturns, eq(schema.orderReturns.id, schema.orderReturnLines.returnId))
+      .where(
+        and(eq(schema.orderReturns.orderId, id), eq(schema.orderReturns.status, 'authorized')),
+      );
+    const pendingByLine = new Map<string, number>();
+    for (const r of openReturns) {
+      pendingByLine.set(r.orderLineId, (pendingByLine.get(r.orderLineId) ?? 0) + r.quantity);
+    }
+
     let amountCents = 0;
-    const validated: { line: (typeof lines)[number]; quantity: number; perUnit: number }[] = [];
+    const validated: {
+      line: (typeof lines)[number];
+      quantity: number;
+      perUnit: number;
+      reasonCodeId: string | null;
+      reason: string | null;
+    }[] = [];
     for (const r of body.lines) {
       if (!r.lineId) throw new BadRequestException('lines[].lineId is required');
       const line = byId.get(r.lineId);
@@ -1595,95 +2151,97 @@ export class OrdersController {
       if (!Number.isInteger(r.quantity) || (r.quantity ?? 0) <= 0) {
         throw new BadRequestException('lines[].quantity must be a positive integer');
       }
-      const returnable = line.qtyFulfilled - line.qtyReturned;
+      const returnable = line.qtyFulfilled - line.qtyReturned - (pendingByLine.get(line.id) ?? 0);
       if (r.quantity! > returnable) {
         throw new BadRequestException(
           `Cannot return ${r.quantity} of line ${line.id}: only ${returnable} delivered unit(s) remain returnable`,
         );
       }
+      // Coded per-line return reason (mandatory once class `return` has
+      // codes; the shared free-text reason is the A9 fallback).
+      const lineReason = await this.overrides.resolveReason(
+        'return',
+        { reasonCodeId: r.reasonCodeId, reason: r.reason ?? body.reason ?? null },
+        { required: false },
+      );
       // Refund what the customer actually paid for the unit: the line
       // total plus its tax share (order lines keep tax separately).
       const perUnit = Math.round((line.totalCents + line.taxCents) / line.quantity);
-      validated.push({ line, quantity: r.quantity!, perUnit });
+      validated.push({
+        line,
+        quantity: r.quantity!,
+        perUnit,
+        reasonCodeId: lineReason.reasonCodeId,
+        reason: lineReason.reasonText,
+      });
       amountCents += perUnit * r.quantity!;
     }
 
+    // Authorization-time sanity check on an original-tender refund; the
+    // binding check re-runs at goods receipt.
     const toStoreCredit = body.refundMethod === 'store_credit';
-    const payments = await this.db
-      .select()
-      .from(schema.payments)
-      .where(eq(schema.payments.orderId, id))
-      .orderBy(desc(schema.payments.createdAt));
-    const collected = paidCents(payments);
-    if (!toStoreCredit && amountCents > collected) {
-      throw new BadRequestException(
-        `Refund (${amountCents}) exceeds the money collected (${collected}) — use store credit for the difference`,
-      );
-    }
-
-    // Goods: bump the returned counters and stage everything in As-Is.
-    for (const v of validated) {
-      await this.db
-        .update(schema.orderLines)
-        .set({ qtyReturned: v.line.qtyReturned + v.quantity })
-        .where(eq(schema.orderLines.id, v.line.id));
-      if (v.line.variantId) {
-        await this.db.insert(schema.asIsItems).values({
-          businessId: tenant.businessId!,
-          variantId: v.line.variantId,
-          locationId: order.locationId,
-          quantity: v.quantity,
-          source: 'return',
-          referenceType: 'order',
-          referenceId: order.id,
-          notes: body.reason ?? null,
-        });
+    if (!toStoreCredit) {
+      const payments = await this.db
+        .select()
+        .from(schema.payments)
+        .where(eq(schema.payments.orderId, id));
+      const collected = paidCents(payments);
+      if (amountCents > collected) {
+        throw new BadRequestException(
+          `Refund (${amountCents}) exceeds the money collected (${collected}) — use store credit for the difference`,
+        );
       }
     }
 
-    // Money: proportional-enough reversal — walk the original tenders
-    // newest first, writing negative payment rows until the refund is
-    // covered (mirrors the sales refund's allocation order).
-    if (toStoreCredit) {
-      await this.storeCredit.issue(this.db, {
+    const priorReturns = await this.db
+      .select({ id: schema.orderReturns.id })
+      .from(schema.orderReturns)
+      .where(eq(schema.orderReturns.orderId, id));
+    const rmaNumber = `RMA-${order.number}-${priorReturns.length + 1}`;
+
+    const [ret] = await this.db
+      .insert(schema.orderReturns)
+      .values({
         businessId: tenant.businessId!,
-        customerId: order.customerId,
+        orderId: id,
+        rmaNumber,
+        status: 'authorized',
+        fulfillment,
+        refundMethod: toStoreCredit ? 'store_credit' : 'original',
         amountCents,
-        reason: body.reason ?? `Return on ${order.number}`,
-        referenceType: 'order_return',
-        referenceId: order.id,
-        actorUserId: actor?.id ?? null,
-      });
-    } else {
-      let remaining = amountCents;
-      for (const p of payments) {
-        if (remaining <= 0) break;
-        if (p.status !== 'succeeded' || p.amountCents <= 0) continue;
-        const slice = Math.min(remaining, p.amountCents);
-        await this.db.insert(schema.payments).values({
-          businessId: tenant.businessId!,
-          saleId: null,
-          orderId: id,
-          kind: 'refund',
-          method: p.method,
-          amountCents: -slice,
-          status: 'succeeded',
-        });
-        remaining -= slice;
-      }
-    }
-
+        reason: body.reason ?? null,
+        createdByUserId: actor?.id ?? null,
+      })
+      .returning();
+    await this.db.insert(schema.orderReturnLines).values(
+      validated.map((v) => ({
+        businessId: tenant.businessId!,
+        returnId: ret!.id,
+        orderLineId: v.line.id,
+        quantity: v.quantity,
+        perUnitCents: v.perUnit,
+        reasonCodeId: v.reasonCodeId,
+        reason: v.reason,
+      })),
+    );
     await this.audit.log({
-      action: 'order.return',
+      action: 'order.return_authorized',
       targetType: 'order',
       targetId: id,
       after: {
+        rmaNumber,
         amountCents,
         refundMethod: toStoreCredit ? 'store_credit' : 'original',
+        fulfillment,
         unitCount: validated.reduce((s, v) => s + v.quantity, 0),
         reason: body.reason ?? null,
       },
     });
+
+    // Drop-off: the goods are in hand — receive (and refund) now.
+    if (fulfillment === 'drop_off') {
+      await this.orderReturns.receiveGoods(ret!.id, actor?.id ?? null);
+    }
     return this.loadDetail(id);
   }
 
@@ -1699,14 +2257,22 @@ export class OrdersController {
     @CurrentUser() actor: CurrentUserPayload,
     @Param('id') id: string,
     @Body()
-    body: { amountCents?: number; reason?: string; refundMethod?: 'original' | 'store_credit' },
+    body: {
+      amountCents?: number;
+      reason?: string;
+      reasonCodeId?: string;
+      refundMethod?: 'original' | 'store_credit';
+    },
   ): Promise<OrderDetail> {
     if (!Number.isInteger(body.amountCents) || (body.amountCents ?? 0) <= 0) {
       throw new BadRequestException('amountCents must be a positive integer');
     }
-    if (!body.reason?.trim()) {
-      throw new BadRequestException('A reason is required for a price adjustment');
-    }
+    // Coded reason (class `adjustment`) once the registry has codes;
+    // free text stays as the transitional fallback (gap amendment A9).
+    const adjReason = await this.overrides.resolveReason('adjustment', {
+      reasonCodeId: body.reasonCodeId,
+      reason: body.reason,
+    });
     const [order] = await this.db
       .select()
       .from(schema.orders)
@@ -1732,7 +2298,7 @@ export class OrdersController {
         businessId: tenant.businessId!,
         customerId: order.customerId,
         amountCents: body.amountCents!,
-        reason: body.reason.trim(),
+        reason: adjReason.reasonText ?? adjReason.reasonCode ?? 'price adjustment',
         referenceType: 'order_return',
         referenceId: order.id,
         actorUserId: actor?.id ?? null,
@@ -1763,7 +2329,8 @@ export class OrdersController {
       after: {
         amountCents: body.amountCents,
         refundMethod: toStoreCredit ? 'store_credit' : 'original',
-        reason: body.reason.trim(),
+        reason: adjReason.reasonText,
+        reasonCode: adjReason.reasonCode,
       },
     });
     return this.loadDetail(id);
@@ -1989,6 +2556,9 @@ export class OrdersController {
       lineType: string;
       taxRateBps: number;
       taxClassId: string | null;
+      /** Catalog list price (variance basis); custom lines = as entered. */
+      listPriceCents: number;
+      costCents: number | null;
     }[]
   > {
     for (const l of inputs) {
@@ -2022,6 +2592,7 @@ export class OrdersController {
       .select({
         id: schema.productVariants.id,
         priceCents: schema.productVariants.priceCents,
+        costCents: schema.productVariants.costCents,
         productName: schema.products.name,
         variantName: schema.productVariants.name,
         taxClassId: schema.products.taxClassId,
@@ -2086,6 +2657,8 @@ export class OrdersController {
           lineType: 'custom',
           taxRateBps: 0,
           taxClassId: null,
+          listPriceCents: l.unitPriceCents!,
+          costCents: null,
         };
       }
       const v = byId.get(l.variantId)!;
@@ -2103,7 +2676,161 @@ export class OrdersController {
           v.taxClassFallbackRateBps ??
           fallbackRateBps!,
         taxClassId: v.taxClassId,
+        listPriceCents: v.priceCents,
+        costCents: v.costCents ?? null,
       };
+    });
+  }
+
+  /** Load an order's lines shaped for the variance gate. */
+  private async varianceLinesFor(orderId: string): Promise<
+    {
+      quantity: number;
+      unitPriceCents: number;
+      lineDiscountCents: number;
+      lineType: string;
+      listPriceCents: number;
+      costCents: number | null;
+      description: string;
+    }[]
+  > {
+    const rows = await this.db
+      .select({
+        quantity: schema.orderLines.quantity,
+        unitPriceCents: schema.orderLines.unitPriceCents,
+        discountCents: schema.orderLines.discountCents,
+        lineType: schema.orderLines.lineType,
+        description: schema.orderLines.description,
+        listPriceCents: schema.productVariants.priceCents,
+        costCents: schema.productVariants.costCents,
+      })
+      .from(schema.orderLines)
+      .leftJoin(schema.productVariants, eq(schema.productVariants.id, schema.orderLines.variantId))
+      .where(eq(schema.orderLines.orderId, orderId));
+    return rows.map((l) => ({
+      quantity: l.quantity,
+      unitPriceCents: l.unitPriceCents,
+      lineDiscountCents: l.discountCents,
+      lineType: l.lineType,
+      listPriceCents: l.listPriceCents ?? l.unitPriceCents,
+      costCents: l.costCents ?? null,
+      description: l.description,
+    }));
+  }
+
+  /**
+   * G6 three-tier price variance (PLAN-STORIS-GAP §5 / amendment A6),
+   * applied to line price overrides, line discounts, and the order
+   * discount against catalog list prices:
+   *
+   *   tier 1 — ≤ tier1Pct (5%) OR ≤ tier1MaxCents ($50): logged only.
+   *   tier 2 — up to tier2Pct (15%): a coded reason is required
+   *            (class `exception`) and the discount hits the register.
+   *   tier 3 — beyond tier2Pct, or selling below cost: a manager
+   *            security override (`orders.price_override`) on top.
+   *
+   * Thresholds are admin-editable via ops settings `priceVariance`.
+   */
+  private async enforcePriceVariance(
+    tenant: RequestTenantContext,
+    priced: readonly {
+      quantity: number;
+      unitPriceCents: number;
+      lineDiscountCents: number;
+      lineType: string;
+      listPriceCents: number;
+      costCents: number | null;
+      description: string;
+    }[],
+    orderDiscountCents: number,
+    body: { priceReasonCodeId?: string; priceReason?: string; override?: OverrideCredentials },
+    context: { action: string; entityType?: string; entityId?: string },
+  ): Promise<void> {
+    const [biz] = await this.db
+      .select({ opsSettingsJson: schema.businesses.opsSettingsJson })
+      .from(schema.businesses)
+      .where(eq(schema.businesses.id, tenant.businessId!))
+      .limit(1);
+    const pv = (
+      (biz?.opsSettingsJson ?? {}) as {
+        priceVariance?: { tier1Pct?: number; tier1MaxCents?: number; tier2Pct?: number } | null;
+      }
+    ).priceVariance;
+    const tier1Pct = pv?.tier1Pct ?? 5;
+    const tier1MaxCents = pv?.tier1MaxCents ?? 5000;
+    const tier2Pct = pv?.tier2Pct ?? 15;
+
+    let worstTier = 1;
+    let belowCost = false;
+    let totalDiscountCents = 0;
+    let listTotalCents = 0;
+    const flagged: string[] = [];
+
+    for (const l of priced) {
+      if (l.lineType === 'custom') continue;
+      const listTotal = l.listPriceCents * l.quantity;
+      listTotalCents += listTotal;
+      const effectiveTotal = l.unitPriceCents * l.quantity - l.lineDiscountCents;
+      const discount = listTotal - effectiveTotal;
+      if (discount <= 0) continue;
+      totalDiscountCents += discount;
+      const pct = listTotal > 0 ? (discount / listTotal) * 100 : 0;
+      const lineBelowCost = l.costCents != null && effectiveTotal / l.quantity < l.costCents;
+      if (lineBelowCost) belowCost = true;
+      const tier =
+        pct > tier2Pct || lineBelowCost ? 3 : pct > tier1Pct && discount > tier1MaxCents ? 2 : 1;
+      if (tier > 1) flagged.push(`${l.description}: -${pct.toFixed(1)}%`);
+      worstTier = Math.max(worstTier, tier);
+    }
+    if (orderDiscountCents > 0 && listTotalCents > 0) {
+      const pct = (orderDiscountCents / listTotalCents) * 100;
+      const tier =
+        pct > tier2Pct ? 3 : pct > tier1Pct && orderDiscountCents > tier1MaxCents ? 2 : 1;
+      if (tier > 1) flagged.push(`order discount: -${pct.toFixed(1)}%`);
+      worstTier = Math.max(worstTier, tier);
+      totalDiscountCents += orderDiscountCents;
+    }
+    if (worstTier === 1) return;
+
+    if (worstTier === 3) {
+      await this.overrides.require({
+        permission: 'orders.price_override',
+        action: `${context.action}: ${flagged.join('; ')}${belowCost ? ' (below cost)' : ''}`,
+        entityType: context.entityType,
+        entityId: context.entityId,
+        override: body.override,
+      });
+    }
+    if (
+      !body.priceReasonCodeId &&
+      !body.priceReason?.trim() &&
+      !body.override?.reasonCodeId &&
+      !body.override?.reason?.trim()
+    ) {
+      throw new BadRequestException({
+        statusCode: 400,
+        code: 'REASON_REQUIRED',
+        usageClass: 'exception',
+        message: `This discount (${flagged.join('; ')}) needs a reason`,
+      });
+    }
+    const reason = await this.overrides.resolveReason('exception', {
+      reasonCodeId: body.priceReasonCodeId ?? body.override?.reasonCodeId,
+      reason: body.priceReason ?? body.override?.reason,
+    });
+    await this.exceptions.record({
+      type: 'price_override',
+      severity: belowCost ? 'critical' : worstTier === 3 ? 'warning' : 'info',
+      entityType: context.entityType,
+      entityId: context.entityId,
+      summary: `${context.action}: ${flagged.join('; ')} — $${(totalDiscountCents / 100).toFixed(2)} off list${belowCost ? ', BELOW COST' : ''}`,
+      metadata: {
+        totalDiscountCents,
+        tier: worstTier,
+        belowCost,
+        reasonCode: reason.reasonCode,
+        reason: reason.reasonText,
+      },
     });
   }
 
@@ -2112,10 +2839,50 @@ export class OrdersController {
    * edits while it's on the truck. Unlocking (POST :id/unlock, its own
    * permission, typed reason) clears the freeze.
    */
-  private assertUnlocked(order: { lockedAt: Date | null }): void {
+  /**
+   * G7 / amendment A5: membership on an open delivery run is the HARD
+   * lock — while the goods are manifested for a truck, the order cannot
+   * be edited or even unlocked; it must be pulled off the run first
+   * (coded reason, exception registered).
+   */
+  private async assertNotOnOpenRun(orderId: string): Promise<void> {
+    const [onRun] = await this.db
+      .select({ runId: schema.deliveries.runId })
+      .from(schema.deliveries)
+      .innerJoin(schema.deliveryRuns, eq(schema.deliveryRuns.id, schema.deliveries.runId))
+      .where(
+        and(
+          eq(schema.deliveries.orderId, orderId),
+          inArray(schema.deliveryRuns.status, ['open', 'out']),
+        ),
+      )
+      .limit(1);
+    if (onRun) {
+      throw new ConflictException(
+        'This order is on a delivery run. Remove it from the run (with a reason) before editing.',
+      );
+    }
+  }
+
+  private assertUnlocked(order: {
+    lockedAt: Date | null;
+    relockAt?: Date | null;
+    ticketPrintCount?: number;
+  }): void {
     if (order.lockedAt) {
       throw new ConflictException(
         'Order is locked — its delivery ticket has been printed. Unlock it with a reason before editing.',
+      );
+    }
+    // G9: an unlock is a 15-minute window. Past it, a printed order
+    // counts as locked again — no cron needed, the check is lazy.
+    if (
+      (order.ticketPrintCount ?? 0) > 0 &&
+      order.relockAt &&
+      order.relockAt.getTime() < Date.now()
+    ) {
+      throw new ConflictException(
+        'The unlock window expired and the lock re-engaged. Unlock again with a reason.',
       );
     }
   }

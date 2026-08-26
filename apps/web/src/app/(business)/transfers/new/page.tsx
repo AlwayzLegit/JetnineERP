@@ -28,6 +28,7 @@ export default function NewTransferPage() {
   const [fromLocationId, setFromLocationId] = useState('');
   const [toLocationId, setToLocationId] = useState('');
   const [notes, setNotes] = useState('');
+  const [transferType, setTransferType] = useState('replenishment');
   const [shipNow, setShipNow] = useState(false);
   const [lines, setLines] = useState<Line[]>([]);
   const [search, setSearch] = useState('');
@@ -99,6 +100,7 @@ export default function NewTransferPage() {
         method: 'POST',
         body: JSON.stringify({
           fromLocationId,
+          transferType,
           toLocationId,
           notes: notes || null,
           ship: shipNow,
@@ -145,6 +147,19 @@ export default function NewTransferPage() {
               </Select>
             </Field>
           </div>
+          <Field label="Transfer type" style={{ marginTop: 8 }}>
+            <Select
+              value={transferType}
+              onChange={(e) => setTransferType(e.target.value)}
+              data-testid="transfer-type"
+              style={{ width: '100%' }}
+            >
+              <option value="replenishment">Replenishment</option>
+              <option value="floor_sample">Floor sample</option>
+              <option value="customer">Customer-driven</option>
+              <option value="as_is">As-Is consolidation</option>
+            </Select>
+          </Field>
           <Field label="Notes" style={{ marginTop: 8 }}>
             <textarea
               className="textarea"
