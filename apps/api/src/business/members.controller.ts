@@ -89,7 +89,12 @@ export class MembersController {
     @CurrentTenant() tenant: RequestTenantContext,
     @CurrentUser() actor: CurrentUserPayload,
     @Body() body: InviteBody,
-  ): Promise<{ membershipId: string; userId: string; alreadyMember: boolean }> {
+  ): Promise<{
+    membershipId: string;
+    userId: string;
+    alreadyMember: boolean;
+    inviteLink?: string;
+  }> {
     const email = body.email?.trim().toLowerCase();
     if (!email || !email.includes('@')) {
       throw new BadRequestException('email is required');
@@ -118,6 +123,12 @@ export class MembersController {
       membershipId: result.membershipId,
       userId: result.userId,
       alreadyMember: result.alreadyMember,
+      // Only when the mail could not actually be delivered: without this
+      // the inviter is told "invitation sent" and the invitee never hears
+      // from us, which is a dead end with no way out of the UI. The caller
+      // already holds `users.invite`, so handing them the link they were
+      // going to email grants nothing extra.
+      ...(result.link && !result.emailDelivered ? { inviteLink: result.link } : {}),
     };
   }
 
@@ -127,7 +138,7 @@ export class MembersController {
     @CurrentTenant() tenant: RequestTenantContext,
     @CurrentUser() actor: CurrentUserPayload,
     @Param('id') membershipId: string,
-  ): Promise<{ resent: true }> {
+  ): Promise<{ resent: true; inviteLink?: string }> {
     const [m] = await this.db
       .select({
         id: schema.memberships.id,
@@ -151,7 +162,7 @@ export class MembersController {
       throw new ConflictException('Member is already active');
     }
     const business = await this.loadBusinessName(tenant.businessId!);
-    await this.invitations.invite({
+    const result = await this.invitations.invite({
       businessId: tenant.businessId!,
       businessName: business,
       email: m.email,
@@ -163,9 +174,12 @@ export class MembersController {
       action: 'membership.invite.resend',
       targetType: 'membership',
       targetId: m.id,
-      metadata: { email: m.email },
+      metadata: { email: m.email, emailDelivered: result.emailDelivered },
     });
-    return { resent: true };
+    return {
+      resent: true,
+      ...(result.link && !result.emailDelivered ? { inviteLink: result.link } : {}),
+    };
   }
 
   @Patch(':id')

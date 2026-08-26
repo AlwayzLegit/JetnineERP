@@ -18,12 +18,20 @@ export interface CapturedEmail extends SendEmailInput {
 }
 
 export interface EmailTransport {
+  /**
+   * False when `send` only captures the message instead of putting it on
+   * the wire. Callers whose flow *depends* on the mail arriving (an invite
+   * link, a password reset) check this and fall back to showing the link
+   * in-app rather than reporting a delivery that never happened.
+   */
+  readonly delivers: boolean;
   send(input: SendEmailInput): Promise<void>;
   // Tests inspect this; production transport returns an empty array.
   drain(): CapturedEmail[];
 }
 
 class ResendTransport implements EmailTransport {
+  readonly delivers = true;
   private readonly logger = new Logger('ResendTransport');
   private readonly apiKey: string;
   private readonly from: string;
@@ -70,6 +78,7 @@ class ResendTransport implements EmailTransport {
 // API key) and also logs them at info level so the developer can see what
 // would have been sent.
 class MemoryTransport implements EmailTransport {
+  readonly delivers = false;
   private readonly logger = new Logger('MemoryTransport');
   private readonly captured: CapturedEmail[] = [];
   private readonly via: 'memory' | 'log';
@@ -99,6 +108,11 @@ export const EMAIL_TRANSPORT = Symbol('EMAIL_TRANSPORT');
 @Injectable()
 export class EmailService {
   constructor(@Inject(EMAIL_TRANSPORT) private readonly transport: EmailTransport) {}
+
+  /** See `EmailTransport.delivers`. */
+  get delivers(): boolean {
+    return this.transport.delivers;
+  }
 
   async send(input: SendEmailInput): Promise<void> {
     await this.transport.send(input);

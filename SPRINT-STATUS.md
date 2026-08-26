@@ -771,6 +771,154 @@ is live on `lamattress-erp.vercel.app`.** P9 (commissions, dashboards, auto-clos
 remains. Ops unchanged: repoint Render repo URL (deploys still manual-trigger), rotate
 the shared owner password, Resend domain when ready, sample invoices into `docs/`.
 
+## Invite email — root-caused and unblocked (2026-08-26)
+
+The owner reported an invite that never arrived. Two independent faults, both visible in
+one Render log line for `POST /v1/business/members/:id/resend-invite` at 17:53:21Z:
+
+1. **Nothing was ever sent.** `RESEND_API_KEY` is unset on the Render service, so
+   `createEmailTransport` fell back to `MemoryTransport` (`"email captured (no Resend key
+configured)"`) while the endpoint still returned 201 and the UI said "Invitation
+   re-sent." Confirmed at the source: the Resend account has **no API keys and no
+   verified domains** — production email has never worked.
+2. **The link pointed at a stale preview.** `WEB_BASE_URL` was the deploy-branch Vercel
+   preview alias, so even with working mail every invite would land on the wrong build.
+
+**Fixed (bde4d23) — the dead end, not just the symptom.** `EmailTransport` now declares
+`delivers`. When it is false, `POST /members/invite` and `/resend-invite` return
+`inviteLink`, and the members page renders it with a Copy button instead of claiming the
+mail was sent. The caller already holds `users.invite`, so handing them the link they
+were about to email grants nothing extra; when a real transport is configured the field
+is omitted entirely. `business.int` asserts the returned link carries the same token the
+email does. 24/24 + admin 11/11 green, all gates verified by exit code.
+
+**Ops done:** `WEB_BASE_URL` set to `https://lamattress-erp.vercel.app` on
+`srv-da4tua3m8hqs73apsflg`; deploy `dep-da7ivn5g1s2s7381pql0` live 18:28:13Z.
+
+**Ops still open — Resend sending domain.** Owner is deciding; `lamattress-erp.vercel.app`
+is _not_ a candidate (Vercel owns that zone, so the DKIM/SPF records can't be added).
+Domains the owner controls, from DNS: `lamattress.com` (GoDaddy DNS, Zoho Mail),
+`lamattressstores.com` (GoDaddy, GoDaddy mail), `jetnine.com` (Cloudflare, Google
+Workspace). A dedicated subdomain is the safe shape — it keeps Resend's SPF/DKIM off the
+zone that already carries live mail. Until then, account creation runs on the copy-link
+path above.
+
+## QA steps 6 + 3 completed against the deployed build (2026-08-26)
+
+Driven through the staging API (browser tools were unavailable), so these exercise the
+same deployed code the browser QA was hitting.
+
+**Step 6 — delivery runs, on run `2c0da72d` (2026-08-26, 2 stops, COD due $1,810.50):**
+
+- D5 verified live: `GET /v1/orders/:id` now returns
+  `onOpenRun {runId, runDate}`, and `PATCH` on a run member is refused 409 ("Remove it
+  from the run (with a reason) before editing"). Previously enforced but invisible.
+- Pull-off-run: refused 400 without a reason, accepted with one; registered
+  `manifest_removal` (warning) attributed to the actor; the pulled order's `onOpenRun`
+  went null and it became editable again. No `manifest_removal` codes exist in the tenant
+  yet, so free text is the A9 fallback — **add codes for that class** to make it coded.
+- Close-out refusals both hold: an unaccounted stop → 400 naming the stop id; a `failed`
+  outcome with no reason → 400 "A reason is required".
+- Close-out with one stop delivered and a COD mismatch → run `completed`, and
+  `cod_variance` registered: _"Run 2026-08-26: COD due $800.00, collected $1700.00"_ with
+  `{codDueCents, codCollectedCents, receivedBy}` in metadata. Note COD due had recomputed
+  from $1,810.50 to $800.00 when the second stop was pulled — correct, and worth knowing
+  when reading the variance.
+
+**Step 3 — return split (SO-2026-000005 pickup, SO-2026-000010 drop-off):**
+
+- Coded return reason enforced (tenant has CHGMIND), and the original-tender cap fires:
+  a $1,000 return against $200 collected → 400 "use store credit for the difference".
+- **Pickup**: authorization moved nothing — `paidCents` unchanged, `qtyReturned` 0, no
+  As-Is row, RMA `RMA-SO-2026-000005-1` `authorized`, list view "Awaiting Return Pickup".
+  On `POST /order-returns/:id/receive`: store credit $0 → $1,000, `qtyReturned` 1, one
+  As-Is piece `pending_review`, RMA `completed`, status "Returned". A7 holds end to end.
+- **Drop-off**: one request → `completed`, refund row `cash -100000`, `paidCents` 0,
+  goods to As-Is. Immediate, as specified.
+
+**D1 verified on the live system.** Rebuilt the exact case: register sale INV-2026-000006,
+$1,000 list less a 30% cart discount, $700 collected. Refund paid out **$700.00** (it
+would have paid $1,000 before the fix). D2 also confirmed live — the same sale was first
+refused `REASON_REQUIRED` with no reason, which is the hole that let the original
+INV-2026-000005 through.
+
+**D9 resolved — not a defect.** `GET /v1/products/9786c836…` returns Q-MOS10 with
+`priceCents: 0` and `costCents: 125500`. Both the API and the variants table map the
+columns correctly; the $1,255.00 on screen _is_ the Cost column, and the Price cell is an
+editable input reading `0.00`. **But the underlying observation is real and is a cutover
+blocker:** the STORIS catalog imported with no retail prices (D12, by design), so every
+imported variant is $0.00 and lands on an order at zero. Spot-checked across the catalog —
+`pos/product-search` returns `price=0` for every imported SKU. A price source is needed
+before go-live: import a price file, or set prices in-app.
+
+**Test-data ledger additions (D11):** INV-2026-000006 ($700 discounted register sale, fully
+refunded); SO-2026-000010 (paid, fulfilled, drop-off returned); a $1,000 store-credit
+balance on customer ELICIA JOHN (4364a598) from RMA-SO-2026-000005-1; two As-Is pieces
+pending review; run 2c0da72d closed with a COD variance; SO-2026-000008 pulled off that run.
+
+## Checkpoint 10 merged + deployed — QA pass fixes (2026-08-26)
+
+First browser QA pass over the deployed gap-closure surface produced 15 findings.
+PR #34 squash-merged to main as `f72a3db`, CI 4/4 green first try. Render deploy
+`dep-da7i1u7avr4c73fub8o0` **live 17:24Z** — boot log: `Schema migrations: 49/49 applied,
+head=0048_sale_line_order_discount_share; this run applied
+0048_sale_line_order_discount_share.` `/health` + `/ready` 200; Vercel production READY on
+main `f72a3db`; `/v1/audit-logs` answers 401 through the prod proxy (the D8 proof).
+
+**D1 — refunds overpaid by the whole discount (real money).** `sale_lines.discount_cents`
+holds only a line's _own_ discount; a cart-level discount lives on the sale header and the
+refund never consulted it, so a $1,000 line sold for $700 under a 30% cart discount
+refunded $1,000 — true of **every** refund against a discounted sale, not one invoice.
+Fix: the line's share of the sale discount is computed at sale time and **persisted**
+(`order_discount_share_cents`, migration 0048) rather than re-derived — the pro-rata
+rounding residue cannot be reconstructed afterwards because line order was never stored,
+and pennies of ambiguity do not belong in a refund. Legacy rows fall back to
+`reconstructOrderDiscountShares` (exact in total). Second half of the same bug: sale
+refunds returned **pre-tax** amounts while the order-return path returned tax; both now
+return what was collected.
+
+**D2 — the register bypassed the price-variance gate.** `POST /v1/sales` never called it,
+and New Sale's fully-paid take-with fast lane posts a register sale, so the hole was
+reachable from the order screen too — that is how the D1 invoice was written. The gate
+moved out of `OrdersController` into a shared `PriceVarianceService` both doors call.
+**Discount codes are exempt**: a coupon is a pre-authorized instrument created by someone
+holding `discounts.manage`; demanding a reason per redemption would only teach staff to
+type junk. (Exempting them also fixed the 3 discount-code specs the gate first broke.)
+
+**D4** all five `window.prompt` calls (pull-off-run, cancel-return, as-is price, vendor
+R/A, vendor credit) replaced with the in-app dialog, which gained typed `fields` — a
+native prompt can carry neither a coded reason nor a manager challenge, and it froze the
+QA browser. **D6** the over-capacity confirm matched the substring `'at capacity'`; the
+G12 multi-dimension rewrite changed the message and silently disabled the documented
+override — now a structured `OVER_CAPACITY` code. **D7** commission plans had API support
+since G5 but no UI, so nobody was ever on a plan, `planFor()` returned null for everyone
+and nothing accrued; added a Plans card. **D8** `/audit` hand-rolled `fetch` against its
+own `NEXT_PUBLIC_API_URL` default and so called `http://localhost:4000` in production;
+switched to the shared `api()` helper.
+
+**Three QA findings corrected rather than fixed:** (a) _D5 — the run lock does work_;
+`assertNotOnOpenRun` was already enforced on every edit path. What was missing is that the
+order detail never reported run membership, so the page showed no banner and left controls
+live — enforced but invisible. Detail now returns `onOpenRun`. (I first "fixed" this by
+duplicating the existing guard, then reverted.) (b) _Tier 3 collapsing to "needs a reason"
+is by design_ — the QA tested as owner, who holds `orders.price_override`, so no second
+signature is demanded; the below-cost CRITICAL never appeared only because the exception
+records _after_ a reason is supplied. (c) _D10 two-`/pos`-screens is deployment skew, not
+code_ — no `order-entry` file, no "Enter a Sales Order" string, one `/pos` route, sidebar
+label hardcoded to "New Sale"; a stale cached build was being served.
+
+**Not fixed:** D9 (variants Price/Cost) is not reproducible from code — both the API
+projection and the table map the fields correctly, and the two symptoms conflict ($1,255
+under Price cannot land on an order at $0.00). Needs the raw `GET /v1/products/<id>`
+payload for Q-MOS10; suspect the STORIS import wrote cost into `price_cents`. A real
+adjacent ambiguity was confirmed: the Cost column renders "hidden" both when the viewer
+lacks `products.cost.view` and when cost is genuinely null.
+
+API suite 489→**500 passing** (+11 covering the D1 numbers and all three D2 tiers); e2e
+8/8 run locally before the push and green in CI. Ops unchanged, plus: **the cashier and
+manager accounts still need creating** (Settings → Users → Invite) — the QA agent cannot
+type passwords, and step 2's override flow needs a second, non-owner identity.
+
 ## Checkpoint 9 merged + deployed (2026-08-26)
 
 PR #33 (the whole STORIS gap closure G1–G15 + §2 append-only audit + P9) squash-merged to
