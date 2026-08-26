@@ -1,6 +1,6 @@
 'use client';
 
-import { UserPlus } from 'lucide-react';
+import { Copy, UserPlus } from 'lucide-react';
 import { toast } from 'sonner';
 import { useEffect, useState, type FormEvent } from 'react';
 import {
@@ -40,6 +40,10 @@ export default function MembersPage() {
   const [roles, setRoles] = useState<Role[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  // Set when the API tells us the invitation mail was captured rather than
+  // sent (no mail transport configured). The invite is real either way, so
+  // we show the link and let the inviter pass it on themselves.
+  const [inviteLink, setInviteLink] = useState<string | null>(null);
 
   async function load() {
     try {
@@ -62,20 +66,27 @@ export default function MembersPage() {
     e.preventDefault();
     setError(null);
     setSuccess(null);
+    setInviteLink(null);
     try {
       const data = new FormData(e.currentTarget);
-      const result = await api<{ alreadyMember: boolean }>('/v1/business/members/invite', {
-        method: 'POST',
-        body: JSON.stringify({
-          email: String(data.get('email') ?? ''),
-          name: String(data.get('name') ?? ''),
-          roleId: String(data.get('roleId') ?? ''),
-        }),
-      });
+      const result = await api<{ alreadyMember: boolean; inviteLink?: string }>(
+        '/v1/business/members/invite',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            email: String(data.get('email') ?? ''),
+            name: String(data.get('name') ?? ''),
+            roleId: String(data.get('roleId') ?? ''),
+          }),
+        },
+      );
+      setInviteLink(result.inviteLink ?? null);
       setSuccess(
         result.alreadyMember
           ? 'That user is already an active member; nothing to do.'
-          : 'Invitation sent.',
+          : result.inviteLink
+            ? 'Invitation created. Email is not configured, so send this link yourself:'
+            : 'Invitation sent.',
       );
       e.currentTarget.reset();
       await load();
@@ -107,9 +118,18 @@ export default function MembersPage() {
   }
 
   async function resend(membershipId: string) {
+    setError(null);
     try {
-      await api(`/v1/business/members/${membershipId}/resend-invite`, { method: 'POST' });
-      setSuccess('Invitation re-sent.');
+      const result = await api<{ inviteLink?: string }>(
+        `/v1/business/members/${membershipId}/resend-invite`,
+        { method: 'POST' },
+      );
+      setInviteLink(result.inviteLink ?? null);
+      setSuccess(
+        result.inviteLink
+          ? 'Invitation refreshed. Email is not configured, so send this link yourself:'
+          : 'Invitation re-sent.',
+      );
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err));
     }
@@ -155,6 +175,45 @@ export default function MembersPage() {
             >
               {success}
             </p>
+          )}
+          {inviteLink && (
+            <div
+              data-testid="invite-link"
+              style={{
+                marginTop: 8,
+                padding: 10,
+                borderRadius: 6,
+                border: '1px solid var(--border)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+              }}
+            >
+              <code
+                style={{
+                  flex: 1,
+                  fontSize: 12,
+                  overflowWrap: 'anywhere',
+                  color: 'var(--text-secondary)',
+                }}
+              >
+                {inviteLink}
+              </code>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  void navigator.clipboard
+                    ?.writeText(inviteLink)
+                    .then(() => toast.success('Invite link copied.'))
+                    .catch(() => toast.error('Could not copy — select the link and copy it.'));
+                }}
+              >
+                <Copy size={14} aria-hidden />
+                Copy
+              </Button>
+            </div>
           )}
         </form>
       </Card>

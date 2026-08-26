@@ -372,6 +372,12 @@ describe('Epic 1.6 — Business admin console', () => {
     cashierUserId = inviteRes.body.userId as string;
     cashierMembershipId = inviteRes.body.membershipId as string;
     expect(inviteRes.body.alreadyMember).toBe(false);
+    // No mail transport is configured under test, so the API has to hand
+    // the inviter the link instead of claiming it was emailed — otherwise
+    // the invitee never hears about the invitation at all.
+    expect(inviteRes.body.inviteLink, 'invite link returned when email cannot deliver').toContain(
+      '/accept-invite?token=',
+    );
 
     const emailRes = await request(app.getHttpServer())
       .get(`/v1/dev/email/last?to=${encodeURIComponent(CASHIER_EMAIL)}`)
@@ -381,6 +387,9 @@ describe('Epic 1.6 — Business admin console', () => {
     const match = html.match(/accept-invite\?token=([^"&]+)/);
     expect(match, 'invite token in email').toBeTruthy();
     inviteToken = decodeURIComponent(match![1]!);
+    // The link handed back is the same one the email carries — not a
+    // second, divergent token.
+    expect(inviteRes.body.inviteLink).toContain(encodeURIComponent(inviteToken));
   });
 
   it('Cashier accepts the invite and signs in; membership flips active', async () => {
