@@ -548,6 +548,153 @@ describe('Orders list-view + notifications (PLAN-POS-OPERATIONS P3)', () => {
   });
 });
 
+describe('Documents + A1 print lock (PLAN-POS-OPERATIONS P4)', () => {
+  let p4VariantId = '';
+
+  beforeAll(async () => {
+    const sql2 = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    const db = drizzle(sql2);
+    try {
+      const [vendor] = await db
+        .insert(schema.vendors)
+        .values({ businessId, name: 'Docs Brand Co' })
+        .returning();
+      const [p] = await db
+        .insert(schema.products)
+        .values({ businessId, sku: 'P4-BED', name: 'Docs Fixture Bed' })
+        .returning();
+      const [v] = await db
+        .insert(schema.productVariants)
+        .values({
+          businessId,
+          productId: p!.id,
+          sku: 'P4-BED-V1',
+          priceCents: 80000,
+          preferredVendorId: vendor!.id,
+        })
+        .returning();
+      p4VariantId = v!.id;
+      await db.insert(schema.inventoryLevels).values({
+        businessId,
+        variantId: p4VariantId,
+        locationId,
+        onHand: 20,
+        reserved: 0,
+      });
+    } finally {
+      await sql2.end({ timeout: 5 });
+    }
+  });
+
+  async function makeOrder(): Promise<{ id: string; number: string }> {
+    const res = await request(app.getHttpServer())
+      .post('/v1/orders')
+      .set('Cookie', cashierCookie)
+      .set('X-Business-Id', businessId)
+      .send({
+        locationId,
+        customerId,
+        confirm: true,
+        requestedDate: '2026-09-10',
+        lines: [{ variantId: p4VariantId, quantity: 1 }],
+      });
+    expect(res.status).toBe(201);
+    return res.body;
+  }
+
+  it('Document payload: business + store + customer + line model/brand + totals', async () => {
+    const order = await makeOrder();
+    const res = await request(app.getHttpServer())
+      .get(`/v1/orders/${order.id}/document`)
+      .set('Cookie', cashierCookie)
+      .set('X-Business-Id', businessId);
+    expect(res.status).toBe(200);
+    expect(res.body.business.name).toBe('Orders Test Co');
+    expect(res.body.location.name).toBe('Showroom');
+    expect(res.body.customer.name).toBe('Dana Reyes');
+    expect(res.body.scheduledDate).toBe('2026-09-10'); // no trip yet → requested date
+    const line = res.body.lines.find((l: { model: string | null }) => l.model === 'P4-BED-V1');
+    expect(line).toBeTruthy();
+    expect(line.brand).toBe('Docs Brand Co');
+    expect(res.body.order.totalCents).toBe(res.body.order.subtotalCents + res.body.order.taxCents);
+  });
+
+  it('Individual ticket print locks: edits refuse 409 until unlocked with a reason', async () => {
+    const order = await makeOrder();
+
+    const printed = await request(app.getHttpServer())
+      .post(`/v1/orders/${order.id}/delivery-ticket-print`)
+      .set('Cookie', cashierCookie)
+      .set('X-Business-Id', businessId);
+    expect(printed.status).toBe(201);
+    expect(printed.body.lockedAt).toBeTruthy();
+
+    // All edit surfaces refuse while locked.
+    await request(app.getHttpServer())
+      .patch(`/v1/orders/${order.id}`)
+      .set('Cookie', cashierCookie)
+      .set('X-Business-Id', businessId)
+      .send({ notes: 'sneaky edit' })
+      .expect(409);
+    await request(app.getHttpServer())
+      .post(`/v1/orders/${order.id}/lines`)
+      .set('Cookie', cashierCookie)
+      .set('X-Business-Id', businessId)
+      .send({ variantId: p4VariantId, quantity: 1 })
+      .expect(409);
+    await request(app.getHttpServer())
+      .post(`/v1/orders/${order.id}/cancel`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({})
+      .expect(409);
+
+    // Cashier lacks orders.unlock; owner without a reason is a 400.
+    await request(app.getHttpServer())
+      .post(`/v1/orders/${order.id}/unlock`)
+      .set('Cookie', cashierCookie)
+      .set('X-Business-Id', businessId)
+      .send({ reason: 'customer changed size' })
+      .expect(403);
+    await request(app.getHttpServer())
+      .post(`/v1/orders/${order.id}/unlock`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({})
+      .expect(400);
+
+    const unlocked = await request(app.getHttpServer())
+      .post(`/v1/orders/${order.id}/unlock`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ reason: 'customer changed size' });
+    expect(unlocked.status).toBe(201);
+    expect(unlocked.body.lockedAt).toBeNull();
+
+    await request(app.getHttpServer())
+      .patch(`/v1/orders/${order.id}`)
+      .set('Cookie', cashierCookie)
+      .set('X-Business-Id', businessId)
+      .send({ notes: 'now it works' })
+      .expect(200);
+
+    // The unlock override surfaces in the owner notifications feed with
+    // its typed reason (§12 "lock overrides").
+    const feed = await request(app.getHttpServer())
+      .get('/v1/notifications?limit=50')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId);
+    expect(feed.status).toBe(200);
+    const hit = feed.body.data.find(
+      (n: { orderId: string | null; action: string }) =>
+        n.orderId === order.id && n.action === 'order.unlock',
+    );
+    expect(hit).toBeTruthy();
+    expect(hit.label).toContain('unlocked');
+    expect(hit.changesJson?.metadata?.reason).toBe('customer changed size');
+  });
+});
+
 describe('Enter a Sales Order — STORIS 3-step parity fields', () => {
   it('Order carries kind, fulfillment, delivery status, fees; total includes fees', async () => {
     const res = await request(app.getHttpServer())

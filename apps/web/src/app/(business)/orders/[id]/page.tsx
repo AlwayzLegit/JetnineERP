@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
-import { CheckCircle2, CreditCard, Share2, Truck } from 'lucide-react';
+import { CheckCircle2, CreditCard, Lock, Printer, Share2, Truck } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatMoney } from '@jetnine/shared';
 import { api } from '@/lib/api';
@@ -63,6 +63,7 @@ interface OrderDetail {
   notes: string | null;
   internalNotes: string | null;
   legacyNumber: string | null;
+  lockedAt: string | null;
   createdAt: string;
   completedAt: string | null;
   cancelledAt: string | null;
@@ -233,7 +234,25 @@ export default function OrderDetailPage() {
             STORIS #{order.legacyNumber}
           </span>
         )}
-        <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 8 }}>
+        <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 8, flexWrap: 'wrap' }}>
+          <LinkButton
+            href={`/print/orders/${id}/invoice`}
+            variant="secondary"
+            size="sm"
+            target="_blank"
+            data-testid="print-invoice"
+          >
+            <Printer size={13} aria-hidden /> Invoice
+          </LinkButton>
+          <LinkButton
+            href={`/print/orders/${id}/delivery-ticket`}
+            variant="secondary"
+            size="sm"
+            target="_blank"
+            data-testid="print-delivery-ticket"
+          >
+            <Printer size={13} aria-hidden /> Delivery ticket
+          </LinkButton>
           <Button
             size="sm"
             variant="secondary"
@@ -265,6 +284,43 @@ export default function OrderDetailPage() {
         {order.requestedDate ? ` · promised ${order.requestedDate}` : ''} · written{' '}
         {new Date(order.createdAt).toLocaleString()}
       </p>
+
+      {order.lockedAt && (
+        <div
+          data-testid="locked-banner"
+          className="card"
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10,
+            padding: '10px 14px',
+            marginBottom: 16,
+            borderColor: 'var(--warning)',
+            fontSize: 13,
+          }}
+        >
+          <Lock size={15} aria-hidden style={{ color: 'var(--warning)', flexShrink: 0 }} />
+          <span style={{ flex: 1 }}>
+            <strong>Locked</strong> — the delivery ticket was printed{' '}
+            {new Date(order.lockedAt).toLocaleString()}. No edits while it&apos;s on the truck.
+          </span>
+          <Button
+            size="sm"
+            variant="secondary"
+            data-testid="unlock-order"
+            disabled={busy}
+            onClick={async () => {
+              const reason = window.prompt(
+                'Unlocking is logged to the owner dashboard. Reason for unlocking:',
+              );
+              if (reason == null) return;
+              await act('/unlock', { reason });
+            }}
+          >
+            Unlock…
+          </Button>
+        </div>
+      )}
 
       <div className="grid gap-4 lg:grid-cols-[2fr_1fr]">
         <div className="min-w-0">

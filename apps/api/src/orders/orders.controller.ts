@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   Body,
+  ConflictException,
   Controller,
   Delete,
   ForbiddenException,
@@ -248,10 +249,39 @@ interface OrderDetail extends OrderListRow {
   otherFeeCents: number;
   otherFeeLabel: string | null;
   legacyNumber: string | null;
+  /** A1 print lock: set when an individual delivery ticket was printed. */
+  lockedAt: Date | null;
   completedAt: Date | null;
   cancelledAt: Date | null;
   lines: OrderLineRow[];
   payments: OrderPaymentRow[];
+}
+
+/** The one-call payload the printable documents render from (§11). */
+interface OrderDocument {
+  business: {
+    name: string;
+    logoUrl: string | null;
+    invoiceHeaderNote: string | null;
+    invoiceFooterNote: string | null;
+  };
+  location: {
+    name: string;
+    orderPrefix: string | null;
+    addressJson: unknown;
+  } | null;
+  customer: {
+    id: string;
+    name: string;
+    email: string | null;
+    phone: string | null;
+  } | null;
+  salespersonName: string | null;
+  secondSalespersonName: string | null;
+  /** Earliest undelivered trip date, falling back to the requested date. */
+  scheduledDate: string | null;
+  order: OrderDetail;
+  lines: (OrderLineRow & { model: string | null; brand: string | null })[];
 }
 
 /** Step-3 fee fields must be non-negative integer cents. */
@@ -725,6 +755,7 @@ export class OrdersController {
     @Body() body: UpdateOrderBody,
   ): Promise<OrderDetail> {
     const order = await this.requireLiveOrder(id);
+    this.assertUnlocked(order);
 
     const patch: Record<string, unknown> = { updatedAt: new Date() };
     if (body.fulfillmentType !== undefined) {
@@ -858,6 +889,7 @@ export class OrdersController {
     @Body() body: OrderLineInput,
   ): Promise<OrderDetail> {
     const order = await this.requireLiveOrder(id);
+    this.assertUnlocked(order);
     const [priced] = await this.priceLines(tenant, order.locationId, [body]);
 
     const [line] = await this.db
@@ -911,6 +943,7 @@ export class OrdersController {
     @Param('lineId') lineId: string,
   ): Promise<OrderDetail> {
     const order = await this.requireLiveOrder(id);
+    this.assertUnlocked(order);
     const [line] = await this.db
       .select()
       .from(schema.orderLines)
@@ -1344,6 +1377,7 @@ export class OrdersController {
     if (order.status === 'completed') {
       throw new BadRequestException('A completed order cannot be cancelled — refund it instead');
     }
+    this.assertUnlocked(order);
 
     const payments = await this.db
       .select({ amountCents: schema.payments.amountCents, status: schema.payments.status })
@@ -1382,6 +1416,209 @@ export class OrdersController {
     const detail = await this.loadDetail(id);
     this.fireOrderEvent('order.cancelled', tenant.businessId!, detail);
     return detail;
+  }
+
+  /**
+   * Record an *individual* delivery-ticket print. Per amendment A1 this
+   * is the action that locks the order (batch printing never calls
+   * this): the ticket is on the truck, so the paper and the system must
+   * not diverge. Locking a live order re-stamps `lockedAt` on re-print;
+   * finished/cancelled orders can still print (a reprint for the file)
+   * without any lock taking effect.
+   */
+  @Post('orders/:id/delivery-ticket-print')
+  @RequirePermission('orders.update')
+  async deliveryTicketPrint(
+    @CurrentTenant() _tenant: RequestTenantContext,
+    @Param('id') id: string,
+  ): Promise<{ lockedAt: Date | null }> {
+    const [order] = await this.db
+      .select()
+      .from(schema.orders)
+      .where(eq(schema.orders.id, id))
+      .limit(1);
+    if (!order) throw new NotFoundException('Order not found');
+
+    if (!isLiveOrderStatus(order.status)) return { lockedAt: order.lockedAt };
+
+    const lockedAt = new Date();
+    await this.db
+      .update(schema.orders)
+      .set({ lockedAt, updatedAt: lockedAt })
+      .where(eq(schema.orders.id, id));
+    await this.audit.log({
+      action: 'order.lock',
+      targetType: 'order',
+      targetId: id,
+      metadata: { trigger: 'delivery_ticket_print' },
+    });
+    return { lockedAt };
+  }
+
+  /**
+   * Clear the A1 print lock. Its own permission (`orders.unlock`, Owner
+   * and Manager by default — the §2 matrix and per-user overrides let
+   * the owner choose exactly who) and a typed reason are both required;
+   * the reason lands in the audit log and therefore in the owner
+   * dashboard notifications feed.
+   */
+  @Post('orders/:id/unlock')
+  @RequirePermission('orders.unlock')
+  async unlock(
+    @CurrentTenant() _tenant: RequestTenantContext,
+    @Param('id') id: string,
+    @Body() body: { reason?: string },
+  ): Promise<OrderDetail> {
+    const reason = body.reason?.trim();
+    if (!reason) throw new BadRequestException('A reason is required to unlock an order');
+    const [order] = await this.db
+      .select()
+      .from(schema.orders)
+      .where(eq(schema.orders.id, id))
+      .limit(1);
+    if (!order) throw new NotFoundException('Order not found');
+    if (!order.lockedAt) throw new BadRequestException('Order is not locked');
+
+    await this.db
+      .update(schema.orders)
+      .set({ lockedAt: null, updatedAt: new Date() })
+      .where(eq(schema.orders.id, id));
+    await this.audit.log({
+      action: 'order.unlock',
+      targetType: 'order',
+      targetId: id,
+      metadata: { reason },
+    });
+    return this.loadDetail(id);
+  }
+
+  /**
+   * Everything a printed document needs in one payload (PLAN-POS-
+   * OPERATIONS §11): the order detail plus business branding + admin
+   * header/footer notes, the store block, the customer (Sold To),
+   * salesperson names, per-line model/brand, the scheduled date from the
+   * earliest undelivered trip, and the payments list. The web print
+   * views (invoice, delivery ticket, batch) all render from this.
+   */
+  @Get('orders/:id/document')
+  @RequirePermission('orders.view')
+  async document(
+    @CurrentTenant() tenant: RequestTenantContext,
+    @Param('id') id: string,
+  ): Promise<OrderDocument> {
+    const detail = await this.loadDetail(id);
+
+    const [biz] = await this.db
+      .select({
+        name: schema.businesses.name,
+        brandingJson: schema.businesses.brandingJson,
+        opsSettingsJson: schema.businesses.opsSettingsJson,
+      })
+      .from(schema.businesses)
+      .where(eq(schema.businesses.id, tenant.businessId!))
+      .limit(1);
+    const branding = (biz?.brandingJson ?? {}) as { logoUrl?: string; publicName?: string };
+    const ops = (biz?.opsSettingsJson ?? {}) as {
+      invoiceHeaderNote?: string;
+      invoiceFooterNote?: string;
+    };
+
+    const [location] = await this.db
+      .select({
+        name: schema.locations.name,
+        orderPrefix: schema.locations.orderPrefix,
+        addressJson: schema.locations.addressJson,
+      })
+      .from(schema.locations)
+      .where(eq(schema.locations.id, detail.locationId))
+      .limit(1);
+
+    const [customer] = await this.db
+      .select({
+        id: schema.customers.id,
+        firstName: schema.customers.firstName,
+        lastName: schema.customers.lastName,
+        email: schema.customers.email,
+        phone: schema.customers.phone,
+      })
+      .from(schema.customers)
+      .where(eq(schema.customers.id, detail.customerId))
+      .limit(1);
+
+    const salespersonName = async (membershipId: string | null) => {
+      if (!membershipId) return null;
+      const [row] = await this.db
+        .select({ name: schema.users.name, email: schema.users.email })
+        .from(schema.memberships)
+        .innerJoin(schema.users, eq(schema.users.id, schema.memberships.userId))
+        .where(eq(schema.memberships.id, membershipId))
+        .limit(1);
+      return row?.name ?? row?.email ?? null;
+    };
+
+    // Scheduled Date box = the earliest trip still owed to the customer.
+    const [trip] = await this.db
+      .select({ scheduledDate: schema.deliveries.scheduledDate })
+      .from(schema.deliveries)
+      .where(
+        and(
+          eq(schema.deliveries.orderId, id),
+          inArray(schema.deliveries.status, ['scheduled', 'loaded', 'out_for_delivery']),
+        ),
+      )
+      .orderBy(schema.deliveries.scheduledDate)
+      .limit(1);
+
+    // Line grid Model | Brand: model = variant SKU, brand = the
+    // variant's preferred vendor (closest thing the catalog has to a
+    // brand field — flagged as a v1 convention).
+    const variantIds = detail.lines.map((l) => l.variantId).filter((v): v is string => Boolean(v));
+    const lineMeta = new Map<string, { model: string | null; brand: string | null }>();
+    if (variantIds.length > 0) {
+      const rows = await this.db
+        .select({
+          variantId: schema.productVariants.id,
+          model: schema.productVariants.sku,
+          brand: schema.vendors.name,
+        })
+        .from(schema.productVariants)
+        .leftJoin(schema.vendors, eq(schema.vendors.id, schema.productVariants.preferredVendorId))
+        .where(inArray(schema.productVariants.id, variantIds));
+      for (const r of rows) lineMeta.set(r.variantId, { model: r.model, brand: r.brand });
+    }
+
+    return {
+      business: {
+        name: branding.publicName ?? biz?.name ?? '',
+        logoUrl: branding.logoUrl ?? null,
+        invoiceHeaderNote: ops.invoiceHeaderNote ?? null,
+        invoiceFooterNote: ops.invoiceFooterNote ?? null,
+      },
+      location: location
+        ? {
+            name: location.name,
+            orderPrefix: location.orderPrefix ?? null,
+            addressJson: location.addressJson ?? null,
+          }
+        : null,
+      customer: customer
+        ? {
+            id: customer.id,
+            name: [customer.firstName, customer.lastName].filter(Boolean).join(' ') || '(no name)',
+            email: customer.email,
+            phone: customer.phone,
+          }
+        : null,
+      salespersonName: await salespersonName(detail.salespersonMembershipId),
+      secondSalespersonName: await salespersonName(detail.secondSalespersonMembershipId),
+      scheduledDate: trip?.scheduledDate ?? detail.requestedDate,
+      order: detail,
+      lines: detail.lines.map((l) => ({
+        ...l,
+        model: l.variantId ? (lineMeta.get(l.variantId)?.model ?? null) : null,
+        brand: l.variantId ? (lineMeta.get(l.variantId)?.brand ?? null) : null,
+      })),
+    };
   }
 
   // ---------------------------------------------------------------------
@@ -1527,6 +1764,19 @@ export class OrdersController {
     });
   }
 
+  /**
+   * A1: an individually-printed delivery ticket freezes the order — no
+   * edits while it's on the truck. Unlocking (POST :id/unlock, its own
+   * permission, typed reason) clears the freeze.
+   */
+  private assertUnlocked(order: { lockedAt: Date | null }): void {
+    if (order.lockedAt) {
+      throw new ConflictException(
+        'Order is locked — its delivery ticket has been printed. Unlock it with a reason before editing.',
+      );
+    }
+  }
+
   /** Load an order, refusing anything that is finished or cancelled. */
   private async requireLiveOrder(id: string): Promise<typeof schema.orders.$inferSelect> {
     const [order] = await this.db
@@ -1602,6 +1852,7 @@ export class OrdersController {
       otherFeeLabel: order.otherFeeLabel,
       importedAt: order.importedAt,
       legacyNumber: order.legacyNumber,
+      lockedAt: order.lockedAt,
       completedAt: order.completedAt,
       cancelledAt: order.cancelledAt,
       createdAt: order.createdAt,

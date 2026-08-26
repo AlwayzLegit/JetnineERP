@@ -633,8 +633,30 @@ supersedes the checkpoint-7 wizard; legacy register + its offline mode retire).
       q filter, feed contents/attribution/gating) → 33/33; orders e2e board assertions
       → table + slide-over. — _2026-08-26. Cap/lock overrides and close-out exceptions
       join the same feed when P5/P9 land (they'll be audit actions too)._
-- [ ] **Build P4:** Documents — invoice (sample layout), delivery ticket + individual-print
-      lock, batch print (no lock, A1)
+- [x] **Build P4:** Documents — invoice, delivery ticket + individual-print lock, batch
+      print. `GET /v1/orders/:id/document` bundles everything §11 needs (business name/
+      logo + admin header/footer notes from ops settings, store block from the location,
+      Sold To/Ship To, salesperson names, scheduled date from the earliest undelivered
+      trip, per-line Model = variant SKU / Brand = preferred vendor). Print views live in
+      a chrome-free `(print)` route group: `/print/orders/:id/invoice` (§11 layout: header
+      note box, SO#/date boxes, info strip w/ salesperson initials, Ln#/F-code/Model/Brand
+      line grid printing $0 lines, payments-by-method table, Merchandise→Amount Due totals
+      rail, footer), `/print/orders/:id/delivery-ticket` (signature + date lines, collect-
+      on-delivery amount), and `/print/deliveries?date=` batch — one ticket per undelivered
+      trip, page-broken, not-ready trips printed WITH a bold flag (failed attempt / stock
+      not fully reserved) per §7. **A1 lock**: `orders.locked_at` (migration 0034);
+      individual print posts `/delivery-ticket-print` → locks; PATCH/line-add/line-remove/
+      cancel all 409 while locked; batch never locks. `POST :id/unlock` requires the new
+      `orders.unlock` permission (Owner+Manager via catalog, backfilled by the boot-time
+      system-role sync; owner narrows via the §2 matrix/per-user overrides) + a typed
+      reason → audit `order.unlock` → notifications feed. Order detail: locked banner w/
+      unlock prompt + Print invoice/ticket buttons; day-sheet gained "All tickets (no
+      lock)". Settings page gained the Store operations card (recycling fee $, delivery
+      cap, invoice header/footer notes, PO reply-to). orders.int.spec +2 → 35/35.
+      — _2026-08-26. Conventions flagged: Brand column = preferred vendor (catalog has no
+      brand field); Terms prints "Balance due"/"Paid in full"; ops.unlockRoleIds is
+      superseded by the `orders.unlock` permission and ignored; payments on the order
+      stay allowed while locked (the office collects at delivery close-out)._
 - [ ] **Build P5:** Delivery dispatch table + 15-stop capacity + zip routes
 - [ ] **Build P6:** Purchasing — PO builder suggestions, PDF/email, receiving
       Received→Inspected→Accepted, partial receipts, vendor-invoice matching

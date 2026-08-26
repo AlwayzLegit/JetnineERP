@@ -26,6 +26,7 @@ const NOTABLE_ACTIONS = [
   'order.line.remove',
   'order.cancel',
   'order.payment.take',
+  'order.unlock',
 ] as const;
 
 const ACTION_LABELS: Record<string, string> = {
@@ -34,6 +35,7 @@ const ACTION_LABELS: Record<string, string> = {
   'order.line.remove': 'Line removed',
   'order.cancel': 'Order cancelled',
   'order.payment.take': 'Payment taken',
+  'order.unlock': 'Order unlocked (lock override)',
 };
 
 interface NotificationRow {

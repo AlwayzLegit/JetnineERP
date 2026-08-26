@@ -137,6 +137,13 @@ export const orders = pgTable(
      * — the public endpoint exposes only customer-safe fields.
      */
     publicToken: text('public_token'),
+    /**
+     * A1 lock: set when an *individual* delivery ticket is printed —
+     * the order is "on the truck" and refuses edits until a permitted
+     * role unlocks it with a typed reason (batch printing never sets
+     * this). NULL = unlocked.
+     */
+    lockedAt: timestamp('locked_at', { withTimezone: true }),
     // D8: legacy history imports carry these and are excluded from the
     // cash drawer, commission accrual, and webhook emission.
     importedAt: timestamp('imported_at', { withTimezone: true }),

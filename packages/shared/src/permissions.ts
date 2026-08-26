@@ -62,6 +62,7 @@ export const PERMISSIONS = {
   'orders.cancel': 'Cancel a sales order',
   'orders.deposit.take': 'Take a deposit or balance payment on an order',
   'orders.complete_with_balance': 'Complete an order that still has a balance due',
+  'orders.unlock': 'Unlock an order locked by a delivery-ticket print (typed reason required)',
 
   'deliveries.view': 'View the delivery calendar and day sheets',
   'deliveries.schedule': 'Schedule / reschedule deliveries',
