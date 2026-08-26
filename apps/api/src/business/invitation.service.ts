@@ -20,6 +20,14 @@ export interface InviteResult {
   userId: string;
   membershipId: string;
   token: string;
+  /** The accept-invite URL the email carries. Empty for `alreadyMember`. */
+  link: string;
+  /**
+   * False when the configured transport only captured the mail (no Resend
+   * key). The invite is still valid — it just has no way of reaching the
+   * invitee, so the caller has to hand `link` to whoever is inviting.
+   */
+  emailDelivered: boolean;
   alreadyMember: boolean;
 }
 
@@ -87,7 +95,14 @@ export class InvitationService {
     let membershipId: string;
     if (existing[0]) {
       if (existing[0].status === 'active') {
-        return { userId, membershipId: existing[0].id, token: '', alreadyMember: true };
+        return {
+          userId,
+          membershipId: existing[0].id,
+          token: '',
+          link: '',
+          emailDelivered: false,
+          alreadyMember: true,
+        };
       }
       const [updated] = await this.db
         .update(schema.memberships)
@@ -138,7 +153,14 @@ export class InvitationService {
       html: inviteEmail(input.businessName, link),
     });
 
-    return { userId, membershipId, token, alreadyMember: false };
+    return {
+      userId,
+      membershipId,
+      token,
+      link,
+      emailDelivered: this.email.delivers,
+      alreadyMember: false,
+    };
   }
 }
 
