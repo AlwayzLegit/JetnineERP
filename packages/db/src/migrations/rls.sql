@@ -124,7 +124,9 @@ DECLARE
     'customer_tags',
     'customer_tag_links',
     'customer_segments',
-    'campaigns'
+    'campaigns',
+    'order_sequences',
+    'membership_permission_overrides'
   ];
 BEGIN
   FOREACH t IN ARRAY tenant_tables LOOP

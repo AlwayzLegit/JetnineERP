@@ -220,6 +220,68 @@ describe('Epic 1.6 — Business admin console', () => {
     expect(badUpdate.body.message).toContain('invalid timezone');
   });
 
+  it('Per-store order numbering: prefixed locations use their own counter', async () => {
+    const server = app.getHttpServer();
+    const mkLoc = async (name: string, orderPrefix: string) => {
+      const res = await request(server)
+        .post('/v1/business/locations')
+        .set('Cookie', ownerCookie)
+        .set('X-Business-Id', businessId)
+        .send({ name, timezone: 'America/Los_Angeles', orderPrefix });
+      expect(res.status).toBe(201);
+      expect(res.body.orderPrefix).toBe(orderPrefix.toUpperCase());
+      return res.body.id as string;
+    };
+    const wl = await mkLoc('Numbering West LA', 'wl');
+    const k = await mkLoc('Numbering Koreatown', 'K');
+
+    // Prefix collisions are rejected by the unique index.
+    const dup = await request(server)
+      .post('/v1/business/locations')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ name: 'Dup Prefix', timezone: 'America/Los_Angeles', orderPrefix: 'WL' });
+    expect(dup.status).toBeGreaterThanOrEqual(400);
+
+    let custId: string;
+    let variantId: string;
+    {
+      const sql = postgres(TEST_DB_URL, { max: 1, prepare: false });
+      const db = drizzle(sql);
+      try {
+        const [c] = await db
+          .insert(schema.customers)
+          .values({ businessId, firstName: 'Num', lastName: 'Bering' })
+          .returning();
+        custId = c!.id;
+        const [pr] = await db
+          .insert(schema.products)
+          .values({ businessId, sku: 'NUMBERING-1', name: 'Numbering Product' })
+          .returning();
+        const [v] = await db
+          .insert(schema.productVariants)
+          .values({ businessId, productId: pr!.id, sku: 'NUMBERING-1-V1', priceCents: 5000 })
+          .returning();
+        variantId = v!.id;
+      } finally {
+        await sql.end({ timeout: 5 });
+      }
+    }
+    const mkOrder = async (locationId: string) => {
+      const res = await request(server)
+        .post('/v1/orders')
+        .set('Cookie', ownerCookie)
+        .set('X-Business-Id', businessId)
+        .send({ locationId, customerId: custId, lines: [{ variantId, quantity: 1 }] });
+      expect(res.status).toBe(201);
+      return res.body.number as string;
+    };
+    expect(await mkOrder(wl)).toBe('WL-10001');
+    expect(await mkOrder(wl)).toBe('WL-10002');
+    // A different store runs its own counter from the start.
+    expect(await mkOrder(k)).toBe('K-10001');
+  });
+
   it('Location delete: active blocked, referenced blocked, clean inactive deleted', async () => {
     const server = app.getHttpServer();
     const mk = async (name: string) => {
@@ -347,6 +409,42 @@ describe('Epic 1.6 — Business admin console', () => {
     }
 
     cashierCookie = await captureCookie(CASHIER_EMAIL, CASHIER_PASSWORD);
+  });
+
+  it('Per-user permission overrides adjust role defaults both directions', async () => {
+    const server = app.getHttpServer();
+    const probe = () =>
+      request(server)
+        .get('/v1/products')
+        .set('Cookie', cashierCookie)
+        .set('X-Business-Id', businessId);
+
+    const sql = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    const db = drizzle(sql);
+    try {
+      // Grant: an explicit allowed=true override wins regardless of what
+      // earlier tests did to the cashier's role.
+      await db.insert(schema.membershipPermissionOverrides).values({
+        businessId,
+        membershipId: cashierMembershipId,
+        permission: 'products.view',
+        allowed: true,
+      });
+      expect((await probe()).status).toBe(200);
+
+      // Revoke: flipping the same override takes the permission away even
+      // though a role may grant it.
+      await db
+        .update(schema.membershipPermissionOverrides)
+        .set({ allowed: false })
+        .where(eq(schema.membershipPermissionOverrides.membershipId, cashierMembershipId));
+      expect((await probe()).status).toBe(403);
+    } finally {
+      await db
+        .delete(schema.membershipPermissionOverrides)
+        .where(eq(schema.membershipPermissionOverrides.businessId, businessId));
+      await sql.end({ timeout: 5 });
+    }
   });
 
   it('Cashier has cashier permissions only', async () => {

@@ -90,6 +90,11 @@ export const orders = pgTable(
      */
     orderKind: text('order_kind').notNull().default('sales_order'),
     /**
+     * Exchange Orders (PLAN-POS-OPERATIONS §10) link back to the original
+     * sale's order; the printed document shows it as "Original Invoice #".
+     */
+    originalOrderId: uuid('original_order_id'),
+    /**
      * 'delivery' | 'pickup' | 'take_with' | 'direct_ship' — the order
      * default; STORIS split tickets are per-line overrides on
      * `order_lines.fulfillment_method`.

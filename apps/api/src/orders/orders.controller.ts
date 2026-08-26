@@ -411,7 +411,11 @@ export class OrdersController {
 
     const priced = await this.priceLines(tenant, body.locationId, body.lines);
 
-    const number = await this.orders.generateOrderNumber(this.db, tenant.businessId!);
+    const number = await this.orders.generateOrderNumber(
+      this.db,
+      tenant.businessId!,
+      body.locationId,
+    );
     const [order] = await this.db
       .insert(schema.orders)
       .values({

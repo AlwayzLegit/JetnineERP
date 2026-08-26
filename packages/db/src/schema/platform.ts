@@ -84,6 +84,13 @@ export const businesses = pgTable(
      * `name` stays what invoices and the platform know the business as).
      */
     brandingJson: jsonb('branding_json'),
+    /**
+     * Operational knobs from PLAN-POS-OPERATIONS: `{ recyclingFeeCents?,
+     * invoiceHeaderNote?, invoiceFooterNote?, unlockRoleIds?: string[],
+     * deliveryDailyCap?, poReplyTo? }`. One jsonb blob rather than a column
+     * per knob — these are admin-edited settings, never queried by value.
+     */
+    opsSettingsJson: jsonb('ops_settings_json'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
     deletedAt: timestamp('deleted_at', { withTimezone: true }),
