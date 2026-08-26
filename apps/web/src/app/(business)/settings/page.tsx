@@ -24,6 +24,11 @@ interface OpsSettings {
   invoiceFooterNote?: string | null;
   deliveryDailyCap?: number | null;
   poReplyTo?: string | null;
+  priceVariance?: {
+    tier1Pct?: number | null;
+    tier1MaxCents?: number | null;
+    tier2Pct?: number | null;
+  } | null;
 }
 
 interface Settings {
@@ -232,6 +237,17 @@ function OpsCard({ settings, onSaved }: { settings: Settings; onSaved: (s: Setti
         invoiceFooterNote: String(data.get('invoiceFooterNote') ?? '').trim() || null,
         poReplyTo: String(data.get('poReplyTo') ?? '').trim() || null,
       };
+      const t1 = String(data.get('pvTier1Pct') ?? '').trim();
+      const t1max = String(data.get('pvTier1Max') ?? '').trim();
+      const t2 = String(data.get('pvTier2Pct') ?? '').trim();
+      body.priceVariance =
+        t1 === '' && t1max === '' && t2 === ''
+          ? null
+          : {
+              tier1Pct: t1 === '' ? null : Number(t1),
+              tier1MaxCents: t1max === '' ? null : Math.round(Number(t1max) * 100),
+              tier2Pct: t2 === '' ? null : Number(t2),
+            };
       const updated = await api<Settings>('/v1/business/settings', {
         method: 'PATCH',
         body: JSON.stringify({ ops: body }),
@@ -286,6 +302,40 @@ function OpsCard({ settings, onSaved }: { settings: Settings; onSaved: (s: Setti
           name="poReplyTo"
           type="email"
           defaultValue={ops.poReplyTo ?? ''}
+          style={{ width: '100%' }}
+        />
+      </Field>
+      <Field label="Price variance — no-friction tier (%; blank = 5)">
+        <Input
+          name="pvTier1Pct"
+          type="number"
+          step="0.5"
+          min={0}
+          defaultValue={ops.priceVariance?.tier1Pct ?? ''}
+          style={{ width: '100%' }}
+        />
+      </Field>
+      <Field label="No-friction max discount ($; blank = 50)">
+        <Input
+          name="pvTier1Max"
+          type="number"
+          step="1"
+          min={0}
+          defaultValue={
+            ops.priceVariance?.tier1MaxCents != null
+              ? (ops.priceVariance.tier1MaxCents / 100).toFixed(0)
+              : ''
+          }
+          style={{ width: '100%' }}
+        />
+      </Field>
+      <Field label="Manager-approval tier starts above (%; blank = 15)">
+        <Input
+          name="pvTier2Pct"
+          type="number"
+          step="0.5"
+          min={0}
+          defaultValue={ops.priceVariance?.tier2Pct ?? ''}
           style={{ width: '100%' }}
         />
       </Field>

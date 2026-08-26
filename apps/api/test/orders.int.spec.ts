@@ -1047,14 +1047,17 @@ describe('Day 1 — partial stock, line edits, and cancellation', () => {
 
 describe('Day 1 — order pricing rules', () => {
   it('An order-level discount is allocated across lines before tax', async () => {
+    // Deep negotiated prices — since G6 that takes the owner (who holds
+    // orders.price_override) plus a reason; the tax math is unchanged.
     const res = await request(app.getHttpServer())
       .post('/v1/orders')
-      .set('Cookie', cashierCookie)
+      .set('Cookie', ownerCookie)
       .set('X-Business-Id', businessId)
       .send({
         locationId,
         customerId,
         orderDiscountCents: 10_000,
+        priceReason: 'negotiated floor deal',
         lines: [
           { variantId: sofaVariantId, quantity: 1, unitPriceCents: 90_000 },
           { variantId: chairVariantId, quantity: 1, unitPriceCents: 10_000 },
@@ -1592,5 +1595,162 @@ describe('Return lifecycle — refund gated on goods receipt (PLAN-STORIS-GAP G3
       .expect(201);
     const [ret] = (await owner().get(`/v1/order-returns?orderId=${order.id}`)).body;
     await as(cashierCookie).post(`/v1/order-returns/${ret.id}/receive`).send({}).expect(403);
+  });
+});
+
+describe('Price variance 3-tier + §5 gates (PLAN-STORIS-GAP G6)', () => {
+  let pvVariantId = '';
+
+  function as(cookie: string) {
+    return {
+      post: (url: string) =>
+        request(app.getHttpServer())
+          .post(url)
+          .set('Cookie', cookie)
+          .set('X-Business-Id', businessId),
+      get: (url: string) =>
+        request(app.getHttpServer())
+          .get(url)
+          .set('Cookie', cookie)
+          .set('X-Business-Id', businessId),
+    };
+  }
+
+  beforeAll(async () => {
+    const sql2 = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    const db = drizzle(sql2);
+    try {
+      const [p] = await db
+        .insert(schema.products)
+        .values({ businessId, sku: 'G6-MATT', name: 'Variance Test Mattress' })
+        .returning();
+      const [v] = await db
+        .insert(schema.productVariants)
+        .values({
+          businessId,
+          productId: p!.id,
+          sku: 'G6-MATT-Q',
+          priceCents: 100_000,
+          costCents: 60_000,
+        })
+        .returning();
+      pvVariantId = v!.id;
+      await db.insert(schema.inventoryLevels).values({
+        businessId,
+        variantId: pvVariantId,
+        locationId,
+        onHand: 50,
+        reserved: 0,
+      });
+    } finally {
+      await sql2.end({ timeout: 5 });
+    }
+  });
+
+  function orderBody(unitPriceCents: number, extra: Record<string, unknown> = {}) {
+    return {
+      locationId,
+      customerId,
+      confirm: true,
+      lines: [
+        { variantId: pvVariantId, quantity: 1, unitPriceCents },
+        // The recycling fee keeps the pass-through exception quiet here.
+        { lineType: 'custom', description: 'Recycling Fee', quantity: 1, unitPriceCents: 1050 },
+      ],
+      ...extra,
+    };
+  }
+
+  it('tier 1: a small discount sails through with no reason', async () => {
+    const res = await as(cashierCookie).post('/v1/orders').send(orderBody(96_000));
+    expect(res.status).toBe(201);
+  });
+
+  it('tier 2: a 10% discount needs a reason (REASON_REQUIRED), then passes', async () => {
+    const refused = await as(cashierCookie).post('/v1/orders').send(orderBody(90_000));
+    expect(refused.status).toBe(400);
+    expect(refused.body.code).toBe('REASON_REQUIRED');
+
+    const ok = await as(cashierCookie)
+      .post('/v1/orders')
+      .send(orderBody(90_000, { priceReason: 'competitor price match' }));
+    expect(ok.status).toBe(201);
+
+    const register = await as(ownerCookie).get('/v1/exceptions?type=price_override');
+    expect(register.status).toBe(200);
+    expect(register.body.length).toBeGreaterThan(0);
+  });
+
+  it('tier 3: a 30% discount from a cashier needs a manager override; below cost is critical', async () => {
+    const refused = await as(cashierCookie)
+      .post('/v1/orders')
+      .send(orderBody(70_000, { priceReason: 'trying anyway' }));
+    expect(refused.status).toBe(403);
+    expect(refused.body.code).toBe('OVERRIDE_REQUIRED');
+    expect(refused.body.permission).toBe('orders.price_override');
+
+    const ok = await as(cashierCookie)
+      .post('/v1/orders')
+      .send(
+        orderBody(50_000, {
+          override: {
+            email: 'owner@orders-test.local',
+            password: PASSWORD,
+            reason: 'clearance unit',
+          },
+        }),
+      );
+    expect(ok.status).toBe(201);
+
+    // $500 < $600 cost → the exception is critical.
+    const register = await as(ownerCookie).get(
+      '/v1/exceptions?type=price_override&severity=critical',
+    );
+    expect(register.body.length).toBeGreaterThan(0);
+    expect(register.body[0].summary).toMatch(/BELOW COST/);
+  });
+
+  it('the owner passes tier 3 directly with a reason (holds orders.price_override)', async () => {
+    const res = await as(ownerCookie)
+      .post('/v1/orders')
+      .send(orderBody(70_000, { priceReason: 'floor model' }));
+    expect(res.status).toBe(201);
+  });
+
+  it('layaway deposits below $100 need a manager; the exception is registered', async () => {
+    const order = await as(ownerCookie)
+      .post('/v1/orders')
+      .send(orderBody(100_000, { orderKind: 'layaway' }));
+    expect(order.status).toBe(201);
+
+    const small = await as(cashierCookie)
+      .post(`/v1/orders/${order.body.id}/payments`)
+      .send({ method: 'cash', amountCents: 5_000 });
+    expect(small.status).toBe(403);
+    expect(small.body.code).toBe('OVERRIDE_REQUIRED');
+
+    // The owner (orders.complete_with_balance) can open it small.
+    await as(ownerCookie)
+      .post(`/v1/orders/${order.body.id}/payments`)
+      .send({ method: 'cash', amountCents: 5_000 })
+      .expect(201);
+    const register = await as(ownerCookie).get('/v1/exceptions?type=layaway_min_deposit_override');
+    expect(register.body.length).toBeGreaterThan(0);
+  });
+
+  it('a qualifying order without the recycling fee registers the pass-through exception', async () => {
+    const res = await as(ownerCookie)
+      .post('/v1/orders')
+      .send({
+        locationId,
+        customerId,
+        confirm: true,
+        lines: [{ variantId: pvVariantId, quantity: 1 }],
+      });
+    expect(res.status).toBe(201);
+    const register = await as(ownerCookie).get('/v1/exceptions?type=recycling_fee_removed');
+    expect(register.body.some((e: { entityId: string | null }) => e.entityId === res.body.id)).toBe(
+      true,
+    );
   });
 });

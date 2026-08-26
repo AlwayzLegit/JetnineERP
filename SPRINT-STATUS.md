@@ -841,8 +841,22 @@ commission-clawback + digest requirements.
       accepts the action's own reason code (any class) — class enforcement stays with the
       consuming prompt, so the dialog never asks for two reasons; G6 adds the threshold
       writers (price variance) to the same register._
-- [ ] **G6 — Price variance 3-tier** + margin floor + tax-exempt permission + layaway
-      min-deposit enforcement + recycling-fee-removal coded reason + daily cash refund cap
+- [x] **G6 — Price variance 3-tier + §5 gates:** server-side variance gate on order
+      create / draft-confirm / discount raise / line add, against catalog list prices
+      (line overrides + line discounts + order discount): tier 1 (≤5% OR ≤$50) logged
+      only; tier 2 (≤15%) → 400 `code:REASON_REQUIRED`, coded reason (class exception) + exception-register entry; tier 3 (>15% or below variant cost) → manager
+      security override on new `orders.price_override`, below-cost registers as
+      **critical**. Thresholds per business in ops settings `priceVariance` (editable
+      in Settings → Store operations). New Sale catches REASON*REQUIRED/
+      OVERRIDE_REQUIRED and runs the approval dialog, then retries. Also: layaway $100
+      minimum deposit enforced at save (override on orders.complete_with_balance +
+      registered), and qualifying orders written without a recycling-fee line register
+      a `recycling_fee_removed` exception automatically (server-side keyword check —
+      can't be bypassed by the UI). orders.int.spec 42→48. — \_2026-08-26. Conventions
+      flagged: margin floor = variant cost (no separate floor setting yet); drafts skip
+      the gate but re-run it at completion; exchange passes control fields through;
+      tax-exempt gate deferred — no tax-exempt field exists on orders yet; daily cash
+      refund cap deferred to the §8 refund-controls slice.*
 - [ ] **G7 — Delivery run object + close-out reconciliation** (run = hard lock; per-piece
       outcomes; COD due vs collected; outcome codes; postponement counter)
 - [ ] **G8 — Transfer in-transit state + variance investigation** + aging alert + types

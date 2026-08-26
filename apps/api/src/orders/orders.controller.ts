@@ -144,6 +144,10 @@ interface CreateOrderBody extends StepThreeFees {
    * reservation, resumable by any associate, listed under status=draft.
    */
   draft?: boolean;
+  /** G6 price-variance controls: coded reason + optional manager override. */
+  priceReasonCodeId?: string;
+  priceReason?: string;
+  override?: OverrideCredentials;
 }
 
 interface UpdateOrderBody extends StepThreeFees {
@@ -165,6 +169,10 @@ interface UpdateOrderBody extends StepThreeFees {
   orderDiscountCents?: number;
   /** 'quote' → 'open' only; every other transition has its own endpoint. */
   status?: 'open';
+  /** G6 price-variance controls: coded reason + optional manager override. */
+  priceReasonCodeId?: string;
+  priceReason?: string;
+  override?: OverrideCredentials;
 }
 
 interface OrderPaymentBody {
@@ -702,6 +710,14 @@ export class OrdersController {
     }
 
     const priced = await this.priceLines(tenant, body.locationId, body.lines);
+    // Drafts skip the variance gate; it re-runs when the draft is
+    // completed through this endpoint again (drafts are superseded by a
+    // fresh create, never confirmed in place).
+    if (!body.draft) {
+      await this.enforcePriceVariance(tenant, priced, orderDiscountCents, body, {
+        action: 'Write order below list price',
+      });
+    }
 
     const number = await this.orders.generateOrderNumber(
       this.db,
@@ -804,6 +820,28 @@ export class OrdersController {
         customerId: order.customerId,
       },
     });
+
+    // G6 (§5): the CA recycling fee is a state-mandated pass-through. A
+    // qualifying order written without one registers an exception — the
+    // removal shows up in the digest whether or not the UI prompted.
+    if (!body.draft) {
+      const RECYCLING_KEYWORDS = /mattress|foundation|adjustable base|box spring/i;
+      const qualifies = priced.some(
+        (l) => l.lineType !== 'custom' && RECYCLING_KEYWORDS.test(l.description),
+      );
+      const hasFee = priced.some(
+        (l) => l.lineType === 'custom' && /recycling/i.test(l.description),
+      );
+      if (qualifies && !hasFee) {
+        await this.exceptions.record({
+          type: 'recycling_fee_removed',
+          severity: 'info',
+          entityType: 'order',
+          entityId: order.id,
+          summary: `Order ${order.number} has qualifying units but no recycling fee`,
+        });
+      }
+    }
 
     const detail = await this.loadDetail(order.id);
     this.fireOrderEvent('order.created', tenant.businessId!, detail);
@@ -911,6 +949,23 @@ export class OrdersController {
       repriced = true;
     }
 
+    // G6: a raised order discount, or completing a parked draft/quote,
+    // re-runs the price-variance gate against catalog list prices.
+    if (
+      (body.orderDiscountCents !== undefined &&
+        body.orderDiscountCents > order.orderDiscountCents) ||
+      (body.status === 'open' && (order.status === 'draft' || order.status === 'quote'))
+    ) {
+      const lines = await this.varianceLinesFor(id);
+      await this.enforcePriceVariance(
+        tenant,
+        lines,
+        body.orderDiscountCents ?? order.orderDiscountCents,
+        body,
+        { action: `Discount order ${order.number}`, entityType: 'order', entityId: id },
+      );
+    }
+
     await this.db.update(schema.orders).set(patch).where(eq(schema.orders.id, id));
     if (repriced) await this.orders.recomputeTotals(this.db, id);
 
@@ -950,11 +1005,23 @@ export class OrdersController {
     @CurrentTenant() tenant: RequestTenantContext,
     @CurrentUser() actor: CurrentUserPayload,
     @Param('id') id: string,
-    @Body() body: OrderLineInput,
+    @Body()
+    body: OrderLineInput & {
+      priceReasonCodeId?: string;
+      priceReason?: string;
+      override?: OverrideCredentials;
+    },
   ): Promise<OrderDetail> {
     const order = await this.requireLiveOrder(id);
     this.assertUnlocked(order);
     const [priced] = await this.priceLines(tenant, order.locationId, [body]);
+    if (order.status !== 'draft') {
+      await this.enforcePriceVariance(tenant, [priced!], 0, body, {
+        action: `Add discounted line to ${order.number}`,
+        entityType: 'order',
+        entityId: id,
+      });
+    }
 
     const [line] = await this.db
       .insert(schema.orderLines)
@@ -1163,6 +1230,31 @@ export class OrdersController {
     // Infer the kind: the first money in is the deposit, the rest is
     // balance. An explicit kind (an installment against a plan) wins.
     const kind = body.kind ?? (paidCents(existing) === 0 ? 'deposit' : 'balance');
+
+    // G6 (§5): the layaway minimum deposit ($100, or the full balance if
+    // smaller) is enforced at save, not just in the UI. A manager can
+    // authorize a smaller deposit at the point of action.
+    const LAYAWAY_MIN_DEPOSIT_CENTS = 10000;
+    if (
+      order.orderKind === 'layaway' &&
+      kind === 'deposit' &&
+      body.amountCents < Math.min(LAYAWAY_MIN_DEPOSIT_CENTS, due)
+    ) {
+      await this.overrides.require({
+        permission: 'orders.complete_with_balance',
+        action: `Layaway deposit below the $100 minimum on ${order.number}`,
+        entityType: 'order',
+        entityId: id,
+        override: (body as { override?: OverrideCredentials }).override,
+      });
+      await this.exceptions.record({
+        type: 'layaway_min_deposit_override',
+        severity: 'info',
+        entityType: 'order',
+        entityId: id,
+        summary: `Layaway ${order.number} opened with a $${(body.amountCents / 100).toFixed(2)} deposit (min $100)`,
+      });
+    }
 
     // Money down means the customer committed, so a quote becomes an open
     // order and commits its stock here. Taking a deposit is one action at
@@ -2082,6 +2174,9 @@ export class OrdersController {
       lineType: string;
       taxRateBps: number;
       taxClassId: string | null;
+      /** Catalog list price (variance basis); custom lines = as entered. */
+      listPriceCents: number;
+      costCents: number | null;
     }[]
   > {
     for (const l of inputs) {
@@ -2115,6 +2210,7 @@ export class OrdersController {
       .select({
         id: schema.productVariants.id,
         priceCents: schema.productVariants.priceCents,
+        costCents: schema.productVariants.costCents,
         productName: schema.products.name,
         variantName: schema.productVariants.name,
         taxClassId: schema.products.taxClassId,
@@ -2179,6 +2275,8 @@ export class OrdersController {
           lineType: 'custom',
           taxRateBps: 0,
           taxClassId: null,
+          listPriceCents: l.unitPriceCents!,
+          costCents: null,
         };
       }
       const v = byId.get(l.variantId)!;
@@ -2196,7 +2294,161 @@ export class OrdersController {
           v.taxClassFallbackRateBps ??
           fallbackRateBps!,
         taxClassId: v.taxClassId,
+        listPriceCents: v.priceCents,
+        costCents: v.costCents ?? null,
       };
+    });
+  }
+
+  /** Load an order's lines shaped for the variance gate. */
+  private async varianceLinesFor(orderId: string): Promise<
+    {
+      quantity: number;
+      unitPriceCents: number;
+      lineDiscountCents: number;
+      lineType: string;
+      listPriceCents: number;
+      costCents: number | null;
+      description: string;
+    }[]
+  > {
+    const rows = await this.db
+      .select({
+        quantity: schema.orderLines.quantity,
+        unitPriceCents: schema.orderLines.unitPriceCents,
+        discountCents: schema.orderLines.discountCents,
+        lineType: schema.orderLines.lineType,
+        description: schema.orderLines.description,
+        listPriceCents: schema.productVariants.priceCents,
+        costCents: schema.productVariants.costCents,
+      })
+      .from(schema.orderLines)
+      .leftJoin(schema.productVariants, eq(schema.productVariants.id, schema.orderLines.variantId))
+      .where(eq(schema.orderLines.orderId, orderId));
+    return rows.map((l) => ({
+      quantity: l.quantity,
+      unitPriceCents: l.unitPriceCents,
+      lineDiscountCents: l.discountCents,
+      lineType: l.lineType,
+      listPriceCents: l.listPriceCents ?? l.unitPriceCents,
+      costCents: l.costCents ?? null,
+      description: l.description,
+    }));
+  }
+
+  /**
+   * G6 three-tier price variance (PLAN-STORIS-GAP §5 / amendment A6),
+   * applied to line price overrides, line discounts, and the order
+   * discount against catalog list prices:
+   *
+   *   tier 1 — ≤ tier1Pct (5%) OR ≤ tier1MaxCents ($50): logged only.
+   *   tier 2 — up to tier2Pct (15%): a coded reason is required
+   *            (class `exception`) and the discount hits the register.
+   *   tier 3 — beyond tier2Pct, or selling below cost: a manager
+   *            security override (`orders.price_override`) on top.
+   *
+   * Thresholds are admin-editable via ops settings `priceVariance`.
+   */
+  private async enforcePriceVariance(
+    tenant: RequestTenantContext,
+    priced: readonly {
+      quantity: number;
+      unitPriceCents: number;
+      lineDiscountCents: number;
+      lineType: string;
+      listPriceCents: number;
+      costCents: number | null;
+      description: string;
+    }[],
+    orderDiscountCents: number,
+    body: { priceReasonCodeId?: string; priceReason?: string; override?: OverrideCredentials },
+    context: { action: string; entityType?: string; entityId?: string },
+  ): Promise<void> {
+    const [biz] = await this.db
+      .select({ opsSettingsJson: schema.businesses.opsSettingsJson })
+      .from(schema.businesses)
+      .where(eq(schema.businesses.id, tenant.businessId!))
+      .limit(1);
+    const pv = (
+      (biz?.opsSettingsJson ?? {}) as {
+        priceVariance?: { tier1Pct?: number; tier1MaxCents?: number; tier2Pct?: number } | null;
+      }
+    ).priceVariance;
+    const tier1Pct = pv?.tier1Pct ?? 5;
+    const tier1MaxCents = pv?.tier1MaxCents ?? 5000;
+    const tier2Pct = pv?.tier2Pct ?? 15;
+
+    let worstTier = 1;
+    let belowCost = false;
+    let totalDiscountCents = 0;
+    let listTotalCents = 0;
+    const flagged: string[] = [];
+
+    for (const l of priced) {
+      if (l.lineType === 'custom') continue;
+      const listTotal = l.listPriceCents * l.quantity;
+      listTotalCents += listTotal;
+      const effectiveTotal = l.unitPriceCents * l.quantity - l.lineDiscountCents;
+      const discount = listTotal - effectiveTotal;
+      if (discount <= 0) continue;
+      totalDiscountCents += discount;
+      const pct = listTotal > 0 ? (discount / listTotal) * 100 : 0;
+      const lineBelowCost = l.costCents != null && effectiveTotal / l.quantity < l.costCents;
+      if (lineBelowCost) belowCost = true;
+      const tier =
+        pct > tier2Pct || lineBelowCost ? 3 : pct > tier1Pct && discount > tier1MaxCents ? 2 : 1;
+      if (tier > 1) flagged.push(`${l.description}: -${pct.toFixed(1)}%`);
+      worstTier = Math.max(worstTier, tier);
+    }
+    if (orderDiscountCents > 0 && listTotalCents > 0) {
+      const pct = (orderDiscountCents / listTotalCents) * 100;
+      const tier =
+        pct > tier2Pct ? 3 : pct > tier1Pct && orderDiscountCents > tier1MaxCents ? 2 : 1;
+      if (tier > 1) flagged.push(`order discount: -${pct.toFixed(1)}%`);
+      worstTier = Math.max(worstTier, tier);
+      totalDiscountCents += orderDiscountCents;
+    }
+    if (worstTier === 1) return;
+
+    if (worstTier === 3) {
+      await this.overrides.require({
+        permission: 'orders.price_override',
+        action: `${context.action}: ${flagged.join('; ')}${belowCost ? ' (below cost)' : ''}`,
+        entityType: context.entityType,
+        entityId: context.entityId,
+        override: body.override,
+      });
+    }
+    if (
+      !body.priceReasonCodeId &&
+      !body.priceReason?.trim() &&
+      !body.override?.reasonCodeId &&
+      !body.override?.reason?.trim()
+    ) {
+      throw new BadRequestException({
+        statusCode: 400,
+        code: 'REASON_REQUIRED',
+        usageClass: 'exception',
+        message: `This discount (${flagged.join('; ')}) needs a reason`,
+      });
+    }
+    const reason = await this.overrides.resolveReason('exception', {
+      reasonCodeId: body.priceReasonCodeId ?? body.override?.reasonCodeId,
+      reason: body.priceReason ?? body.override?.reason,
+    });
+    await this.exceptions.record({
+      type: 'price_override',
+      severity: belowCost ? 'critical' : worstTier === 3 ? 'warning' : 'info',
+      entityType: context.entityType,
+      entityId: context.entityId,
+      summary: `${context.action}: ${flagged.join('; ')} — $${(totalDiscountCents / 100).toFixed(2)} off list${belowCost ? ', BELOW COST' : ''}`,
+      metadata: {
+        totalDiscountCents,
+        tier: worstTier,
+        belowCost,
+        reasonCode: reason.reasonCode,
+        reason: reason.reasonText,
+      },
     });
   }
 

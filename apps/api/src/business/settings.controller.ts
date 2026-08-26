@@ -41,6 +41,12 @@ interface OpsSettings {
   unlockRoleIds?: string[] | null;
   deliveryDailyCap?: number | null;
   poReplyTo?: string | null;
+  /** G6 three-tier price-variance thresholds (defaults 5% / $50 / 15%). */
+  priceVariance?: {
+    tier1Pct?: number | null;
+    tier1MaxCents?: number | null;
+    tier2Pct?: number | null;
+  } | null;
 }
 
 interface UpdateBody {
@@ -87,6 +93,20 @@ function validateOps(input: OpsSettings): OpsSettings {
       throw new BadRequestException('ops.unlockRoleIds must be an array of role ids');
     }
     out.unlockRoleIds = input.unlockRoleIds;
+  }
+  if (input.priceVariance !== undefined) {
+    if (input.priceVariance !== null) {
+      const pv = input.priceVariance;
+      for (const [key, val] of Object.entries(pv) as [string, number | null | undefined][]) {
+        if (val != null && (typeof val !== 'number' || !Number.isFinite(val) || val < 0)) {
+          throw new BadRequestException(`ops.priceVariance.${key} must be a non-negative number`);
+        }
+      }
+      if (pv.tier1Pct != null && pv.tier2Pct != null && pv.tier2Pct < pv.tier1Pct) {
+        throw new BadRequestException('ops.priceVariance.tier2Pct must be ≥ tier1Pct');
+      }
+    }
+    out.priceVariance = input.priceVariance;
   }
   return out;
 }

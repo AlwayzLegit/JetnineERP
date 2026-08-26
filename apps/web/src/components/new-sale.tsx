@@ -5,7 +5,8 @@ import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { Plus, Search, X } from 'lucide-react';
 import { formatMoney } from '@jetnine/shared';
-import { api } from '@/lib/api';
+import { api, ApiError } from '@/lib/api';
+import { SecurityOverrideDialog } from '@/components/security-override-dialog';
 import { Money } from '@/components/money';
 import { Button, Card, Field, Input, Select } from '@/components/ui';
 
@@ -173,6 +174,7 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
 
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [priceGateMode, setPriceGateMode] = useState<'complete' | 'draft' | null>(null);
   const [done, setDone] = useState<{ id: string; number: string; kind: 'order' | 'sale' } | null>(
     null,
   );
@@ -433,6 +435,15 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
     }
   }
 
+  // G6: the server may refuse a deep discount with REASON_REQUIRED
+  // (tier 2 — coded reason) or OVERRIDE_REQUIRED (tier 3 — manager
+  // credentials); the override dialog collects both and retries.
+  interface PriceControl {
+    priceReasonCodeId?: string;
+    priceReason?: string;
+    override?: { email: string; password: string; reasonCodeId?: string; reason?: string };
+  }
+
   async function submit(mode: 'complete' | 'draft') {
     setError(null);
     if (!customer) {
@@ -449,6 +460,24 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
     }
     setBusy(true);
     try {
+      await doSubmit(mode);
+    } catch (err) {
+      if (
+        err instanceof ApiError &&
+        (err.code === 'REASON_REQUIRED' || err.code === 'OVERRIDE_REQUIRED')
+      ) {
+        setPriceGateMode(mode);
+      } else {
+        setError(err instanceof Error ? err.message : String(err));
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function doSubmit(mode: 'complete' | 'draft', control?: PriceControl) {
+    if (!customer) throw new Error('Attach a customer first.');
+    {
       const linePayload = lines.map((l) => ({
         variantId: l.variantId ?? undefined,
         description: l.lineType === 'custom' ? l.description : undefined,
@@ -534,6 +563,7 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
           deliveryFeeCents: parseDollars(deliveryFee) || undefined,
           draft: mode === 'draft' ? true : undefined,
           confirm: mode === 'complete' && orderType !== 'quote' ? true : undefined,
+          ...(control ?? {}),
         }),
       });
 
@@ -559,10 +589,6 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
       } else {
         setDone({ id: order.id, number: order.number, kind: 'order' });
       }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(false);
     }
   }
 
@@ -619,6 +645,21 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
 
   return (
     <div className="grid gap-4 xl:grid-cols-[1fr_340px]" data-testid="new-sale">
+      <SecurityOverrideDialog
+        open={priceGateMode != null}
+        title="Discount needs approval"
+        usageClass="exception"
+        submitLabel="Approve & save"
+        perform={(payload) =>
+          doSubmit(priceGateMode!, {
+            priceReasonCodeId: payload.reasonCodeId,
+            priceReason: payload.reason,
+            override: payload.override,
+          })
+        }
+        onClose={() => setPriceGateMode(null)}
+        onSuccess={() => undefined}
+      />
       <div className="min-w-0">
         {exchangeOriginal && (
           <div
@@ -1226,7 +1267,8 @@ function LineRow({
           />
         </td>
         <td>
-          {/* Price override: click, type, done — any associate, no cap. */}
+          {/* Price override: click, type, done. Small variances stay frictionless;
+              deep ones hit the G6 reason/manager gate at save. */}
           <Input
             type="number"
             step="0.01"
