@@ -771,6 +771,59 @@ is live on `lamattress-erp.vercel.app`.** P9 (commissions, dashboards, auto-clos
 remains. Ops unchanged: repoint Render repo URL (deploys still manual-trigger), rotate
 the shared owner password, Resend domain when ready, sample invoices into `docs/`.
 
+## QA steps 6 + 3 completed against the deployed build (2026-08-26)
+
+Driven through the staging API (browser tools were unavailable), so these exercise the
+same deployed code the browser QA was hitting.
+
+**Step 6 — delivery runs, on run `2c0da72d` (2026-08-26, 2 stops, COD due $1,810.50):**
+
+- D5 verified live: `GET /v1/orders/:id` now returns
+  `onOpenRun {runId, runDate}`, and `PATCH` on a run member is refused 409 ("Remove it
+  from the run (with a reason) before editing"). Previously enforced but invisible.
+- Pull-off-run: refused 400 without a reason, accepted with one; registered
+  `manifest_removal` (warning) attributed to the actor; the pulled order's `onOpenRun`
+  went null and it became editable again. No `manifest_removal` codes exist in the tenant
+  yet, so free text is the A9 fallback — **add codes for that class** to make it coded.
+- Close-out refusals both hold: an unaccounted stop → 400 naming the stop id; a `failed`
+  outcome with no reason → 400 "A reason is required".
+- Close-out with one stop delivered and a COD mismatch → run `completed`, and
+  `cod_variance` registered: _"Run 2026-08-26: COD due $800.00, collected $1700.00"_ with
+  `{codDueCents, codCollectedCents, receivedBy}` in metadata. Note COD due had recomputed
+  from $1,810.50 to $800.00 when the second stop was pulled — correct, and worth knowing
+  when reading the variance.
+
+**Step 3 — return split (SO-2026-000005 pickup, SO-2026-000010 drop-off):**
+
+- Coded return reason enforced (tenant has CHGMIND), and the original-tender cap fires:
+  a $1,000 return against $200 collected → 400 "use store credit for the difference".
+- **Pickup**: authorization moved nothing — `paidCents` unchanged, `qtyReturned` 0, no
+  As-Is row, RMA `RMA-SO-2026-000005-1` `authorized`, list view "Awaiting Return Pickup".
+  On `POST /order-returns/:id/receive`: store credit $0 → $1,000, `qtyReturned` 1, one
+  As-Is piece `pending_review`, RMA `completed`, status "Returned". A7 holds end to end.
+- **Drop-off**: one request → `completed`, refund row `cash -100000`, `paidCents` 0,
+  goods to As-Is. Immediate, as specified.
+
+**D1 verified on the live system.** Rebuilt the exact case: register sale INV-2026-000006,
+$1,000 list less a 30% cart discount, $700 collected. Refund paid out **$700.00** (it
+would have paid $1,000 before the fix). D2 also confirmed live — the same sale was first
+refused `REASON_REQUIRED` with no reason, which is the hole that let the original
+INV-2026-000005 through.
+
+**D9 resolved — not a defect.** `GET /v1/products/9786c836…` returns Q-MOS10 with
+`priceCents: 0` and `costCents: 125500`. Both the API and the variants table map the
+columns correctly; the $1,255.00 on screen _is_ the Cost column, and the Price cell is an
+editable input reading `0.00`. **But the underlying observation is real and is a cutover
+blocker:** the STORIS catalog imported with no retail prices (D12, by design), so every
+imported variant is $0.00 and lands on an order at zero. Spot-checked across the catalog —
+`pos/product-search` returns `price=0` for every imported SKU. A price source is needed
+before go-live: import a price file, or set prices in-app.
+
+**Test-data ledger additions (D11):** INV-2026-000006 ($700 discounted register sale, fully
+refunded); SO-2026-000010 (paid, fulfilled, drop-off returned); a $1,000 store-credit
+balance on customer ELICIA JOHN (4364a598) from RMA-SO-2026-000005-1; two As-Is pieces
+pending review; run 2c0da72d closed with a COD variance; SO-2026-000008 pulled off that run.
+
 ## Checkpoint 10 merged + deployed — QA pass fixes (2026-08-26)
 
 First browser QA pass over the deployed gap-closure surface produced 15 findings.
