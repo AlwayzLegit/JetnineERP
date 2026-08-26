@@ -3,17 +3,20 @@ import {
   Body,
   Controller,
   Delete,
+  Get,
   Inject,
   NotFoundException,
   Param,
   Patch,
   Post,
+  Query,
 } from '@nestjs/common';
-import { eq } from 'drizzle-orm';
+import { and, asc, eq, gt, inArray, or, sql } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { schema } from '@jetnine/db';
 import { AuditService } from '../audit/audit.service';
 import { CurrentTenant } from '../auth/current-user.decorator';
+import { buildPage, clampLimit, decodeCursor, type PageResponse } from '../common/pagination';
 import { DRIZZLE } from '../database/database.module';
 import { RequirePermission, TenantScoped } from '../tenancy/decorators';
 import type { RequestTenantContext } from '../tenancy/request-context';
@@ -36,6 +39,155 @@ export class VariantsController {
     @Inject(DRIZZLE) private readonly db: PostgresJsDatabase,
     @Inject(AuditService) private readonly audit: AuditService,
   ) {}
+
+  /**
+   * Flat variant work-list for the bulk price editor. Cursor-paginated by
+   * SKU (id tiebreaker) so a stable walk covers the whole catalog;
+   * `unpricedOnly=1` narrows to active variants still at $0 — the state
+   * every STORIS-imported variant lands in under D12. `unpricedCount` is
+   * the remaining-work counter regardless of the current filter.
+   */
+  @Get('variants/pricing')
+  @RequirePermission('products.view')
+  async pricingList(
+    @CurrentTenant() tenant: RequestTenantContext,
+    @Query('q') q?: string,
+    @Query('unpricedOnly') unpricedOnly?: string,
+    @Query('limit') limitStr?: string,
+    @Query('cursor') cursorStr?: string,
+  ): Promise<
+    PageResponse<{
+      id: string;
+      sku: string | null;
+      name: string | null;
+      productId: string;
+      productName: string;
+      priceCents: number;
+      costCents: number | null;
+      vendorSku: string | null;
+    }> & { unpricedCount: number }
+  > {
+    const limit = clampLimit(limitStr);
+    const skuExpr = sql`coalesce(${schema.productVariants.sku}, '')`;
+    const activeOnly = and(
+      eq(schema.productVariants.isActive, true),
+      eq(schema.products.isActive, true),
+    )!;
+    const filters = [activeOnly];
+    if (unpricedOnly === '1' || unpricedOnly === 'true') {
+      filters.push(eq(schema.productVariants.priceCents, 0));
+    }
+    if (q && q.trim().length > 0) {
+      const tsq = sql`websearch_to_tsquery('simple', ${q})`;
+      filters.push(
+        sql`(${schema.productVariants.searchTsv} @@ ${tsq}
+             OR ${schema.products.searchTsv} @@ ${tsq})`,
+      );
+    }
+    const cursor = decodeCursor(cursorStr);
+    if (cursor) {
+      filters.push(
+        or(
+          gt(skuExpr, cursor.v as string),
+          and(sql`${skuExpr} = ${cursor.v as string}`, gt(schema.productVariants.id, cursor.id)),
+        )!,
+      );
+    }
+
+    const canSeeCost = tenant.isSuperAdmin || tenant.permissions.has('products.cost.view');
+    const rows = await this.db
+      .select({
+        id: schema.productVariants.id,
+        sku: schema.productVariants.sku,
+        name: schema.productVariants.name,
+        productId: schema.products.id,
+        productName: schema.products.name,
+        priceCents: schema.productVariants.priceCents,
+        costCents: schema.productVariants.costCents,
+        vendorSku: schema.productVariants.vendorSku,
+      })
+      .from(schema.productVariants)
+      .innerJoin(schema.products, eq(schema.productVariants.productId, schema.products.id))
+      .where(and(...filters))
+      .orderBy(asc(skuExpr), asc(schema.productVariants.id))
+      .limit(limit + 1);
+
+    const [{ count: unpricedCount }] = (await this.db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(schema.productVariants)
+      .innerJoin(schema.products, eq(schema.productVariants.productId, schema.products.id))
+      .where(and(activeOnly, eq(schema.productVariants.priceCents, 0)))) as [{ count: number }];
+
+    const page = buildPage(
+      rows.map((r) => ({ ...r, costCents: canSeeCost ? (r.costCents ?? null) : null })),
+      limit,
+      (r) => r.sku ?? '',
+    );
+    return { ...page, unpricedCount };
+  }
+
+  /**
+   * Batched price entry for the pricing page. Each item audits exactly like
+   * the single-variant price PATCH so the change history stays field-level;
+   * unchanged prices are skipped. The whole request runs on the tenant's
+   * RLS transaction, so a mid-batch failure rolls everything back.
+   */
+  @Post('variants/bulk-price')
+  @RequirePermission('products.update')
+  async bulkPrice(
+    @Body() body: { updates?: { id?: string; priceCents?: number }[] },
+  ): Promise<{ updated: number; unchanged: number }> {
+    const updates = body.updates;
+    if (!Array.isArray(updates) || updates.length === 0) {
+      throw new BadRequestException('updates must be a non-empty array');
+    }
+    if (updates.length > 200) {
+      throw new BadRequestException('at most 200 price updates per request');
+    }
+    for (const u of updates) {
+      if (!u || typeof u.id !== 'string' || u.id.length === 0) {
+        throw new BadRequestException('every update needs a variant id');
+      }
+      if (typeof u.priceCents !== 'number' || !Number.isInteger(u.priceCents) || u.priceCents < 0) {
+        throw new BadRequestException('priceCents must be a non-negative integer');
+      }
+    }
+    const ids = updates.map((u) => u.id!);
+    if (new Set(ids).size !== ids.length) {
+      throw new BadRequestException('duplicate variant ids in updates');
+    }
+
+    const existing = await this.db
+      .select({ id: schema.productVariants.id, priceCents: schema.productVariants.priceCents })
+      .from(schema.productVariants)
+      .where(inArray(schema.productVariants.id, ids));
+    const beforeById = new Map(existing.map((r) => [r.id, r.priceCents]));
+    const missing = ids.filter((id) => !beforeById.has(id));
+    if (missing.length > 0) {
+      throw new NotFoundException(
+        `Variant(s) not found: ${missing.slice(0, 5).join(', ')}${missing.length > 5 ? '…' : ''}`,
+      );
+    }
+
+    let updated = 0;
+    for (const u of updates) {
+      const before = beforeById.get(u.id!)!;
+      if (before === u.priceCents) continue;
+      await this.db
+        .update(schema.productVariants)
+        .set({ priceCents: u.priceCents })
+        .where(eq(schema.productVariants.id, u.id!));
+      await this.audit.log({
+        action: 'product.variant.price.update',
+        targetType: 'product_variant',
+        targetId: u.id!,
+        before: { priceCents: before },
+        after: { priceCents: u.priceCents },
+      });
+      updated += 1;
+    }
+    return { updated, unchanged: updates.length - updated };
+  }
 
   @Post(':productId/variants')
   @RequirePermission('products.update')

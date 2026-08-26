@@ -1411,3 +1411,39 @@ required`). A raw-TCP probe to `dpg-da4ttsm417fc73di57eg-a.oregon-postgres.rende
   Fastest paths: (a) run `query_render_postgres` from a local Claude session (raw TCP
   works there), (b) paste the recon report JSON from Settings → Import during the QA
   pass, or (c) approve the staging-login curl in this session.
+
+## Cutover session — Resend chain + bulk price entry (2026-08-26)
+
+Two owner decisions taken this session (AskUserQuestion, on record):
+
+1. **Resend sending domain is now the ROOT `a-prompt.ai`** — the owner deleted the
+   `mail.a-prompt.ai` subdomain from HANDOFF §4a and created the root domain instead
+   (id `e3b4a9d3-170d-4cc2-b082-6e7505b08ead`, us-east-1; the earlier "claimed in
+   another account" 403 evidently resolved). Owner confirmed the root-name records
+   (`resend._domainkey` TXT / `send` MX prio 10 / `send` SPF TXT — no `.mail` suffix)
+   were saved at GoDaddy. Verification triggered and the domain reached **verified**
+   (all three records) within ~20 min. Then, in order: sending-scoped API key
+   `jetnine-api-render-sending` created restricted to that domain; `RESEND_API_KEY` +
+   `RESEND_FROM_EMAIL` (`LA Mattress ERP <notifications@a-prompt.ai>`) set on
+   `srv-da4tua3m8hqs73apsflg` (env update auto-triggered deploy
+   `dep-da7kc6fqj5pc73835nvg`). The key was set **only after** the domain verified,
+   per the HANDOFF §4a trap. Proof-of-delivery invite: see the note below once sent.
+
+2. **Catalog prices will be set in-app** (not imported) — D12 register-side pricing
+   stands; the owner chose manual entry over a retail-price file. To make 6,909
+   zero-price variants feasible, this session shipped a **bulk price entry** slice:
+   - API: `GET /v1/products/variants/pricing` (`products.view`; flat variant
+     work-list joined to products, cursor-paginated by SKU, `unpricedOnly=1` filter,
+     tsvector search, `unpricedCount` remaining-work counter, cost gated on
+     `products.cost.view`) and `POST /v1/products/variants/bulk-price`
+     (`products.update`; ≤200 `{id, priceCents}` per request, non-negative-integer
+     validation, unknown-id 404, per-variant `product.variant.price.update` audit
+     rows identical to the single-price PATCH, unchanged rows skipped, all on the
+     request's RLS transaction).
+   - Web: `/products/pricing` — "Unpriced only" on by default, search, inline
+     new-price column with invalid-amount highlighting, batched save, remaining
+     counter, Load more; "Set prices" button added to the Products page header.
+   - Tests: catalog.int.spec.ts 10→16 (work-list shape + count, cashier cost
+     redaction, permission gate, malformed/unknown rejects, bulk write + audit row +
+     count drop). Gates by exit code: typecheck 0 · lint 0 · catalog spec 16/16 ·
+     prettier 0.

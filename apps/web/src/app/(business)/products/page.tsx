@@ -55,6 +55,9 @@ export default function ProductsPage() {
         title="Products"
         actions={
           <>
+            <LinkButton href="/products/pricing" variant="secondary">
+              Set prices
+            </LinkButton>
             <LinkButton href="/products/labels" variant="secondary">
               Print labels
             </LinkButton>
