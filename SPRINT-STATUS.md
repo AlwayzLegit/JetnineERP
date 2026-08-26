@@ -582,9 +582,18 @@ Owner handoff spec committed as `PLAN-POS-OPERATIONS.md` with amendments A1–A4
 (batch print doesn't lock; LB=La Brea keeps its name+history; single-screen New Sale
 supersedes the checkpoint-7 wizard; legacy register + its offline mode retire).
 
-- [ ] **Build P1:** Schema — store prefixes + per-store order sequences, ops settings
-      (recycling rate, doc header/footer note, unlock roles, delivery cap), permission
-      matrix per-user overrides, exchange link + draft status support
+- [x] **Build P1 (schema+API core):** migration `0032_pos_ops_phase1` — `locations.order_prefix`
+      (validated 1–4 letters, unique per business, admin-editable via locations API),
+      `order_sequences` per-store atomic counters (orders at a prefixed location number
+      `{PREFIX}-{seq}` from 10001; unprefixed locations keep the legacy SO-YYYY sequence),
+      `businesses.ops_settings_json` (recycling rate / doc notes / unlock roles / delivery
+      cap / PO reply-to — editors ride with their consuming phases),
+      `orders.original_order_id` (exchange link), `membership_permission_overrides`
+      (per-user grant/revoke applied in the tenancy guard on top of role defaults). RLS
+      registered; verified from empty DB (33/33). business.int.spec +2 (WL-10001/WL-10002/
+      K-10001 numbering, duplicate-prefix rejection; override grant→200 / revoke→403);
+      orders suite 27/27 unaffected. — _2026-08-25. Remaining P1 surface (permission-matrix
+      UI, ops-settings editor, new role set, store-scoped visibility) rides with P2/P3._
 - [ ] **Build P2:** New Sale screen (single-screen; replaces wizard + register)
 - [ ] **Build P3:** Orders list + slide-over + change-history timeline + notifications feed
 - [ ] **Build P4:** Documents — invoice (sample layout), delivery ticket + individual-print
