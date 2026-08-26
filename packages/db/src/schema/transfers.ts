@@ -12,11 +12,13 @@ import { sql } from 'drizzle-orm';
 import { businesses, users } from './platform';
 import { locations } from './tenancy';
 import { productVariants } from './catalog';
+import { reasonCodes } from './controls';
 
 /**
  * Stock transfers move inventory between two of the business's own
  * locations. Lifecycle:
  *   draft → in_transit → received
+ *                    ├── closed_short (G8: variance write-off)
  *                    └── canceled
  *
  * Shipping deducts inventory at the origin (`reason='transfer_out'`,
@@ -39,8 +41,18 @@ export const stockTransfers = pgTable(
       .notNull()
       .references(() => locations.id, { onDelete: 'restrict' }),
     number: text('number').notNull(),
-    /** 'draft' | 'in_transit' | 'received' | 'canceled' */
+    /** 'draft' | 'in_transit' | 'received' | 'closed_short' | 'canceled' */
     status: text('status').notNull(),
+    /**
+     * G8 (STORIS transfer types): 'replenishment' | 'floor_sample' |
+     * 'customer' | 'as_is' — a floor model moved to a store is not
+     * silently sellable as new.
+     */
+    transferType: text('transfer_type').notNull().default('replenishment'),
+    /** G8: coded reason (class `transfer_variance`) on a short close. */
+    varianceReasonCodeId: uuid('variance_reason_code_id').references(() => reasonCodes.id, {
+      onDelete: 'set null',
+    }),
     notes: text('notes'),
     createdByUserId: uuid('created_by_user_id').references(() => users.id, {
       onDelete: 'set null',

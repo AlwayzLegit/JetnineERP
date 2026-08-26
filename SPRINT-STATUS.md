@@ -878,7 +878,21 @@ commission-clawback + digest requirements.
       override-able) with the run lock layered stronger on top; truck is a free label
       until a truck entity exists; COD due counts delivered stops only; postponement
       counter rides with G13's auto stock release.*
-- [ ] **G8 — Transfer in-transit state + variance investigation** + aging alert + types
+- [x] **G8 — Transfer variance + aging + types:** migration `0042_transfer_variance`.
+      (In-transit was already a real bucket — ship deducts origin, receive credits
+      destination, so road goods are sellable nowhere; kept.) New: **`POST
+    /v1/stock-transfers/:id/close-short`** — a short transfer can't be dismissed, only
+      resolved: needs `inventory.write_off` (clerk → manager-override dialog), a coded
+      reason (class `transfer_variance`), values the missing units at cost onto the
+      write-off register (attributed to origin), registers a `transfer_variance`
+      exception, status → `closed_short`. `GET /v1/stock-transfers/aging?days=3` — the
+      in-transit-too-long standing alert, surfaced as a red banner on the transfers page.
+      Transfer types (`replenishment`/`floor_sample`/`customer`/`as_is`) on create + a
+      type select in the UI. transfers.int.spec 13→15. — _2026-08-26. Conventions
+      flagged: floor-sample type is recorded but doesn't yet gate sellability at the
+      destination; the request workflow (store asks → warehouse approves) and a
+      coded creation reason are deferred; receiving identity already captured in
+      movements/audit._
 - [ ] **G9 — Ticket print preconditions** (scheduled date / reserved / balance cap w/
       override) + reprint counter + unlock expiry/escalation
 - [ ] **G10 — As-is piece-level reference ids** (condition, gated price, storage location,
