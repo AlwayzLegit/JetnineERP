@@ -700,7 +700,19 @@ supersedes the checkpoint-7 wizard; legacy register + its offline mode retire).
       — \_2026-08-26. Conventions flagged: no-PO-number auto-match falls back to newest
       same-vendor PO with an equal subtotal; inspection is bookkeeping only (no damaged/
       reject disposition until P8's As-Is flow).*
-- [ ] **Build P7:** Transfers with ticket + sign + receive-confirm workflow
+- [x] **Build P7:** Transfers with ticket + sign + receive-confirm workflow. The spine
+      already existed (draft → ship deducts origin → partial receives increment the
+      destination → received; drafts cancellable); P7 added the §11 **Transfer Ticket**:
+      `/print/transfers/:id` in the chrome-free print group — from/to store blocks with
+      addresses, letterhead, lines with a blank hand-tally "Received" column, driver +
+      received-by signature lines and a "confirm in the system to complete" footer;
+      detail hydrate now carries fromLocationAddressJson/toLocationAddressJson/
+      businessName; transfer detail page gained the Transfer ticket print button.
+      Printing never changes state — the §5 workflow is create → print → deliver → sign
+      on paper → receiving side confirms via the existing receive endpoint (actor
+      recorded in the audit trail). transfers.int.spec +1 → 13/13.
+      — _2026-08-26. Convention: signatures live on paper only (drivers work off printed
+      tickets, §7); the system records who confirmed receipt, not a captured signature._
 - [ ] **Build P8:** Returns/exchanges/service, As-Is review flow, store credit
 - [ ] **Build P9:** Commissions (equal-split default, exchange clawback), owner +
       manager dashboards, 22:00 auto-close job

@@ -3,10 +3,18 @@
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
-import { PackageCheck, Truck } from 'lucide-react';
+import { PackageCheck, Printer, Truck } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '@/lib/api';
-import { Button, Card, Input, LoadingRows, PageHeader, StatusBadge } from '@/components/ui';
+import {
+  Button,
+  Card,
+  Input,
+  LinkButton,
+  LoadingRows,
+  PageHeader,
+  StatusBadge,
+} from '@/components/ui';
 
 interface TransferLine {
   id: string;
@@ -121,6 +129,17 @@ export default function TransferDetailPage() {
             <StatusBadge status={t.status} /> · <strong>{t.fromLocationName ?? '—'}</strong> →{' '}
             <strong>{t.toLocationName ?? '—'}</strong> · {new Date(t.createdAt).toLocaleString()}
           </>
+        }
+        actions={
+          <LinkButton
+            href={`/print/transfers/${id}`}
+            variant="secondary"
+            size="sm"
+            target="_blank"
+            data-testid="print-transfer-ticket"
+          >
+            <Printer size={13} aria-hidden /> Transfer ticket
+          </LinkButton>
         }
       />
 
