@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '@/lib/api';
 import { Money } from '@/components/money';
-import { Button, PageHeader } from '@/components/ui';
+import { Button, LinkButton, PageHeader } from '@/components/ui';
 
 /**
  * Delivery calendar (STORIS cutover Day 3). Week view by default, one
@@ -119,6 +119,9 @@ export default function DeliveriesPage() {
         }
         actions={
           <>
+            <LinkButton href="/deliveries/dispatch" variant="secondary" size="sm">
+              Dispatch
+            </LinkButton>
             <Button size="sm" onClick={() => shiftWeek(-7)}>
               ← Prev
             </Button>

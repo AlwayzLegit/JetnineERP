@@ -27,6 +27,7 @@ const NOTABLE_ACTIONS = [
   'order.cancel',
   'order.payment.take',
   'order.unlock',
+  'delivery.cap_override',
 ] as const;
 
 const ACTION_LABELS: Record<string, string> = {
@@ -36,6 +37,7 @@ const ACTION_LABELS: Record<string, string> = {
   'order.cancel': 'Order cancelled',
   'order.payment.take': 'Payment taken',
   'order.unlock': 'Order unlocked (lock override)',
+  'delivery.cap_override': 'Delivery booked over capacity',
 };
 
 interface NotificationRow {

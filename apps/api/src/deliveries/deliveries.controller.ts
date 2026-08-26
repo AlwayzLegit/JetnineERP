@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   Body,
+  ConflictException,
   Controller,
   Get,
   Inject,
@@ -10,7 +11,7 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
-import { and, asc, eq, gte, inArray, lte } from 'drizzle-orm';
+import { and, asc, eq, gte, inArray, lte, sql } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { schema } from '@jetnine/db';
 import { AuditService } from '../audit/audit.service';
@@ -27,6 +28,21 @@ import {
 import { RequirePermission, TenantScoped } from '../tenancy/decorators';
 import type { RequestTenantContext } from '../tenancy/request-context';
 import { WebhookDispatcher } from '../webhooks/webhook-dispatcher.service';
+
+function isoToday(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+/**
+ * §7 route auto-suggestion: LA-area routes group naturally by zip
+ * prefix, so the default label is the first three digits + "xx"
+ * ("900xx", "913xx"). Free text after that — the dispatcher renames and
+ * regroups at will.
+ */
+function suggestRoute(postalCode: string | null): string | null {
+  const zip = postalCode?.trim().match(/^(\d{5})/)?.[1];
+  return zip ? `${zip.slice(0, 3)}xx` : null;
+}
 
 type DeliveryStatus =
   | 'scheduled'
@@ -51,12 +67,21 @@ interface ScheduleDeliveryBody {
   windowEnd?: string | null;
   driverMembershipId?: string | null;
   notes?: string | null;
+  /** Route label; omitted → auto-suggested from the ship-to zip (§7). */
+  route?: string | null;
+  /**
+   * §7 soft cap: a day at/over capacity refuses with 409 unless this is
+   * true — the caller confirmed, and the override is logged to the
+   * owner notifications feed.
+   */
+  confirmOverCapacity?: boolean;
   /** Omitted → everything still owed on the order rides on this delivery. */
   lines?: { orderLineId?: string; quantity?: number }[];
 }
 
 interface UpdateDeliveryBody {
   scheduledDate?: string;
+  route?: string | null;
   windowStart?: string | null;
   windowEnd?: string | null;
   driverMembershipId?: string | null;
@@ -80,6 +105,7 @@ interface DeliveryRow {
   status: string;
   driverMembershipId: string | null;
   routePosition: number | null;
+  route: string | null;
   notes: string | null;
   completedAt: Date | null;
   createdAt: Date;
@@ -162,6 +188,58 @@ export class DeliveriesController {
     return Promise.all(rows.map((r) => this.hydrate(r)));
   }
 
+  /**
+   * §7 capacity: booked stops per day against the soft cap
+   * (ops.deliveryDailyCap, default 15). The New Sale screen and the
+   * dispatch table both read this; every date in [from, to] comes back
+   * even when empty so calendars can render without gap logic.
+   * Declared before `deliveries/:id` so "capacity" isn't captured as an
+   * id. The cap counts trucks business-wide — LA Mattress runs one
+   * delivery fleet, not one per store (v1 convention).
+   */
+  @Get('deliveries/capacity')
+  @RequirePermission('deliveries.view')
+  async capacity(
+    @CurrentTenant() tenant: RequestTenantContext,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ): Promise<{ cap: number; days: { date: string; booked: number; remaining: number }[] }> {
+    const start = from && !Number.isNaN(new Date(from).getTime()) ? from : isoToday();
+    const end = to && !Number.isNaN(new Date(to).getTime()) ? to : start;
+    if (end < start) throw new BadRequestException('to must not be before from');
+    const span =
+      (new Date(`${end}T00:00:00Z`).getTime() - new Date(`${start}T00:00:00Z`).getTime()) /
+      86_400_000;
+    if (span > 62) throw new BadRequestException('range too large (max 62 days)');
+
+    const cap = await this.dailyCap(tenant.businessId!);
+    const rows = await this.db
+      .select({
+        date: schema.deliveries.scheduledDate,
+        booked: sql<number>`count(*)::int`,
+      })
+      .from(schema.deliveries)
+      .where(
+        and(
+          gte(schema.deliveries.scheduledDate, start),
+          lte(schema.deliveries.scheduledDate, end),
+          inArray(schema.deliveries.status, ['scheduled', 'loaded', 'out_for_delivery']),
+        ),
+      )
+      .groupBy(schema.deliveries.scheduledDate);
+    const byDate = new Map(rows.map((r) => [r.date, r.booked]));
+
+    const days: { date: string; booked: number; remaining: number }[] = [];
+    for (let i = 0; i <= span; i++) {
+      const date = new Date(new Date(`${start}T00:00:00Z`).getTime() + i * 86_400_000)
+        .toISOString()
+        .slice(0, 10);
+      const booked = byDate.get(date) ?? 0;
+      days.push({ date, booked, remaining: Math.max(0, cap - booked) });
+    }
+    return { cap, days };
+  }
+
   @Get('deliveries/:id')
   @RequirePermission('deliveries.view')
   async get(
@@ -237,6 +315,25 @@ export class DeliveriesController {
     const plan = planFulfillment(schedulable, requests);
     if (plan.errors.length > 0) throw new BadRequestException(plan.errors.join('; '));
 
+    // §7 soft cap: the day can be over-booked, but only deliberately —
+    // and every override lands in the owner notifications feed.
+    const cap = await this.dailyCap(tenant.businessId!);
+    const [{ booked }] = (await this.db
+      .select({ booked: sql<number>`count(*)::int` })
+      .from(schema.deliveries)
+      .where(
+        and(
+          eq(schema.deliveries.scheduledDate, body.scheduledDate),
+          inArray(schema.deliveries.status, ['scheduled', 'loaded', 'out_for_delivery']),
+        ),
+      )) as [{ booked: number }];
+    const overCapacity = booked >= cap;
+    if (overCapacity && !body.confirmOverCapacity) {
+      throw new ConflictException(
+        `${body.scheduledDate} is at capacity (${booked}/${cap} stops). Confirm to book beyond the cap.`,
+      );
+    }
+
     // Route position: append to the end of that day's route.
     const dayRows = await this.db
       .select({ routePosition: schema.deliveries.routePosition })
@@ -260,10 +357,26 @@ export class DeliveriesController {
         windowEnd: body.windowEnd ?? null,
         driverMembershipId: body.driverMembershipId ?? null,
         routePosition: nextPosition,
+        route: body.route?.trim() || suggestRoute(order.addressPostalCode),
         notes: body.notes ?? null,
       })
       .returning();
     if (!delivery) throw new BadRequestException('failed to create delivery');
+
+    if (overCapacity) {
+      await this.audit.log({
+        action: 'delivery.cap_override',
+        targetType: 'order',
+        targetId: orderId,
+        metadata: {
+          deliveryId: delivery.id,
+          scheduledDate: body.scheduledDate,
+          booked: booked + 1,
+          cap,
+          orderNumber: order.number,
+        },
+      });
+    }
 
     await this.db.insert(schema.deliveryLines).values(
       plan.steps.map((s) => ({
@@ -315,6 +428,7 @@ export class DeliveriesController {
           ? { driverMembershipId: body.driverMembershipId }
           : {}),
         ...(body.routePosition !== undefined ? { routePosition: body.routePosition } : {}),
+        ...(body.route !== undefined ? { route: body.route?.trim() || null } : {}),
         ...(body.notes !== undefined ? { notes: body.notes } : {}),
         updatedAt: new Date(),
       })
@@ -470,6 +584,17 @@ export class DeliveriesController {
   // ---------------------------------------------------------------------
   // Internals
   // ---------------------------------------------------------------------
+
+  /** ops.deliveryDailyCap, defaulting to the spec's 15 stops/day. */
+  private async dailyCap(businessId: string): Promise<number> {
+    const [biz] = await this.db
+      .select({ opsSettingsJson: schema.businesses.opsSettingsJson })
+      .from(schema.businesses)
+      .where(eq(schema.businesses.id, businessId))
+      .limit(1);
+    const ops = (biz?.opsSettingsJson ?? {}) as { deliveryDailyCap?: number };
+    return ops.deliveryDailyCap && ops.deliveryDailyCap > 0 ? ops.deliveryDailyCap : 15;
+  }
 
   private async load(id: string): Promise<DeliveryRow> {
     const [row] = await this.db

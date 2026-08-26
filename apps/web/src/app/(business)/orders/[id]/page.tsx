@@ -147,6 +147,26 @@ export default function OrderDetailPage() {
   const [payMethod, setPayMethod] = useState<(typeof PAYMENT_METHODS)[number]>('cash');
   const [deliveries, setDeliveries] = useState<DeliveryRow[]>([]);
   const [deliveryDate, setDeliveryDate] = useState('');
+  const [dayCapacity, setDayCapacity] = useState<{ booked: number; cap: number } | null>(null);
+
+  // §7: the associate sees the day's remaining capacity while booking.
+  useEffect(() => {
+    if (!deliveryDate) {
+      setDayCapacity(null);
+      return;
+    }
+    let stale = false;
+    api<{ cap: number; days: { booked: number }[] }>(
+      `/v1/deliveries/capacity?from=${deliveryDate}&to=${deliveryDate}`,
+    )
+      .then((r) => {
+        if (!stale) setDayCapacity({ booked: r.days[0]?.booked ?? 0, cap: r.cap });
+      })
+      .catch(() => setDayCapacity(null));
+    return () => {
+      stale = true;
+    };
+  }, [deliveryDate]);
 
   async function load() {
     try {
@@ -499,12 +519,47 @@ export default function OrderDetailPage() {
                     />
                     <Button
                       variant="primary"
-                      onClick={() => {
+                      onClick={async () => {
                         if (!deliveryDate) {
                           setError('Pick a delivery date first.');
                           return;
                         }
-                        void act('/deliveries', { scheduledDate: deliveryDate });
+                        // Over-cap booking is allowed but deliberate:
+                        // the 409 becomes a confirm, and the retry
+                        // carries the override flag (logged to the
+                        // owner feed server-side).
+                        setBusy(true);
+                        setError(null);
+                        try {
+                          await api(`/v1/orders/${id}/deliveries`, {
+                            method: 'POST',
+                            body: JSON.stringify({ scheduledDate: deliveryDate }),
+                          });
+                          await load();
+                        } catch (err) {
+                          const msg = err instanceof Error ? err.message : String(err);
+                          if (
+                            msg.includes('at capacity') &&
+                            window.confirm(`${msg}\n\nBook beyond the cap anyway?`)
+                          ) {
+                            try {
+                              await api(`/v1/orders/${id}/deliveries`, {
+                                method: 'POST',
+                                body: JSON.stringify({
+                                  scheduledDate: deliveryDate,
+                                  confirmOverCapacity: true,
+                                }),
+                              });
+                              await load();
+                            } catch (err2) {
+                              setError(err2 instanceof Error ? err2.message : String(err2));
+                            }
+                          } else {
+                            setError(msg);
+                          }
+                        } finally {
+                          setBusy(false);
+                        }
                       }}
                       disabled={busy}
                       data-testid="schedule-delivery"
@@ -512,6 +567,16 @@ export default function OrderDetailPage() {
                       <Truck size={14} aria-hidden />
                       Schedule delivery
                     </Button>
+                    {dayCapacity && (
+                      <span
+                        className={`badge badge-${
+                          dayCapacity.booked >= dayCapacity.cap ? 'danger' : 'info'
+                        }`}
+                        data-testid="capacity-hint"
+                      >
+                        {dayCapacity.booked}/{dayCapacity.cap} stops booked
+                      </span>
+                    )}
                   </>
                 ) : (
                   <Button

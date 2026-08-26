@@ -275,6 +275,11 @@ export const deliveries = pgTable(
     }),
     // Ordinal within the day's route; the calendar drag-reorders these.
     routePosition: integer('route_position'),
+    /**
+     * Route label (§7): auto-suggested from the ship-to zip at
+     * scheduling ("900xx"), freely editable by the dispatcher.
+     */
+    route: text('route'),
     notes: text('notes'),
     completedAt: timestamp('completed_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),

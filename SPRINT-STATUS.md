@@ -657,7 +657,23 @@ supersedes the checkpoint-7 wizard; legacy register + its offline mode retire).
       brand field); Terms prints "Balance due"/"Paid in full"; ops.unlockRoleIds is
       superseded by the `orders.unlock` permission and ignored; payments on the order
       stay allowed while locked (the office collects at delivery close-out)._
-- [ ] **Build P5:** Delivery dispatch table + 15-stop capacity + zip routes
+- [x] **Build P5:** Delivery dispatch table + 15-stop capacity + zip routes.
+      `deliveries.route` (migration 0035) auto-suggested from the ship-to zip at
+      scheduling ("91205" → "912xx"), free-text editable via PATCH. `GET
+  /v1/deliveries/capacity?from&to` returns per-day booked/remaining against
+      ops.deliveryDailyCap (default 15; counted business-wide — one fleet, flagged as v1
+      convention). Booking a full day now 409s unless `confirmOverCapacity: true`; the
+      override writes audit `delivery.cap_override` (targeting the order) → owner
+      notifications feed ("Delivery booked over capacity"). Web: `/deliveries/dispatch` —
+      the §7 dispatcher table for a date (stop # + route inline-editable, order link,
+      customer, address+phone, window, items, collect amount, status) with the "12/15
+      stops" chip (amber near cap, red at cap) and All-tickets/Calendar links; calendar
+      header gained Dispatch. Order detail's schedule box shows the day's booked/cap and
+      turns the 409 into a confirm that retries with the override flag; New Sale shows
+      "N of 15 stops left that day" under the delivery date (red "Full — booking will
+      need a capacity override" at cap). deliveries.int.spec +2 → 14/14; orders 35/35.
+      — _2026-08-26. Conventions flagged: cap counts stops business-wide, not per store;
+      route suggestion is zip-prefix ("912xx") pending real route areas._
 - [ ] **Build P6:** Purchasing — PO builder suggestions, PDF/email, receiving
       Received→Inspected→Accepted, partial receipts, vendor-invoice matching
 - [ ] **Build P7:** Transfers with ticket + sign + receive-confirm workflow

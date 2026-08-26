@@ -148,6 +148,7 @@ export function NewSale() {
   const [orderType, setOrderType] = useState<'sales_order' | 'layaway' | 'quote'>('sales_order');
   const [fulfillment, setFulfillment] = useState<Fulfillment>('delivery');
   const [requestedDate, setRequestedDate] = useState('');
+  const [dayCapacity, setDayCapacity] = useState<{ booked: number; cap: number } | null>(null);
   const [deliveryInstructions, setDeliveryInstructions] = useState('');
   const [notes, setNotes] = useState('');
   const [salespeople, setSalespeople] = useState<string[]>([]);
@@ -170,6 +171,26 @@ export function NewSale() {
   const [done, setDone] = useState<{ id: string; number: string; kind: 'order' | 'sale' } | null>(
     null,
   );
+
+  // §7: while writing a delivery sale, show how many stops the chosen
+  // day still has against the soft cap.
+  useEffect(() => {
+    if (fulfillment !== 'delivery' || !requestedDate) {
+      setDayCapacity(null);
+      return;
+    }
+    let stale = false;
+    api<{ cap: number; days: { booked: number }[] }>(
+      `/v1/deliveries/capacity?from=${requestedDate}&to=${requestedDate}`,
+    )
+      .then((r) => {
+        if (!stale) setDayCapacity({ booked: r.days[0]?.booked ?? 0, cap: r.cap });
+      })
+      .catch(() => setDayCapacity(null));
+    return () => {
+      stale = true;
+    };
+  }, [fulfillment, requestedDate]);
 
   const loadDrafts = useCallback(() => {
     void api<{ data: DraftRow[] }>('/v1/orders?status=draft&limit=10')
@@ -857,6 +878,24 @@ export function NewSale() {
                   onChange={(e) => setRequestedDate(e.target.value)}
                   style={{ width: '100%' }}
                 />
+                {fulfillment === 'delivery' && dayCapacity && (
+                  <span
+                    data-testid="newsale-capacity"
+                    style={{
+                      display: 'block',
+                      marginTop: 3,
+                      fontSize: 11.5,
+                      color:
+                        dayCapacity.booked >= dayCapacity.cap
+                          ? 'var(--danger)'
+                          : 'var(--text-muted)',
+                    }}
+                  >
+                    {dayCapacity.booked >= dayCapacity.cap
+                      ? `Full — ${dayCapacity.booked}/${dayCapacity.cap} stops (booking will need a capacity override)`
+                      : `${dayCapacity.cap - dayCapacity.booked} of ${dayCapacity.cap} stops left that day`}
+                  </span>
+                )}
               </Field>
             )}
             {members.length > 0 && (
