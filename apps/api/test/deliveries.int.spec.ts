@@ -477,3 +477,155 @@ describe('Dispatch: capacity cap + zip routes (PLAN-POS-OPERATIONS P5)', () => {
       .send({ ops: { deliveryDailyCap: null } });
   });
 });
+
+describe('Delivery runs — build, hard lock, close-out reconciliation (PLAN-STORIS-GAP G7)', () => {
+  const runDay = '2027-04-10';
+
+  async function makeDeliveryOrder(): Promise<string> {
+    const res = await ownerReq()
+      .post('/v1/orders')
+      .send({
+        locationId,
+        customerId,
+        fulfillmentType: 'delivery',
+        address: { line1: '9 Manifest Way', city: 'Glendale', region: 'CA', postalCode: '91205' },
+        lines: [{ variantId: mattressVariantId, quantity: 1 }],
+        confirm: true,
+      });
+    expect(res.status).toBe(201);
+    return res.body.id;
+  }
+
+  async function scheduleOn(orderId: string): Promise<string> {
+    const res = await ownerReq()
+      .post(`/v1/orders/${orderId}/deliveries`)
+      .send({ scheduledDate: runDay });
+    expect(res.status).toBe(201);
+    return res.body.id;
+  }
+
+  it('the run is the hard lock; close-out reconciles every stop and the COD', async () => {
+    const orderA = await makeDeliveryOrder();
+    const orderB = await makeDeliveryOrder();
+    const deliveryA = await scheduleOn(orderA);
+    const deliveryB = await scheduleOn(orderB);
+
+    const orderTotal = (await ownerReq().get(`/v1/orders/${orderA}`)).body.totalCents as number;
+
+    const run = await ownerReq()
+      .post('/v1/delivery-runs')
+      .send({ runDate: runDay, deliveryIds: [deliveryA, deliveryB], truck: 'Box truck 1' });
+    expect(run.status).toBe(201);
+    const runId = run.body.id as string;
+
+    const detail = await ownerReq().get(`/v1/delivery-runs/${runId}`);
+    expect(detail.status).toBe(200);
+    expect(detail.body.stops).toHaveLength(2);
+    // Nothing is paid — the truck carries both balances as COD.
+    expect(detail.body.codDueCents).toBe(orderTotal * 2);
+
+    // A5: orders on an open run cannot be edited…
+    const blocked = await ownerReq().patch(`/v1/orders/${orderA}`).send({ notes: 'nope' });
+    expect(blocked.status).toBe(409);
+    expect(blocked.body.message).toMatch(/delivery run/);
+
+    // …until pulled off the run, which needs a reason and registers.
+    const noReason = await ownerReq()
+      .post(`/v1/delivery-runs/${runId}/remove-delivery`)
+      .send({ deliveryId: deliveryA });
+    expect(noReason.status).toBe(400);
+    await ownerReq()
+      .post(`/v1/delivery-runs/${runId}/remove-delivery`)
+      .send({ deliveryId: deliveryA, reason: 'customer postponed' })
+      .expect(201);
+    await ownerReq().patch(`/v1/orders/${orderA}`).send({ notes: 'editable again' }).expect(200);
+    const removals = await ownerReq().get('/v1/exceptions?type=manifest_removal');
+    expect(removals.body.some((e: { entityId: string | null }) => e.entityId === orderA)).toBe(
+      true,
+    );
+
+    // Put it back on (re-create membership by building a second run is
+    // not allowed — deliveryA is free again, so re-add via a new run).
+    const run2 = await ownerReq()
+      .post('/v1/delivery-runs')
+      .send({ runDate: runDay, deliveryIds: [deliveryA] });
+    expect(run2.status).toBe(201);
+
+    // Depart: stops flip to out_for_delivery.
+    await ownerReq().post(`/v1/delivery-runs/${runId}/depart`).send({}).expect(201);
+    const afterDepart = await ownerReq().get(`/v1/delivery-runs/${runId}`);
+    expect(afterDepart.body.status).toBe('out');
+    expect(afterDepart.body.stops[0].status).toBe('out_for_delivery');
+
+    // Close-out refuses partial reconciliation.
+    const partial = await ownerReq().post(`/v1/delivery-runs/${runId}/close`).send({
+      outcomes: [],
+      codCollectedCents: 0,
+    });
+    expect(partial.status).toBe(400);
+    expect(partial.body.message).toMatch(/Every stop needs an outcome/);
+
+    // Deliver stop B; collect less COD than due → variance registered.
+    const stockBefore = await level();
+    const closed = await ownerReq()
+      .post(`/v1/delivery-runs/${runId}/close`)
+      .send({
+        outcomes: [{ deliveryId: deliveryB, outcome: 'delivered' }],
+        codCollectedCents: orderTotal - 5000,
+        codReceivedBy: 'Office Pat',
+      });
+    expect(closed.status).toBe(201);
+    expect(closed.body.status).toBe('completed');
+    expect(closed.body.codDueCents).toBe(orderTotal);
+    expect(closed.body.codCollectedCents).toBe(orderTotal - 5000);
+
+    // The physical event happened: stock left the building.
+    const stockAfter = await level();
+    expect(stockAfter.onHand).toBe(stockBefore.onHand - 1);
+    const orderBAfter = await ownerReq().get(`/v1/orders/${orderB}`);
+    expect(['fulfilled', 'completed']).toContain(orderBAfter.body.status);
+
+    const variances = await ownerReq().get('/v1/exceptions?type=cod_variance');
+    expect(variances.body.some((e: { entityId: string | null }) => e.entityId === runId)).toBe(
+      true,
+    );
+  });
+
+  it('a failed stop takes a coded-or-text reason and auto-reschedules', async () => {
+    const orderId = await makeDeliveryOrder();
+    const deliveryId = await scheduleOn(orderId);
+    const run = await ownerReq()
+      .post('/v1/delivery-runs')
+      .send({ runDate: runDay, deliveryIds: [deliveryId] });
+    expect(run.status).toBe(201);
+
+    const closed = await ownerReq()
+      .post(`/v1/delivery-runs/${run.body.id}/close`)
+      .send({
+        outcomes: [
+          {
+            deliveryId,
+            outcome: 'failed',
+            reason: 'customer not home',
+            rescheduleDate: '2027-04-12',
+          },
+        ],
+        codCollectedCents: 0,
+      });
+    expect(closed.status).toBe(201);
+
+    // The failed stop is recorded and a fresh trip exists for the 12th.
+    const trips = await ownerReq().get(`/v1/deliveries?orderId=${orderId}`);
+    const failed = trips.body.find((d: { id: string }) => d.id === deliveryId);
+    expect(failed.status).toBe('failed');
+    const redo = trips.body.find(
+      (d: { scheduledDate: string; status: string }) =>
+        d.scheduledDate === '2027-04-12' && d.status === 'scheduled',
+    );
+    expect(redo).toBeTruthy();
+    const failures = await ownerReq().get('/v1/exceptions?type=delivery_failed');
+    expect(failures.body.some((e: { entityId: string | null }) => e.entityId === orderId)).toBe(
+      true,
+    );
+  });
+});

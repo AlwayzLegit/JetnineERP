@@ -857,8 +857,27 @@ commission-clawback + digest requirements.
       the gate but re-run it at completion; exchange passes control fields through;
       tax-exempt gate deferred — no tax-exempt field exists on orders yet; daily cash
       refund cap deferred to the §8 refund-controls slice.*
-- [ ] **G7 — Delivery run object + close-out reconciliation** (run = hard lock; per-piece
-      outcomes; COD due vs collected; outcome codes; postponement counter)
+- [x] **G7 — Delivery run object + close-out reconciliation:** migration
+      `0041_delivery_runs` — `delivery_runs` (date/route/truck label/driver, COD due vs
+      collected + received-by, status open→out→completed) + `deliveries.run_id` +
+      `deliveries.failure_reason_code_id`. Build a run from a day's scheduled stops
+      (`POST /v1/delivery-runs`); **run membership is the A5 hard lock** — orders on an
+      open/out run refuse edits AND unlock with 409 until pulled off the run (coded
+      `manifest_removal` reason, exception registered — STORIS S$TE*MAINIF_RMV). Depart
+      flips stops out-for-delivery. **Close-out is mandatory reconciliation**: every open
+      stop needs an outcome — delivered (existing completion path: stock leaves,
+      reservations consume, order advances) or failed (coded `delivery_failure` reason →
+      exception + optional auto-reschedule cloning the stop's lines to a new date); COD
+      due (delivered stops' balances) vs collected compared, variance → `cod_variance`
+      exception with who received the cash. Manifest print page
+      (`/print/delivery-runs/:id`): stops in order, per-stop collect + signature +
+      outcome checkboxes, driver + office-received signature lines. Dispatch page: run
+      cards (Depart / Pull-off / Close-out form / Print manifest) + "Build run" from
+      unassigned stops. deliveries.int.spec 14→16; orders 48/48, RLS 14/14. — \_2026-08-26.
+      Conventions flagged: A5 applied as print-lock stays hard (per A1, now
+      override-able) with the run lock layered stronger on top; truck is a free label
+      until a truck entity exists; COD due counts delivered stops only; postponement
+      counter rides with G13's auto stock release.*
 - [ ] **G8 — Transfer in-transit state + variance investigation** + aging alert + types
 - [ ] **G9 — Ticket print preconditions** (scheduled date / reserved / balance cap w/
       override) + reprint counter + unlock expiry/escalation

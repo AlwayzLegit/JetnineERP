@@ -121,6 +121,7 @@ DECLARE
     'order_return_lines',
     'exception_events',
     'write_offs',
+    'delivery_runs',
     'serial_units',
     'payment_plans',
     'payment_plan_installments',

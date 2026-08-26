@@ -100,4 +100,5 @@ export const TENANT_SCOPED_TABLES = [
   'order_return_lines',
   'exception_events',
   'write_offs',
+  'delivery_runs',
 ] as const;

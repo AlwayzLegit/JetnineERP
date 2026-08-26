@@ -858,6 +858,7 @@ export class OrdersController {
   ): Promise<OrderDetail> {
     const order = await this.requireLiveOrder(id);
     this.assertUnlocked(order);
+    await this.assertNotOnOpenRun(id);
 
     const patch: Record<string, unknown> = { updatedAt: new Date() };
     if (body.fulfillmentType !== undefined) {
@@ -1014,6 +1015,7 @@ export class OrdersController {
   ): Promise<OrderDetail> {
     const order = await this.requireLiveOrder(id);
     this.assertUnlocked(order);
+    await this.assertNotOnOpenRun(id);
     const [priced] = await this.priceLines(tenant, order.locationId, [body]);
     if (order.status !== 'draft') {
       await this.enforcePriceVariance(tenant, [priced!], 0, body, {
@@ -1075,6 +1077,7 @@ export class OrdersController {
   ): Promise<OrderDetail> {
     const order = await this.requireLiveOrder(id);
     this.assertUnlocked(order);
+    await this.assertNotOnOpenRun(id);
     const [line] = await this.db
       .select()
       .from(schema.orderLines)
@@ -1549,6 +1552,7 @@ export class OrdersController {
       throw new BadRequestException('A completed order cannot be cancelled — refund it instead');
     }
     this.assertUnlocked(order);
+    await this.assertNotOnOpenRun(id);
 
     const payments = await this.db
       .select({ amountCents: schema.payments.amountCents, status: schema.payments.status })
@@ -1648,6 +1652,9 @@ export class OrdersController {
       .limit(1);
     if (!order) throw new NotFoundException('Order not found');
     if (!order.lockedAt) throw new BadRequestException('Order is not locked');
+    // A5: while manifested on an open run there is no unlock — the run
+    // is the hard lock; pull the order off the run first.
+    await this.assertNotOnOpenRun(id);
 
     const overrideResult = await this.overrides.require({
       permission: 'orders.unlock',
@@ -2457,6 +2464,31 @@ export class OrdersController {
    * edits while it's on the truck. Unlocking (POST :id/unlock, its own
    * permission, typed reason) clears the freeze.
    */
+  /**
+   * G7 / amendment A5: membership on an open delivery run is the HARD
+   * lock — while the goods are manifested for a truck, the order cannot
+   * be edited or even unlocked; it must be pulled off the run first
+   * (coded reason, exception registered).
+   */
+  private async assertNotOnOpenRun(orderId: string): Promise<void> {
+    const [onRun] = await this.db
+      .select({ runId: schema.deliveries.runId })
+      .from(schema.deliveries)
+      .innerJoin(schema.deliveryRuns, eq(schema.deliveryRuns.id, schema.deliveries.runId))
+      .where(
+        and(
+          eq(schema.deliveries.orderId, orderId),
+          inArray(schema.deliveryRuns.status, ['open', 'out']),
+        ),
+      )
+      .limit(1);
+    if (onRun) {
+      throw new ConflictException(
+        'This order is on a delivery run. Remove it from the run (with a reason) before editing.',
+      );
+    }
+  }
+
   private assertUnlocked(order: { lockedAt: Date | null }): void {
     if (order.lockedAt) {
       throw new ConflictException(
