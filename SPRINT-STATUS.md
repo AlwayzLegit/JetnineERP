@@ -989,7 +989,7 @@ commission-clawback + digest requirements.
       tender-void / deposit-transfer N/A (those routines don't exist yet — each gets
       its control when built). — \_2026-08-26.*
 - [x] **Build P9:** commissions clawback + morning dashboards + 22:00 auto-close.
-      Migration `0048_daily_closeouts`. **Commissions:** accrual at completion (split per
+      Migration `0047_daily_closeouts`. **Commissions:** accrual at completion (split per
       split*bps) already existed; `reverseForOrderReturn` now claws back the returned
       fraction as negative entries when a return's goods are received (rides the A7
       lifecycle — an exchange nets out: clawback on the return, fresh accrual on the
