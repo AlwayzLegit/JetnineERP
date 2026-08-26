@@ -27,6 +27,7 @@ interface MemberRow {
   email: string;
   name: string | null;
   emailVerified: boolean;
+  commissionPlanId?: string | null;
   status: string;
   roleId: string;
   roleName: string;
@@ -72,6 +73,8 @@ export class MembersController {
         roleName: schema.roles.name,
         invitedAt: schema.memberships.invitedAt,
         acceptedAt: schema.memberships.acceptedAt,
+        // Lets the commissions page show who is currently on a plan.
+        commissionPlanId: schema.memberships.commissionPlanId,
       })
       .from(schema.memberships)
       .innerJoin(schema.users, eq(schema.users.id, schema.memberships.userId))

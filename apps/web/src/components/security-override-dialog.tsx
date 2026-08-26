@@ -24,6 +24,24 @@ export interface OverridePayload {
   reasonCodeId?: string;
   reason?: string;
   override?: { email: string; password: string; reasonCodeId?: string; reason?: string };
+  /** Values collected from any extra `fields` the caller declared. */
+  values?: Record<string, string>;
+}
+
+/**
+ * An extra input the action needs alongside its reason — an as-is
+ * selling price, a vendor R/A number. Declaring them here keeps every
+ * reason-gated action in one dialog that can also carry a coded reason
+ * and a manager challenge, which a native `window.prompt` never could.
+ */
+export interface DialogField {
+  name: string;
+  label: string;
+  type?: 'text' | 'number';
+  placeholder?: string;
+  required?: boolean;
+  step?: string;
+  min?: number;
 }
 
 interface ReasonCode {
@@ -37,6 +55,7 @@ export function SecurityOverrideDialog({
   title,
   usageClass,
   submitLabel,
+  fields,
   perform,
   onClose,
   onSuccess,
@@ -46,6 +65,8 @@ export function SecurityOverrideDialog({
   /** Reason-code class to offer, or null when the action takes no reason. */
   usageClass: string | null;
   submitLabel: string;
+  /** Extra typed inputs this action needs alongside the reason. */
+  fields?: DialogField[];
   perform: (payload: OverridePayload) => Promise<void>;
   onClose: () => void;
   onSuccess: () => void;
@@ -59,6 +80,7 @@ export function SecurityOverrideDialog({
   const [authPassword, setAuthPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [values, setValues] = useState<Record<string, string>>({});
 
   useEffect(() => {
     if (!open) {
@@ -69,6 +91,7 @@ export function SecurityOverrideDialog({
       setAuthEmail('');
       setAuthPassword('');
       setError(null);
+      setValues({});
       return;
     }
     if (usageClass) {
@@ -87,6 +110,7 @@ export function SecurityOverrideDialog({
     setBusy(true);
     setError(null);
     const payload: OverridePayload = {
+      ...(fields && fields.length > 0 ? { values } : {}),
       ...(reasonCodeId ? { reasonCodeId } : {}),
       ...(reason.trim() ? { reason: reason.trim() } : {}),
       ...(needsOverride && authEmail && authPassword
@@ -139,6 +163,21 @@ export function SecurityOverrideDialog({
         style={{ width: 'min(440px, 92vw)', padding: 20, display: 'grid', gap: 12 }}
       >
         <strong style={{ fontSize: 15 }}>{title}</strong>
+
+        {(fields ?? []).map((f) => (
+          <label key={f.name} style={{ display: 'grid', gap: 4, fontSize: 13 }}>
+            {f.label}
+            <Input
+              data-testid={`dialog-field-${f.name}`}
+              type={f.type ?? 'text'}
+              step={f.step}
+              min={f.min}
+              placeholder={f.placeholder}
+              value={values[f.name] ?? ''}
+              onChange={(e) => setValues((prev) => ({ ...prev, [f.name]: e.target.value }))}
+            />
+          </label>
+        ))}
 
         {usageClass &&
           (hasCodes ? (
@@ -225,6 +264,7 @@ export function SecurityOverrideDialog({
             data-testid="override-submit"
             disabled={
               busy ||
+              (fields ?? []).some((f) => f.required && !(values[f.name] ?? '').trim()) ||
               (usageClass !== null && hasCodes && !reasonCodeId) ||
               (usageClass !== null && !hasCodes && !reason.trim()) ||
               (needsOverride && (!authEmail.trim() || !authPassword))

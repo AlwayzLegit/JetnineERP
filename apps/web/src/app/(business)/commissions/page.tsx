@@ -299,6 +299,194 @@ function MiniTotal({
       >
         {formatMoney(cents)}
       </div>
+      <CommissionPlansCard />
     </div>
+  );
+}
+
+/**
+ * Commission plans + who is on them.
+ *
+ * The API has had plan CRUD and assignment since G5, but nothing in the
+ * app ever exposed it — so no member had a plan, `planFor()` returned
+ * null for everyone, and commissions silently never accrued at all
+ * ("No commission entries", QA 2026-08-26 D7). Accrual works; it just
+ * had no way to be switched on.
+ */
+function CommissionPlansCard() {
+  interface Plan {
+    id: string;
+    name: string;
+    basis: string;
+    rateBps: number;
+  }
+  interface Member {
+    membershipId: string;
+    email: string;
+    name: string | null;
+    commissionPlanId?: string | null;
+  }
+  const [plans, setPlans] = useState<Plan[] | null>(null);
+  const [members, setMembers] = useState<Member[]>([]);
+  const [name, setName] = useState('');
+  const [rate, setRate] = useState('');
+  const [basis, setBasis] = useState('percent_of_sale');
+  const [busy, setBusy] = useState(false);
+
+  async function load() {
+    try {
+      setPlans(await api<Plan[]>('/v1/commission-plans'));
+    } catch {
+      setPlans([]);
+    }
+    try {
+      setMembers(await api<Member[]>('/v1/business/members'));
+    } catch {
+      setMembers([]);
+    }
+  }
+  useEffect(() => {
+    void load();
+  }, []);
+
+  async function createPlan() {
+    const pct = Number(rate);
+    if (!name.trim() || !Number.isFinite(pct) || pct <= 0) {
+      toast.error('Name and a rate above 0 are required.');
+      return;
+    }
+    setBusy(true);
+    try {
+      await api('/v1/commission-plans', {
+        method: 'POST',
+        body: JSON.stringify({ name: name.trim(), basis, rateBps: Math.round(pct * 100) }),
+      });
+      setName('');
+      setRate('');
+      toast.success('Plan created. Assign it to a salesperson to start accruing.');
+      await load();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function assign(membershipId: string, planId: string) {
+    setBusy(true);
+    try {
+      await api('/v1/commission-plans/assign', {
+        method: 'POST',
+        body: JSON.stringify({ membershipId, planId: planId || null }),
+      });
+      await load();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Card title="Commission plans" style={{ marginTop: 16 }}>
+      <p className="muted" style={{ fontSize: 12.5, marginTop: 0 }}>
+        Commission accrues at completion only for salespeople who are on a plan. Nobody on a plan
+        means nothing accrues.
+      </p>
+      {plans === null ? (
+        <LoadingRows rows={2} />
+      ) : plans.length === 0 ? (
+        <EmptyState>No plans yet — create one below.</EmptyState>
+      ) : (
+        <table className="table" data-testid="commission-plans-table">
+          <thead>
+            <tr>
+              <th>Plan</th>
+              <th>Basis</th>
+              <th className="num">Rate</th>
+            </tr>
+          </thead>
+          <tbody>
+            {plans.map((p) => (
+              <tr key={p.id}>
+                <td>{p.name}</td>
+                <td>{p.basis === 'percent_of_margin' ? 'of margin' : 'of sale'}</td>
+                <td className="num">{(p.rateBps / 100).toFixed(2)}%</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+
+      <div className="flex flex-wrap items-end gap-2" style={{ fontSize: 13, marginTop: 10 }}>
+        <label style={{ display: 'grid', gap: 2, fontSize: 12, minWidth: 0 }}>
+          Plan name
+          <Input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="Flat 5%"
+            data-testid="plan-name"
+            style={{ minWidth: 0 }}
+          />
+        </label>
+        <label style={{ display: 'grid', gap: 2, fontSize: 12 }}>
+          Rate (%)
+          <Input
+            type="number"
+            step="0.01"
+            min={0}
+            value={rate}
+            onChange={(e) => setRate(e.target.value)}
+            data-testid="plan-rate"
+            style={{ width: 90 }}
+          />
+        </label>
+        <label style={{ display: 'grid', gap: 2, fontSize: 12 }}>
+          Basis
+          <select className="select" value={basis} onChange={(e) => setBasis(e.target.value)}>
+            <option value="percent_of_sale">Percent of sale</option>
+            <option value="percent_of_margin">Percent of margin</option>
+          </select>
+        </label>
+        <Button
+          variant="secondary"
+          disabled={busy}
+          onClick={() => void createPlan()}
+          data-testid="create-plan"
+        >
+          Add plan
+        </Button>
+      </div>
+
+      {members.length > 0 && (plans?.length ?? 0) > 0 && (
+        <>
+          <h4 style={{ margin: '14px 0 6px', fontSize: 12.5 }}>Who is on a plan</h4>
+          <table className="table" data-testid="plan-assignments">
+            <tbody>
+              {members.map((m) => (
+                <tr key={m.membershipId}>
+                  <td>{m.name ?? m.email}</td>
+                  <td>
+                    <select
+                      className="select"
+                      value={m.commissionPlanId ?? ''}
+                      disabled={busy}
+                      onChange={(e) => void assign(m.membershipId, e.target.value)}
+                    >
+                      <option value="">Not on commission</option>
+                      {plans!.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name}
+                        </option>
+                      ))}
+                    </select>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      )}
+    </Card>
   );
 }

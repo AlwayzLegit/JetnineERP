@@ -3,6 +3,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { Button, Card, EmptyState, Field, Input, LoadingRows, PageHeader } from '@/components/ui';
 import { useSession } from '@/lib/auth-client';
+import { api } from '@/lib/api';
 
 interface AuditLogRow {
   id: string;
@@ -17,8 +18,6 @@ interface AuditLogRow {
   userAgent: string | null;
   createdAt: string;
 }
-
-const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
 
 export default function AuditLogPage() {
   const session = useSession();
@@ -36,15 +35,13 @@ export default function AuditLogPage() {
       if (currentFilters.actorUserId) params.set('actorUserId', currentFilters.actorUserId);
       if (currentFilters.since) params.set('since', currentFilters.since);
       if (currentFilters.until) params.set('until', currentFilters.until);
-      const res = await fetch(`${apiUrl}/v1/audit-logs?${params.toString()}`, {
-        credentials: 'include',
-      });
-      if (!res.ok) {
-        setError(`${res.status} ${res.statusText}`);
-        setRows([]);
-        return;
-      }
-      const body = (await res.json()) as { data: AuditLogRow[]; nextCursor: string | null };
+      // Uses the shared api() helper like every other page: this one
+      // hand-rolled fetch against its own NEXT_PUBLIC_API_URL default,
+      // so in production it called http://localhost:4000 and the global
+      // audit log was permanently "Failed to fetch" (QA 2026-08-26, D8).
+      const body = await api<{ data: AuditLogRow[]; nextCursor: string | null }>(
+        `/v1/audit-logs?${params.toString()}`,
+      );
       setRows(body.data);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));

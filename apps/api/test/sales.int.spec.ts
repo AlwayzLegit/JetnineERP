@@ -352,7 +352,10 @@ describe('Epic 1.10 — POS register & sales', () => {
         lines: [{ saleLineId: saleLineAId, quantity: 1 }],
       });
     expect(res.status).toBe(201);
-    expect(res.body.amountCents).toBe(200); // 1 unit * $2.00
+    // 1 unit @ $2.00 + the 10% tax the customer actually paid on it.
+    // (Was 200 — pre-tax — until the QA D1 fix; sale refunds now return
+    // tax like the order-return path always has.)
+    expect(res.body.amountCents).toBe(220);
     expect(res.body.saleStatus).toBe('partially_refunded');
     // §10 (P8): returned goods land in the As-Is review queue, NOT
     // straight back into sellable stock.
@@ -427,5 +430,133 @@ describe('Epic 1.10 — POS register & sales', () => {
     expect(res.status).toBe(201);
     expect(res.body.number).not.toBe(saleNumber);
     expect(res.body.number).toMatch(/^INV-\d{4}-\d{6}$/);
+  });
+});
+
+/**
+ * QA finding D1 (2026-08-26): INV-2026-000005 sold a $1,000 line under a
+ * 30% cart discount — $700 collected in cash — and the refund paid out
+ * $1,000. `sale_lines.discount_cents` holds only a line's own discount;
+ * the cart-wide discount lived on the sale header and was never applied
+ * to the refund, so every discounted sale refunded the discount as a
+ * gift. This reproduces the exact shape.
+ */
+describe('Refunds honour a SALE-level discount (QA D1)', () => {
+  let discountedSaleId = '';
+  let discountedLineId = '';
+
+  it('a cart-discounted sale refunds what was collected, not list price', async () => {
+    const created = await request(app.getHttpServer())
+      .post('/v1/sales')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({
+        locationId,
+        lines: [{ variantId: variantAId, quantity: 1 }],
+        // $2.00 line, 30% off the cart = $0.60 off → $1.40 + 10% tax.
+        orderDiscountCents: 60,
+        // 30% is tier 3, so the G6 gate wants a reason (owner holds
+        // orders.price_override, so no second signature is needed).
+        priceReason: 'D1 fixture — deep discount',
+        payments: [{ method: 'cash', amountCents: 154 }],
+      });
+    expect(created.status).toBe(201);
+    expect(created.body.totalCents).toBe(154); // 140 net + 14 tax
+    discountedSaleId = created.body.id;
+    discountedLineId = created.body.lines[0].id;
+
+    const refund = await request(app.getHttpServer())
+      .post(`/v1/sales/${discountedSaleId}/refund`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ lines: [{ saleLineId: discountedLineId, quantity: 1 }], reason: 'D1 regression' });
+    expect(refund.status).toBe(201);
+    // Exactly what the customer handed over — NOT the $2.00 list price,
+    // and not $2.00 + tax.
+    expect(refund.body.amountCents).toBe(154);
+  });
+
+  it('never refunds more than the sale collected', async () => {
+    const sale = await request(app.getHttpServer())
+      .get(`/v1/sales/${discountedSaleId}`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId);
+    const refunded = sale.body.refunds.reduce(
+      (s: number, r: { amountCents: number }) => s + r.amountCents,
+      0,
+    );
+    expect(refunded).toBeLessThanOrEqual(sale.body.totalCents);
+  });
+});
+
+/**
+ * QA finding D2 (2026-08-26): the register bypassed the G6 price-variance
+ * gate entirely — a 30% discount rang straight through to cash with no
+ * reason, no authorization, and no exception. New Sale's fully-paid
+ * take-with fast lane posts here too, so the hole was reachable from the
+ * order screen as well. Same door, same lock now.
+ */
+describe('Register sales pass the price-variance gate (QA D2)', () => {
+  const cart = (orderDiscountCents: number, extra: Record<string, unknown> = {}) => ({
+    locationId,
+    lines: [{ variantId: variantAId, quantity: 1 }],
+    orderDiscountCents,
+    payments: [{ method: 'cash', amountCents: 0 }],
+    ...extra,
+  });
+
+  it('a small discount still rings through untouched (tier 1)', async () => {
+    // $2.00 line, $0.05 off → under both the 5% and $50 floors.
+    const res = await request(app.getHttpServer())
+      .post('/v1/sales')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({
+        locationId,
+        lines: [{ variantId: variantAId, quantity: 1 }],
+        orderDiscountCents: 5,
+        payments: [{ method: 'cash', amountCents: 215 }], // 195 + 10% tax (rounded)
+      });
+    expect([201, 400]).toContain(res.status);
+    // If the payment sum is off the fixture rounds differently; the point
+    // is that it is NOT refused for a missing reason.
+    if (res.status === 400) expect(res.body.code).not.toBe('REASON_REQUIRED');
+  });
+
+  it('a 30% register discount is refused without a reason', async () => {
+    const res = await request(app.getHttpServer())
+      .post('/v1/sales')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send(cart(60));
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('REASON_REQUIRED');
+    expect(res.body.usageClass).toBe('exception');
+  });
+
+  it('the same discount goes through with a reason, and registers an exception', async () => {
+    const res = await request(app.getHttpServer())
+      .post('/v1/sales')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({
+        locationId,
+        lines: [{ variantId: variantAId, quantity: 1 }],
+        orderDiscountCents: 60,
+        priceReason: 'floor model, scratched',
+        payments: [{ method: 'cash', amountCents: 154 }],
+      });
+    expect(res.status).toBe(201);
+
+    const exceptions = await request(app.getHttpServer())
+      .get('/v1/exceptions?type=price_override')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId);
+    expect(exceptions.status).toBe(200);
+    expect(
+      exceptions.body.some((e: { summary: string }) =>
+        e.summary.includes('Register sale discount'),
+      ),
+    ).toBe(true);
   });
 });
