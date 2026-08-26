@@ -743,8 +743,9 @@ supersedes the checkpoint-7 wizard; legacy register + its offline mode retire).
       no Stripe reversal on order returns in v1 (office terminal); selling As-Is at a
       discount = restock then adjust onto the `-AS` SKU; service orders already link to
       sales (existing G6 module).*
-- [ ] **Build P9:** Commissions (equal-split default, exchange clawback), owner +
-      manager dashboards, 22:00 auto-close job
+- [x] **Build P9:** Commissions (equal-split default, exchange clawback), owner +
+      manager dashboards, 22:00 auto-close job — _shipped in checkpoint 9 (PR #33,
+      `5930f90`); box was left unchecked at the time._
 - [ ] **Ops:** Provide the two sample invoices into `docs/` for the document templates
       (P4); confirm PO reply-to address; pick unlock-capable roles in settings once P1 ships
 
@@ -770,6 +771,27 @@ role sync. Sprint branch restarted from main. **The whole POS-operations surface
 is live on `lamattress-erp.vercel.app`.** P9 (commissions, dashboards, auto-close)
 remains. Ops unchanged: repoint Render repo URL (deploys still manual-trigger), rotate
 the shared owner password, Resend domain when ready, sample invoices into `docs/`.
+
+## Checkpoint 11 merged + deployed — invite link fallback (2026-08-26)
+
+PR #35 squash-merged to main as `41577bd`; CI 4/4 green first try. Render deploy
+`dep-da7ja5bm6pss73fudmr0` **live 18:50:37Z** — boot log `Schema migrations: 49/49
+applied, head=0048_sale_line_order_discount_share; this run applied none (already up to
+date).` Vercel production READY on main `41577bd`.
+
+**Ops done this checkpoint:** `WEB_BASE_URL` on Render corrected from the stale
+deploy-branch preview alias to `https://lamattress-erp.vercel.app` (deploy
+`dep-da7ivn5g1s2s7381pql0`, live 18:28:13Z). Sending domain `mail.a-prompt.ai` created in
+Resend (`fbebebe1-3a0a-4e91-a82a-b333cd6769b3`, us-east-1, `not_started`) — the root
+`a-prompt.ai` was refused, 403 "domain has been registered already", i.e. claimed in a
+different Resend account. Owner is adding the three DKIM/SPF records at GoDaddy; verify +
+sending-scoped key + env vars follow. **Do not set `RESEND_API_KEY` before the domain
+verifies** — a key with an unverified domain makes `ResendTransport` throw instead of
+falling back, breaking the copy-link path.
+
+`HANDOFF.md` added at the repo root and wired in as step 0 of the CLAUDE.md read order,
+so a fresh session starts from current state rather than reconstructing it. The stale P9
+checkbox (shipped in checkpoint 9) was corrected.
 
 ## Invite email — root-caused and unblocked (2026-08-26)
 
