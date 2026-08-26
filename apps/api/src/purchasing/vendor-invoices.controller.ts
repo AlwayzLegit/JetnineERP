@@ -14,6 +14,10 @@ import { and, desc, eq } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { schema } from '@jetnine/db';
 import { AuditService } from '../audit/audit.service';
+import {
+  SecurityOverrideService,
+  type OverrideCredentials,
+} from '../controls/security-override.service';
 import { CurrentTenant, CurrentUser } from '../auth/current-user.decorator';
 import type { CurrentUserPayload } from '../auth/current-user.decorator';
 import { DRIZZLE } from '../database/database.module';
@@ -62,6 +66,7 @@ export class VendorInvoicesController {
   constructor(
     @Inject(DRIZZLE) private readonly db: PostgresJsDatabase,
     @Inject(AuditService) private readonly audit: AuditService,
+    @Inject(SecurityOverrideService) private readonly overrides: SecurityOverrideService,
   ) {}
 
   @Get()
@@ -101,6 +106,7 @@ export class VendorInvoicesController {
   @RequirePermission('vendor_invoices.manage')
   async create(
     @CurrentTenant() tenant: RequestTenantContext,
+    @CurrentUser() actor: CurrentUserPayload,
     @Body() body: CreateInvoiceBody,
   ): Promise<InvoiceRow> {
     if (!body.vendorId) throw new BadRequestException('vendorId is required');
@@ -160,6 +166,7 @@ export class VendorInvoicesController {
           totalCents: body.totalCents!,
           status: matchedPoId ? 'matched' : 'unmatched',
           matchedAt: matchedPoId ? new Date() : null,
+          createdByUserId: actor?.id ?? null,
           notes: body.notes ?? null,
         })
         .returning();
@@ -196,6 +203,38 @@ export class VendorInvoicesController {
         purchaseOrderId: matchedPoId,
       },
     });
+
+    // G11 tolerance auto-clear (STORIS three-way match): a matched
+    // invoice within the ops variance tolerance clears for payment by
+    // itself — reviewers only ever see exceptions, so review stays a
+    // review instead of theatre.
+    if (matchedPoId) {
+      const loaded = await this.load(inserted.id);
+      const [biz] = await this.db
+        .select({ opsSettingsJson: schema.businesses.opsSettingsJson })
+        .from(schema.businesses)
+        .where(eq(schema.businesses.id, tenant.businessId!))
+        .limit(1);
+      const tolerance = (
+        (biz?.opsSettingsJson ?? {}) as { invoiceVarianceToleranceCents?: number | null }
+      ).invoiceVarianceToleranceCents;
+      if (
+        tolerance != null &&
+        loaded.varianceCents != null &&
+        Math.abs(loaded.varianceCents) <= tolerance
+      ) {
+        await this.db
+          .update(schema.vendorInvoices)
+          .set({ status: 'approved', approvedAt: new Date(), updatedAt: new Date() })
+          .where(eq(schema.vendorInvoices.id, inserted.id));
+        await this.audit.log({
+          action: 'vendor_invoice.approve',
+          targetType: 'vendor_invoice',
+          targetId: inserted.id,
+          metadata: { autoCleared: true, varianceCents: loaded.varianceCents, tolerance },
+        });
+      }
+    }
     return this.load(inserted.id);
   }
 
@@ -206,6 +245,7 @@ export class VendorInvoicesController {
     @CurrentTenant() _tenant: RequestTenantContext,
     @CurrentUser() actor: CurrentUserPayload,
     @Param('id') id: string,
+    @Body() body: { override?: OverrideCredentials },
   ): Promise<InvoiceRow> {
     const invoice = await this.load(id);
     if (invoice.status === 'approved') {
@@ -213,6 +253,23 @@ export class VendorInvoicesController {
     }
     if (invoice.status !== 'matched') {
       throw new BadRequestException('Match the invoice to a purchase order before approving');
+    }
+    // G11 segregation of duties: the person who keyed the invoice
+    // cannot also approve it — a different authorized user signs off.
+    const [raw] = await this.db
+      .select({ createdByUserId: schema.vendorInvoices.createdByUserId })
+      .from(schema.vendorInvoices)
+      .where(eq(schema.vendorInvoices.id, id))
+      .limit(1);
+    if (raw?.createdByUserId && raw.createdByUserId === actor.id) {
+      await this.overrides.require({
+        permission: 'vendor_invoices.manage',
+        action: `Approve invoice ${invoice.number} you recorded yourself`,
+        entityType: 'vendor_invoice',
+        entityId: id,
+        override: body.override,
+        force: true,
+      });
     }
     await this.db
       .update(schema.vendorInvoices)

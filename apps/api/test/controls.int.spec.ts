@@ -1,0 +1,744 @@
+/**
+ * Gap sprint G1+G2 acceptance (PLAN-STORIS-GAP §0.1/§0.2):
+ *
+ * - Reason-code registry: manage permission, usage-class validation,
+ *   duplicate refusal, deactivate-not-delete, class-filtered listing.
+ * - Security Override primitive, proven through the order-unlock pilot:
+ *   an actor without `orders.unlock` gets 403 OVERRIDE_REQUIRED; a
+ *   retry under a manager's credentials succeeds and stamps the
+ *   security_overrides register with both identities; wrong passwords,
+ *   unauthorized authorizers, and self-authorization are refused.
+ * - Coded reasons: once an `exception` code exists, free text is
+ *   refused; the resolved code lands in the audit trail. Price
+ *   adjustments enforce the same for class `adjustment`.
+ */
+import { execFileSync } from 'node:child_process';
+import { join } from 'node:path';
+import { hashPassword } from 'better-auth/crypto';
+import { drizzle } from 'drizzle-orm/postgres-js';
+import { desc, eq } from 'drizzle-orm';
+import postgres from 'postgres';
+import request from 'supertest';
+import { Test } from '@nestjs/testing';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import type { INestApplication } from '@nestjs/common';
+import { schema } from '@jetnine/db';
+import { SYSTEM_ROLES } from '@jetnine/shared';
+import { AppModule } from '../src/app.module';
+
+const TEST_DB_URL =
+  process.env.CONTROLS_TEST_DATABASE_URL ??
+  'postgres://postgres:postgres@localhost:5432/jetnine_controls';
+
+const dbPackageRoot = join(__dirname, '..', '..', '..', 'packages', 'db');
+const PASSWORD = 'CtrlPass!2026';
+
+let app: INestApplication;
+let businessId = '';
+let locationId = '';
+let customerId = '';
+let variantId = '';
+let managerCookie = '';
+let cashierCookie = '';
+let clerkCookie = '';
+
+async function resetTestDb() {
+  const env = { ...process.env, DATABASE_URL: TEST_DB_URL };
+  execFileSync('pnpm', ['exec', 'tsx', 'src/reset.ts'], {
+    cwd: dbPackageRoot,
+    env,
+    stdio: 'inherit',
+  });
+  execFileSync('pnpm', ['exec', 'tsx', 'src/migrate.ts'], {
+    cwd: dbPackageRoot,
+    env,
+    stdio: 'inherit',
+  });
+}
+
+async function seed() {
+  const sql = postgres(TEST_DB_URL, { max: 1, prepare: false });
+  const db = drizzle(sql);
+  try {
+    const passwordHash = await hashPassword(PASSWORD);
+    const [biz] = await db
+      .insert(schema.businesses)
+      .values({ slug: 'ctrl-test', name: 'Controls Test Co', status: 'active' })
+      .returning();
+    businessId = biz!.id;
+
+    const roles = new Map<string, string>();
+    for (const role of SYSTEM_ROLES) {
+      const [r] = await db
+        .insert(schema.roles)
+        .values({ businessId, name: role.name, description: role.description, isSystem: true })
+        .returning();
+      roles.set(role.name, r!.id);
+      if (role.permissions.length > 0) {
+        await db
+          .insert(schema.rolePermissions)
+          .values(role.permissions.map((permission) => ({ roleId: r!.id, permission })));
+      }
+    }
+    async function makeUser(email: string, role: string): Promise<void> {
+      const [u] = await db
+        .insert(schema.users)
+        .values({ email, emailVerified: true, name: role })
+        .returning();
+      await db.insert(schema.accounts).values({
+        accountId: u!.id,
+        providerId: 'credential',
+        userId: u!.id,
+        password: passwordHash,
+      });
+      await db.insert(schema.memberships).values({
+        businessId,
+        userId: u!.id,
+        roleId: roles.get(role)!,
+        status: 'active',
+        acceptedAt: new Date(),
+      });
+    }
+    await makeUser('manager@ctrl-test.local', 'Manager');
+    await makeUser('cashier@ctrl-test.local', 'Cashier');
+    await makeUser('cashier2@ctrl-test.local', 'Cashier');
+    await makeUser('clerk@ctrl-test.local', 'Inventory Clerk');
+
+    const [loc] = await db
+      .insert(schema.locations)
+      .values({ businessId, name: 'Main Store', timezone: 'America/Los_Angeles' })
+      .returning();
+    locationId = loc!.id;
+
+    const [p] = await db
+      .insert(schema.products)
+      .values({ businessId, sku: 'CTRL-BED', name: 'Controls Fixture Bed' })
+      .returning();
+    const [v] = await db
+      .insert(schema.productVariants)
+      .values({
+        businessId,
+        productId: p!.id,
+        sku: 'CTRL-BED-V1',
+        priceCents: 80000,
+        costCents: 30000,
+      })
+      .returning();
+    variantId = v!.id;
+
+    const [cust] = await db
+      .insert(schema.customers)
+      .values({ businessId, firstName: 'Carl', lastName: 'Controls' })
+      .returning();
+    customerId = cust!.id;
+  } finally {
+    await sql.end({ timeout: 5 });
+  }
+}
+
+async function captureCookie(email: string): Promise<string> {
+  const res = await request(app.getHttpServer())
+    .post('/api/auth/sign-in/email')
+    .send({ email, password: PASSWORD })
+    .expect(200);
+  const cookies = res.get('Set-Cookie') ?? [];
+  const sessionCookie = cookies
+    .map((c) => c.split(';')[0])
+    .filter((c): c is string => Boolean(c?.startsWith('jetnine.session_token=')))
+    .find((c) => !c.endsWith('='));
+  if (!sessionCookie) throw new Error(`no session cookie for ${email}`);
+  return sessionCookie;
+}
+
+/** Insert a locked order directly — the unlock pilot needs nothing else. */
+async function makeLockedOrder(number: string): Promise<string> {
+  const sql = postgres(TEST_DB_URL, { max: 1, prepare: false });
+  const db = drizzle(sql);
+  try {
+    const [order] = await db
+      .insert(schema.orders)
+      .values({
+        businessId,
+        locationId,
+        number,
+        status: 'open',
+        customerId,
+        lockedAt: new Date(),
+      })
+      .returning();
+    return order!.id;
+  } finally {
+    await sql.end({ timeout: 5 });
+  }
+}
+
+async function overrideRows() {
+  const sql = postgres(TEST_DB_URL, { max: 1, prepare: false });
+  const db = drizzle(sql);
+  try {
+    return await db
+      .select()
+      .from(schema.securityOverrides)
+      .orderBy(desc(schema.securityOverrides.createdAt));
+  } finally {
+    await sql.end({ timeout: 5 });
+  }
+}
+
+beforeAll(async () => {
+  await resetTestDb();
+  await seed();
+
+  process.env.DATABASE_URL = TEST_DB_URL;
+  process.env.BETTER_AUTH_URL ??= 'http://localhost';
+  process.env.BETTER_AUTH_SECRET ??= 'ctrl-test-secret-ctrl-test-secret-xx';
+  process.env.AUTH_TRUSTED_ORIGINS ??= 'http://localhost';
+  process.env.NODE_ENV ??= 'test';
+  delete process.env.STRIPE_SECRET_KEY;
+
+  const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
+  app = moduleRef.createNestApplication({ bufferLogs: true, rawBody: true });
+  await app.init();
+
+  managerCookie = await captureCookie('manager@ctrl-test.local');
+  cashierCookie = await captureCookie('cashier@ctrl-test.local');
+  clerkCookie = await captureCookie('clerk@ctrl-test.local');
+});
+
+afterAll(async () => {
+  if (app) await app.close();
+});
+
+describe('G2 — reason-code registry', () => {
+  it('Cashier (no reason_codes.manage) cannot create codes', async () => {
+    await request(app.getHttpServer())
+      .post('/v1/reason-codes')
+      .set('Cookie', cashierCookie)
+      .set('x-business-id', businessId)
+      .send({ code: 'NOPE', description: 'nope', usageClass: 'exception' })
+      .expect(403);
+  });
+
+  it('refuses an unknown usage class', async () => {
+    const res = await request(app.getHttpServer())
+      .post('/v1/reason-codes')
+      .set('Cookie', managerCookie)
+      .set('x-business-id', businessId)
+      .send({ code: 'BAD', description: 'bad class', usageClass: 'nonsense' })
+      .expect(400);
+    expect(res.body.message).toMatch(/usageClass/);
+  });
+
+  it('creates, uppercases, and lists by class; duplicates 409', async () => {
+    await request(app.getHttpServer())
+      .post('/v1/reason-codes')
+      .set('Cookie', managerCookie)
+      .set('x-business-id', businessId)
+      .send({ code: 'dmg', description: 'Damaged in transit', usageClass: 'as_is' })
+      .expect(201);
+    await request(app.getHttpServer())
+      .post('/v1/reason-codes')
+      .set('Cookie', managerCookie)
+      .set('x-business-id', businessId)
+      .send({ code: 'DMG', description: 'dup', usageClass: 'as_is' })
+      .expect(409);
+
+    // Any member can read the registry — prompts everywhere need it.
+    const list = await request(app.getHttpServer())
+      .get('/v1/reason-codes?usageClass=as_is')
+      .set('Cookie', cashierCookie)
+      .set('x-business-id', businessId)
+      .expect(200);
+    expect(list.body).toHaveLength(1);
+    expect(list.body[0].code).toBe('DMG');
+  });
+
+  it('deactivates instead of deleting; inactive codes drop from the default list', async () => {
+    const created = await request(app.getHttpServer())
+      .post('/v1/reason-codes')
+      .set('Cookie', managerCookie)
+      .set('x-business-id', businessId)
+      .send({ code: 'TMP', description: 'Temporary', usageClass: 'return' })
+      .expect(201);
+    await request(app.getHttpServer())
+      .patch(`/v1/reason-codes/${created.body.id}`)
+      .set('Cookie', managerCookie)
+      .set('x-business-id', businessId)
+      .send({ active: false })
+      .expect(200);
+    const active = await request(app.getHttpServer())
+      .get('/v1/reason-codes?usageClass=return')
+      .set('Cookie', managerCookie)
+      .set('x-business-id', businessId)
+      .expect(200);
+    expect(active.body).toHaveLength(0);
+    const all = await request(app.getHttpServer())
+      .get('/v1/reason-codes?usageClass=return&includeInactive=1')
+      .set('Cookie', managerCookie)
+      .set('x-business-id', businessId)
+      .expect(200);
+    expect(all.body).toHaveLength(1);
+  });
+});
+
+describe('G1 — security override via the order-unlock pilot', () => {
+  it('a permitted user unlocks directly (free text while no exception codes exist)', async () => {
+    const orderId = await makeLockedOrder('CTRL-1001');
+    const res = await request(app.getHttpServer())
+      .post(`/v1/orders/${orderId}/unlock`)
+      .set('Cookie', managerCookie)
+      .set('x-business-id', businessId)
+      .send({ reason: 'customer added a pillow' })
+      .expect(201);
+    expect(res.body.lockedAt).toBeNull();
+    expect(await overrideRows()).toHaveLength(0);
+  });
+
+  it('an unpermitted user gets 403 OVERRIDE_REQUIRED naming the action', async () => {
+    const orderId = await makeLockedOrder('CTRL-1002');
+    const res = await request(app.getHttpServer())
+      .post(`/v1/orders/${orderId}/unlock`)
+      .set('Cookie', cashierCookie)
+      .set('x-business-id', businessId)
+      .send({ reason: 'trying' })
+      .expect(403);
+    expect(res.body.code).toBe('OVERRIDE_REQUIRED');
+    expect(res.body.permission).toBe('orders.unlock');
+    expect(res.body.action).toMatch(/CTRL-1002/);
+  });
+
+  it('wrong authorizer password → OVERRIDE_DENIED, order stays locked', async () => {
+    const orderId = await makeLockedOrder('CTRL-1003');
+    const res = await request(app.getHttpServer())
+      .post(`/v1/orders/${orderId}/unlock`)
+      .set('Cookie', cashierCookie)
+      .set('x-business-id', businessId)
+      .send({
+        reason: 'trying',
+        override: { email: 'manager@ctrl-test.local', password: 'wrong-password' },
+      })
+      .expect(403);
+    expect(res.body.code).toBe('OVERRIDE_DENIED');
+  });
+
+  it('an authorizer without the permission is refused', async () => {
+    const orderId = await makeLockedOrder('CTRL-1004');
+    const res = await request(app.getHttpServer())
+      .post(`/v1/orders/${orderId}/unlock`)
+      .set('Cookie', cashierCookie)
+      .set('x-business-id', businessId)
+      .send({
+        reason: 'trying',
+        override: { email: 'cashier2@ctrl-test.local', password: PASSWORD },
+      })
+      .expect(403);
+    expect(res.body.message).toMatch(/does not hold/);
+  });
+
+  it('self-authorization is refused', async () => {
+    const orderId = await makeLockedOrder('CTRL-1005');
+    const res = await request(app.getHttpServer())
+      .post(`/v1/orders/${orderId}/unlock`)
+      .set('Cookie', cashierCookie)
+      .set('x-business-id', businessId)
+      .send({
+        reason: 'trying',
+        override: { email: 'cashier@ctrl-test.local', password: PASSWORD },
+      })
+      .expect(403);
+    expect(res.body.message).toMatch(/different user/);
+  });
+
+  it('manager credentials authorize the unlock and stamp the register with both identities', async () => {
+    const orderId = await makeLockedOrder('CTRL-1006');
+    const res = await request(app.getHttpServer())
+      .post(`/v1/orders/${orderId}/unlock`)
+      .set('Cookie', cashierCookie)
+      .set('x-business-id', businessId)
+      .send({
+        override: {
+          email: 'manager@ctrl-test.local',
+          password: PASSWORD,
+          reason: 'approved at the counter',
+        },
+      })
+      .expect(201);
+    expect(res.body.lockedAt).toBeNull();
+
+    const rows = await overrideRows();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.permission).toBe('orders.unlock');
+    expect(rows[0]!.entityId).toBe(orderId);
+    expect(rows[0]!.actorUserId).not.toBe(rows[0]!.authorizingUserId);
+    expect(rows[0]!.reason).toBe('approved at the counter');
+
+    // The register endpoint shows it (manager holds security_overrides.view).
+    const register = await request(app.getHttpServer())
+      .get('/v1/security-overrides')
+      .set('Cookie', managerCookie)
+      .set('x-business-id', businessId)
+      .expect(200);
+    expect(register.body).toHaveLength(1);
+    expect(register.body[0].actorEmail).toBe('cashier@ctrl-test.local');
+    expect(register.body[0].authorizingEmail).toBe('manager@ctrl-test.local');
+    // The cashier cannot read the register.
+    await request(app.getHttpServer())
+      .get('/v1/security-overrides')
+      .set('Cookie', cashierCookie)
+      .set('x-business-id', businessId)
+      .expect(403);
+  });
+
+  it('once exception codes exist, free text is refused and the coded reason lands in the audit', async () => {
+    const code = await request(app.getHttpServer())
+      .post('/v1/reason-codes')
+      .set('Cookie', managerCookie)
+      .set('x-business-id', businessId)
+      .send({ code: 'CUSTREQ', description: 'Customer request', usageClass: 'exception' })
+      .expect(201);
+
+    const orderId = await makeLockedOrder('CTRL-1007');
+    const freeText = await request(app.getHttpServer())
+      .post(`/v1/orders/${orderId}/unlock`)
+      .set('Cookie', managerCookie)
+      .set('x-business-id', businessId)
+      .send({ reason: 'free text no longer allowed' })
+      .expect(400);
+    expect(freeText.body.message).toMatch(/coded reason/i);
+
+    await request(app.getHttpServer())
+      .post(`/v1/orders/${orderId}/unlock`)
+      .set('Cookie', managerCookie)
+      .set('x-business-id', businessId)
+      .send({ reasonCodeId: code.body.id })
+      .expect(201);
+
+    const sql = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    const db = drizzle(sql);
+    try {
+      const [entry] = await db
+        .select()
+        .from(schema.auditLogs)
+        .where(eq(schema.auditLogs.targetId, orderId))
+        .orderBy(desc(schema.auditLogs.createdAt))
+        .limit(1);
+      const meta = (entry!.changesJson as { metadata?: { reasonCode?: string } }).metadata;
+      expect(meta?.reasonCode).toBe('CUSTREQ');
+    } finally {
+      await sql.end({ timeout: 5 });
+    }
+  });
+
+  it('a reason code of the wrong class is refused at unlock', async () => {
+    // DMG is class as_is — not legal for an exception prompt.
+    const list = await request(app.getHttpServer())
+      .get('/v1/reason-codes?usageClass=as_is')
+      .set('Cookie', managerCookie)
+      .set('x-business-id', businessId)
+      .expect(200);
+    const orderId = await makeLockedOrder('CTRL-1008');
+    await request(app.getHttpServer())
+      .post(`/v1/orders/${orderId}/unlock`)
+      .set('Cookie', managerCookie)
+      .set('x-business-id', businessId)
+      .send({ reasonCodeId: list.body[0].id })
+      .expect(400);
+  });
+});
+
+describe('G2 — coded reasons on price adjustments', () => {
+  it('adjustment prompts take class `adjustment` codes once they exist', async () => {
+    const code = await request(app.getHttpServer())
+      .post('/v1/reason-codes')
+      .set('Cookie', managerCookie)
+      .set('x-business-id', businessId)
+      .send({ code: 'GOODWILL', description: 'Goodwill credit', usageClass: 'adjustment' })
+      .expect(201);
+
+    const orderId = await makeLockedOrder('CTRL-2001');
+    // Free text refused now that a code exists…
+    await request(app.getHttpServer())
+      .post(`/v1/orders/${orderId}/price-adjustment`)
+      .set('Cookie', managerCookie)
+      .set('x-business-id', businessId)
+      .send({ amountCents: 500, reason: 'free text', refundMethod: 'store_credit' })
+      .expect(400);
+    // …the coded reason goes through (store credit avoids needing payments).
+    await request(app.getHttpServer())
+      .post(`/v1/orders/${orderId}/price-adjustment`)
+      .set('Cookie', managerCookie)
+      .set('x-business-id', businessId)
+      .send({ amountCents: 500, reasonCodeId: code.body.id, refundMethod: 'store_credit' })
+      .expect(201);
+  });
+});
+
+describe('G4 — scrap is a write-off; vendor returns carry an R/A', () => {
+  function as(cookie: string) {
+    return {
+      post: (url: string) =>
+        request(app.getHttpServer())
+          .post(url)
+          .set('Cookie', cookie)
+          .set('x-business-id', businessId),
+      get: (url: string) =>
+        request(app.getHttpServer())
+          .get(url)
+          .set('Cookie', cookie)
+          .set('x-business-id', businessId),
+    };
+  }
+
+  async function makeAsIsItem(quantity: number): Promise<string> {
+    // The G2 suite defined an as_is code (DMG) — per A9 a coded intake
+    // reason is now mandatory.
+    const codes = await as(clerkCookie).get('/v1/reason-codes?usageClass=as_is');
+    const dmg = codes.body.find((c: { code: string }) => c.code === 'DMG');
+    const res = await as(clerkCookie)
+      .post('/v1/as-is')
+      .send({ variantId, locationId, quantity, source: 'defect', reasonCodeId: dmg.id });
+    expect(res.status).toBe(201);
+    // G10: intakes explode into one piece per unit; this returns the
+    // first piece's id.
+    expect(res.body.quantity).toBe(1);
+    expect(res.body.pieceNumber).toMatch(/^AS-/);
+    return res.body.id;
+  }
+
+  it('a clerk (no inventory.write_off) hits OVERRIDE_REQUIRED on scrap; manager credentials clear it', async () => {
+    const itemId = await makeAsIsItem(2);
+
+    const blocked = await as(clerkCookie)
+      .post(`/v1/as-is/${itemId}/review`)
+      .send({ action: 'scrap', reason: 'water damage' });
+    expect(blocked.status).toBe(403);
+    expect(blocked.body.code).toBe('OVERRIDE_REQUIRED');
+    expect(blocked.body.permission).toBe('inventory.write_off');
+
+    const ok = await as(clerkCookie)
+      .post(`/v1/as-is/${itemId}/review`)
+      .send({
+        action: 'scrap',
+        reason: 'water damage',
+        override: {
+          email: 'manager@ctrl-test.local',
+          password: PASSWORD,
+          reason: 'water damage',
+        },
+      });
+    expect(ok.status).toBe(201);
+    expect(ok.body.status).toBe('scrapped');
+
+    // Valued at cost on the register: the scrapped piece at $300.00.
+    const register = await as(managerCookie).get('/v1/write-offs?days=7');
+    expect(register.status).toBe(200);
+    const row = register.body.rows.find(
+      (r: { totalCostCents: number }) => r.totalCostCents === 30000,
+    );
+    expect(row).toBeTruthy();
+    expect(row.quantity).toBe(1);
+    expect(row.unitCostCents).toBe(30000);
+    expect(register.body.totalCostCents).toBeGreaterThanOrEqual(30000);
+  });
+
+  it('a manager scraps directly — no override row, but the write-off lands in the exception register', async () => {
+    const itemId = await makeAsIsItem(1);
+    await as(managerCookie)
+      .post(`/v1/as-is/${itemId}/review`)
+      .send({ action: 'scrap', reason: 'floor model destroyed' })
+      .expect(201);
+    const exceptions = await as(managerCookie).get('/v1/exceptions?type=write_off');
+    expect(exceptions.status).toBe(200);
+    expect(exceptions.body.some((e: { summary: string }) => e.summary.includes('$300.00'))).toBe(
+      true,
+    );
+  });
+
+  it('vendor return requires the R/A number and opens a credit to chase', async () => {
+    const itemId = await makeAsIsItem(1);
+    const noRa = await as(managerCookie)
+      .post(`/v1/as-is/${itemId}/review`)
+      .send({ action: 'vendor_return' });
+    expect(noRa.status).toBe(400);
+    expect(noRa.body.message).toMatch(/raNumber/);
+
+    const ok = await as(managerCookie)
+      .post(`/v1/as-is/${itemId}/review`)
+      .send({ action: 'vendor_return', raNumber: 'RA-778', expectedCreditCents: 25000 });
+    expect(ok.status).toBe(201);
+    expect(ok.body.vendorRaNumber).toBe('RA-778');
+    expect(ok.body.vendorCreditStatus).toBe('open');
+
+    const closed = await as(managerCookie)
+      .post(`/v1/as-is/${itemId}/vendor-credit`)
+      .send({ action: 'received' });
+    expect(closed.status).toBe(201);
+    expect(closed.body.vendorCreditStatus).toBe('received');
+    // One-shot: no open credit remains.
+    await as(managerCookie)
+      .post(`/v1/as-is/${itemId}/vendor-credit`)
+      .send({ action: 'received' })
+      .expect(400);
+  });
+});
+
+describe('G5 — exception register + ranked digest', () => {
+  function as(cookie: string) {
+    return {
+      post: (url: string) =>
+        request(app.getHttpServer())
+          .post(url)
+          .set('Cookie', cookie)
+          .set('x-business-id', businessId),
+      get: (url: string) =>
+        request(app.getHttpServer())
+          .get(url)
+          .set('Cookie', cookie)
+          .set('x-business-id', businessId),
+    };
+  }
+
+  it('overrides and unlocks land in the register; a cashier cannot read it', async () => {
+    const list = await as(managerCookie).get('/v1/exceptions');
+    expect(list.status).toBe(200);
+    const types = new Set(list.body.map((e: { type: string }) => e.type));
+    // From earlier suites: the cashier's override-authorized unlock and
+    // the scrap write-offs.
+    expect(types.has('security_override')).toBe(true);
+    expect(types.has('order_unlock')).toBe(true);
+    expect(types.has('write_off')).toBe(true);
+
+    await as(cashierCookie).get('/v1/exceptions').expect(403);
+  });
+
+  it('acknowledge is one-shot and stamps who acknowledged', async () => {
+    const list = await as(managerCookie).get('/v1/exceptions?open=1');
+    expect(list.body.length).toBeGreaterThan(0);
+    const target = list.body[0];
+    await as(managerCookie).post(`/v1/exceptions/${target.id}/ack`).send({}).expect(201);
+    await as(managerCookie).post(`/v1/exceptions/${target.id}/ack`).send({}).expect(400);
+    const after = await as(managerCookie).get('/v1/exceptions');
+    const row = after.body.find((e: { id: string }) => e.id === target.id);
+    expect(row.acknowledgedAt).toBeTruthy();
+    expect(row.acknowledgedByEmail).toBe('manager@ctrl-test.local');
+    // The open filter no longer shows it.
+    const open = await as(managerCookie).get('/v1/exceptions?open=1');
+    expect(open.body.some((e: { id: string }) => e.id === target.id)).toBe(false);
+  });
+
+  it('the digest ranks associates by exception count', async () => {
+    const digest = await as(managerCookie).get('/v1/exceptions/digest?days=7');
+    expect(digest.status).toBe(200);
+    expect(digest.body.length).toBeGreaterThan(0);
+    // Ranked descending.
+    for (let i = 1; i < digest.body.length; i++) {
+      expect(digest.body[i - 1].total).toBeGreaterThanOrEqual(digest.body[i].total);
+    }
+    const withEmail = digest.body.find((d: { actorEmail: string | null }) => d.actorEmail);
+    expect(withEmail).toBeTruthy();
+    expect(Object.keys(withEmail.byType).length).toBeGreaterThan(0);
+  });
+});
+
+describe('G10 — as-is piece identity, gated pricing, restricted reasons, aging', () => {
+  function as(cookie: string) {
+    return {
+      post: (url: string) =>
+        request(app.getHttpServer())
+          .post(url)
+          .set('Cookie', cookie)
+          .set('x-business-id', businessId),
+      patch: (url: string) =>
+        request(app.getHttpServer())
+          .patch(url)
+          .set('Cookie', cookie)
+          .set('x-business-id', businessId),
+      get: (url: string) =>
+        request(app.getHttpServer())
+          .get(url)
+          .set('Cookie', cookie)
+          .set('x-business-id', businessId),
+    };
+  }
+
+  it('a restricted as-is reason needs write-off authority (or a manager override)', async () => {
+    const restricted = await as(managerCookie)
+      .post('/v1/reason-codes')
+      .send({
+        code: 'FLOODED',
+        description: 'Flood-damaged stock',
+        usageClass: 'as_is',
+        isRestricted: true,
+      })
+      .expect(201);
+
+    const blocked = await as(clerkCookie)
+      .post('/v1/as-is')
+      .send({ variantId, locationId, quantity: 1, reasonCodeId: restricted.body.id });
+    expect(blocked.status).toBe(403);
+    expect(blocked.body.code).toBe('OVERRIDE_REQUIRED');
+
+    const ok = await as(clerkCookie)
+      .post('/v1/as-is')
+      .send({
+        variantId,
+        locationId,
+        quantity: 1,
+        reasonCodeId: restricted.body.id,
+        condition: 'damaged',
+        storageLocation: 'Back rack B3',
+        override: { email: 'manager@ctrl-test.local', password: PASSWORD, reason: 'verified' },
+      });
+    expect(ok.status).toBe(201);
+    expect(ok.body.condition).toBe('damaged');
+    expect(ok.body.storageLocation).toBe('Back rack B3');
+    expect(ok.body.pieceNumber).toMatch(/^AS-/);
+  });
+
+  it('the as-is price is its own permission; a clerk needs a manager', async () => {
+    const codes = await as(clerkCookie).get('/v1/reason-codes?usageClass=as_is');
+    const dmg = codes.body.find((c: { code: string }) => c.code === 'DMG');
+    const piece = await as(clerkCookie)
+      .post('/v1/as-is')
+      .send({ variantId, locationId, quantity: 1, reasonCodeId: dmg.id });
+    expect(piece.status).toBe(201);
+
+    const blocked = await as(clerkCookie)
+      .patch(`/v1/as-is/${piece.body.id}`)
+      .send({ asIsPriceCents: 39900 });
+    expect(blocked.status).toBe(403);
+    expect(blocked.body.permission).toBe('as_is.price.set');
+
+    const priced = await as(managerCookie)
+      .patch(`/v1/as-is/${piece.body.id}`)
+      .send({ asIsPriceCents: 39900 });
+    expect(priced.status).toBe(200);
+    expect(priced.body.asIsPriceCents).toBe(39900);
+    // Condition edits need no special authority.
+    const cond = await as(clerkCookie)
+      .patch(`/v1/as-is/${piece.body.id}`)
+      .send({ condition: 'light_wear' });
+    expect(cond.status).toBe(200);
+  });
+
+  it('aging surfaces pieces stuck in review', async () => {
+    const codes = await as(clerkCookie).get('/v1/reason-codes?usageClass=as_is');
+    const dmg = codes.body.find((c: { code: string }) => c.code === 'DMG');
+    const piece = await as(clerkCookie)
+      .post('/v1/as-is')
+      .send({ variantId, locationId, quantity: 1, reasonCodeId: dmg.id });
+    const sql2 = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    const db = drizzle(sql2);
+    try {
+      await db
+        .update(schema.asIsItems)
+        .set({ createdAt: new Date(Date.now() - 90 * 86_400_000) })
+        .where(eq(schema.asIsItems.id, piece.body.id));
+    } finally {
+      await sql2.end({ timeout: 5 });
+    }
+    const aging = await as(managerCookie).get('/v1/as-is/aging?days=60');
+    expect(aging.status).toBe(200);
+    expect(aging.body.some((r: { id: string }) => r.id === piece.body.id)).toBe(true);
+  });
+});

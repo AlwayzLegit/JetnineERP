@@ -8,6 +8,29 @@
 // for local dev pointing at a separate API server.
 export const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? '';
 
+/**
+ * Error with the parsed response body attached, so callers can react to
+ * structured API errors — e.g. `code: 'OVERRIDE_REQUIRED'` from the
+ * security-override guard opens the authorization dialog instead of a
+ * toast.
+ */
+export class ApiError extends Error {
+  readonly status: number;
+  readonly body: Record<string, unknown> | null;
+
+  constructor(status: number, message: string, body: Record<string, unknown> | null) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+    this.body = body;
+  }
+
+  get code(): string | null {
+    const c = this.body?.code;
+    return typeof c === 'string' ? c : null;
+  }
+}
+
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${apiUrl}${path}`, {
     credentials: 'include',
@@ -20,13 +43,14 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   if (!res.ok) {
     const text = await res.text();
     let message = `${res.status} ${res.statusText}`;
+    let body: Record<string, unknown> | null = null;
     try {
-      const body = JSON.parse(text) as { message?: string };
-      if (body.message) message = body.message;
+      body = JSON.parse(text) as Record<string, unknown>;
+      if (typeof body.message === 'string') message = body.message;
     } catch {
       if (text) message = text;
     }
-    throw new Error(message);
+    throw new ApiError(res.status, message, body);
   }
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;

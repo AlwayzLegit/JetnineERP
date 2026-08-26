@@ -14,6 +14,7 @@ import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { schema } from '@jetnine/db';
 import { AuditService } from '../audit/audit.service';
+import { ExceptionsService } from '../controls/exceptions.service';
 import { CurrentTenant, CurrentUser } from '../auth/current-user.decorator';
 import type { CurrentUserPayload } from '../auth/current-user.decorator';
 import { DRIZZLE } from '../database/database.module';
@@ -67,6 +68,8 @@ interface ReceiveStagesBody {
     received?: number;
     inspected?: number;
     accepted?: number;
+    /** G11 third bucket: inspected units that failed — go to As-Is review. */
+    rejected?: number;
   }[];
 }
 
@@ -96,6 +99,7 @@ interface PoLineRow {
   quantityReceived: number;
   quantityInspected: number;
   quantityAccepted: number;
+  quantityRejected: number;
   unitCostCents: number;
   lineTotalCents: number;
   /** §6: units on this line bought for specific customer orders. */
@@ -114,6 +118,8 @@ interface PoDetail extends PoListRow {
   /** Letterhead for the printed / emailed document. */
   businessName: string | null;
   businessLogoUrl: string | null;
+  /** G11: ops.blindReceiving — the receiving grid hides expected qtys. */
+  blindReceiving: boolean;
   lines: PoLineRow[];
 }
 
@@ -126,6 +132,7 @@ export class PurchaseOrdersController {
     @Inject(WebhookDispatcher) private readonly webhooks: WebhookDispatcher,
     @Inject(SpecialOrdersService) private readonly specialOrders: SpecialOrdersService,
     @Inject(EmailService) private readonly email: EmailService,
+    @Inject(ExceptionsService) private readonly exceptions: ExceptionsService,
   ) {}
 
   @Get()
@@ -506,6 +513,7 @@ export class PurchaseOrdersController {
       received: number;
       inspected: number;
       accepted: number;
+      rejected: number;
     }[] = [];
     for (const r of body.lines) {
       if (!r.lineId) throw new BadRequestException('lines[].lineId is required');
@@ -525,13 +533,16 @@ export class PurchaseOrdersController {
       const received = inc(r.received, 'received');
       const inspected = inc(r.inspected, 'inspected');
       const accepted = inc(r.accepted, 'accepted');
-      if (received + inspected + accepted === 0) {
+      const rejected = inc(r.rejected, 'rejected');
+      if (received + inspected + accepted + rejected === 0) {
         throw new BadRequestException('Each line needs at least one stage increment');
       }
-      // Invariant after the increments: ordered ≥ received ≥ inspected ≥ accepted.
+      // Invariant after the increments:
+      //   ordered ≥ received ≥ inspected ≥ accepted + rejected.
       const nextReceived = line.quantityReceived + received;
       const nextInspected = line.quantityInspected + inspected;
       const nextAccepted = line.quantityAccepted + accepted;
+      const nextRejected = line.quantityRejected + rejected;
       if (nextReceived > line.quantityOrdered) {
         throw new BadRequestException(
           `Cannot receive ${received}: only ${line.quantityOrdered - line.quantityReceived} of ${line.quantityOrdered} remaining`,
@@ -540,10 +551,10 @@ export class PurchaseOrdersController {
       if (nextInspected > nextReceived) {
         throw new BadRequestException('Cannot inspect more units than have been received');
       }
-      if (nextAccepted > nextInspected) {
-        throw new BadRequestException('Cannot accept more units than have been inspected');
+      if (nextAccepted + nextRejected > nextInspected) {
+        throw new BadRequestException('Cannot accept + reject more units than have been inspected');
       }
-      entries.push({ line, received, inspected, accepted });
+      entries.push({ line, received, inspected, accepted, rejected });
     }
 
     return this.applyReceiving(tenant, actor, po, entries, body.notes ?? null);
@@ -565,6 +576,7 @@ export class PurchaseOrdersController {
       received: number;
       inspected: number;
       accepted: number;
+      rejected?: number;
     }[],
     notes: string | null,
   ): Promise<PoDetail> {
@@ -599,12 +611,48 @@ export class PurchaseOrdersController {
             },
           });
       }
+      const rejected = e.rejected ?? 0;
+      if (rejected > 0) {
+        // G11 third bucket: failed units go to As-Is review as pieces —
+        // the reviewer disposes them (vendor return w/ R/A, or scrap as
+        // a valued write-off). They never silently become sellable.
+        const pieces = await this.db
+          .insert(schema.asIsItems)
+          .values(
+            Array.from({ length: rejected }, () => ({
+              businessId: tenant.businessId!,
+              variantId: e.line.variantId,
+              locationId: po.locationId,
+              quantity: 1,
+              source: 'defect',
+              referenceType: 'purchase_order',
+              referenceId: po.id,
+              notes: notes ?? `Rejected at receiving on ${po.number}`,
+            })),
+          )
+          .returning({ id: schema.asIsItems.id });
+        for (const piece of pieces) {
+          await this.db
+            .update(schema.asIsItems)
+            .set({ pieceNumber: `AS-${piece.id.slice(0, 8).toUpperCase()}` })
+            .where(eq(schema.asIsItems.id, piece.id));
+        }
+        await this.exceptions.record({
+          type: 'po_reject',
+          severity: 'info',
+          entityType: 'purchase_order',
+          entityId: po.id,
+          summary: `${rejected} unit(s) rejected at receiving on ${po.number} — staged in As-Is review`,
+          metadata: { poLineId: e.line.id, rejected },
+        });
+      }
       await this.db
         .update(schema.purchaseOrderLines)
         .set({
           quantityReceived: e.line.quantityReceived + e.received,
           quantityInspected: e.line.quantityInspected + e.inspected,
           quantityAccepted: e.line.quantityAccepted + e.accepted,
+          quantityRejected: e.line.quantityRejected + rejected,
         })
         .where(eq(schema.purchaseOrderLines.id, e.line.id));
       if (e.accepted > 0) {
@@ -627,10 +675,15 @@ export class PurchaseOrdersController {
         ordered: schema.purchaseOrderLines.quantityOrdered,
         received: schema.purchaseOrderLines.quantityReceived,
         accepted: schema.purchaseOrderLines.quantityAccepted,
+        rejected: schema.purchaseOrderLines.quantityRejected,
       })
       .from(schema.purchaseOrderLines)
       .where(eq(schema.purchaseOrderLines.purchaseOrderId, po.id));
-    const fullyAccepted = refreshed.every((l) => l.accepted >= l.ordered);
+    // G11: a PO completes when every ordered unit is DISPOSITIONED —
+    // accepted into stock or rejected into As-Is; rejects no longer
+    // strand the PO open (or worse, pressure the dock into accepting
+    // damage to close it).
+    const fullyAccepted = refreshed.every((l) => l.accepted + l.rejected >= l.ordered);
     const nextStatus = fullyAccepted ? 'received' : 'partially_received';
     const closedAt = fullyAccepted ? new Date() : null;
     await this.db
@@ -790,6 +843,7 @@ export class PurchaseOrdersController {
         locationAddressJson: schema.locations.addressJson,
         businessName: schema.businesses.name,
         businessBrandingJson: schema.businesses.brandingJson,
+        businessOpsJson: schema.businesses.opsSettingsJson,
         expectedAt: schema.purchaseOrders.expectedAt,
         placedAt: schema.purchaseOrders.placedAt,
         closedAt: schema.purchaseOrders.closedAt,
@@ -818,6 +872,7 @@ export class PurchaseOrdersController {
         quantityReceived: schema.purchaseOrderLines.quantityReceived,
         quantityInspected: schema.purchaseOrderLines.quantityInspected,
         quantityAccepted: schema.purchaseOrderLines.quantityAccepted,
+        quantityRejected: schema.purchaseOrderLines.quantityRejected,
         unitCostCents: schema.purchaseOrderLines.unitCostCents,
         lineTotalCents: schema.purchaseOrderLines.lineTotalCents,
       })
@@ -867,11 +922,15 @@ export class PurchaseOrdersController {
     }
 
     const branding = (po.businessBrandingJson ?? {}) as { logoUrl?: string; publicName?: string };
-    const { businessBrandingJson: _branding, ...rest } = po;
+    const blindReceiving = Boolean(
+      ((po.businessOpsJson ?? {}) as { blindReceiving?: boolean }).blindReceiving,
+    );
+    const { businessBrandingJson: _branding, businessOpsJson: _ops, ...rest } = po;
     return {
       ...rest,
       businessName: branding.publicName ?? po.businessName ?? null,
       businessLogoUrl: branding.logoUrl ?? null,
+      blindReceiving,
       lines: lines.map((l) => ({
         ...l,
         productName: l.productName ?? '(deleted)',

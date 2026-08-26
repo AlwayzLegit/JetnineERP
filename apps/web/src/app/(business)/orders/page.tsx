@@ -28,6 +28,12 @@ interface ListRow {
   salespersonName: string | null;
   totalCents: number;
   createdAt: string;
+  lineSummary: {
+    units: number;
+    reserved: number;
+    fulfilled: number;
+    specialOrder: number;
+  } | null;
 }
 
 interface OrderDetail {
@@ -95,15 +101,17 @@ export default function OrdersPage() {
   const [error, setError] = useState<string | null>(null);
   const [q, setQ] = useState('');
   const [status, setStatus] = useState('');
+  const [view, setView] = useState('');
   const [loadingMore, setLoadingMore] = useState(false);
   const [selected, setSelected] = useState<ListRow | null>(null);
   const searchSeq = useRef(0);
 
   const fetchPage = useCallback(
-    async (query: string, statusFilter: string, cursor: string | null) => {
+    async (query: string, statusFilter: string, viewFilter: string, cursor: string | null) => {
       const params = new URLSearchParams({ limit: '50' });
       if (query.trim()) params.set('q', query.trim());
       if (statusFilter) params.set('status', statusFilter);
+      if (viewFilter) params.set('view', viewFilter);
       if (cursor) params.set('cursor', cursor);
       return api<{ data: ListRow[]; nextCursor: string | null }>(
         `/v1/orders/list-view?${params.toString()}`,
@@ -118,7 +126,7 @@ export default function OrdersPage() {
     const seq = ++searchSeq.current;
     const t = setTimeout(
       () => {
-        fetchPage(q, status, null)
+        fetchPage(q, status, view, null)
           .then((page) => {
             if (searchSeq.current !== seq) return;
             setRows(page.data);
@@ -134,13 +142,13 @@ export default function OrdersPage() {
     );
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [q, status, fetchPage]);
+  }, [q, status, view, fetchPage]);
 
   async function loadMore() {
     if (!nextCursor) return;
     setLoadingMore(true);
     try {
-      const page = await fetchPage(q, status, nextCursor);
+      const page = await fetchPage(q, status, view, nextCursor);
       setRows((prev) => [...(prev ?? []), ...page.data]);
       setNextCursor(page.nextCursor);
     } catch (err) {
@@ -182,6 +190,13 @@ export default function OrdersPage() {
             </option>
           ))}
         </Select>
+        <button
+          className={`btn btn-sm ${view === 'past_due' ? 'btn-danger' : 'btn-secondary'}`}
+          data-testid="past-due-chip"
+          onClick={() => setView((v) => (v === 'past_due' ? '' : 'past_due'))}
+        >
+          Past due
+        </button>
       </div>
 
       {error && <p style={{ color: 'var(--danger)', fontSize: 13 }}>{error}</p>}
@@ -214,6 +229,13 @@ export default function OrdersPage() {
                   <td>{r.customerName}</td>
                   <td>
                     <DisplayStatus row={r} />
+                    {r.lineSummary && r.lineSummary.units > 0 && (
+                      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
+                        {r.lineSummary.fulfilled > 0 && `${r.lineSummary.fulfilled} delivered · `}
+                        {r.lineSummary.reserved} of {r.lineSummary.units} reserved
+                        {r.lineSummary.specialOrder > 0 && ` · ${r.lineSummary.specialOrder} SO`}
+                      </div>
+                    )}
                   </td>
                   <td style={{ whiteSpace: 'nowrap' }}>{r.deliveryDate ?? '—'}</td>
                   <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>

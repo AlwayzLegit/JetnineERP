@@ -21,6 +21,7 @@ import {
   PackageSearch,
   Receipt,
   ScrollText,
+  TriangleAlert,
   Settings,
   ShieldCheck,
   ShoppingCart,
@@ -93,6 +94,7 @@ const NAV: NavGroup[] = [
     items: [
       { href: '/reports', label: 'Reports', icon: BadgePercent },
       { href: '/commissions', label: 'Commissions', icon: CreditCard },
+      { href: '/exceptions', label: 'Exceptions', icon: TriangleAlert },
       { href: '/audit', label: 'Audit log', icon: ScrollText },
     ],
   },

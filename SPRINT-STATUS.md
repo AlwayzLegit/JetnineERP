@@ -748,6 +748,271 @@ supersedes the checkpoint-7 wizard; legacy register + its offline mode retire).
 - [ ] **Ops:** Provide the two sample invoices into `docs/` for the document templates
       (P4); confirm PO reply-to address; pick unlock-capable roles in settings once P1 ships
 
+## Checkpoint 8 merged + deployed (2026-08-26)
+
+PR #32 (P3–P8: orders list-view + notifications, print/lock/unlock + documents,
+dispatch + capacity, staged receiving + PO email + vendor invoices, transfer tickets,
+returns/As-Is/store credit/exchanges) squash-merged to main as `db89ef8`. CI needed one
+fix first: the Playwright run — the FIRST ever CI pass over the P2 New Sale e2e (the web
+build OOM'd locally back then) — failed 4 tests at the create-customer click; trace
+forensics showed the Create button shoved under the sticky totals rail (grid/flex
+`min-width: auto` overflow), a latent P2 layout bug, not a P3–P8 regression. Fixed with
+`min-width: 0` on the form cells (`62d15e8`), all 4 verified green locally, then CI 4/4
+green. Deploy branch rolled (`5bafced`), Render deploy `dep-da79h515efls73cj0g4g`
+**live 07:43Z** — boot log: `Schema migrations: 38/38 applied,
+head=0037_returns_as_is_store_credit; this run applied 0032_pos_ops_phase1,
+0033_customer_search_addresses, 0034_order_print_lock, 0035_delivery_routes,
+0036_receiving_stages_vendor_invoices, 0037_returns_as_is_store_credit.` `/health` 200.
+Vercel production READY on main `db89ef8`; new endpoints (`/v1/orders/list-view`,
+`/v1/as-is`) answer 401 through the prod proxy — routed and auth-gated. New permissions
+`orders.unlock` + `vendor_invoices.manage` backfilled into system roles by the boot-time
+role sync. Sprint branch restarted from main. **The whole POS-operations surface P1–P8
+is live on `lamattress-erp.vercel.app`.** P9 (commissions, dashboards, auto-close)
+remains. Ops unchanged: repoint Render repo URL (deploys still manual-trigger), rotate
+the shared owner password, Resend domain when ready, sample invoices into `docs/`.
+
+## STORIS gap-closure build (PLAN-STORIS-GAP.md) — ranked tracker
+
+Owner delivered a full STORIS gap analysis 2026-08-26 ("we need to add all which is
+missing"); committed verbatim as `PLAN-STORIS-GAP.md` with amendments A5–A9 (soft print
+lock / run hard-lock, 3-tier price variance, refund gated on goods receipt, as-is piece
+ids, coded reasons everywhere). Build in the doc's ranked order; each item is a vertical
+slice. P9 (commissions/dashboards/auto-close) stays queued and will absorb the gap doc's
+commission-clawback + digest requirements.
+
+- [x] **G1 — Security Override primitive:** migration `0038_reason_codes_security_overrides`;
+      `SecurityOverrideService.require()` gates at the point of action — actor with the
+      permission passes, actor without gets 403 `code:OVERRIDE_REQUIRED` (names the action +
+      permission), retry with a _different_ authorized user's email+password verifies the
+      credential (root connection — the accounts owner-only RLS policy rightly blocks the
+      request tx), checks the authorizer's effective permissions (role + per-user overrides),
+      refuses self-authorization, and stamps `security_overrides` with both identities +
+      before/after. `GET /v1/security-overrides` register (new `security_overrides.view`
+      perm; Owner/Manager/Bookkeeper). Reusable `<SecurityOverrideDialog>` (reason select →
+      manager-credentials section appears on 403; used by order unlock). Pilot consumer:
+      order unlock — `orders.unlock` holders proceed as before, others via override; the
+      `ApiError` class now carries structured bodies so the client can react to codes.
+      controls.int.spec 13/13; orders 39/39, business 24/24, RLS 14/14 unaffected.
+      — _2026-08-26._
+- [x] **G2 — Reason Code registry:** `reason_codes` (usage classes from shared
+      `REASON_USAGE_CLASSES`, restricted flag, active flag; unique per business+class+code;
+      deactivate-not-delete). CRUD API (`reason_codes.manage`; listing open to any member —
+      every prompt reads it), Settings → "Reason codes" card. Consumers wired: unlock
+      (class `exception`) + price adjustment (class `adjustment`) — once a class has active
+      codes, free text is refused and the resolved code lands in audit metadata; while a
+      class is empty, free text is the transitional fallback (amendment A9). — _2026-08-26.
+      Conventions flagged: restricted-code enforcement (manager auth to *use* a restricted
+      code) lands with its first consumer (as-is flows, G4/G10); return-line coded reasons
+      ride with G3._
+- [x] **G3 — Return lifecycle:** migration `0039_order_returns` — `order_returns`
+      (RMA `RMA-{order#}-{n}`, status authorized/completed/cancelled, fulfillment
+      drop*off/pickup, refund method + amount captured at authorization) +
+      `order_return_lines` (per-line qty, per-unit cents, coded reason class `return`).
+      `POST /orders/:id/return` now *authorizes* (no money, no inventory; open
+      authorizations count against returnable qty; list-view shows "Awaiting Return
+      Pickup"); `POST /order-returns/:id/receive` (inventory.receive — warehouse-side)
+      fires the whole physical+financial event: qtyReturned, As-Is intake, tender
+      reversal / store credit, status completed; drop-off (default — goods in hand)
+      authorizes + receives in one request, flagged. `:id/cancel` voids an authorization
+      (reason; override-gated on pos.refund.create). UI: fulfillment select, coded
+      return-reason select, per-order returns table w/ "Goods received"/Cancel.
+      Notifications feed += return_authorized / cancel / security.override labels.
+      orders.int.spec 39→42. — \_2026-08-26. Conventions flagged: one reason code applies
+      to all lines of a return (per-line selects when a real need shows); As-Is rows
+      keep referencing the order (P8 contract); original-tender cap re-checked at
+      receipt — a shortfall blocks with "re-authorize as store credit"; SoD: writer
+      needs pos.refund.create, receiver needs inventory.receive.*
+- [x] **G4 — Scrap/write-off control:** migration `0040_write_offs_exceptions`. Scrap in
+      As-Is review is now a write-off: gated on new `inventory.write_off` (Owner/Manager;
+      a clerk goes through the manager-override dialog), coded reason (class `write_off`),
+      valued at variant cost onto the `write_offs` register (`GET /v1/write-offs` w/
+      rolling total, reports.inventory.view). Vendor returns REQUIRE an R/A number and
+      open a credit to chase (`vendorCreditStatus` open → received / written-off via
+      `POST /v1/as-is/:id/vendor-credit`, vendor*invoices.manage; giving up on a credit is
+      itself an exception). — \_2026-08-26.*
+- [x] **G5 — Exception register + ranked digest:** `exception_events` (type, severity,
+      actor, ack state) + `ExceptionsService.record()` wired into the control points:
+      security overrides, order unlocks, over-capacity bookings, write-offs, vendor-credit
+      write-offs. `GET /v1/exceptions` (filters: open/severity/type/actor, audit.view),
+      `POST :id/ack` (one-shot, stamps who), `GET /v1/exceptions/digest?days=` — the §2
+      per-associate ranked digest. New `/exceptions` page (register table + ack + 7-day
+      ranked digest card) in the Insights nav. controls.int.spec 13→19; orders 42/42,
+      deliveries 14/14, RLS 14/14. — _2026-08-26. Convention flagged: the override stamp
+      accepts the action's own reason code (any class) — class enforcement stays with the
+      consuming prompt, so the dialog never asks for two reasons; G6 adds the threshold
+      writers (price variance) to the same register._
+- [x] **G6 — Price variance 3-tier + §5 gates:** server-side variance gate on order
+      create / draft-confirm / discount raise / line add, against catalog list prices
+      (line overrides + line discounts + order discount): tier 1 (≤5% OR ≤$50) logged
+      only; tier 2 (≤15%) → 400 `code:REASON_REQUIRED`, coded reason (class exception) + exception-register entry; tier 3 (>15% or below variant cost) → manager
+      security override on new `orders.price_override`, below-cost registers as
+      **critical**. Thresholds per business in ops settings `priceVariance` (editable
+      in Settings → Store operations). New Sale catches REASON*REQUIRED/
+      OVERRIDE_REQUIRED and runs the approval dialog, then retries. Also: layaway $100
+      minimum deposit enforced at save (override on orders.complete_with_balance +
+      registered), and qualifying orders written without a recycling-fee line register
+      a `recycling_fee_removed` exception automatically (server-side keyword check —
+      can't be bypassed by the UI). orders.int.spec 42→48. — \_2026-08-26. Conventions
+      flagged: margin floor = variant cost (no separate floor setting yet); drafts skip
+      the gate but re-run it at completion; exchange passes control fields through;
+      tax-exempt gate deferred — no tax-exempt field exists on orders yet; daily cash
+      refund cap deferred to the §8 refund-controls slice.*
+- [x] **G7 — Delivery run object + close-out reconciliation:** migration
+      `0041_delivery_runs` — `delivery_runs` (date/route/truck label/driver, COD due vs
+      collected + received-by, status open→out→completed) + `deliveries.run_id` +
+      `deliveries.failure_reason_code_id`. Build a run from a day's scheduled stops
+      (`POST /v1/delivery-runs`); **run membership is the A5 hard lock** — orders on an
+      open/out run refuse edits AND unlock with 409 until pulled off the run (coded
+      `manifest_removal` reason, exception registered — STORIS S$TE*MAINIF_RMV). Depart
+      flips stops out-for-delivery. **Close-out is mandatory reconciliation**: every open
+      stop needs an outcome — delivered (existing completion path: stock leaves,
+      reservations consume, order advances) or failed (coded `delivery_failure` reason →
+      exception + optional auto-reschedule cloning the stop's lines to a new date); COD
+      due (delivered stops' balances) vs collected compared, variance → `cod_variance`
+      exception with who received the cash. Manifest print page
+      (`/print/delivery-runs/:id`): stops in order, per-stop collect + signature +
+      outcome checkboxes, driver + office-received signature lines. Dispatch page: run
+      cards (Depart / Pull-off / Close-out form / Print manifest) + "Build run" from
+      unassigned stops. deliveries.int.spec 14→16; orders 48/48, RLS 14/14. — \_2026-08-26.
+      Conventions flagged: A5 applied as print-lock stays hard (per A1, now
+      override-able) with the run lock layered stronger on top; truck is a free label
+      until a truck entity exists; COD due counts delivered stops only; postponement
+      counter rides with G13's auto stock release.*
+- [x] **G8 — Transfer variance + aging + types:** migration `0042_transfer_variance`.
+      (In-transit was already a real bucket — ship deducts origin, receive credits
+      destination, so road goods are sellable nowhere; kept.) New: **`POST
+/v1/stock-transfers/:id/close-short`** — a short transfer can't be dismissed, only
+      resolved: needs `inventory.write_off` (clerk → manager-override dialog), a coded
+      reason (class `transfer_variance`), values the missing units at cost onto the
+      write-off register (attributed to origin), registers a `transfer_variance`
+      exception, status → `closed_short`. `GET /v1/stock-transfers/aging?days=3` — the
+      in-transit-too-long standing alert, surfaced as a red banner on the transfers page.
+      Transfer types (`replenishment`/`floor_sample`/`customer`/`as_is`) on create + a
+      type select in the UI. transfers.int.spec 13→15. — _2026-08-26. Conventions
+      flagged: floor-sample type is recorded but doesn't yet gate sellability at the
+      destination; the request workflow (store asks → warehouse approves) and a
+      coded creation reason are deferred; receiving identity already captured in
+      movements/audit._
+- [x] **G9 — Print preconditions + reprint counter + unlock window** + **G15 pick
+      list:** migration `0043_print_preconditions` (`orders.ticket_print_count`,
+      `orders.relock_at`). Delivery-ticket print now checks server-side and answers a
+      pass/fail checklist (409 `code:PRINT_BLOCKED`): stock lines reserved; a scheduled
+      trip (delivery orders) / promised date (pickups); balance ≤ new ops setting
+      `maxBalanceForTicketPrintCents` — the balance cap alone is override-able
+      (orders.complete*with_balance, manager dialog). Every print bumps the copy
+      counter; copy 2+ registers a `ticket_reprint` exception and the print page shows
+      "REPRINT — copy #n". **Unlock is a 15-minute window** (relock re-engages lazily,
+      no cron; fresh unlock re-opens it) and the **3rd unlock on one order escalates to
+      a critical exception**. Locked-state allowlist per §3: delivery instructions /
+      notes / address fixes pass through the lock so unlocking never becomes routine.
+      **G15**: `/print/orders/:id/pick-list` — warehouse pull sheet with qty, item,
+      model/SKU, pulled checkbox, pulled-by/checked-by lines and **no prices**; button
+      on the order page; never locks. orders.int.spec 48→52 (P4 suite adapted: pickup
+      fixture satisfies preconditions; notes edits now pass the lock by design). —
+      \_2026-08-26. Conventions flagged: reserved/date failures are hard blocks (fix the
+      data), only the balance cap has an override path; credit-hold check waits for a
+      credit-hold field to exist; document id/revision on invoices deferred.*
+- [x] **G10 — As-is piece identity:** migration `0044_as_is_pieces` — `as_is_items` +=
+      piece*number, condition, as_is_price_cents, storage_location, reason_code_id.
+      Intakes and return receipts now explode into **one row per unit** with a piece
+      reference (`AS-XXXXXXXX`, id-derived — no sequence race); legacy qty>1 rows stay
+      valid. Coded intake reason (class `as_is`) mandatory once codes exist; a
+      **restricted** code (STORIS "As-Is Restricted") needs `inventory.write_off` or a
+      manager override. `PATCH /v1/as-is/:id` — condition + storage location free,
+      as-is price gated on new `as_is.price.set` (Owner/Manager; override dialog for
+      others). `GET /v1/as-is/aging?days=60` — pieces stuck in review. UI: piece #,
+      condition, storage, as-is price shown per row + "price…" action. controls.int.spec
+      19→22; orders/sales/reports 77/77 unaffected. — \_2026-08-26. Conventions flagged:
+      photos deferred (needs the storage decision already on the backlog); max discount
+      off original not enforced yet (price is manager-gated instead).*
+- [x] **G11 — Purchasing controls:** migration `0045_purchasing_controls`
+      (`purchase_order_lines.quantity_rejected`, `vendor_invoices.created_by_user_id`,
+      `vendors.remit_to`). **Third bucket**: staged receiving takes `rejected` —
+      invariant ordered ≥ received ≥ inspected ≥ accepted+rejected; rejects become
+      As-Is pieces (never silently sellable, reviewer disposes → vendor return w/ R/A
+      or valued scrap), register a `po_reject` exception, and count as dispositioned so
+      the PO still completes (no pressure to accept damage). **SoD on invoice
+      approval**: the recorder cannot self-approve — a _different_ holder of
+      vendor*invoices.manage signs (override dialog; `force` mode added to the
+      override primitive). **Tolerance auto-clear**: matched invoices within ops
+      `invoiceVarianceToleranceCents` approve themselves — reviewers only see
+      exceptions. **Remit-to alert**: `vendors.remit_to` changes register a CRITICAL
+      `vendor_remit_change` exception (vendor-master fraud). **Blind receiving**: ops
+      toggle hides Ordered/expected/cost columns on the receiving grid (PO detail
+      carries the flag). Settings knobs for tolerance + blind mode. purchasing.int.spec
+      24→27 (P6 approve updated: manager signs per SoD). — \_2026-08-26. Conventions
+      flagged: PO hold/release deferred (POs here are buyer-created, not auto-created
+      from order entry — the hold's driver); landed cost, receiving-error reversal as a
+      distinct transaction, R/A field on POs, email-PO ack capture deferred; remit-to
+      is API-level until the vendor edit UI lands (existing backlog item).*
+- [x] **G12 — Multi-dimensional capacity + zip→route mapping:** migration
+      `0046_capacity_units` (`product_variants.capacity_units`, default 1 — a king set
+      is not a twin). Capacity is now stops + optional per-day piece budget
+      (`deliveryDailyPieceCap`) + optional capacity-unit budget
+      (`deliveryDailyCapacityUnits`); scheduling refuses 409 **naming the over
+      dimension** ("over capacity on capacity units (4 + 3 > 4)"), override still
+      deliberate+registered; `/deliveries/capacity` reports pieces + units per day.
+      `ops.zipRoutes` ("912" → "Glendale AM") wins route suggestion by longest prefix,
+      falling back to the zip-prefix label. Settings knobs for both budgets.
+      deliveries.int.spec 16→17. — _2026-08-26. Conventions: zipRoutes edited via API/
+      settings JSON for now (no dedicated editor); stop times/windows already exist on
+      deliveries; truck lanes wait for a truck entity (G7 note)._
+- [x] **G13 — Line roll-up + Past Due + Auto Stock Release + drift:** list-view rows
+      carry `lineSummary` (units/reserved/fulfilled/special-order, rendered "2 of 3
+      reserved · 1 SO" under the status chip) and `?view=past_due` — undelivered orders
+      past their promised date, one chip on /orders. `POST /v1/orders/auto-stock-release`
+      (inventory.adjust; {days, dryRun}) frees reservations on open orders promised >N
+      days ago with nothing on a truck and no lock — each release audited + registered
+      (`auto_stock_release`); P9's nightly job will call it. `GET
+/v1/orders/reservation-drift` (reports.inventory.view): SUM(line reserved) vs
+      level reserved per variant+location, drift rows only. orders.int.spec 52→56. —
+      _2026-08-26. Conventions: past-due keyed on requestedDate (scheduled-trip lateness
+      shows via Scheduled status + date already); per-line Hold, credit hold, EST-vs-SCH
+      date distinction, and manual reservation re-assignment still open (rolled into the
+      backlog); postponement counter still deferred to P9._
+- [x] **G14 — Duplicate-order prompt + ATP-vs-promise warning:** `GET
+/v1/customers/:id/open-orders` (open orders w/ promised + next-trip dates); New
+      Sale shows a warning banner when the picked customer already has open orders
+      ("consider one truck"), and completing with a promised date EARLIER than any
+      line's ATP date demands an explicit confirm naming the late lines. —
+      _2026-08-26. Conventions: the consolidate prompt is advisory (banner), not a
+      blocking dialog; credit-application gate for Synchrony/Acima still open (needs a
+      credit-app entity)._
+- [x] **§2 audit coverage:** `audit_logs`, `security_overrides`, and `write_offs` are
+      now **append-only at the DB level** (UPDATE/DELETE revoked from app*user in
+      rls.sql; exception_events keeps UPDATE for acknowledge). Field-level coverage
+      audit: line add/remove/qty ✓ (endpoint audits), price + discount changes ✓ (G6
+      exceptions + order.update diffs), delivery date changes ✓ (order.update /
+      delivery PATCH diffs), salesperson change ✓ (order.update diff), recycling-fee
+      removal ✓ (G6 exception), route/date-after-print ✓ (G7 run lock + audits),
+      customer-swap N/A (no endpoint can change an order's customer), tax-exempt /
+      tender-void / deposit-transfer N/A (those routines don't exist yet — each gets
+      its control when built). — \_2026-08-26.*
+- [x] **Build P9:** commissions clawback + morning dashboards + 22:00 auto-close.
+      Migration `0047_daily_closeouts`. **Commissions:** accrual at completion (split per
+      split*bps) already existed; `reverseForOrderReturn` now claws back the returned
+      fraction as negative entries when a return's goods are received (rides the A7
+      lifecycle — an exchange nets out: clawback on the return, fresh accrual on the
+      exchange order's own completion). **Morning dashboard:** `GET /v1/dashboard/morning`
+      (reports.sales.view; `?date=` + `?locationId=` for the store-manager scope) —
+      yesterday by store (orders written + register sales), by associate (order totals
+      split-weighted + sale totals), today's deliveries vs the cap, refunds/cancellations
+      with the actor, the daily modification log, and the open-exception count; rendered
+      as the dashboard "Morning brief" card (hides on 403). **22:00 auto-close:**
+      `CloseoutService` in-process scheduler (OverdueScheduler pattern: 10-min tick, fires
+      once per store-local day after CLOSEOUT_LOCAL_HOUR=22, store timezone-aware,
+      NODE_ENV=test/CLOSEOUT_ENABLED=false guards) — never blocks, flags: open cash
+      drawers, today's undelivered trips, delivery runs never closed (critical),
+      delivered-with-balance orders (critical, the §1 standing alert); findings land on
+      the exception register; the nightly G13 Auto Stock Release rides along once per
+      business. Idempotent via unique (location, close_date) `daily_closeouts` row;
+      `POST /v1/closeouts/run` manual trigger + `GET /v1/closeouts` history.
+      closeout.int.spec 4/4; full API suite 39 files / 489 tests green. — \_2026-08-26.
+      Conventions flagged: dashboard day boundaries are UTC calendar dates (matches the
+      Z-report); commission clawback fires on returns only (price adjustments do not
+      recalc commission in v1); close-out balance/deliveries scoped per location, stock
+      release per business; close hour env-configurable, not per-store yet.*
+
 ## Test-data ledger (D11 — what lives in the QA tenant and never reaches production)
 
 Production cutover creates a **fresh business**; everything below stays behind in the

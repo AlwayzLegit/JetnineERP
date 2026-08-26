@@ -186,6 +186,53 @@ export class CommissionsService {
   }
 
   /**
+   * Order-return clawback (PLAN-POS-OPERATIONS §9, gap §8): when a
+   * return completes — goods physically back, refund issued — the
+   * salespeople give back the commission on the returned fraction.
+   * Negative entries mirror the originals, so an exchange nets out:
+   * clawback on the returned portion here, fresh accrual to the
+   * exchange order's salesperson at its own completion.
+   */
+  async reverseForOrderReturn(
+    db: PostgresJsDatabase,
+    args: {
+      businessId: string;
+      orderId: string;
+      refundedCents: number;
+      orderTotalCents: number;
+      rmaNumber?: string;
+    },
+  ): Promise<void> {
+    if (args.orderTotalCents <= 0 || args.refundedCents <= 0) return;
+    const entries = await db
+      .select()
+      .from(schema.commissionEntries)
+      .where(
+        and(
+          eq(schema.commissionEntries.orderId, args.orderId),
+          inArray(schema.commissionEntries.status, ['pending', 'approved', 'paid']),
+        ),
+      );
+    const fraction = Math.min(1, args.refundedCents / args.orderTotalCents);
+    for (const e of entries) {
+      if (e.amountCents <= 0) continue; // don't reverse reversals
+      const basis = -Math.round(e.basisCents * fraction);
+      const amount = Math.round((basis * e.rateBps) / 10000);
+      if (amount === 0) continue;
+      await db.insert(schema.commissionEntries).values({
+        businessId: args.businessId,
+        membershipId: e.membershipId,
+        orderId: args.orderId,
+        basisCents: basis,
+        amountCents: amount,
+        rateBps: e.rateBps,
+        period: this.period(),
+        notes: args.rmaNumber ? `return clawback (${args.rmaNumber})` : 'return clawback',
+      });
+    }
+  }
+
+  /**
    * Refund reversal: negative entries proportional to the refunded
    * fraction of each original entry for the sale.
    */

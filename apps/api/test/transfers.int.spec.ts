@@ -36,6 +36,7 @@ let variantAId = '';
 let variantBId = '';
 let clerkCookie = '';
 let cashierCookie = '';
+let managerCookie = '';
 
 async function resetTestDb() {
   const env = { ...process.env, DATABASE_URL: TEST_DB_URL };
@@ -96,6 +97,7 @@ async function seed() {
     }
     await makeUser('clerk@trans-test.local', 'Inventory Clerk');
     await makeUser('cashier@trans-test.local', 'Cashier');
+    await makeUser('manager@trans-test.local', 'Manager');
 
     const [main] = await db
       .insert(schema.locations)
@@ -114,7 +116,7 @@ async function seed() {
       .returning();
     const [vA] = await db
       .insert(schema.productVariants)
-      .values({ businessId, productId: pA!.id, sku: 'WIDGET-1', priceCents: 1000 })
+      .values({ businessId, productId: pA!.id, sku: 'WIDGET-1', priceCents: 1000, costCents: 600 })
       .returning();
     variantAId = vA!.id;
     const [pB] = await db
@@ -187,6 +189,7 @@ beforeAll(async () => {
 
   clerkCookie = await captureCookie('clerk@trans-test.local');
   cashierCookie = await captureCookie('cashier@trans-test.local');
+  managerCookie = await captureCookie('manager@trans-test.local');
 });
 
 afterAll(async () => {
@@ -418,5 +421,127 @@ describe('Transfer ticket data (PLAN-POS-OPERATIONS P7)', () => {
     // Address blocks round-trip (null when the location has none on file).
     expect(created.body).toHaveProperty('fromLocationAddressJson');
     expect(created.body).toHaveProperty('toLocationAddressJson');
+  });
+});
+
+describe('Transfer variance + aging + types (PLAN-STORIS-GAP G8)', () => {
+  function as(cookie: string) {
+    return {
+      post: (url: string) =>
+        request(app.getHttpServer())
+          .post(url)
+          .set('Cookie', cookie)
+          .set('X-Business-Id', businessId),
+      get: (url: string) =>
+        request(app.getHttpServer())
+          .get(url)
+          .set('Cookie', cookie)
+          .set('X-Business-Id', businessId),
+    };
+  }
+
+  it('a short transfer cannot be dismissed: close-short needs write-off authority + reason, values shrink at cost', async () => {
+    // Ship 4 widgets, receive 3 — one walked off the truck.
+    const created = await as(clerkCookie)
+      .post('/v1/stock-transfers')
+      .send({
+        fromLocationId: warehouseLocationId,
+        toLocationId: mainLocationId,
+        transferType: 'floor_sample',
+        lines: [{ variantId: variantAId, quantity: 4 }],
+        ship: true,
+      });
+    expect(created.status).toBe(201);
+    expect(created.body.transferType).toBe('floor_sample');
+    const transferId = created.body.id as string;
+    const lineId = created.body.lines[0].id as string;
+
+    await as(clerkCookie)
+      .post(`/v1/stock-transfers/${transferId}/receive`)
+      .send({ lines: [{ lineId, quantity: 3 }] })
+      .expect(201);
+
+    // The clerk lacks inventory.write_off → override required.
+    const blocked = await as(clerkCookie)
+      .post(`/v1/stock-transfers/${transferId}/close-short`)
+      .send({ reason: 'lost in transit' });
+    expect(blocked.status).toBe(403);
+    expect(blocked.body.code).toBe('OVERRIDE_REQUIRED');
+    expect(blocked.body.permission).toBe('inventory.write_off');
+
+    const closed = await as(clerkCookie)
+      .post(`/v1/stock-transfers/${transferId}/close-short`)
+      .send({
+        override: {
+          email: 'manager@trans-test.local',
+          password: PASSWORD,
+          reason: 'lost in transit',
+        },
+      });
+    expect(closed.status).toBe(201);
+    expect(closed.body.status).toBe('closed_short');
+
+    // The missing unit is shrink: on the write-off register at cost.
+    const register = await as(managerCookie).get('/v1/write-offs?days=7');
+    const row = register.body.rows.find((r: { reason: string | null }) =>
+      r.reason?.includes(closed.body.number),
+    );
+    expect(row).toBeTruthy();
+    expect(row.quantity).toBe(1);
+    expect(row.totalCostCents).toBe(600);
+
+    const exceptions = await as(managerCookie).get('/v1/exceptions?type=transfer_variance');
+    expect(
+      exceptions.body.some((e: { entityId: string | null }) => e.entityId === transferId),
+    ).toBe(true);
+
+    // A fully-received transfer refuses a short close.
+    const clean = await as(clerkCookie)
+      .post('/v1/stock-transfers')
+      .send({
+        fromLocationId: warehouseLocationId,
+        toLocationId: mainLocationId,
+        lines: [{ variantId: variantBId, quantity: 1 }],
+        ship: true,
+      });
+    const cleanLine = clean.body.lines[0].id as string;
+    await as(clerkCookie)
+      .post(`/v1/stock-transfers/${clean.body.id}/receive`)
+      .send({ lines: [{ lineId: cleanLine, quantity: 1 }] })
+      .expect(201);
+    await as(clerkCookie)
+      .post(`/v1/stock-transfers/${clean.body.id}/close-short`)
+      .send({ reason: 'nope' })
+      .expect(403); // received → ForbiddenException before anything else
+  });
+
+  it('aging surfaces transfers stuck in transit', async () => {
+    const created = await as(clerkCookie)
+      .post('/v1/stock-transfers')
+      .send({
+        fromLocationId: warehouseLocationId,
+        toLocationId: mainLocationId,
+        lines: [{ variantId: variantAId, quantity: 1 }],
+        ship: true,
+      });
+    expect(created.status).toBe(201);
+
+    // Backdate the shipment a week.
+    const sql2 = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    const db = drizzle(sql2);
+    try {
+      await db
+        .update(schema.stockTransfers)
+        .set({ shippedAt: new Date(Date.now() - 7 * 86_400_000) })
+        .where(eq(schema.stockTransfers.id, created.body.id));
+    } finally {
+      await sql2.end({ timeout: 5 });
+    }
+
+    const aging = await as(clerkCookie).get('/v1/stock-transfers/aging?days=3');
+    expect(aging.status).toBe(200);
+    const hit = aging.body.find((t: { id: string }) => t.id === created.body.id);
+    expect(hit).toBeTruthy();
+    expect(hit.daysInTransit).toBeGreaterThanOrEqual(6);
   });
 });

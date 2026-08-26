@@ -32,6 +32,11 @@ export const vendors = pgTable(
     email: text('email'),
     phone: text('phone'),
     addressJson: jsonb('address_json'),
+    /**
+     * G11: where payments go. Changing this is the classic vendor-master
+     * fraud, so every change is separately audited and alerts the owner.
+     */
+    remitTo: text('remit_to'),
     notes: text('notes'),
     isActive: boolean('is_active').notNull().default(true),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -111,6 +116,8 @@ export const purchaseOrderLines = pgTable(
      */
     quantityInspected: integer('quantity_inspected').notNull().default(0),
     quantityAccepted: integer('quantity_accepted').notNull().default(0),
+    /** G11 third bucket: inspected units that failed — dispositioned via As-Is. */
+    quantityRejected: integer('quantity_rejected').notNull().default(0),
     unitCostCents: integer('unit_cost_cents').notNull(),
     lineTotalCents: integer('line_total_cents').notNull(),
   },
@@ -179,6 +186,10 @@ export const vendorInvoices = pgTable(
     /** 'unmatched' | 'matched' | 'approved' */
     status: text('status').notNull().default('unmatched'),
     notes: text('notes'),
+    /** G11 SoD: who keyed the invoice — the approver must differ. */
+    createdByUserId: uuid('created_by_user_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
     matchedAt: timestamp('matched_at', { withTimezone: true }),
     approvedAt: timestamp('approved_at', { withTimezone: true }),
     approvedByUserId: uuid('approved_by_user_id').references(() => users.id, {

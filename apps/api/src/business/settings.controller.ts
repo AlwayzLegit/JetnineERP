@@ -41,6 +41,24 @@ interface OpsSettings {
   unlockRoleIds?: string[] | null;
   deliveryDailyCap?: number | null;
   poReplyTo?: string | null;
+  /** G9: block delivery-ticket print above this balance due (null = off). */
+  maxBalanceForTicketPrintCents?: number | null;
+  /** G11: auto-clear matched invoices within this variance (null = manual). */
+  invoiceVarianceToleranceCents?: number | null;
+  /** G11: hide expected quantities on the receiving grid. */
+  blindReceiving?: boolean | null;
+  /** G12: optional per-day piece budget for the trucks. */
+  deliveryDailyPieceCap?: number | null;
+  /** G12: optional per-day capacity-unit budget (variant capacityUnits). */
+  deliveryDailyCapacityUnits?: number | null;
+  /** G12: zip-prefix → route map ("912" → "Glendale AM"). */
+  zipRoutes?: Record<string, string> | null;
+  /** G6 three-tier price-variance thresholds (defaults 5% / $50 / 15%). */
+  priceVariance?: {
+    tier1Pct?: number | null;
+    tier1MaxCents?: number | null;
+    tier2Pct?: number | null;
+  } | null;
 }
 
 interface UpdateBody {
@@ -87,6 +105,73 @@ function validateOps(input: OpsSettings): OpsSettings {
       throw new BadRequestException('ops.unlockRoleIds must be an array of role ids');
     }
     out.unlockRoleIds = input.unlockRoleIds;
+  }
+  if (input.maxBalanceForTicketPrintCents !== undefined) {
+    if (
+      input.maxBalanceForTicketPrintCents !== null &&
+      (!Number.isInteger(input.maxBalanceForTicketPrintCents) ||
+        input.maxBalanceForTicketPrintCents < 0)
+    ) {
+      throw new BadRequestException(
+        'ops.maxBalanceForTicketPrintCents must be a non-negative integer',
+      );
+    }
+    out.maxBalanceForTicketPrintCents = input.maxBalanceForTicketPrintCents;
+  }
+  if (input.invoiceVarianceToleranceCents !== undefined) {
+    if (
+      input.invoiceVarianceToleranceCents !== null &&
+      (!Number.isInteger(input.invoiceVarianceToleranceCents) ||
+        input.invoiceVarianceToleranceCents < 0)
+    ) {
+      throw new BadRequestException(
+        'ops.invoiceVarianceToleranceCents must be a non-negative integer',
+      );
+    }
+    out.invoiceVarianceToleranceCents = input.invoiceVarianceToleranceCents;
+  }
+  if (input.blindReceiving !== undefined) {
+    if (input.blindReceiving !== null && typeof input.blindReceiving !== 'boolean') {
+      throw new BadRequestException('ops.blindReceiving must be a boolean');
+    }
+    out.blindReceiving = input.blindReceiving;
+  }
+  for (const key of ['deliveryDailyPieceCap', 'deliveryDailyCapacityUnits'] as const) {
+    if (input[key] !== undefined) {
+      if (input[key] !== null && (!Number.isInteger(input[key]) || (input[key] as number) < 1)) {
+        throw new BadRequestException(`ops.${key} must be a positive integer`);
+      }
+      out[key] = input[key];
+    }
+  }
+  if (input.zipRoutes !== undefined) {
+    if (input.zipRoutes !== null) {
+      if (typeof input.zipRoutes !== 'object' || Array.isArray(input.zipRoutes)) {
+        throw new BadRequestException('ops.zipRoutes must be an object of prefix → route');
+      }
+      for (const [prefix, route] of Object.entries(input.zipRoutes)) {
+        if (!/^\d{1,5}$/.test(prefix) || typeof route !== 'string' || !route.trim()) {
+          throw new BadRequestException(
+            'ops.zipRoutes keys must be 1–5 digit zip prefixes with non-empty route names',
+          );
+        }
+      }
+    }
+    out.zipRoutes = input.zipRoutes;
+  }
+  if (input.priceVariance !== undefined) {
+    if (input.priceVariance !== null) {
+      const pv = input.priceVariance;
+      for (const [key, val] of Object.entries(pv) as [string, number | null | undefined][]) {
+        if (val != null && (typeof val !== 'number' || !Number.isFinite(val) || val < 0)) {
+          throw new BadRequestException(`ops.priceVariance.${key} must be a non-negative number`);
+        }
+      }
+      if (pv.tier1Pct != null && pv.tier2Pct != null && pv.tier2Pct < pv.tier1Pct) {
+        throw new BadRequestException('ops.priceVariance.tier2Pct must be ≥ tier1Pct');
+      }
+    }
+    out.priceVariance = input.priceVariance;
   }
   return out;
 }

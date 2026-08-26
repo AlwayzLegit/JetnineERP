@@ -5,7 +5,8 @@ import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { Plus, Search, X } from 'lucide-react';
 import { formatMoney } from '@jetnine/shared';
-import { api } from '@/lib/api';
+import { api, ApiError } from '@/lib/api';
+import { SecurityOverrideDialog } from '@/components/security-override-dialog';
 import { Money } from '@/components/money';
 import { Button, Card, Field, Input, Select } from '@/components/ui';
 
@@ -127,6 +128,9 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
   // --- customer ---
   const [customer, setCustomer] = useState<CustomerHit | null>(null);
   const [storeCredit, setStoreCredit] = useState<number | null>(null);
+  const [openOrders, setOpenOrders] = useState<
+    { id: string; number: string; requestedDate: string | null; deliveryDate: string | null }[]
+  >([]);
   const [exchangeOriginal, setExchangeOriginal] = useState<{
     id: string;
     number: string;
@@ -173,6 +177,7 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
 
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [priceGateMode, setPriceGateMode] = useState<'complete' | 'draft' | null>(null);
   const [done, setDone] = useState<{ id: string; number: string; kind: 'order' | 'sale' } | null>(
     null,
   );
@@ -196,6 +201,26 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
       stale = true;
     };
   }, [fulfillment, requestedDate]);
+
+  // G14: the customer's open orders — two orders, same house, same
+  // week is two trucks and pure margin loss.
+  useEffect(() => {
+    if (!customer) {
+      setOpenOrders([]);
+      return;
+    }
+    let stale = false;
+    api<
+      { id: string; number: string; requestedDate: string | null; deliveryDate: string | null }[]
+    >(`/v1/customers/${customer.id}/open-orders`)
+      .then((r) => {
+        if (!stale) setOpenOrders(r);
+      })
+      .catch(() => setOpenOrders([]));
+    return () => {
+      stale = true;
+    };
+  }, [customer]);
 
   // §10: store credit auto-surfaces at checkout.
   useEffect(() => {
@@ -433,6 +458,15 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
     }
   }
 
+  // G6: the server may refuse a deep discount with REASON_REQUIRED
+  // (tier 2 — coded reason) or OVERRIDE_REQUIRED (tier 3 — manager
+  // credentials); the override dialog collects both and retries.
+  interface PriceControl {
+    priceReasonCodeId?: string;
+    priceReason?: string;
+    override?: { email: string; password: string; reasonCodeId?: string; reason?: string };
+  }
+
   async function submit(mode: 'complete' | 'draft') {
     setError(null);
     if (!customer) {
@@ -447,8 +481,39 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
       setError('Layaway needs a minimum $100 deposit to open.');
       return;
     }
+    // G14: promising a date before the goods can arrive is the #1
+    // customer-service failure in furniture — make it a deliberate act.
+    if (mode === 'complete' && requestedDate) {
+      const lateLines = lines.filter((l) => l.atpDate && l.atpDate > requestedDate);
+      if (lateLines.length > 0) {
+        const ok = window.confirm(
+          `Promised ${requestedDate}, but not expected until ${lateLines
+            .map((l) => `${l.description} (${l.atpDate})`)
+            .join(', ')}. Promise it anyway?`,
+        );
+        if (!ok) return;
+      }
+    }
     setBusy(true);
     try {
+      await doSubmit(mode);
+    } catch (err) {
+      if (
+        err instanceof ApiError &&
+        (err.code === 'REASON_REQUIRED' || err.code === 'OVERRIDE_REQUIRED')
+      ) {
+        setPriceGateMode(mode);
+      } else {
+        setError(err instanceof Error ? err.message : String(err));
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function doSubmit(mode: 'complete' | 'draft', control?: PriceControl) {
+    if (!customer) throw new Error('Attach a customer first.');
+    {
       const linePayload = lines.map((l) => ({
         variantId: l.variantId ?? undefined,
         description: l.lineType === 'custom' ? l.description : undefined,
@@ -534,6 +599,7 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
           deliveryFeeCents: parseDollars(deliveryFee) || undefined,
           draft: mode === 'draft' ? true : undefined,
           confirm: mode === 'complete' && orderType !== 'quote' ? true : undefined,
+          ...(control ?? {}),
         }),
       });
 
@@ -559,10 +625,6 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
       } else {
         setDone({ id: order.id, number: order.number, kind: 'order' });
       }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(false);
     }
   }
 
@@ -619,6 +681,21 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
 
   return (
     <div className="grid gap-4 xl:grid-cols-[1fr_340px]" data-testid="new-sale">
+      <SecurityOverrideDialog
+        open={priceGateMode != null}
+        title="Discount needs approval"
+        usageClass="exception"
+        submitLabel="Approve & save"
+        perform={(payload) =>
+          doSubmit(priceGateMode!, {
+            priceReasonCodeId: payload.reasonCodeId,
+            priceReason: payload.reason,
+            override: payload.override,
+          })
+        }
+        onClose={() => setPriceGateMode(null)}
+        onSuccess={() => undefined}
+      />
       <div className="min-w-0">
         {exchangeOriginal && (
           <div
@@ -629,6 +706,23 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
             Writing an <strong>Exchange Order</strong> against original invoice{' '}
             <strong>{exchangeOriginal.number}</strong> — the document prints with the original
             number, and the customer is fixed to the original order&apos;s.
+          </div>
+        )}
+        {!exchangeOriginal && openOrders.length > 0 && (
+          <div
+            className="card mb-3"
+            data-testid="duplicate-order-banner"
+            style={{ padding: '10px 14px', borderColor: 'var(--warning)', fontSize: 13 }}
+          >
+            This customer already has {openOrders.length === 1 ? 'an open order' : 'open orders'}:{' '}
+            {openOrders.map((o, i) => (
+              <span key={o.id}>
+                {i > 0 && ', '}
+                <strong>{o.number}</strong>
+                {(o.deliveryDate ?? o.requestedDate) && ` (${o.deliveryDate ?? o.requestedDate})`}
+              </span>
+            ))}
+            {' — '}consider one truck: add to the existing order or match its delivery date.
           </div>
         )}
         {drafts.length > 0 && (
@@ -1226,7 +1320,8 @@ function LineRow({
           />
         </td>
         <td>
-          {/* Price override: click, type, done — any associate, no cap. */}
+          {/* Price override: click, type, done. Small variances stay frictionless;
+              deep ones hit the G6 reason/manager gate at save. */}
           <Input
             type="number"
             step="0.01"

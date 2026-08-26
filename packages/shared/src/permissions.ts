@@ -29,6 +29,9 @@ export const PERMISSIONS = {
   'inventory.adjust': 'Adjust inventory',
   'inventory.receive': 'Receive inventory',
   'inventory.transfer': 'Transfer between locations',
+  'inventory.write_off':
+    'Write off (scrap) physical goods — valued at cost on the write-off register',
+  'as_is.price.set': 'Set or change the as-is selling price on a piece',
 
   'vendors.view': 'View vendors',
   'vendors.manage': 'Create / update / delete vendors',
@@ -64,6 +67,8 @@ export const PERMISSIONS = {
   'orders.deposit.take': 'Take a deposit or balance payment on an order',
   'orders.complete_with_balance': 'Complete an order that still has a balance due',
   'orders.unlock': 'Unlock an order locked by a delivery-ticket print (typed reason required)',
+  'orders.price_override':
+    'Approve deep price overrides — beyond the tier-2 variance threshold or below cost',
 
   'deliveries.view': 'View the delivery calendar and day sheets',
   'deliveries.schedule': 'Schedule / reschedule deliveries',
@@ -111,6 +116,9 @@ export const PERMISSIONS = {
   'reports.export': 'Export reports',
 
   'audit.view': 'View audit log',
+
+  'reason_codes.manage': 'Manage the reason-code registry (add / deactivate / restrict codes)',
+  'security_overrides.view': 'View the security-override register',
 
   // Super-admin only — platform surfaces, never granted to a business role.
   'platform.templates.manage': 'Create and apply business templates (snapshots)',

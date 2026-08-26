@@ -3,8 +3,9 @@
 import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { api } from '@/lib/api';
+import { api, ApiError } from '@/lib/api';
 import { Button, EmptyState, LoadingRows, PageHeader, Select, StatusBadge } from '@/components/ui';
+import { SecurityOverrideDialog } from '@/components/security-override-dialog';
 
 /**
  * As-Is review queue (PLAN-POS-OPERATIONS §10): everything a return,
@@ -22,8 +23,15 @@ interface AsIsRow {
   sku: string | null;
   locationName: string | null;
   quantity: number;
+  pieceNumber: string | null;
+  condition: string | null;
+  asIsPriceCents: number | null;
+  storageLocation: string | null;
   source: string;
   status: string;
+  vendorRaNumber: string | null;
+  vendorCreditCents: number | null;
+  vendorCreditStatus: string | null;
   notes: string | null;
   createdAt: string;
 }
@@ -47,20 +55,72 @@ export default function AsIsPage() {
     void load(status);
   }, [status, load]);
 
-  async function review(id: string, action: 'restock' | 'vendor_return' | 'scrap') {
-    const labels = {
-      restock: 'Restock into sellable inventory?',
-      vendor_return: 'Mark as returned to vendor?',
-      scrap: 'Scrap these units?',
-    } as const;
-    if (!window.confirm(labels[action])) return;
+  const [scrapId, setScrapId] = useState<string | null>(null);
+  const [pricePending, setPricePending] = useState<{ id: string; cents: number } | null>(null);
+
+  async function setPrice(id: string) {
+    const v = window.prompt('As-is selling price ($):');
+    if (v == null) return;
+    const cents = Math.round(Number(v) * 100);
+    if (!Number.isFinite(cents) || cents < 0) return;
+    try {
+      await api(`/v1/as-is/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ asIsPriceCents: cents }),
+      });
+      await load(status);
+    } catch (err) {
+      if (err instanceof ApiError && err.code === 'OVERRIDE_REQUIRED') {
+        setPricePending({ id, cents });
+      } else {
+        toast.error(err instanceof Error ? err.message : String(err));
+      }
+    }
+  }
+
+  async function review(id: string, action: 'restock' | 'vendor_return') {
+    let extra: Record<string, unknown> = {};
+    if (action === 'restock') {
+      if (!window.confirm('Restock into sellable inventory?')) return;
+    } else {
+      // G4: a vendor return needs the R/A number — that's the handle
+      // the credit gets chased under.
+      const ra = window.prompt('Vendor R/A number (required):');
+      if (ra == null || !ra.trim()) return;
+      const credit = window.prompt('Expected vendor credit in dollars (blank if unknown):');
+      extra = {
+        raNumber: ra.trim(),
+        ...(credit && Number(credit) > 0
+          ? { expectedCreditCents: Math.round(Number(credit) * 100) }
+          : {}),
+      };
+    }
     setBusy(true);
     try {
       await api(`/v1/as-is/${id}/review`, {
         method: 'POST',
-        body: JSON.stringify({ action }),
+        body: JSON.stringify({ action, ...extra }),
       });
       toast.success(`Reviewed: ${action.replace('_', ' ')}.`);
+      await load(status);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function vendorCredit(id: string, action: 'received' | 'write_off') {
+    if (
+      !window.confirm(action === 'received' ? 'Vendor credit received?' : 'Give up on this credit?')
+    )
+      return;
+    setBusy(true);
+    try {
+      await api(`/v1/as-is/${id}/vendor-credit`, {
+        method: 'POST',
+        body: JSON.stringify({ action }),
+      });
       await load(status);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err));
@@ -119,6 +179,27 @@ export default function AsIsPage() {
                     {r.notes && (
                       <div style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>{r.notes}</div>
                     )}
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                      {r.pieceNumber && <code>{r.pieceNumber}</code>}
+                      {r.condition && <> · {r.condition.replace(/_/g, ' ')}</>}
+                      {r.storageLocation && <> · {r.storageLocation}</>}
+                      {r.asIsPriceCents != null && (
+                        <> · as-is ${(r.asIsPriceCents / 100).toFixed(2)}</>
+                      )}
+                      {r.status === 'pending_review' && (
+                        <>
+                          {' '}
+                          <button
+                            className="btn btn-ghost btn-sm"
+                            style={{ padding: '0 4px', fontSize: 11 }}
+                            disabled={busy}
+                            onClick={() => void setPrice(r.id)}
+                          >
+                            price…
+                          </button>
+                        </>
+                      )}
+                    </div>
                   </td>
                   <td className="num">{r.quantity}</td>
                   <td>{r.locationName ?? '—'}</td>
@@ -153,9 +234,35 @@ export default function AsIsPage() {
                           size="sm"
                           variant="danger"
                           disabled={busy}
-                          onClick={() => void review(r.id, 'scrap')}
+                          data-testid="review-scrap"
+                          onClick={() => setScrapId(r.id)}
                         >
                           Scrap
+                        </Button>
+                      </span>
+                    )}
+                    {r.status === 'vendor_return' && r.vendorCreditStatus === 'open' && (
+                      <span style={{ display: 'inline-flex', gap: 4, alignItems: 'center' }}>
+                        <span style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>
+                          R/A {r.vendorRaNumber}
+                          {r.vendorCreditCents != null &&
+                            ` · $${(r.vendorCreditCents / 100).toFixed(2)} open`}
+                        </span>
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          disabled={busy}
+                          onClick={() => void vendorCredit(r.id, 'received')}
+                        >
+                          Credit received
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          disabled={busy}
+                          onClick={() => void vendorCredit(r.id, 'write_off')}
+                        >
+                          Give up
                         </Button>
                       </span>
                     )}
@@ -169,8 +276,46 @@ export default function AsIsPage() {
       <p className="muted" style={{ fontSize: 12, marginTop: 10 }}>
         Restock puts units back into the same SKU at the same location. To sell a unit as As-Is at a
         discount, restock it and adjust it onto the matching <code>-AS</code> SKU from{' '}
-        <Link href="/inventory">Inventory</Link>.
+        <Link href="/inventory">Inventory</Link>. Scrapping is a write-off: it needs its own
+        permission (or a manager&apos;s approval), a coded reason, and lands on the write-off
+        register at cost.
       </p>
+
+      <SecurityOverrideDialog
+        open={pricePending != null}
+        title="As-is price needs manager approval"
+        usageClass={null}
+        submitLabel="Set price"
+        perform={(payload) =>
+          api(`/v1/as-is/${pricePending!.id}`, {
+            method: 'PATCH',
+            body: JSON.stringify({
+              asIsPriceCents: pricePending!.cents,
+              override: payload.override,
+            }),
+          }).then(() => undefined)
+        }
+        onClose={() => setPricePending(null)}
+        onSuccess={() => void load(status)}
+      />
+
+      <SecurityOverrideDialog
+        open={scrapId != null}
+        title="Scrap — write off these units"
+        usageClass="write_off"
+        submitLabel="Write off"
+        perform={(payload) =>
+          api(`/v1/as-is/${scrapId}/review`, {
+            method: 'POST',
+            body: JSON.stringify({ action: 'scrap', ...payload }),
+          }).then(() => undefined)
+        }
+        onClose={() => setScrapId(null)}
+        onSuccess={() => {
+          toast.success('Written off — recorded on the shrink register.');
+          void load(status);
+        }}
+      />
     </div>
   );
 }

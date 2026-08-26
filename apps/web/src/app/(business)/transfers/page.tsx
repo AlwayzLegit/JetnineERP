@@ -25,7 +25,14 @@ interface TransferRow {
 
 export default function TransfersPage() {
   const [rows, setRows] = useState<TransferRow[] | null>(null);
+  const [aging, setAging] = useState<{ id: string; number: string; daysInTransit: number }[]>([]);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    api<{ id: string; number: string; daysInTransit: number }[]>('/v1/stock-transfers/aging?days=3')
+      .then(setAging)
+      .catch(() => setAging([]));
+  }, []);
 
   useEffect(() => {
     void (async () => {
@@ -47,6 +54,32 @@ export default function TransfersPage() {
           </LinkButton>
         }
       />
+      {aging.length > 0 && (
+        <div
+          className="card"
+          data-testid="transfer-aging-alert"
+          style={{
+            padding: '10px 14px',
+            marginBottom: 12,
+            borderColor: 'var(--danger)',
+            fontSize: 13,
+          }}
+        >
+          <strong>In transit too long:</strong>{' '}
+          {aging.map((a, i) => (
+            <span key={a.id}>
+              {i > 0 && ' · '}
+              <Link href={`/transfers/${a.id}`}>
+                {a.number} ({a.daysInTransit}d)
+              </Link>
+            </span>
+          ))}
+          <span style={{ color: 'var(--text-secondary)' }}>
+            {' '}
+            — receive them or close them short; goods on the road are sellable nowhere.
+          </span>
+        </div>
+      )}
       {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
       <Card style={{ padding: 0 }}>
         {rows == null ? (
