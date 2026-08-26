@@ -748,6 +748,29 @@ supersedes the checkpoint-7 wizard; legacy register + its offline mode retire).
 - [ ] **Ops:** Provide the two sample invoices into `docs/` for the document templates
       (P4); confirm PO reply-to address; pick unlock-capable roles in settings once P1 ships
 
+## Checkpoint 8 merged + deployed (2026-08-26)
+
+PR #32 (P3–P8: orders list-view + notifications, print/lock/unlock + documents,
+dispatch + capacity, staged receiving + PO email + vendor invoices, transfer tickets,
+returns/As-Is/store credit/exchanges) squash-merged to main as `db89ef8`. CI needed one
+fix first: the Playwright run — the FIRST ever CI pass over the P2 New Sale e2e (the web
+build OOM'd locally back then) — failed 4 tests at the create-customer click; trace
+forensics showed the Create button shoved under the sticky totals rail (grid/flex
+`min-width: auto` overflow), a latent P2 layout bug, not a P3–P8 regression. Fixed with
+`min-width: 0` on the form cells (`62d15e8`), all 4 verified green locally, then CI 4/4
+green. Deploy branch rolled (`5bafced`), Render deploy `dep-da79h515efls73cj0g4g`
+**live 07:43Z** — boot log: `Schema migrations: 38/38 applied,
+head=0037_returns_as_is_store_credit; this run applied 0032_pos_ops_phase1,
+0033_customer_search_addresses, 0034_order_print_lock, 0035_delivery_routes,
+0036_receiving_stages_vendor_invoices, 0037_returns_as_is_store_credit.` `/health` 200.
+Vercel production READY on main `db89ef8`; new endpoints (`/v1/orders/list-view`,
+`/v1/as-is`) answer 401 through the prod proxy — routed and auth-gated. New permissions
+`orders.unlock` + `vendor_invoices.manage` backfilled into system roles by the boot-time
+role sync. Sprint branch restarted from main. **The whole POS-operations surface P1–P8
+is live on `lamattress-erp.vercel.app`.** P9 (commissions, dashboards, auto-close)
+remains. Ops unchanged: repoint Render repo URL (deploys still manual-trigger), rotate
+the shared owner password, Resend domain when ready, sample invoices into `docs/`.
+
 ## Test-data ledger (D11 — what lives in the QA tenant and never reaches production)
 
 Production cutover creates a **fresh business**; everything below stays behind in the
