@@ -217,6 +217,172 @@ afterAll(async () => {
   if (app) await app.close();
 });
 
+describe('New Sale backend (PLAN-POS-OPERATIONS P2a)', () => {
+  // Own fixtures — the Day-1 suites assert absolute stock numbers on the
+  // shared sofa, so nothing here may touch it.
+  let nsVariantId = '';
+  let atpVariantId = '';
+
+  beforeAll(async () => {
+    const sql2 = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    const db = drizzle(sql2);
+    try {
+      const [p1] = await db
+        .insert(schema.products)
+        .values({ businessId, sku: 'NS-SOFA', name: 'NewSale Fixture Sofa' })
+        .returning();
+      const [v1] = await db
+        .insert(schema.productVariants)
+        .values({ businessId, productId: p1!.id, sku: 'NS-SOFA-V1', priceCents: 99900 })
+        .returning();
+      nsVariantId = v1!.id;
+      await db.insert(schema.inventoryLevels).values({
+        businessId,
+        variantId: nsVariantId,
+        locationId,
+        onHand: 10,
+        reserved: 0,
+      });
+
+      const [p2] = await db
+        .insert(schema.products)
+        .values({ businessId, sku: 'ATP-1', name: 'ATP Backorder Mattress' })
+        .returning();
+      const [v2] = await db
+        .insert(schema.productVariants)
+        .values({ businessId, productId: p2!.id, sku: 'ATP-1-V1', priceCents: 49999 })
+        .returning();
+      atpVariantId = v2!.id;
+      const [vendor] = await db
+        .insert(schema.vendors)
+        .values({ businessId, name: 'ATP Vendor' })
+        .returning();
+      const [po] = await db
+        .insert(schema.purchaseOrders)
+        .values({
+          businessId,
+          vendorId: vendor!.id,
+          locationId,
+          number: 'PO-ATP-1',
+          status: 'ordered',
+          expectedAt: new Date('2026-09-04T00:00:00Z'),
+        })
+        .returning();
+      await db.insert(schema.purchaseOrderLines).values({
+        businessId,
+        purchaseOrderId: po!.id,
+        variantId: atpVariantId,
+        quantityOrdered: 5,
+        quantityReceived: 0,
+        unitCostCents: 20000,
+        lineTotalCents: 100000,
+      });
+    } finally {
+      await sql2.end({ timeout: 5 });
+    }
+  });
+
+  it('Custom fee lines: no variant, untaxed, never reserved; new tenders accepted', async () => {
+    const res = await request(app.getHttpServer())
+      .post('/v1/orders')
+      .set('Cookie', cashierCookie)
+      .set('X-Business-Id', businessId)
+      .send({
+        locationId,
+        customerId,
+        confirm: true,
+        lines: [
+          { variantId: nsVariantId, quantity: 1 },
+          { lineType: 'custom', description: 'Recycling Fee', quantity: 2, unitPriceCents: 1050 },
+          { lineType: 'custom', description: 'Mattress Removal', quantity: 1, unitPriceCents: 0 },
+        ],
+      });
+    expect(res.status).toBe(201);
+    const o = res.body;
+    const fee = o.lines.find((l: { description: string }) => l.description === 'Recycling Fee');
+    expect(fee.variantId).toBeNull();
+    expect(fee.taxCents).toBe(0); // fees are untaxed
+    expect(fee.totalCents).toBe(2100);
+    const removal = o.lines.find(
+      (l: { description: string }) => l.description === 'Mattress Removal',
+    );
+    expect(removal.totalCents).toBe(0);
+    expect(fee.qtyReserved).toBe(0);
+    const sofa = o.lines.find((l: { variantId: string | null }) => l.variantId);
+    expect(sofa.qtyReserved).toBe(1);
+
+    const pay = await request(app.getHttpServer())
+      .post(`/v1/orders/${o.id}/payments`)
+      .set('Cookie', cashierCookie)
+      .set('X-Business-Id', businessId)
+      .send({ method: 'venmo', amountCents: 5000, kind: 'deposit' });
+    expect(pay.status).toBe(201);
+
+    const noDesc = await request(app.getHttpServer())
+      .post('/v1/orders')
+      .set('Cookie', cashierCookie)
+      .set('X-Business-Id', businessId)
+      .send({
+        locationId,
+        customerId,
+        lines: [{ lineType: 'custom', quantity: 1, unitPriceCents: 100 }],
+      });
+    expect(noDesc.status).toBe(400);
+  });
+
+  it('Drafts: store-wide, no reservation, resumable to open', async () => {
+    const res = await request(app.getHttpServer())
+      .post('/v1/orders')
+      .set('Cookie', cashierCookie)
+      .set('X-Business-Id', businessId)
+      .send({
+        locationId,
+        customerId,
+        draft: true,
+        lines: [{ variantId: nsVariantId, quantity: 1 }],
+      });
+    expect(res.status).toBe(201);
+    expect(res.body.status).toBe('draft');
+    expect(res.body.lines[0].qtyReserved).toBe(0);
+
+    const list = await request(app.getHttpServer())
+      .get('/v1/orders?status=draft')
+      .set('Cookie', cashierCookie)
+      .set('X-Business-Id', businessId);
+    expect(list.status).toBe(200);
+    expect(list.body.data.some((o: { id: string }) => o.id === res.body.id)).toBe(true);
+
+    const confirmed = await request(app.getHttpServer())
+      .patch(`/v1/orders/${res.body.id}`)
+      .set('Cookie', cashierCookie)
+      .set('X-Business-Id', businessId)
+      .send({ status: 'open' });
+    expect(confirmed.status).toBe(200);
+    expect(confirmed.body.status).toBe('open');
+    expect(confirmed.body.lines[0].qtyReserved).toBe(1);
+  });
+
+  it('Product search: stock filters and ATP date from open POs', async () => {
+    const out = await request(app.getHttpServer())
+      .get(`/v1/pos/product-search?q=ATP&inStock=0&locationId=${locationId}`)
+      .set('Cookie', cashierCookie)
+      .set('X-Business-Id', businessId);
+    expect(out.status).toBe(200);
+    const hit = out.body.find((r: { variantId: string }) => r.variantId === atpVariantId);
+    expect(hit).toBeTruthy();
+    expect(hit.availableTotal).toBe(0);
+    expect(hit.atpDate).toContain('2026-09-04');
+
+    const inn = await request(app.getHttpServer())
+      .get(`/v1/pos/product-search?q=NewSale&inStock=1&locationId=${locationId}`)
+      .set('Cookie', cashierCookie)
+      .set('X-Business-Id', businessId);
+    expect(inn.status).toBe(200);
+    expect(inn.body.some((r: { variantId: string }) => r.variantId === nsVariantId)).toBe(true);
+    expect(inn.body.every((r: { availableTotal: number }) => r.availableTotal > 0)).toBe(true);
+  });
+});
+
 describe('Enter a Sales Order — STORIS 3-step parity fields', () => {
   it('Order carries kind, fulfillment, delivery status, fees; total includes fees', async () => {
     const res = await request(app.getHttpServer())

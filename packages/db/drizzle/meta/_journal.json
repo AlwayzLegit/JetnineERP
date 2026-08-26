@@ -232,6 +232,13 @@
       "when": 1787716686768,
       "tag": "0032_pos_ops_phase1",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1787718286242,
+      "tag": "0033_customer_search_addresses",
+      "breakpoints": true
     }
   ]
 }

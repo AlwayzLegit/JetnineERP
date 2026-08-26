@@ -53,13 +53,18 @@ const PAYMENT_METHODS = [
   'financing',
   'external_card',
   'check',
+  'paypal',
+  'venmo',
+  'zelle',
+  'synchrony',
+  'acima',
 ] as const;
 type PaymentMethod = (typeof PAYMENT_METHODS)[number];
 
 const FULFILLMENT_TYPES = ['delivery', 'pickup', 'take_with', 'direct_ship'] as const;
 const DELIVERY_STATUSES = ['scheduled', 'estimated', 'asap', 'will_call'] as const;
 const ORDER_KINDS = ['sales_order', 'layaway'] as const;
-const LINE_TYPES = ['stock', 'special_order'] as const;
+const LINE_TYPES = ['stock', 'special_order', 'custom'] as const;
 
 interface OrderLineInput {
   variantId?: string;
@@ -118,6 +123,11 @@ interface CreateOrderBody extends StepThreeFees {
    * commits.
    */
   confirm?: boolean;
+  /**
+   * Park as a store-wide draft instead (PLAN-POS-OPERATIONS §4): no
+   * reservation, resumable by any associate, listed under status=draft.
+   */
+  draft?: boolean;
 }
 
 interface UpdateOrderBody extends StepThreeFees {
@@ -422,7 +432,7 @@ export class OrdersController {
         businessId: tenant.businessId!,
         locationId: body.locationId,
         number,
-        status: 'quote',
+        status: body.draft ? 'draft' : 'quote',
         customerId: body.customerId,
         salespersonMembershipId: body.salespersonMembershipId ?? tenant.membershipId ?? null,
         secondSalespersonMembershipId: body.secondSalespersonMembershipId ?? null,
@@ -624,7 +634,7 @@ export class OrdersController {
     // Confirming a quote is the one status change this endpoint accepts;
     // it commits stock the same way `create({confirm:true})` does.
     if (body.status === 'open') {
-      if (order.status !== 'quote') {
+      if (order.status !== 'quote' && order.status !== 'draft') {
         throw new BadRequestException(`Cannot confirm an order in status '${order.status}'`);
       }
       await this.orders.reserveOrder(this.db, {
@@ -1213,16 +1223,32 @@ export class OrdersController {
       taxClassId: string | null;
     }[]
   > {
-    const variantIds = inputs.map((l) => {
-      if (!l.variantId) throw new BadRequestException('lines[].variantId is required');
+    for (const l of inputs) {
       if (!Number.isInteger(l.quantity) || (l.quantity ?? 0) <= 0) {
         throw new BadRequestException('lines[].quantity must be a positive integer');
       }
       if (l.lineType && !LINE_TYPES.includes(l.lineType)) {
-        throw new BadRequestException("lines[].lineType must be 'stock' or 'special_order'");
+        throw new BadRequestException(`lines[].lineType must be one of ${LINE_TYPES.join(', ')}`);
       }
-      return l.variantId;
-    });
+      // Custom lines (PLAN-POS-OPERATIONS §4: recycling fee, removal, misc
+      // charges) have no variant: they need their own description + price,
+      // never reserve stock, and are untaxed (CA recycling fees are not
+      // taxable; taxable merchandise is always a variant line).
+      if (!l.variantId) {
+        if (l.lineType !== 'custom') {
+          throw new BadRequestException('lines[].variantId is required for product lines');
+        }
+        if (!l.description?.trim()) {
+          throw new BadRequestException('custom lines need a description');
+        }
+        if (!Number.isInteger(l.unitPriceCents) || (l.unitPriceCents ?? -1) < 0) {
+          throw new BadRequestException('custom lines need a non-negative unitPriceCents');
+        }
+      } else if (l.lineType === 'custom') {
+        throw new BadRequestException('custom lines must not reference a variant');
+      }
+    }
+    const variantIds = inputs.map((l) => l.variantId).filter((id): id is string => Boolean(id));
 
     const variants = await this.db
       .select({
@@ -1278,11 +1304,23 @@ export class OrdersController {
     }
 
     return inputs.map((l) => {
-      const v = byId.get(l.variantId!)!;
       const lineDiscountCents = l.lineDiscountCents ?? 0;
       if (!Number.isInteger(lineDiscountCents) || lineDiscountCents < 0) {
         throw new BadRequestException('lines[].lineDiscountCents must be a non-negative integer');
       }
+      if (!l.variantId) {
+        return {
+          variantId: null as unknown as string,
+          description: l.description!.trim(),
+          quantity: l.quantity!,
+          unitPriceCents: l.unitPriceCents!,
+          lineDiscountCents,
+          lineType: 'custom',
+          taxRateBps: 0,
+          taxClassId: null,
+        };
+      }
+      const v = byId.get(l.variantId)!;
       const description =
         l.description ?? [v.productName, v.variantName].filter(Boolean).join(' — ');
       return {

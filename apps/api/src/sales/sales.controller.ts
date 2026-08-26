@@ -170,6 +170,109 @@ export class SalesController {
    * (so a scan auto-resolves), then falls back to product name / SKU
    * substring search. Returns active variants only.
    */
+  /**
+   * New Sale product popup (PLAN-POS-OPERATIONS §4): searchable, vendor-
+   * filterable results carrying live stock at the selling location plus
+   * everywhere, and — when a variant is out of stock — the ATP date: the
+   * earliest expected date among open POs that still owe units of it.
+   */
+  @Get('pos/product-search')
+  @RequirePermission('pos.access')
+  async productSearch(
+    @CurrentTenant() tenant: RequestTenantContext,
+    @Query('q') q?: string,
+    @Query('vendorId') vendorId?: string,
+    @Query('inStock') inStock?: string,
+    @Query('locationId') locationId?: string,
+    @Query('limit') limitStr?: string,
+  ): Promise<
+    {
+      variantId: string;
+      productId: string;
+      productName: string;
+      variantName: string | null;
+      sku: string | null;
+      priceCents: number;
+      vendorId: string | null;
+      vendorName: string | null;
+      availableHere: number;
+      availableTotal: number;
+      atpDate: string | null;
+    }[]
+  > {
+    const query = (q ?? '').trim();
+    const limit = clampLimit(limitStr, 30);
+    const filters = [eq(schema.productVariants.isActive, true), eq(schema.products.isActive, true)];
+    if (query) {
+      filters.push(
+        sql`(${schema.products.name} ILIKE ${'%' + query + '%'} OR ${schema.productVariants.name} ILIKE ${'%' + query + '%'} OR ${schema.productVariants.sku} ILIKE ${'%' + query + '%'})`,
+      );
+    }
+    if (vendorId) filters.push(eq(schema.productVariants.preferredVendorId, vendorId));
+
+    const rows = await this.db
+      .select({
+        variantId: schema.productVariants.id,
+        productId: schema.products.id,
+        productName: schema.products.name,
+        variantName: schema.productVariants.name,
+        sku: schema.productVariants.sku,
+        priceCents: schema.productVariants.priceCents,
+        vendorId: schema.productVariants.preferredVendorId,
+        vendorName: schema.vendors.name,
+        availableHere: locationId
+          ? sql<number>`coalesce(sum(${schema.inventoryLevels.onHand} - ${schema.inventoryLevels.reserved}) FILTER (WHERE ${schema.inventoryLevels.locationId} = ${locationId}), 0)::int`
+          : sql<number>`0`,
+        availableTotal: sql<number>`coalesce(sum(${schema.inventoryLevels.onHand} - ${schema.inventoryLevels.reserved}), 0)::int`,
+      })
+      .from(schema.productVariants)
+      .innerJoin(schema.products, eq(schema.products.id, schema.productVariants.productId))
+      .leftJoin(schema.vendors, eq(schema.vendors.id, schema.productVariants.preferredVendorId))
+      .leftJoin(
+        schema.inventoryLevels,
+        eq(schema.inventoryLevels.variantId, schema.productVariants.id),
+      )
+      .where(and(...filters))
+      .groupBy(schema.productVariants.id, schema.products.id, schema.vendors.name)
+      .having(
+        inStock === '1'
+          ? sql`coalesce(sum(${schema.inventoryLevels.onHand} - ${schema.inventoryLevels.reserved}), 0) > 0`
+          : inStock === '0'
+            ? sql`coalesce(sum(${schema.inventoryLevels.onHand} - ${schema.inventoryLevels.reserved}), 0) <= 0`
+            : sql`true`,
+      )
+      .orderBy(schema.products.name)
+      .limit(limit);
+
+    // ATP only matters for the out-of-stock rows the popup is warning about.
+    const outIds = rows.filter((r) => r.availableTotal <= 0).map((r) => r.variantId);
+    const atp = new Map<string, string>();
+    if (outIds.length > 0) {
+      const pos = await this.db
+        .select({
+          variantId: schema.purchaseOrderLines.variantId,
+          expectedAt: sql<string | null>`min(${schema.purchaseOrders.expectedAt})::text`,
+        })
+        .from(schema.purchaseOrderLines)
+        .innerJoin(
+          schema.purchaseOrders,
+          eq(schema.purchaseOrders.id, schema.purchaseOrderLines.purchaseOrderId),
+        )
+        .where(
+          and(
+            inArray(schema.purchaseOrderLines.variantId, outIds),
+            inArray(schema.purchaseOrders.status, ['draft', 'ordered', 'partially_received']),
+            sql`${schema.purchaseOrderLines.quantityOrdered} > ${schema.purchaseOrderLines.quantityReceived}`,
+            sql`${schema.purchaseOrders.expectedAt} IS NOT NULL`,
+          ),
+        )
+        .groupBy(schema.purchaseOrderLines.variantId);
+      for (const r of pos) if (r.variantId && r.expectedAt) atp.set(r.variantId, r.expectedAt);
+    }
+
+    return rows.map((r) => ({ ...r, atpDate: atp.get(r.variantId) ?? null }));
+  }
+
   @Get('pos/lookup')
   @RequirePermission('pos.access')
   async lookup(
