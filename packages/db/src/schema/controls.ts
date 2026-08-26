@@ -1,6 +1,7 @@
 import {
   boolean,
   index,
+  integer,
   jsonb,
   pgTable,
   text,
@@ -125,5 +126,37 @@ export const exceptionEvents = pgTable(
     openIdx: index('exception_events_open_idx').on(t.businessId, t.acknowledgedAt, t.createdAt),
     actorIdx: index('exception_events_actor_idx').on(t.businessId, t.actorUserId, t.createdAt),
     typeIdx: index('exception_events_type_idx').on(t.businessId, t.type),
+  }),
+);
+
+/**
+ * Daily close-out runs (PLAN-POS-OPERATIONS §12 / P9): the 22:00 job
+ * per store. Never blocks — it flags. One row per location per local
+ * date is the idempotency key; the summary keeps what was flagged.
+ */
+export const dailyCloseouts = pgTable(
+  'daily_closeouts',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    businessId: uuid('business_id')
+      .notNull()
+      .references(() => businesses.id, { onDelete: 'cascade' }),
+    locationId: uuid('location_id').notNull(),
+    /** The store-local calendar date the close covers (YYYY-MM-DD). */
+    closeDate: text('close_date').notNull(),
+    ranAt: timestamp('ran_at', { withTimezone: true }).notNull().defaultNow(),
+    /** 'scheduler' | 'manual' */
+    trigger: text('trigger').notNull().default('scheduler'),
+    exceptionCount: integer('exception_count').notNull().default(0),
+    stockReleasedCount: integer('stock_released_count').notNull().default(0),
+    summaryJson: jsonb('summary_json'),
+  },
+  (t) => ({
+    businessIdx: index('daily_closeouts_business_id_idx').on(t.businessId),
+    dateIdx: index('daily_closeouts_date_idx').on(t.businessId, t.closeDate),
+    locationDateUnique: uniqueIndex('daily_closeouts_location_date_uniq').on(
+      t.locationId,
+      t.closeDate,
+    ),
   }),
 );

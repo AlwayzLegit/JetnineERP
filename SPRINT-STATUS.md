@@ -964,14 +964,14 @@ commission-clawback + digest requirements.
       (inventory.adjust; {days, dryRun}) frees reservations on open orders promised >N
       days ago with nothing on a truck and no lock — each release audited + registered
       (`auto_stock_release`); P9's nightly job will call it. `GET
-  /v1/orders/reservation-drift` (reports.inventory.view): SUM(line reserved) vs
+/v1/orders/reservation-drift` (reports.inventory.view): SUM(line reserved) vs
       level reserved per variant+location, drift rows only. orders.int.spec 52→56. —
       _2026-08-26. Conventions: past-due keyed on requestedDate (scheduled-trip lateness
       shows via Scheduled status + date already); per-line Hold, credit hold, EST-vs-SCH
       date distinction, and manual reservation re-assignment still open (rolled into the
       backlog); postponement counter still deferred to P9._
 - [x] **G14 — Duplicate-order prompt + ATP-vs-promise warning:** `GET
-  /v1/customers/:id/open-orders` (open orders w/ promised + next-trip dates); New
+/v1/customers/:id/open-orders` (open orders w/ promised + next-trip dates); New
       Sale shows a warning banner when the picked customer already has open orders
       ("consider one truck"), and completing with a promised date EARLIER than any
       line's ATP date demands an explicit confirm naming the late lines. —
@@ -988,8 +988,30 @@ commission-clawback + digest requirements.
       customer-swap N/A (no endpoint can change an order's customer), tax-exempt /
       tender-void / deposit-transfer N/A (those routines don't exist yet — each gets
       its control when built). — \_2026-08-26.*
-- [ ] **Build P9 (pre-existing):** commissions (equal-split, exchange clawback per gap §8),
-      owner + manager dashboards, 22:00 auto-close job
+- [x] **Build P9:** commissions clawback + morning dashboards + 22:00 auto-close.
+      Migration `0048_daily_closeouts`. **Commissions:** accrual at completion (split per
+      split*bps) already existed; `reverseForOrderReturn` now claws back the returned
+      fraction as negative entries when a return's goods are received (rides the A7
+      lifecycle — an exchange nets out: clawback on the return, fresh accrual on the
+      exchange order's own completion). **Morning dashboard:** `GET /v1/dashboard/morning`
+      (reports.sales.view; `?date=` + `?locationId=` for the store-manager scope) —
+      yesterday by store (orders written + register sales), by associate (order totals
+      split-weighted + sale totals), today's deliveries vs the cap, refunds/cancellations
+      with the actor, the daily modification log, and the open-exception count; rendered
+      as the dashboard "Morning brief" card (hides on 403). **22:00 auto-close:**
+      `CloseoutService` in-process scheduler (OverdueScheduler pattern: 10-min tick, fires
+      once per store-local day after CLOSEOUT_LOCAL_HOUR=22, store timezone-aware,
+      NODE_ENV=test/CLOSEOUT_ENABLED=false guards) — never blocks, flags: open cash
+      drawers, today's undelivered trips, delivery runs never closed (critical),
+      delivered-with-balance orders (critical, the §1 standing alert); findings land on
+      the exception register; the nightly G13 Auto Stock Release rides along once per
+      business. Idempotent via unique (location, close_date) `daily_closeouts` row;
+      `POST /v1/closeouts/run` manual trigger + `GET /v1/closeouts` history.
+      closeout.int.spec 4/4; full API suite 39 files / 489 tests green. — \_2026-08-26.
+      Conventions flagged: dashboard day boundaries are UTC calendar dates (matches the
+      Z-report); commission clawback fires on returns only (price adjustments do not
+      recalc commission in v1); close-out balance/deliveries scoped per location, stock
+      release per business; close hour env-configurable, not per-store yet.*
 
 ## Test-data ledger (D11 — what lives in the QA tenant and never reaches production)
 

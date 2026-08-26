@@ -10,6 +10,7 @@ import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { schema } from '@jetnine/db';
 import { AuditService } from '../audit/audit.service';
 import { DRIZZLE } from '../database/database.module';
+import { CommissionsService } from '../money/commissions.service';
 import { paidCents } from '../orders/order-math';
 import { StoreCreditService } from './store-credit.service';
 
@@ -26,6 +27,7 @@ export class OrderReturnsService {
     @Inject(DRIZZLE) private readonly db: PostgresJsDatabase,
     @Inject(AuditService) private readonly audit: AuditService,
     @Inject(StoreCreditService) private readonly storeCredit: StoreCreditService,
+    @Inject(CommissionsService) private readonly commissions: CommissionsService,
   ) {}
 
   async receiveGoods(returnId: string, actorUserId: string | null): Promise<void> {
@@ -141,6 +143,17 @@ export class OrderReturnsService {
         remaining -= slice;
       }
     }
+
+    // §9 exchange/return clawback: the salespeople give back the
+    // commission on the returned fraction (no-op until the order has
+    // completed and accrued).
+    await this.commissions.reverseForOrderReturn(this.db, {
+      businessId: ret.businessId,
+      orderId: ret.orderId,
+      refundedCents: ret.amountCents,
+      orderTotalCents: order.totalCents,
+      rmaNumber: ret.rmaNumber,
+    });
 
     const now = new Date();
     await this.db
