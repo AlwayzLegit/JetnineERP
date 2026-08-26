@@ -47,6 +47,16 @@ interface LowStockRow {
 interface AgencyOverview {
   businesses: { businessId: string; openOrdersCount: number | null }[];
 }
+interface NotificationRow {
+  id: string;
+  action: string;
+  label: string;
+  actorName: string | null;
+  actorEmail: string | null;
+  orderId: string | null;
+  orderNumber: string | null;
+  createdAt: string;
+}
 
 /**
  * The analytics home. Renders inside the (business) shell; each card
@@ -65,6 +75,7 @@ export default function DashboardClient() {
   const [lowStock, setLowStock] = useState<LowStockRow[] | null>(null);
   const [openOrders, setOpenOrders] = useState<number | null>(null);
   const [salesDenied, setSalesDenied] = useState(false);
+  const [notifications, setNotifications] = useState<NotificationRow[] | null>(null);
 
   useEffect(() => {
     if (!session.data) return;
@@ -115,6 +126,11 @@ export default function DashboardClient() {
     void api<LowStockRow[]>('/v1/reports/inventory/on-hand?lowStock=5')
       .then((rows) => setLowStock(rows.slice(0, 5)))
       .catch(() => {});
+    // Audit-gated: post-creation order changes (PLAN-POS-OPERATIONS §12).
+    // A 403 hides the card — associates don't see the owner feed.
+    void api<{ data: NotificationRow[]; nextCursor: string | null }>('/v1/notifications?limit=10')
+      .then((r) => setNotifications(r.data))
+      .catch(() => setNotifications(null));
     // Open orders for the active business, via the membership overview.
     void api<AgencyOverview>('/v1/agency/overview')
       .then((res) => {
@@ -207,6 +223,50 @@ export default function DashboardClient() {
       {businessActive && !salesDenied && (
         <Card title="Revenue — last 30 days">
           {trend ? <RevenueTrend points={trend} /> : <LoadingRows />}
+        </Card>
+      )}
+
+      {businessActive && notifications != null && (
+        <Card
+          title="Notifications — order changes"
+          actions={
+            <Link href="/orders" style={{ fontSize: 12.5 }}>
+              Orders →
+            </Link>
+          }
+        >
+          {notifications.length === 0 ? (
+            <EmptyState>No order changes recorded yet.</EmptyState>
+          ) : (
+            <ul
+              data-testid="notifications-feed"
+              style={{ margin: 0, padding: 0, listStyle: 'none', fontSize: 13 }}
+            >
+              {notifications.map((n) => (
+                <li
+                  key={n.id}
+                  style={{
+                    display: 'flex',
+                    gap: 8,
+                    padding: '6px 0',
+                    borderBottom: '1px solid var(--border)',
+                    flexWrap: 'wrap',
+                  }}
+                >
+                  <span style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                    {new Date(n.createdAt).toLocaleString()}
+                  </span>
+                  <span style={{ fontWeight: 600 }}>{n.label}</span>
+                  {n.orderId && (
+                    <Link href={`/orders/${n.orderId}`}>{n.orderNumber ?? 'order'}</Link>
+                  )}
+                  <span style={{ color: 'var(--text-secondary)', marginLeft: 'auto' }}>
+                    {n.actorName ?? n.actorEmail ?? 'system'}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
         </Card>
       )}
 

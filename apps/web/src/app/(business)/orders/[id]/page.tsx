@@ -89,6 +89,39 @@ interface AuditRow {
   action: string;
   createdAt: string;
   actorUserId: string | null;
+  actorEmail: string | null;
+  changesJson: {
+    before?: Record<string, unknown>;
+    after?: Record<string, unknown>;
+    metadata?: Record<string, unknown>;
+  } | null;
+}
+
+/** "$1,234.56" for *_cents fields, plain stringification otherwise. */
+function formatAuditValue(field: string, value: unknown): string {
+  if (value == null || value === '') return '—';
+  if (/cents$/i.test(field) && typeof value === 'number') {
+    return `$${(value / 100).toFixed(2)}`;
+  }
+  if (typeof value === 'object') return JSON.stringify(value);
+  return String(value);
+}
+
+/**
+ * The change-history line for one audit entry: each changed field with
+ * its before → after values (PLAN-POS-OPERATIONS §8 — "every field
+ * change attributed"). The audit service stores a minimal diff, so
+ * every key present actually changed.
+ */
+function auditChanges(row: AuditRow): { field: string; from: string; to: string }[] {
+  const before = row.changesJson?.before ?? {};
+  const after = row.changesJson?.after ?? {};
+  const fields = [...new Set([...Object.keys(before), ...Object.keys(after)])];
+  return fields.map((field) => ({
+    field,
+    from: formatAuditValue(field, before[field]),
+    to: formatAuditValue(field, after[field]),
+  }));
 }
 
 const PAYMENT_METHODS = [
@@ -438,21 +471,43 @@ export default function OrderDetailPage() {
             )}
           </Card>
 
-          <Card title="Timeline" style={{ marginBottom: 16 }}>
+          <Card title="Change history" style={{ marginBottom: 16 }}>
             {timeline.length === 0 ? (
               <p className="muted" style={{ fontSize: 13, margin: 0 }}>
                 No events recorded.
               </p>
             ) : (
-              <ul style={{ margin: 0, paddingLeft: 16, fontSize: 13 }}>
-                {timeline.map((t) => (
-                  <li key={t.id} style={{ marginBottom: 4 }}>
-                    <span style={{ color: 'var(--text-secondary)' }}>
-                      {new Date(t.createdAt).toLocaleString()}
-                    </span>{' '}
-                    — {t.action.replace('order.', '').replace(/[._]/g, ' ')}
-                  </li>
-                ))}
+              <ul style={{ margin: 0, paddingLeft: 16, fontSize: 13 }} data-testid="order-timeline">
+                {timeline.map((t) => {
+                  const changes = auditChanges(t);
+                  return (
+                    <li key={t.id} style={{ marginBottom: 6 }}>
+                      <span style={{ color: 'var(--text-secondary)' }}>
+                        {new Date(t.createdAt).toLocaleString()}
+                      </span>{' '}
+                      — {t.action.replace('order.', '').replace(/[._]/g, ' ')}
+                      {t.actorEmail && (
+                        <span style={{ color: 'var(--text-muted)' }}> by {t.actorEmail}</span>
+                      )}
+                      {changes.length > 0 && (
+                        <ul
+                          style={{
+                            margin: '2px 0 0',
+                            paddingLeft: 14,
+                            color: 'var(--text-secondary)',
+                            fontSize: 12,
+                          }}
+                        >
+                          {changes.map((c) => (
+                            <li key={c.field}>
+                              {c.field}: {c.from} → {c.to}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </li>
+                  );
+                })}
               </ul>
             )}
           </Card>

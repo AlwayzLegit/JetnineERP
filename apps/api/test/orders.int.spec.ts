@@ -383,6 +383,171 @@ describe('New Sale backend (PLAN-POS-OPERATIONS P2a)', () => {
   });
 });
 
+describe('Orders list-view + notifications (PLAN-POS-OPERATIONS P3)', () => {
+  // Own fixtures again — display-status assertions must not depend on
+  // what other suites did to the shared variants.
+  let lvStockedVariantId = '';
+  let lvEmptyVariantId = '';
+
+  interface ListViewRow {
+    id: string;
+    number: string;
+    customerName: string;
+    displayStatus: string;
+    poNumber: string | null;
+    deliveryDate: string | null;
+    balanceDueCents: number;
+    salespersonName: string | null;
+    totalCents: number;
+  }
+
+  async function listView(query = ''): Promise<ListViewRow[]> {
+    const res = await request(app.getHttpServer())
+      .get(`/v1/orders/list-view${query}`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId);
+    expect(res.status).toBe(200);
+    return res.body.data as ListViewRow[];
+  }
+
+  beforeAll(async () => {
+    const sql2 = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    const db = drizzle(sql2);
+    try {
+      const mk = async (sku: string, name: string, onHand: number) => {
+        const [p] = await db.insert(schema.products).values({ businessId, sku, name }).returning();
+        const [v] = await db
+          .insert(schema.productVariants)
+          .values({ businessId, productId: p!.id, sku: `${sku}-V1`, priceCents: 50000 })
+          .returning();
+        await db.insert(schema.inventoryLevels).values({
+          businessId,
+          variantId: v!.id,
+          locationId,
+          onHand,
+          reserved: 0,
+        });
+        return v!.id;
+      };
+      lvStockedVariantId = await mk('LV-STOCK', 'ListView Stocked Bed', 10);
+      lvEmptyVariantId = await mk('LV-EMPTY', 'ListView Backordered Bed', 0);
+    } finally {
+      await sql2.end({ timeout: 5 });
+    }
+  });
+
+  it('Spec columns + display statuses: Draft, Quote, Reserved, Pending; balance due after payment', async () => {
+    const make = async (body: Record<string, unknown>) => {
+      const res = await request(app.getHttpServer())
+        .post('/v1/orders')
+        .set('Cookie', cashierCookie)
+        .set('X-Business-Id', businessId)
+        .send({ locationId, customerId, ...body });
+      expect(res.status).toBe(201);
+      return res.body as { id: string; number: string; totalCents: number };
+    };
+
+    const draft = await make({
+      draft: true,
+      lines: [{ variantId: lvStockedVariantId, quantity: 1 }],
+    });
+    const quote = await make({ lines: [{ variantId: lvStockedVariantId, quantity: 1 }] });
+    const reserved = await make({
+      confirm: true,
+      lines: [{ variantId: lvStockedVariantId, quantity: 1 }],
+    });
+    const pending = await make({
+      confirm: true,
+      lines: [{ variantId: lvEmptyVariantId, quantity: 1 }],
+    });
+
+    const pay = await request(app.getHttpServer())
+      .post(`/v1/orders/${reserved.id}/payments`)
+      .set('Cookie', cashierCookie)
+      .set('X-Business-Id', businessId)
+      .send({ method: 'cash', amountCents: 10000, kind: 'deposit' });
+    expect(pay.status).toBe(201);
+
+    const rows = await listView('?limit=100');
+    const byId = new Map(rows.map((r) => [r.id, r]));
+
+    expect(byId.get(draft.id)?.displayStatus).toBe('Draft');
+    expect(byId.get(quote.id)?.displayStatus).toBe('Quote');
+    expect(byId.get(reserved.id)?.displayStatus).toBe('Reserved');
+    expect(byId.get(pending.id)?.displayStatus).toBe('Pending');
+
+    const r = byId.get(reserved.id)!;
+    expect(r.customerName).toBe('Dana Reyes');
+    expect(r.balanceDueCents).toBe(reserved.totalCents - 10000);
+    expect(r.number).toBe(reserved.number);
+  });
+
+  it('q filter matches order number and customer name', async () => {
+    const res = await request(app.getHttpServer())
+      .post('/v1/orders')
+      .set('Cookie', cashierCookie)
+      .set('X-Business-Id', businessId)
+      .send({
+        locationId,
+        customerId,
+        confirm: true,
+        lines: [{ variantId: lvStockedVariantId, quantity: 1 }],
+      });
+    expect(res.status).toBe(201);
+    const number: string = res.body.number;
+
+    const byNumber = await listView(`?q=${encodeURIComponent(number)}`);
+    expect(byNumber.some((r) => r.id === res.body.id)).toBe(true);
+
+    const byName = await listView('?q=reyes&limit=200');
+    expect(byName.some((r) => r.id === res.body.id)).toBe(true);
+    expect(byName.every((r) => r.customerName === 'Dana Reyes')).toBe(true);
+  });
+
+  it('Notifications feed: post-creation order changes, attributed; gated by audit.view', async () => {
+    const created = await request(app.getHttpServer())
+      .post('/v1/orders')
+      .set('Cookie', cashierCookie)
+      .set('X-Business-Id', businessId)
+      .send({
+        locationId,
+        customerId,
+        confirm: true,
+        lines: [{ variantId: lvStockedVariantId, quantity: 1 }],
+      });
+    expect(created.status).toBe(201);
+
+    const patched = await request(app.getHttpServer())
+      .patch(`/v1/orders/${created.body.id}`)
+      .set('Cookie', cashierCookie)
+      .set('X-Business-Id', businessId)
+      .send({ notes: 'call before delivery' });
+    expect(patched.status).toBe(200);
+
+    const feed = await request(app.getHttpServer())
+      .get('/v1/notifications?limit=50')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId);
+    expect(feed.status).toBe(200);
+    const hit = feed.body.data.find(
+      (n: { orderId: string | null; action: string }) =>
+        n.orderId === created.body.id && n.action === 'order.update',
+    );
+    expect(hit).toBeTruthy();
+    expect(hit.label).toBe('Order edited');
+    expect(hit.orderNumber).toBe(created.body.number);
+    expect(hit.actorEmail).toBe('cashier@orders-test.local');
+    // order.create is not a *post-creation* change — it must not be in the feed.
+    expect(feed.body.data.some((n: { action: string }) => n.action === 'order.create')).toBe(false);
+
+    await request(app.getHttpServer())
+      .get('/v1/notifications')
+      .set('Cookie', cashierCookie)
+      .set('X-Business-Id', businessId)
+      .expect(403);
+  });
+});
+
 describe('Enter a Sales Order — STORIS 3-step parity fields', () => {
   it('Order carries kind, fulfillment, delivery status, fees; total includes fees', async () => {
     const res = await request(app.getHttpServer())

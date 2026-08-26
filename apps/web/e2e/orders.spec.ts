@@ -6,9 +6,10 @@
  * Flow: order writer (/orders/new) → search, add a line, attach a
  * customer, confirm → order detail shows OPEN with the line reserved →
  * take a cash deposit → paid/balance move → /inventory shows the
- * reserved unit → the pipeline board shows the order in the Open
- * column. Then the POS variant: cart → "Save as order / take deposit"
- * → confirmed order with the deposit already posted.
+ * reserved unit → the orders table row opens the slide-over, whose
+ * full-page link lands back on the order. Then the POS variant: cart →
+ * "Save as order / take deposit" → confirmed order with the deposit
+ * already posted.
  */
 import { expect, request, test } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
@@ -135,10 +136,12 @@ test.describe('Day 2 — order writer', () => {
     await expect(invRow.locator('td').nth(4)).toHaveText('1');
     await expect(invRow.locator('td').nth(5)).toHaveText('99');
 
-    // --- Pipeline board shows it under Open ---
+    // --- Orders table row opens the slide-over; full page returns here ---
     await page.goto('/orders');
-    await expect(page.getByTestId('pipeline-count-open')).toHaveText('1');
-    await page.getByTestId('order-card').first().click();
+    await expect(page.getByTestId('orders-table')).toBeVisible();
+    await page.getByTestId('order-row').first().click();
+    await expect(page.getByTestId('order-slide-over')).toBeVisible();
+    await page.getByTestId('slide-over-full-page').click();
     await page.waitForURL(orderUrl);
   });
 

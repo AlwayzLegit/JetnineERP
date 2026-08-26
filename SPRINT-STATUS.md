@@ -614,7 +614,25 @@ supersedes the checkpoint-7 wizard; legacy register + its offline mode retire).
       match (mattress/foundation/adjustable base/box spring) pending a category flag;
       salespeople capped at two by the split schema; store-credit tender records
       without a balance check until P8's ledger._
-- [ ] **Build P3:** Orders list + slide-over + change-history timeline + notifications feed
+- [x] **Build P3:** Orders list + slide-over + change-history timeline + notifications feed.
+      `/v1/orders/list-view` returns the spec table page (Order #, Customer, derived
+      display Status w/ PO #, Delivery Date, Balance Due, Salesperson) — display status
+      computed per row from real state (draft/quote/cancelled/completed → Draft/Quote/
+      Cancelled/Delivered; layaway w/ balance → Layaway; undelivered trip → Scheduled/
+      Out for Delivery; open PO allocation w/ unreceived qty → On PO (#); under-reserved
+      stock line → Pending; else Reserved), never stored. `/orders` page rebuilt as that
+      table (search over order #/customer, raw-status filter, cursor "Load more"); row
+      click opens a read-only slide-over (lines/totals/payments/balance) with an
+      "Open full page" link, Esc/backdrop closes. Order-detail Timeline card upgraded to
+      the spec change history: actor email per entry + field-level before → after values
+      from the audit diff (cents fields rendered as dollars). `/v1/notifications`
+      (audit.view-gated) derives the owner feed from audit rows (order.update/line.add/
+      line.remove/cancel/payment.take — order.create excluded as not post-creation),
+      joined to actor + live order number; dashboard gained a "Notifications — order
+      changes" card that hides on 403. orders.int.spec +3 (display statuses + balance,
+      q filter, feed contents/attribution/gating) → 33/33; orders e2e board assertions
+      → table + slide-over. — _2026-08-26. Cap/lock overrides and close-out exceptions
+      join the same feed when P5/P9 land (they'll be audit actions too)._
 - [ ] **Build P4:** Documents — invoice (sample layout), delivery ticket + individual-print
       lock, batch print (no lock, A1)
 - [ ] **Build P5:** Delivery dispatch table + 15-stop capacity + zip routes

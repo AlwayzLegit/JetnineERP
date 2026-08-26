@@ -13,13 +13,21 @@ import {
   Query,
 } from '@nestjs/common';
 import { randomBytes } from 'node:crypto';
-import { and, desc, eq, inArray, isNull, lt, or } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, lt, or, sql } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { schema } from '@jetnine/db';
 import { AuditService } from '../audit/audit.service';
 import { CurrentTenant, CurrentUser } from '../auth/current-user.decorator';
 import type { CurrentUserPayload } from '../auth/current-user.decorator';
-import { buildPage, clampLimit, decodeCursor, type PageResponse } from '../common/pagination';
+import {
+  buildPage,
+  clampLimit,
+  decodeCursor,
+  encodeCursor,
+  timestampCursorOrder,
+  timestampCursorWhere,
+  type PageResponse,
+} from '../common/pagination';
 import { DRIZZLE } from '../database/database.module';
 import { RequirePermission, TenantScoped } from '../tenancy/decorators';
 import type { RequestTenantContext } from '../tenancy/request-context';
@@ -337,6 +345,186 @@ export class OrdersController {
       .orderBy(desc(schema.orders.createdAt), desc(schema.orders.id))
       .limit(limit + 1);
     return buildPage(rows, limit, (r) => r.createdAt);
+  }
+
+  /**
+   * The spec's orders table (PLAN-POS-OPERATIONS §8): one page of orders
+   * with everything the columns need — customer, salesperson, balance
+   * due, delivery date — plus the STORIS display status derived from the
+   * order's real state (Draft → Pending → On PO → Reserved → Scheduled →
+   * Out for Delivery → Delivered; Quote/Layaway/Cancelled as applicable).
+   */
+  @Get('orders/list-view')
+  @RequirePermission('orders.view')
+  async listView(
+    @CurrentTenant() _tenant: RequestTenantContext,
+    @Query('limit') limitStr?: string,
+    @Query('cursor') cursorStr?: string,
+    @Query('status') status?: string,
+    @Query('q') q?: string,
+  ): Promise<
+    PageResponse<{
+      id: string;
+      number: string;
+      customerName: string;
+      displayStatus: string;
+      poNumber: string | null;
+      deliveryDate: string | null;
+      balanceDueCents: number;
+      salespersonName: string | null;
+      totalCents: number;
+      createdAt: Date;
+    }>
+  > {
+    const limit = clampLimit(limitStr);
+    const cursor = decodeCursor(cursorStr);
+    const filters = [];
+    if (status) filters.push(eq(schema.orders.status, status));
+    if (q?.trim()) {
+      const like = `%${q.trim()}%`;
+      filters.push(
+        sql`(${schema.orders.number} ILIKE ${like} OR ${schema.customers.firstName} ILIKE ${like} OR ${schema.customers.lastName} ILIKE ${like})`,
+      );
+    }
+    const cursorWhere = timestampCursorWhere(schema.orders.createdAt, schema.orders.id, cursor);
+    if (cursorWhere) filters.push(cursorWhere);
+
+    const rows = await this.db
+      .select({
+        id: schema.orders.id,
+        number: schema.orders.number,
+        status: schema.orders.status,
+        orderKind: schema.orders.orderKind,
+        totalCents: schema.orders.totalCents,
+        requestedDate: schema.orders.requestedDate,
+        createdAt: schema.orders.createdAt,
+        firstName: schema.customers.firstName,
+        lastName: schema.customers.lastName,
+        salespersonName: schema.users.name,
+      })
+      .from(schema.orders)
+      .innerJoin(schema.customers, eq(schema.customers.id, schema.orders.customerId))
+      .leftJoin(
+        schema.memberships,
+        eq(schema.memberships.id, schema.orders.salespersonMembershipId),
+      )
+      .leftJoin(schema.users, eq(schema.users.id, schema.memberships.userId))
+      .where(filters.length > 0 ? and(...filters) : undefined)
+      .orderBy(...timestampCursorOrder(schema.orders.createdAt, schema.orders.id))
+      .limit(limit + 1);
+
+    const pageRows = rows.slice(0, limit);
+    const ids = pageRows.map((r) => r.id);
+    const paid = new Map<string, number>();
+    const deliveryState = new Map<string, { date: string | null; status: string }>();
+    const poByOrder = new Map<string, string>();
+    const reservedShort = new Set<string>();
+    if (ids.length > 0) {
+      const pays = await this.db
+        .select({
+          orderId: schema.payments.orderId,
+          cents: sql<number>`coalesce(sum(${schema.payments.amountCents}), 0)::int`,
+        })
+        .from(schema.payments)
+        .where(and(inArray(schema.payments.orderId, ids), eq(schema.payments.status, 'succeeded')))
+        .groupBy(schema.payments.orderId);
+      for (const p of pays) if (p.orderId) paid.set(p.orderId, p.cents);
+
+      // Undelivered trips, most advanced status first per order.
+      const trips = await this.db
+        .select({
+          orderId: schema.deliveries.orderId,
+          scheduledDate: schema.deliveries.scheduledDate,
+          status: schema.deliveries.status,
+        })
+        .from(schema.deliveries)
+        .where(
+          and(
+            inArray(schema.deliveries.orderId, ids),
+            inArray(schema.deliveries.status, ['scheduled', 'loaded', 'out_for_delivery']),
+          ),
+        );
+      for (const t of trips) {
+        const cur = deliveryState.get(t.orderId);
+        if (!cur || t.status === 'out_for_delivery') {
+          deliveryState.set(t.orderId, { date: t.scheduledDate, status: t.status });
+        }
+      }
+
+      // Lines still owed by an open PO → "On PO (#…)".
+      const allocs = await this.db
+        .select({
+          orderId: schema.orderLines.orderId,
+          poNumber: schema.purchaseOrders.number,
+        })
+        .from(schema.poLineAllocations)
+        .innerJoin(
+          schema.orderLines,
+          eq(schema.orderLines.id, schema.poLineAllocations.orderLineId),
+        )
+        .innerJoin(
+          schema.purchaseOrderLines,
+          eq(schema.purchaseOrderLines.id, schema.poLineAllocations.poLineId),
+        )
+        .innerJoin(
+          schema.purchaseOrders,
+          eq(schema.purchaseOrders.id, schema.purchaseOrderLines.purchaseOrderId),
+        )
+        .where(
+          and(
+            inArray(schema.orderLines.orderId, ids),
+            sql`${schema.purchaseOrderLines.quantityOrdered} > ${schema.purchaseOrderLines.quantityReceived}`,
+          ),
+        );
+      for (const a of allocs) if (!poByOrder.has(a.orderId)) poByOrder.set(a.orderId, a.poNumber);
+
+      // Stock lines not yet fully reserved → still "Pending".
+      const shorts = await this.db
+        .select({ orderId: schema.orderLines.orderId })
+        .from(schema.orderLines)
+        .where(
+          and(
+            inArray(schema.orderLines.orderId, ids),
+            eq(schema.orderLines.lineType, 'stock'),
+            sql`${schema.orderLines.qtyReserved} + ${schema.orderLines.qtyFulfilled} < ${schema.orderLines.quantity}`,
+          ),
+        );
+      for (const r of shorts) reservedShort.add(r.orderId);
+    }
+
+    const enriched = pageRows.map((r) => {
+      const balance = Math.max(0, r.totalCents - (paid.get(r.id) ?? 0));
+      const trip = deliveryState.get(r.id);
+      let displayStatus: string;
+      if (r.status === 'draft') displayStatus = 'Draft';
+      else if (r.status === 'quote') displayStatus = 'Quote';
+      else if (r.status === 'cancelled') displayStatus = 'Cancelled';
+      else if (r.status === 'completed' || r.status === 'fulfilled') displayStatus = 'Delivered';
+      else if (r.orderKind === 'layaway' && balance > 0) displayStatus = 'Layaway';
+      else if (trip?.status === 'out_for_delivery') displayStatus = 'Out for Delivery';
+      else if (trip) displayStatus = 'Scheduled';
+      else if (poByOrder.has(r.id)) displayStatus = 'On PO';
+      else if (!reservedShort.has(r.id)) displayStatus = 'Reserved';
+      else displayStatus = 'Pending';
+      return {
+        id: r.id,
+        number: r.number,
+        customerName: [r.firstName, r.lastName].filter(Boolean).join(' ') || '—',
+        displayStatus,
+        poNumber: displayStatus === 'On PO' ? (poByOrder.get(r.id) ?? null) : null,
+        deliveryDate: trip?.date ?? r.requestedDate,
+        balanceDueCents: balance,
+        salespersonName: r.salespersonName ?? null,
+        totalCents: r.totalCents,
+        createdAt: r.createdAt,
+      };
+    });
+    const hasMore = rows.length > limit;
+    const last = pageRows[pageRows.length - 1];
+    return {
+      data: enriched,
+      nextCursor: hasMore && last ? encodeCursor(last.createdAt, last.id) : null,
+    };
   }
 
   @Get('orders/:id')
