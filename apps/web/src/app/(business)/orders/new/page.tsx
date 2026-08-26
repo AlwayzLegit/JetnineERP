@@ -1,18 +1,31 @@
 'use client';
 
+import { Suspense } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { PageHeader } from '@/components/ui';
-import { OrderEntry } from '@/components/order-entry';
+import { NewSale } from '@/components/new-sale';
 
 /**
- * The order writer is the same three-step "Enter a Sales Order" flow the
- * POS defaults to — one way to write an order, reachable from both the
- * Orders board and the register.
+ * Orders → New is the same single-screen New Sale the POS lands on.
+ * `?exchangeOf=<orderId>` switches it into Exchange Order mode (§10):
+ * the customer pins to the original order's and the completed document
+ * prints as an Exchange Order against the original invoice #.
  */
-export default function OrderWriterPage() {
+function OrderWriterInner() {
+  const search = useSearchParams();
+  const exchangeOf = search?.get('exchangeOf') ?? undefined;
   return (
     <div>
-      <PageHeader title="Enter a Sales Order" />
-      <OrderEntry />
+      <PageHeader title={exchangeOf ? 'Exchange Order' : 'New Sale'} />
+      <NewSale exchangeOf={exchangeOf} />
     </div>
+  );
+}
+
+export default function OrderWriterPage() {
+  return (
+    <Suspense fallback={null}>
+      <OrderWriterInner />
+    </Suspense>
   );
 }

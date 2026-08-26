@@ -217,6 +217,484 @@ afterAll(async () => {
   if (app) await app.close();
 });
 
+describe('New Sale backend (PLAN-POS-OPERATIONS P2a)', () => {
+  // Own fixtures — the Day-1 suites assert absolute stock numbers on the
+  // shared sofa, so nothing here may touch it.
+  let nsVariantId = '';
+  let atpVariantId = '';
+
+  beforeAll(async () => {
+    const sql2 = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    const db = drizzle(sql2);
+    try {
+      const [p1] = await db
+        .insert(schema.products)
+        .values({ businessId, sku: 'NS-SOFA', name: 'NewSale Fixture Sofa' })
+        .returning();
+      const [v1] = await db
+        .insert(schema.productVariants)
+        .values({ businessId, productId: p1!.id, sku: 'NS-SOFA-V1', priceCents: 99900 })
+        .returning();
+      nsVariantId = v1!.id;
+      await db.insert(schema.inventoryLevels).values({
+        businessId,
+        variantId: nsVariantId,
+        locationId,
+        onHand: 10,
+        reserved: 0,
+      });
+
+      const [p2] = await db
+        .insert(schema.products)
+        .values({ businessId, sku: 'ATP-1', name: 'ATP Backorder Mattress' })
+        .returning();
+      const [v2] = await db
+        .insert(schema.productVariants)
+        .values({ businessId, productId: p2!.id, sku: 'ATP-1-V1', priceCents: 49999 })
+        .returning();
+      atpVariantId = v2!.id;
+      const [vendor] = await db
+        .insert(schema.vendors)
+        .values({ businessId, name: 'ATP Vendor' })
+        .returning();
+      const [po] = await db
+        .insert(schema.purchaseOrders)
+        .values({
+          businessId,
+          vendorId: vendor!.id,
+          locationId,
+          number: 'PO-ATP-1',
+          status: 'ordered',
+          expectedAt: new Date('2026-09-04T00:00:00Z'),
+        })
+        .returning();
+      await db.insert(schema.purchaseOrderLines).values({
+        businessId,
+        purchaseOrderId: po!.id,
+        variantId: atpVariantId,
+        quantityOrdered: 5,
+        quantityReceived: 0,
+        unitCostCents: 20000,
+        lineTotalCents: 100000,
+      });
+    } finally {
+      await sql2.end({ timeout: 5 });
+    }
+  });
+
+  it('Custom fee lines: no variant, untaxed, never reserved; new tenders accepted', async () => {
+    const res = await request(app.getHttpServer())
+      .post('/v1/orders')
+      .set('Cookie', cashierCookie)
+      .set('X-Business-Id', businessId)
+      .send({
+        locationId,
+        customerId,
+        confirm: true,
+        lines: [
+          { variantId: nsVariantId, quantity: 1 },
+          { lineType: 'custom', description: 'Recycling Fee', quantity: 2, unitPriceCents: 1050 },
+          { lineType: 'custom', description: 'Mattress Removal', quantity: 1, unitPriceCents: 0 },
+        ],
+      });
+    expect(res.status).toBe(201);
+    const o = res.body;
+    const fee = o.lines.find((l: { description: string }) => l.description === 'Recycling Fee');
+    expect(fee.variantId).toBeNull();
+    expect(fee.taxCents).toBe(0); // fees are untaxed
+    expect(fee.totalCents).toBe(2100);
+    const removal = o.lines.find(
+      (l: { description: string }) => l.description === 'Mattress Removal',
+    );
+    expect(removal.totalCents).toBe(0);
+    expect(fee.qtyReserved).toBe(0);
+    const sofa = o.lines.find((l: { variantId: string | null }) => l.variantId);
+    expect(sofa.qtyReserved).toBe(1);
+
+    const pay = await request(app.getHttpServer())
+      .post(`/v1/orders/${o.id}/payments`)
+      .set('Cookie', cashierCookie)
+      .set('X-Business-Id', businessId)
+      .send({ method: 'venmo', amountCents: 5000, kind: 'deposit' });
+    expect(pay.status).toBe(201);
+
+    const noDesc = await request(app.getHttpServer())
+      .post('/v1/orders')
+      .set('Cookie', cashierCookie)
+      .set('X-Business-Id', businessId)
+      .send({
+        locationId,
+        customerId,
+        lines: [{ lineType: 'custom', quantity: 1, unitPriceCents: 100 }],
+      });
+    expect(noDesc.status).toBe(400);
+  });
+
+  it('Drafts: store-wide, no reservation, resumable to open', async () => {
+    const res = await request(app.getHttpServer())
+      .post('/v1/orders')
+      .set('Cookie', cashierCookie)
+      .set('X-Business-Id', businessId)
+      .send({
+        locationId,
+        customerId,
+        draft: true,
+        lines: [{ variantId: nsVariantId, quantity: 1 }],
+      });
+    expect(res.status).toBe(201);
+    expect(res.body.status).toBe('draft');
+    expect(res.body.lines[0].qtyReserved).toBe(0);
+
+    const list = await request(app.getHttpServer())
+      .get('/v1/orders?status=draft')
+      .set('Cookie', cashierCookie)
+      .set('X-Business-Id', businessId);
+    expect(list.status).toBe(200);
+    expect(list.body.data.some((o: { id: string }) => o.id === res.body.id)).toBe(true);
+
+    const confirmed = await request(app.getHttpServer())
+      .patch(`/v1/orders/${res.body.id}`)
+      .set('Cookie', cashierCookie)
+      .set('X-Business-Id', businessId)
+      .send({ status: 'open' });
+    expect(confirmed.status).toBe(200);
+    expect(confirmed.body.status).toBe('open');
+    expect(confirmed.body.lines[0].qtyReserved).toBe(1);
+  });
+
+  it('Product search: stock filters and ATP date from open POs', async () => {
+    const out = await request(app.getHttpServer())
+      .get(`/v1/pos/product-search?q=ATP&inStock=0&locationId=${locationId}`)
+      .set('Cookie', cashierCookie)
+      .set('X-Business-Id', businessId);
+    expect(out.status).toBe(200);
+    const hit = out.body.find((r: { variantId: string }) => r.variantId === atpVariantId);
+    expect(hit).toBeTruthy();
+    expect(hit.availableTotal).toBe(0);
+    expect(hit.atpDate).toContain('2026-09-04');
+
+    const inn = await request(app.getHttpServer())
+      .get(`/v1/pos/product-search?q=NewSale&inStock=1&locationId=${locationId}`)
+      .set('Cookie', cashierCookie)
+      .set('X-Business-Id', businessId);
+    expect(inn.status).toBe(200);
+    expect(inn.body.some((r: { variantId: string }) => r.variantId === nsVariantId)).toBe(true);
+    expect(inn.body.every((r: { availableTotal: number }) => r.availableTotal > 0)).toBe(true);
+  });
+});
+
+describe('Orders list-view + notifications (PLAN-POS-OPERATIONS P3)', () => {
+  // Own fixtures again — display-status assertions must not depend on
+  // what other suites did to the shared variants.
+  let lvStockedVariantId = '';
+  let lvEmptyVariantId = '';
+
+  interface ListViewRow {
+    id: string;
+    number: string;
+    customerName: string;
+    displayStatus: string;
+    poNumber: string | null;
+    deliveryDate: string | null;
+    balanceDueCents: number;
+    salespersonName: string | null;
+    totalCents: number;
+  }
+
+  async function listView(query = ''): Promise<ListViewRow[]> {
+    const res = await request(app.getHttpServer())
+      .get(`/v1/orders/list-view${query}`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId);
+    expect(res.status).toBe(200);
+    return res.body.data as ListViewRow[];
+  }
+
+  beforeAll(async () => {
+    const sql2 = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    const db = drizzle(sql2);
+    try {
+      const mk = async (sku: string, name: string, onHand: number) => {
+        const [p] = await db.insert(schema.products).values({ businessId, sku, name }).returning();
+        const [v] = await db
+          .insert(schema.productVariants)
+          .values({ businessId, productId: p!.id, sku: `${sku}-V1`, priceCents: 50000 })
+          .returning();
+        await db.insert(schema.inventoryLevels).values({
+          businessId,
+          variantId: v!.id,
+          locationId,
+          onHand,
+          reserved: 0,
+        });
+        return v!.id;
+      };
+      lvStockedVariantId = await mk('LV-STOCK', 'ListView Stocked Bed', 10);
+      lvEmptyVariantId = await mk('LV-EMPTY', 'ListView Backordered Bed', 0);
+    } finally {
+      await sql2.end({ timeout: 5 });
+    }
+  });
+
+  it('Spec columns + display statuses: Draft, Quote, Reserved, Pending; balance due after payment', async () => {
+    const make = async (body: Record<string, unknown>) => {
+      const res = await request(app.getHttpServer())
+        .post('/v1/orders')
+        .set('Cookie', cashierCookie)
+        .set('X-Business-Id', businessId)
+        .send({ locationId, customerId, ...body });
+      expect(res.status).toBe(201);
+      return res.body as { id: string; number: string; totalCents: number };
+    };
+
+    const draft = await make({
+      draft: true,
+      lines: [{ variantId: lvStockedVariantId, quantity: 1 }],
+    });
+    const quote = await make({ lines: [{ variantId: lvStockedVariantId, quantity: 1 }] });
+    const reserved = await make({
+      confirm: true,
+      lines: [{ variantId: lvStockedVariantId, quantity: 1 }],
+    });
+    const pending = await make({
+      confirm: true,
+      lines: [{ variantId: lvEmptyVariantId, quantity: 1 }],
+    });
+
+    const pay = await request(app.getHttpServer())
+      .post(`/v1/orders/${reserved.id}/payments`)
+      .set('Cookie', cashierCookie)
+      .set('X-Business-Id', businessId)
+      .send({ method: 'cash', amountCents: 10000, kind: 'deposit' });
+    expect(pay.status).toBe(201);
+
+    const rows = await listView('?limit=100');
+    const byId = new Map(rows.map((r) => [r.id, r]));
+
+    expect(byId.get(draft.id)?.displayStatus).toBe('Draft');
+    expect(byId.get(quote.id)?.displayStatus).toBe('Quote');
+    expect(byId.get(reserved.id)?.displayStatus).toBe('Reserved');
+    expect(byId.get(pending.id)?.displayStatus).toBe('Pending');
+
+    const r = byId.get(reserved.id)!;
+    expect(r.customerName).toBe('Dana Reyes');
+    expect(r.balanceDueCents).toBe(reserved.totalCents - 10000);
+    expect(r.number).toBe(reserved.number);
+  });
+
+  it('q filter matches order number and customer name', async () => {
+    const res = await request(app.getHttpServer())
+      .post('/v1/orders')
+      .set('Cookie', cashierCookie)
+      .set('X-Business-Id', businessId)
+      .send({
+        locationId,
+        customerId,
+        confirm: true,
+        lines: [{ variantId: lvStockedVariantId, quantity: 1 }],
+      });
+    expect(res.status).toBe(201);
+    const number: string = res.body.number;
+
+    const byNumber = await listView(`?q=${encodeURIComponent(number)}`);
+    expect(byNumber.some((r) => r.id === res.body.id)).toBe(true);
+
+    const byName = await listView('?q=reyes&limit=200');
+    expect(byName.some((r) => r.id === res.body.id)).toBe(true);
+    expect(byName.every((r) => r.customerName === 'Dana Reyes')).toBe(true);
+  });
+
+  it('Notifications feed: post-creation order changes, attributed; gated by audit.view', async () => {
+    const created = await request(app.getHttpServer())
+      .post('/v1/orders')
+      .set('Cookie', cashierCookie)
+      .set('X-Business-Id', businessId)
+      .send({
+        locationId,
+        customerId,
+        confirm: true,
+        lines: [{ variantId: lvStockedVariantId, quantity: 1 }],
+      });
+    expect(created.status).toBe(201);
+
+    const patched = await request(app.getHttpServer())
+      .patch(`/v1/orders/${created.body.id}`)
+      .set('Cookie', cashierCookie)
+      .set('X-Business-Id', businessId)
+      .send({ notes: 'call before delivery' });
+    expect(patched.status).toBe(200);
+
+    const feed = await request(app.getHttpServer())
+      .get('/v1/notifications?limit=50')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId);
+    expect(feed.status).toBe(200);
+    const hit = feed.body.data.find(
+      (n: { orderId: string | null; action: string }) =>
+        n.orderId === created.body.id && n.action === 'order.update',
+    );
+    expect(hit).toBeTruthy();
+    expect(hit.label).toBe('Order edited');
+    expect(hit.orderNumber).toBe(created.body.number);
+    expect(hit.actorEmail).toBe('cashier@orders-test.local');
+    // order.create is not a *post-creation* change — it must not be in the feed.
+    expect(feed.body.data.some((n: { action: string }) => n.action === 'order.create')).toBe(false);
+
+    await request(app.getHttpServer())
+      .get('/v1/notifications')
+      .set('Cookie', cashierCookie)
+      .set('X-Business-Id', businessId)
+      .expect(403);
+  });
+});
+
+describe('Documents + A1 print lock (PLAN-POS-OPERATIONS P4)', () => {
+  let p4VariantId = '';
+
+  beforeAll(async () => {
+    const sql2 = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    const db = drizzle(sql2);
+    try {
+      const [vendor] = await db
+        .insert(schema.vendors)
+        .values({ businessId, name: 'Docs Brand Co' })
+        .returning();
+      const [p] = await db
+        .insert(schema.products)
+        .values({ businessId, sku: 'P4-BED', name: 'Docs Fixture Bed' })
+        .returning();
+      const [v] = await db
+        .insert(schema.productVariants)
+        .values({
+          businessId,
+          productId: p!.id,
+          sku: 'P4-BED-V1',
+          priceCents: 80000,
+          preferredVendorId: vendor!.id,
+        })
+        .returning();
+      p4VariantId = v!.id;
+      await db.insert(schema.inventoryLevels).values({
+        businessId,
+        variantId: p4VariantId,
+        locationId,
+        onHand: 20,
+        reserved: 0,
+      });
+    } finally {
+      await sql2.end({ timeout: 5 });
+    }
+  });
+
+  async function makeOrder(): Promise<{ id: string; number: string }> {
+    const res = await request(app.getHttpServer())
+      .post('/v1/orders')
+      .set('Cookie', cashierCookie)
+      .set('X-Business-Id', businessId)
+      .send({
+        locationId,
+        customerId,
+        confirm: true,
+        requestedDate: '2026-09-10',
+        lines: [{ variantId: p4VariantId, quantity: 1 }],
+      });
+    expect(res.status).toBe(201);
+    return res.body;
+  }
+
+  it('Document payload: business + store + customer + line model/brand + totals', async () => {
+    const order = await makeOrder();
+    const res = await request(app.getHttpServer())
+      .get(`/v1/orders/${order.id}/document`)
+      .set('Cookie', cashierCookie)
+      .set('X-Business-Id', businessId);
+    expect(res.status).toBe(200);
+    expect(res.body.business.name).toBe('Orders Test Co');
+    expect(res.body.location.name).toBe('Showroom');
+    expect(res.body.customer.name).toBe('Dana Reyes');
+    expect(res.body.scheduledDate).toBe('2026-09-10'); // no trip yet → requested date
+    const line = res.body.lines.find((l: { model: string | null }) => l.model === 'P4-BED-V1');
+    expect(line).toBeTruthy();
+    expect(line.brand).toBe('Docs Brand Co');
+    expect(res.body.order.totalCents).toBe(res.body.order.subtotalCents + res.body.order.taxCents);
+  });
+
+  it('Individual ticket print locks: edits refuse 409 until unlocked with a reason', async () => {
+    const order = await makeOrder();
+
+    const printed = await request(app.getHttpServer())
+      .post(`/v1/orders/${order.id}/delivery-ticket-print`)
+      .set('Cookie', cashierCookie)
+      .set('X-Business-Id', businessId);
+    expect(printed.status).toBe(201);
+    expect(printed.body.lockedAt).toBeTruthy();
+
+    // All edit surfaces refuse while locked.
+    await request(app.getHttpServer())
+      .patch(`/v1/orders/${order.id}`)
+      .set('Cookie', cashierCookie)
+      .set('X-Business-Id', businessId)
+      .send({ notes: 'sneaky edit' })
+      .expect(409);
+    await request(app.getHttpServer())
+      .post(`/v1/orders/${order.id}/lines`)
+      .set('Cookie', cashierCookie)
+      .set('X-Business-Id', businessId)
+      .send({ variantId: p4VariantId, quantity: 1 })
+      .expect(409);
+    await request(app.getHttpServer())
+      .post(`/v1/orders/${order.id}/cancel`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({})
+      .expect(409);
+
+    // Cashier lacks orders.unlock; owner without a reason is a 400.
+    await request(app.getHttpServer())
+      .post(`/v1/orders/${order.id}/unlock`)
+      .set('Cookie', cashierCookie)
+      .set('X-Business-Id', businessId)
+      .send({ reason: 'customer changed size' })
+      .expect(403);
+    await request(app.getHttpServer())
+      .post(`/v1/orders/${order.id}/unlock`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({})
+      .expect(400);
+
+    const unlocked = await request(app.getHttpServer())
+      .post(`/v1/orders/${order.id}/unlock`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ reason: 'customer changed size' });
+    expect(unlocked.status).toBe(201);
+    expect(unlocked.body.lockedAt).toBeNull();
+
+    await request(app.getHttpServer())
+      .patch(`/v1/orders/${order.id}`)
+      .set('Cookie', cashierCookie)
+      .set('X-Business-Id', businessId)
+      .send({ notes: 'now it works' })
+      .expect(200);
+
+    // The unlock override surfaces in the owner notifications feed with
+    // its typed reason (§12 "lock overrides").
+    const feed = await request(app.getHttpServer())
+      .get('/v1/notifications?limit=50')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId);
+    expect(feed.status).toBe(200);
+    const hit = feed.body.data.find(
+      (n: { orderId: string | null; action: string }) =>
+        n.orderId === order.id && n.action === 'order.unlock',
+    );
+    expect(hit).toBeTruthy();
+    expect(hit.label).toContain('unlocked');
+    expect(hit.changesJson?.metadata?.reason).toBe('customer changed size');
+  });
+});
+
 describe('Enter a Sales Order — STORIS 3-step parity fields', () => {
   it('Order carries kind, fulfillment, delivery status, fees; total includes fees', async () => {
     const res = await request(app.getHttpServer())
@@ -726,5 +1204,217 @@ describe('Customer-facing status link', () => {
     expect(wrong.status).toBe(404);
     const malformed = await request(app.getHttpServer()).get('/v1/public/orders/short');
     expect(malformed.status).toBe(404);
+  });
+});
+
+describe('Returns, As-Is, store credit, exchanges (PLAN-POS-OPERATIONS P8)', () => {
+  let p8VariantId = '';
+
+  function owner() {
+    return {
+      post: (url: string) =>
+        request(app.getHttpServer())
+          .post(url)
+          .set('Cookie', ownerCookie)
+          .set('X-Business-Id', businessId),
+      get: (url: string) =>
+        request(app.getHttpServer())
+          .get(url)
+          .set('Cookie', ownerCookie)
+          .set('X-Business-Id', businessId),
+    };
+  }
+
+  beforeAll(async () => {
+    const sql2 = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    const db = drizzle(sql2);
+    try {
+      const [p] = await db
+        .insert(schema.products)
+        .values({ businessId, sku: 'P8-BED', name: 'Returns Fixture Bed' })
+        .returning();
+      const [v] = await db
+        .insert(schema.productVariants)
+        .values({ businessId, productId: p!.id, sku: 'P8-BED-V1', priceCents: 100000 })
+        .returning();
+      p8VariantId = v!.id;
+      await db.insert(schema.inventoryLevels).values({
+        businessId,
+        variantId: p8VariantId,
+        locationId,
+        onHand: 20,
+        reserved: 0,
+      });
+    } finally {
+      await sql2.end({ timeout: 5 });
+    }
+  });
+
+  async function fulfilledPaidOrder(quantity: number): Promise<{
+    id: string;
+    number: string;
+    lineId: string;
+    totalCents: number;
+  }> {
+    const created = await owner()
+      .post('/v1/orders')
+      .send({
+        locationId,
+        customerId,
+        fulfillmentType: 'pickup',
+        confirm: true,
+        lines: [{ variantId: p8VariantId, quantity }],
+      });
+    expect(created.status).toBe(201);
+    const pay = await owner()
+      .post(`/v1/orders/${created.body.id}/payments`)
+      .send({ method: 'cash', amountCents: created.body.totalCents });
+    expect(pay.status).toBe(201);
+    const ful = await owner().post(`/v1/orders/${created.body.id}/fulfill`).send({});
+    expect(ful.status).toBe(201);
+    return {
+      id: created.body.id,
+      number: created.body.number,
+      lineId: created.body.lines[0].id,
+      totalCents: created.body.totalCents,
+    };
+  }
+
+  async function stockOf(variantId: string): Promise<number> {
+    return levelOf(variantId).then((l) => l.onHand);
+  }
+
+  it('return: money reverses to the original tender, goods land in As-Is, not stock', async () => {
+    const order = await fulfilledPaidOrder(2);
+    const stockBefore = await stockOf(p8VariantId);
+
+    const perUnit = Math.round(order.totalCents / 2);
+    const ret = await owner()
+      .post(`/v1/orders/${order.id}/return`)
+      .send({ lines: [{ lineId: order.lineId, quantity: 1 }], reason: 'too firm' });
+    expect(ret.status).toBe(201);
+    expect(ret.body.lines[0].qtyReturned).toBe(1);
+    expect(ret.body.paidCents).toBe(order.totalCents - perUnit); // negative cash row
+    const refundRow = ret.body.payments.find(
+      (p: { kind: string; amountCents: number }) => p.kind === 'refund',
+    );
+    expect(refundRow.amountCents).toBe(-perUnit);
+    expect(refundRow.method).toBe('cash');
+
+    // Goods: As-Is pending review, sellable stock untouched.
+    expect(await stockOf(p8VariantId)).toBe(stockBefore);
+    const queue = await owner().get('/v1/as-is?status=pending_review');
+    const item = queue.body.find((r: { referenceId: string | null }) => r.referenceId === order.id);
+    expect(item).toBeTruthy();
+    expect(item.quantity).toBe(1);
+    expect(item.source).toBe('return');
+
+    // Over-returning is refused.
+    const over = await owner()
+      .post(`/v1/orders/${order.id}/return`)
+      .send({ lines: [{ lineId: order.lineId, quantity: 2 }] });
+    expect(over.status).toBe(400);
+
+    // Returning the rest flips the list-view display status to Returned.
+    const rest = await owner()
+      .post(`/v1/orders/${order.id}/return`)
+      .send({ lines: [{ lineId: order.lineId, quantity: 1 }] });
+    expect(rest.status).toBe(201);
+    const lv = await owner().get('/v1/orders/list-view?limit=100');
+    const row = lv.body.data.find((r: { id: string }) => r.id === order.id);
+    expect(row.displayStatus).toBe('Returned');
+
+    // Review the As-Is item: restock puts it back into sellable stock.
+    const reviewed = await owner().post(`/v1/as-is/${item.id}/review`).send({ action: 'restock' });
+    expect(reviewed.status).toBe(201);
+    expect(reviewed.body.status).toBe('restocked');
+    expect(await stockOf(p8VariantId)).toBe(stockBefore + 1);
+    await owner().post(`/v1/as-is/${item.id}/review`).send({ action: 'scrap' }).expect(400);
+  });
+
+  it('store credit: issued by a return, surfaces on the customer, redeems with a balance check', async () => {
+    const order = await fulfilledPaidOrder(1);
+    const ret = await owner()
+      .post(`/v1/orders/${order.id}/return`)
+      .send({
+        lines: [{ lineId: order.lineId, quantity: 1 }],
+        refundMethod: 'store_credit',
+        reason: 'exchange credit',
+      });
+    expect(ret.status).toBe(201);
+    // Store-credit return keeps the money: paid is unchanged.
+    expect(ret.body.paidCents).toBe(order.totalCents);
+
+    const credit = await owner().get(`/v1/customers/${customerId}/store-credit`);
+    expect(credit.status).toBe(200);
+    expect(credit.body.balanceCents).toBeGreaterThanOrEqual(order.totalCents);
+    const balance = credit.body.balanceCents;
+
+    // Redeem on a new order — within balance succeeds and debits the ledger…
+    const next = await owner()
+      .post('/v1/orders')
+      .send({
+        locationId,
+        customerId,
+        confirm: true,
+        lines: [{ variantId: p8VariantId, quantity: 1 }],
+      });
+    expect(next.status).toBe(201);
+    const redeem = await owner()
+      .post(`/v1/orders/${next.body.id}/payments`)
+      .send({ method: 'store_credit', amountCents: 5000 });
+    expect(redeem.status).toBe(201);
+    const after = await owner().get(`/v1/customers/${customerId}/store-credit`);
+    expect(after.body.balanceCents).toBe(balance - 5000);
+
+    // …and over-balance is refused.
+    const tooMuch = await owner()
+      .post(`/v1/orders/${next.body.id}/payments`)
+      .send({ method: 'store_credit', amountCents: after.body.balanceCents + 100000 });
+    expect([400]).toContain(tooMuch.status);
+  });
+
+  it('price adjustment: money-only, distinct kind, reason required', async () => {
+    const order = await fulfilledPaidOrder(1);
+    await owner()
+      .post(`/v1/orders/${order.id}/price-adjustment`)
+      .send({ amountCents: 500 })
+      .expect(400); // no reason
+
+    const adj = await owner()
+      .post(`/v1/orders/${order.id}/price-adjustment`)
+      .send({ amountCents: 500, reason: 'price match' });
+    expect(adj.status).toBe(201);
+    expect(adj.body.paidCents).toBe(order.totalCents - 500);
+    const row = adj.body.payments.find((p: { kind: string }) => p.kind === 'adjustment');
+    expect(row.amountCents).toBe(-500);
+    // No goods moved: nothing new in As-Is for this order.
+    const queue = await owner().get('/v1/as-is');
+    expect(queue.body.some((r: { referenceId: string | null }) => r.referenceId === order.id)).toBe(
+      false,
+    );
+  });
+
+  it('exchange order: linked to the original, documents as Exchange Order', async () => {
+    const original = await fulfilledPaidOrder(1);
+    const ex = await owner()
+      .post(`/v1/orders/${original.id}/exchange`)
+      .send({
+        confirm: true,
+        lines: [{ variantId: p8VariantId, quantity: 1 }],
+      });
+    expect(ex.status).toBe(201);
+    expect(ex.body.orderKind).toBe('exchange');
+    expect(ex.body.originalOrderId).toBe(original.id);
+
+    const doc = await owner().get(`/v1/orders/${ex.body.id}/document`);
+    expect(doc.status).toBe(200);
+    expect(doc.body.originalOrderNumber).toBe(original.number);
+    expect(doc.body.order.creditDueCents).toBe(0);
+
+    // The original shows as Exchanged on the orders table.
+    const lv = await owner().get('/v1/orders/list-view?limit=100');
+    const row = lv.body.data.find((r: { id: string }) => r.id === original.id);
+    expect(row.displayStatus).toBe('Exchanged');
   });
 });

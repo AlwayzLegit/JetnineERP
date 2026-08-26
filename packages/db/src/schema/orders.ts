@@ -90,6 +90,11 @@ export const orders = pgTable(
      */
     orderKind: text('order_kind').notNull().default('sales_order'),
     /**
+     * Exchange Orders (PLAN-POS-OPERATIONS §10) link back to the original
+     * sale's order; the printed document shows it as "Original Invoice #".
+     */
+    originalOrderId: uuid('original_order_id'),
+    /**
      * 'delivery' | 'pickup' | 'take_with' | 'direct_ship' — the order
      * default; STORIS split tickets are per-line overrides on
      * `order_lines.fulfillment_method`.
@@ -132,6 +137,13 @@ export const orders = pgTable(
      * — the public endpoint exposes only customer-safe fields.
      */
     publicToken: text('public_token'),
+    /**
+     * A1 lock: set when an *individual* delivery ticket is printed —
+     * the order is "on the truck" and refuses edits until a permitted
+     * role unlocks it with a typed reason (batch printing never sets
+     * this). NULL = unlocked.
+     */
+    lockedAt: timestamp('locked_at', { withTimezone: true }),
     // D8: legacy history imports carry these and are excluded from the
     // cash drawer, commission accrual, and webhook emission.
     importedAt: timestamp('imported_at', { withTimezone: true }),
@@ -184,6 +196,8 @@ export const orderLines = pgTable(
     quantity: integer('quantity').notNull(),
     qtyReserved: integer('qty_reserved').notNull().default(0),
     qtyFulfilled: integer('qty_fulfilled').notNull().default(0),
+    /** §10: units taken back on a return (never exceeds qty_fulfilled). */
+    qtyReturned: integer('qty_returned').notNull().default(0),
     /** 'stock' | 'special_order' */
     lineType: text('line_type').notNull().default('stock'),
     unitPriceCents: integer('unit_price_cents').notNull(),
@@ -263,6 +277,11 @@ export const deliveries = pgTable(
     }),
     // Ordinal within the day's route; the calendar drag-reorders these.
     routePosition: integer('route_position'),
+    /**
+     * Route label (§7): auto-suggested from the ship-to zip at
+     * scheduling ("900xx"), freely editable by the dispatcher.
+     */
+    route: text('route'),
     notes: text('notes'),
     completedAt: timestamp('completed_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),

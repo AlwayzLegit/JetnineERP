@@ -340,7 +340,36 @@ export class OrdersService {
    * concurrent insert that wins the race just pushes us to the next
    * candidate.
    */
-  async generateOrderNumber(db: PostgresJsDatabase, businessId: string): Promise<string> {
+  async generateOrderNumber(
+    db: PostgresJsDatabase,
+    businessId: string,
+    locationId?: string,
+  ): Promise<string> {
+    // Per-store numbering (PLAN-POS-OPERATIONS §1): a location with an
+    // order_prefix numbers from its own atomic counter — `{PREFIX}-{seq}`.
+    // Locations without a prefix keep the legacy per-business sequence.
+    if (locationId) {
+      const [loc] = await db
+        .select({ prefix: schema.locations.orderPrefix })
+        .from(schema.locations)
+        .where(eq(schema.locations.id, locationId))
+        .limit(1);
+      if (loc?.prefix) {
+        const [seq] = await db
+          .insert(schema.orderSequences)
+          .values({ businessId, locationId, nextValue: 10002 })
+          .onConflictDoUpdate({
+            target: schema.orderSequences.locationId,
+            set: { nextValue: sql`${schema.orderSequences.nextValue} + 1` },
+          })
+          .returning({ nextValue: schema.orderSequences.nextValue });
+        // Both paths return the post-claim counter, so the claimed number
+        // is always returned - 1: first insert stores 10002 and claims
+        // 10001; each conflict update increments and claims the prior value.
+        const claimed = (seq?.nextValue ?? 10002) - 1;
+        return `${loc.prefix}-${claimed}`;
+      }
+    }
     const year = new Date().getUTCFullYear();
     for (let attempt = 0; attempt < 5; attempt++) {
       const rows = await db

@@ -24,11 +24,45 @@ export const locations = pgTable(
     addressJson: jsonb('address_json'),
     // Optional override of businesses.default_tax_rate_bps. Null inherits.
     taxRateBps: integer('tax_rate_bps'),
+    /**
+     * Store code for order numbering (PLAN-POS-OPERATIONS §1): orders at
+     * this location number as `{PREFIX}-{sequence}` from the location's own
+     * counter in `order_sequences`. NULL = location still numbers from the
+     * legacy per-business SO-YYYY sequence.
+     */
+    orderPrefix: text('order_prefix'),
     isActive: boolean('is_active').notNull().default(true),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => ({
     businessIdx: index('locations_business_id_idx').on(t.businessId),
+    orderPrefixUnique: uniqueIndex('locations_business_order_prefix_uniq').on(
+      t.businessId,
+      t.orderPrefix,
+    ),
+  }),
+);
+
+/**
+ * Per-store order-number counters (PLAN-POS-OPERATIONS §1). One row per
+ * location, `next_value` is claimed with an atomic UPDATE ... RETURNING so
+ * concurrent sales at the same store never collide.
+ */
+export const orderSequences = pgTable(
+  'order_sequences',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    businessId: uuid('business_id')
+      .notNull()
+      .references(() => businesses.id, { onDelete: 'cascade' }),
+    locationId: uuid('location_id')
+      .notNull()
+      .references(() => locations.id, { onDelete: 'cascade' }),
+    nextValue: integer('next_value').notNull().default(10001),
+  },
+  (t) => ({
+    locationUnique: uniqueIndex('order_sequences_location_uniq').on(t.locationId),
+    businessIdx: index('order_sequences_business_id_idx').on(t.businessId),
   }),
 );
 
@@ -113,5 +147,34 @@ export const membershipLocationScopes = pgTable(
     pk: primaryKey({ columns: [t.membershipId, t.locationId] }),
     locationIdx: index('membership_location_scopes_location_idx').on(t.locationId),
     businessIdx: index('membership_location_scopes_business_idx').on(t.businessId),
+  }),
+);
+
+/**
+ * Per-user permission adjustments on top of role defaults
+ * (PLAN-POS-OPERATIONS §2): creating a user copies nothing — the guard
+ * reads role permissions, then applies these rows (allowed=true grants a
+ * permission the role lacks, allowed=false revokes one it has).
+ */
+export const membershipPermissionOverrides = pgTable(
+  'membership_permission_overrides',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    businessId: uuid('business_id')
+      .notNull()
+      .references(() => businesses.id, { onDelete: 'cascade' }),
+    membershipId: uuid('membership_id')
+      .notNull()
+      .references(() => memberships.id, { onDelete: 'cascade' }),
+    permission: text('permission').notNull(),
+    allowed: boolean('allowed').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    memberPermUnique: uniqueIndex('membership_permission_overrides_uniq').on(
+      t.membershipId,
+      t.permission,
+    ),
+    businessIdx: index('membership_permission_overrides_business_idx').on(t.businessId),
   }),
 );

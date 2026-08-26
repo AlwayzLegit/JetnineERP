@@ -6,9 +6,11 @@ GHL-style platform layer). Turborepo + pnpm monorepo, Node 22.
 ## Read order (do this before writing code)
 
 1. **`SPRINT-STATUS.md`** — where the active sprint stands and what to do next. Keep it updated.
-2. **`PLAN-STORIS-CUTOVER.md`** — the active 10-day sprint spec: gap analysis, locked
+2. **`PLAN-POS-OPERATIONS.md`** — the active build spec: STORIS-modeled POS/operations
+   modules (owner-confirmed decisions + amendments §0, 9-phase build order).
+3. **`PLAN-STORIS-CUTOVER.md`** — the prior sprint spec: gap analysis, locked
    decisions D1–D10, data model, module/endpoint/UI surfaces, migration pipeline, schedule.
-3. **`PLAN.md`** — the original locked architecture (tenancy, stack, conventions §10,
+4. **`PLAN.md`** — the original locked architecture (tenancy, stack, conventions §10,
    permission model). Decisions in these docs are **locked**: change the doc first, then the code.
 
 `README.md` is a per-epic status log of Phases 0–2. Note its "Deployment (Phase 2.21 —

@@ -30,6 +30,17 @@ interface BusinessSettings {
   receiptHeader: string | null;
   receiptFooter: string | null;
   branding: BusinessBranding | null;
+  ops: OpsSettings | null;
+}
+
+/** PLAN-POS-OPERATIONS operational knobs; all optional, admin-edited. */
+interface OpsSettings {
+  recyclingFeeCents?: number | null;
+  invoiceHeaderNote?: string | null;
+  invoiceFooterNote?: string | null;
+  unlockRoleIds?: string[] | null;
+  deliveryDailyCap?: number | null;
+  poReplyTo?: string | null;
 }
 
 interface UpdateBody {
@@ -45,6 +56,39 @@ interface UpdateBody {
    */
   currencyCode?: string;
   branding?: BusinessBranding;
+  ops?: OpsSettings;
+}
+
+function validateOps(input: OpsSettings): OpsSettings {
+  const out: OpsSettings = {};
+  if (input.recyclingFeeCents !== undefined) {
+    if (
+      input.recyclingFeeCents !== null &&
+      (!Number.isInteger(input.recyclingFeeCents) || input.recyclingFeeCents < 0)
+    ) {
+      throw new BadRequestException('ops.recyclingFeeCents must be a non-negative integer');
+    }
+    out.recyclingFeeCents = input.recyclingFeeCents;
+  }
+  if (input.deliveryDailyCap !== undefined) {
+    if (
+      input.deliveryDailyCap !== null &&
+      (!Number.isInteger(input.deliveryDailyCap) || input.deliveryDailyCap < 1)
+    ) {
+      throw new BadRequestException('ops.deliveryDailyCap must be a positive integer');
+    }
+    out.deliveryDailyCap = input.deliveryDailyCap;
+  }
+  if (input.invoiceHeaderNote !== undefined) out.invoiceHeaderNote = input.invoiceHeaderNote;
+  if (input.invoiceFooterNote !== undefined) out.invoiceFooterNote = input.invoiceFooterNote;
+  if (input.poReplyTo !== undefined) out.poReplyTo = input.poReplyTo;
+  if (input.unlockRoleIds !== undefined) {
+    if (input.unlockRoleIds !== null && !Array.isArray(input.unlockRoleIds)) {
+      throw new BadRequestException('ops.unlockRoleIds must be an array of role ids');
+    }
+    out.unlockRoleIds = input.unlockRoleIds;
+  }
+  return out;
 }
 
 const HEX_COLOR_RE = /^#[0-9a-fA-F]{6}$/;
@@ -184,6 +228,22 @@ export class SettingsController {
       }
     }
 
+    if (body.ops !== undefined) {
+      // Same merge semantics as branding: field-by-field, null clears.
+      const patch = validateOps(body.ops);
+      const current = (existing.opsSettingsJson ?? {}) as OpsSettings;
+      const merged: OpsSettings = { ...current, ...patch };
+      for (const key of Object.keys(merged) as (keyof OpsSettings)[]) {
+        if (merged[key] == null) delete merged[key];
+      }
+      const next = Object.keys(merged).length > 0 ? merged : null;
+      if (JSON.stringify(next) !== JSON.stringify(existing.opsSettingsJson ?? null)) {
+        update.opsSettingsJson = next;
+        before.ops = existing.opsSettingsJson ?? null;
+        after.ops = next;
+      }
+    }
+
     if (Object.keys(after).length === 0) return toSettings(existing);
 
     const [updated] = await this.db
@@ -217,5 +277,6 @@ function toSettings(b: typeof schema.businesses.$inferSelect): BusinessSettings 
     receiptHeader: b.receiptHeader ?? null,
     receiptFooter: b.receiptFooter ?? null,
     branding: (b.brandingJson as BusinessBranding | null) ?? null,
+    ops: (b.opsSettingsJson as OpsSettings | null) ?? null,
   };
 }

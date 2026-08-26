@@ -112,6 +112,9 @@ DECLARE
     'import_rows',
     'integrations',
     'po_line_allocations',
+    'vendor_invoices',
+    'as_is_items',
+    'store_credit_entries',
     'serial_units',
     'payment_plans',
     'payment_plan_installments',
@@ -124,7 +127,9 @@ DECLARE
     'customer_tags',
     'customer_tag_links',
     'customer_segments',
-    'campaigns'
+    'campaigns',
+    'order_sequences',
+    'membership_permission_overrides'
   ];
 BEGIN
   FOREACH t IN ARRAY tenant_tables LOOP

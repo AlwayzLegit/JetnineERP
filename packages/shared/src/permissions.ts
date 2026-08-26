@@ -32,6 +32,7 @@ export const PERMISSIONS = {
 
   'vendors.view': 'View vendors',
   'vendors.manage': 'Create / update / delete vendors',
+  'vendor_invoices.manage': 'Record vendor invoices, match them to POs, and approve them',
 
   'purchase_orders.view': 'View purchase orders',
   'purchase_orders.create': 'Create purchase orders',
@@ -62,6 +63,7 @@ export const PERMISSIONS = {
   'orders.cancel': 'Cancel a sales order',
   'orders.deposit.take': 'Take a deposit or balance payment on an order',
   'orders.complete_with_balance': 'Complete an order that still has a balance due',
+  'orders.unlock': 'Unlock an order locked by a delivery-ticket print (typed reason required)',
 
   'deliveries.view': 'View the delivery calendar and day sheets',
   'deliveries.schedule': 'Schedule / reschedule deliveries',

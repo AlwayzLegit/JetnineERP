@@ -3,7 +3,7 @@
  * on that earlier specs don't already cover (POS sale, order + deposit +
  * delivery + balance live in orders.spec):
  *
- *   1. POS cash sale → refund from the sale detail (stock restored)
+ *   1. POS cash sale → refund from the sale detail (goods go to As-Is)
  *   2. Layaway: order → payment plan → pay an installment
  *   3. Service ticket: intake → labor charge → ready → collect → complete
  *   4. Special order → generate PO → receive → line committed + arrival email
@@ -99,7 +99,7 @@ async function loginAndPickBusiness(page: Page): Promise<void> {
   await page.getByLabel('Password').fill(PASSWORD);
   await page.getByRole('button', { name: 'Sign in' }).click();
   // Generous: on a cold dev server the first compile of /dashboard is slow.
-  await page.waitForURL(/\/(dashboard|business-picker)/, { timeout: 60_000 });
+  await page.waitForURL(/\/(pos|business-picker)/, { timeout: 60_000 });
   await page.evaluate(
     async ({ apiUrl, businessId }) => {
       await fetch(`${apiUrl}/v1/auth/active-business`, {
@@ -128,17 +128,24 @@ test.describe('Day 9 — QA sweep', () => {
     await loginAndPickBusiness(page);
 
     await page.goto('/pos');
-    await page.getByTestId('pos-tab-register').click();
-    await expect(page.getByRole('heading', { name: 'Register' })).toBeVisible();
-    await page.getByPlaceholder(/scan|search/i).fill(variantSku);
-    await page.keyboard.press('Enter');
-    const hit = page.getByText(/Widget/i).first();
+    await expect(page.getByRole('heading', { name: 'New Sale' })).toBeVisible();
+    // Walk-in cash take-with: customer, product, cash covering the total —
+    // the fast lane posts a plain register sale.
+    await page.getByRole('button', { name: 'New customer' }).click();
+    await page.getByPlaceholder('First name').fill('Cash');
+    await page.getByPlaceholder('Last name').fill('Walkin');
+    await page.getByTestId('create-customer').click();
+    await page.getByTestId('add-product').click();
+    await page.getByTestId('product-query').fill(variantSku);
+    const hit = page.getByTestId('product-result').first();
     await expect(hit).toBeVisible();
     await hit.click();
-    await page.getByRole('button', { name: /^Pay/ }).click();
-    await page.getByLabel(/Cash tendered/i).fill('10.00');
-    await page.getByRole('button', { name: /Confirm payment/i }).click();
-    await expect(page.getByRole('heading', { name: /Sale complete/i })).toBeVisible({
+    await page.getByTestId('fulfillment-method').selectOption('take_with');
+    await page.getByTestId('pay-method').selectOption('cash');
+    await page.getByTestId('pay-amount').fill('10.00');
+    await page.getByTestId('add-payment').click();
+    await page.getByTestId('complete-sale').click();
+    await expect(page.getByRole('heading', { name: /complete/i })).toBeVisible({
       timeout: 15_000,
     });
 
@@ -232,11 +239,14 @@ test.describe('Day 9 — QA sweep', () => {
       .then((r) => r.json())) as { data?: { id: string }[] } | { id: string }[];
     const poId = Array.isArray(pos) ? pos[0]!.id : pos.data![0]!.id;
     await page.goto(`/purchase-orders/${poId}`);
-    await page.locator('table input[type="number"]').first().fill('1');
+    // Staged receiving (P6): dock → inspected → accepted in one submit.
+    await page.getByTestId('stage-received').first().fill('1');
+    await page.getByTestId('stage-inspected').first().fill('1');
+    await page.getByTestId('stage-accepted').first().fill('1');
     const receiveDone = page.waitForResponse(
-      (res) => res.url().includes('/receive') && res.request().method() === 'POST',
+      (res) => res.url().includes('/receiving') && res.request().method() === 'POST',
     );
-    await page.getByRole('button', { name: 'Record receipt' }).click();
+    await page.getByTestId('record-receiving').click();
     // The 201 is the synchronization point: handleReceipt (stock,
     // allocations, reservations, arrival email) runs before it returns.
     expect((await receiveDone).status()).toBe(201);

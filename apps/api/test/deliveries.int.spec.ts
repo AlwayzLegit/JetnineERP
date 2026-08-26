@@ -393,3 +393,87 @@ describe('Day 3 — deliveries: schedule, deliver, collect, complete', () => {
     expect(after.onHand).toBe(before.onHand - 1);
   });
 });
+
+describe('Dispatch: capacity cap + zip routes (PLAN-POS-OPERATIONS P5)', () => {
+  // Far-future date so the Day-3 suite's bookings never count here.
+  const capDay = '2027-03-15';
+
+  async function makeDeliveryOrder(): Promise<string> {
+    const res = await ownerReq()
+      .post('/v1/orders')
+      .send({
+        locationId,
+        customerId,
+        fulfillmentType: 'delivery',
+        address: { line1: '1 Route St', city: 'Glendale', region: 'CA', postalCode: '91205' },
+        lines: [{ variantId: mattressVariantId, quantity: 1 }],
+        confirm: true,
+      });
+    expect(res.status).toBe(201);
+    return res.body.id;
+  }
+
+  it('routes auto-suggest from the ship-to zip and stay editable', async () => {
+    const orderId = await makeDeliveryOrder();
+    const res = await ownerReq()
+      .post(`/v1/orders/${orderId}/deliveries`)
+      .send({ scheduledDate: capDay });
+    expect(res.status).toBe(201);
+    expect(res.body.route).toBe('912xx'); // 91205 → 912xx
+
+    const renamed = await ownerReq()
+      .patch(`/v1/deliveries/${res.body.id}`)
+      .send({ route: 'Glendale AM' });
+    expect(renamed.status).toBe(200);
+    expect(renamed.body.route).toBe('Glendale AM');
+  });
+
+  it('soft cap: 409 without confirm, booked with confirm, override in the owner feed', async () => {
+    // Shrink the cap to 2 so the test doesn't need 15 bookings.
+    const ops = await ownerReq()
+      .patch('/v1/business/settings')
+      .send({ ops: { deliveryDailyCap: 2 } });
+    expect(ops.status).toBe(200);
+
+    // One trip already exists on capDay from the route test → book the 2nd.
+    const secondOrder = await makeDeliveryOrder();
+    const second = await ownerReq()
+      .post(`/v1/orders/${secondOrder}/deliveries`)
+      .send({ scheduledDate: capDay });
+    expect(second.status).toBe(201);
+
+    const cap = await ownerReq().get(`/v1/deliveries/capacity?from=${capDay}&to=${capDay}`);
+    expect(cap.status).toBe(200);
+    expect(cap.body.cap).toBe(2);
+    expect(cap.body.days).toEqual([{ date: capDay, booked: 2, remaining: 0 }]);
+
+    // Third booking: refused plainly, allowed with the override flag.
+    const thirdOrder = await makeDeliveryOrder();
+    const refused = await ownerReq()
+      .post(`/v1/orders/${thirdOrder}/deliveries`)
+      .send({ scheduledDate: capDay });
+    expect(refused.status).toBe(409);
+    expect(refused.body.message).toMatch(/at capacity \(2\/2/);
+
+    const overridden = await ownerReq()
+      .post(`/v1/orders/${thirdOrder}/deliveries`)
+      .send({ scheduledDate: capDay, confirmOverCapacity: true });
+    expect(overridden.status).toBe(201);
+
+    const feed = await ownerReq().get('/v1/notifications?limit=50');
+    expect(feed.status).toBe(200);
+    const hit = feed.body.data.find(
+      (n: { action: string; orderId: string | null }) =>
+        n.action === 'delivery.cap_override' && n.orderId === thirdOrder,
+    );
+    expect(hit).toBeTruthy();
+    expect(hit.label).toBe('Delivery booked over capacity');
+    expect(hit.changesJson?.metadata?.cap).toBe(2);
+    expect(hit.changesJson?.metadata?.scheduledDate).toBe(capDay);
+
+    // Restore the default cap for anything running after this suite.
+    await ownerReq()
+      .patch('/v1/business/settings')
+      .send({ ops: { deliveryDailyCap: null } });
+  });
+});

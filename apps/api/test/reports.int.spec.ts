@@ -403,13 +403,13 @@ describe('Epic 1.11 — Reports & cash drawer', () => {
       .set('Cookie', ownerCookie)
       .set('X-Business-Id', businessId);
     expect(res.status).toBe(200);
-    // Widget: 18 on hand × cost 400 / price 1000. Gadget: back to 2 on
-    // hand (sold 1, then the refund test restocked it) × 200 / 500.
+    // Widget: 18 on hand × cost 400 / price 1000. Gadget: 1 on hand —
+    // the refunded unit sits in As-Is review (P8, §10), not in stock.
     const widget = res.body.rows.find((r: { sku: string }) => r.sku === 'A-1');
     expect(widget.costValueCents).toBe(18 * 400);
     expect(widget.retailValueCents).toBe(18 * 1000);
-    expect(res.body.totalCostValueCents).toBe(18 * 400 + 2 * 200);
-    expect(res.body.totalRetailValueCents).toBe(18 * 1000 + 2 * 500);
+    expect(res.body.totalCostValueCents).toBe(18 * 400 + 1 * 200);
+    expect(res.body.totalRetailValueCents).toBe(18 * 1000 + 1 * 500);
 
     const cashierRes = await request(app.getHttpServer())
       .get('/v1/reports/inventory/valuation')

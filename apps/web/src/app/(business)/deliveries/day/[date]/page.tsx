@@ -72,6 +72,15 @@ export default function DaySheetPage() {
               <Printer size={14} aria-hidden />
               Print
             </Button>
+            <LinkButton
+              href={`/print/deliveries?date=${date}`}
+              variant="secondary"
+              size="sm"
+              data-testid="print-all-tickets"
+            >
+              <Printer size={13} aria-hidden />
+              All tickets (no lock)
+            </LinkButton>
             <LinkButton href="/deliveries" variant="ghost" size="sm">
               ← Calendar
             </LinkButton>

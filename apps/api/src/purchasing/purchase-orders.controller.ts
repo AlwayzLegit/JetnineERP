@@ -17,6 +17,7 @@ import { AuditService } from '../audit/audit.service';
 import { CurrentTenant, CurrentUser } from '../auth/current-user.decorator';
 import type { CurrentUserPayload } from '../auth/current-user.decorator';
 import { DRIZZLE } from '../database/database.module';
+import { EmailService } from '../email/email.service';
 import { SpecialOrdersService } from '../special-orders/special-orders.service';
 import { WebhookDispatcher } from '../webhooks/webhook-dispatcher.service';
 import { RequirePermission, TenantScoped } from '../tenancy/decorators';
@@ -26,6 +27,13 @@ interface PoLineInput {
   variantId?: string;
   quantity?: number;
   unitCostCents?: number;
+  /**
+   * §6: when this line buys stock for a specific customer order line
+   * (the builder's "sold-not-in-stock" pre-load), the allocation is
+   * written so the sales order # rides on the PO and receipt commits
+   * the units to that customer.
+   */
+  orderLineId?: string;
 }
 
 interface CreatePoBody {
@@ -45,6 +53,21 @@ interface CreatePoBody {
 interface ReceivePoBody {
   notes?: string | null;
   lines?: { lineId?: string; quantity?: number }[];
+}
+
+/**
+ * Staged receiving (§6): each entry is an *increment* to one or more
+ * stages of one line. Invariant per line at all times:
+ *   ordered ≥ received ≥ inspected ≥ accepted.
+ */
+interface ReceiveStagesBody {
+  notes?: string | null;
+  lines?: {
+    lineId?: string;
+    received?: number;
+    inspected?: number;
+    accepted?: number;
+  }[];
 }
 
 interface PoListRow {
@@ -71,8 +94,12 @@ interface PoLineRow {
   vendorSku: string | null;
   quantityOrdered: number;
   quantityReceived: number;
+  quantityInspected: number;
+  quantityAccepted: number;
   unitCostCents: number;
   lineTotalCents: number;
+  /** §6: units on this line bought for specific customer orders. */
+  linkedOrders: { orderId: string; orderNumber: string; quantity: number }[];
 }
 
 interface PoDetail extends PoListRow {
@@ -80,9 +107,13 @@ interface PoDetail extends PoListRow {
   createdByUserId: string | null;
   /** Ship-to + vendor contact block for the printable vendor document. */
   locationName: string | null;
+  locationAddressJson: unknown;
   vendorContactName: string | null;
   vendorEmail: string | null;
   vendorPhone: string | null;
+  /** Letterhead for the printed / emailed document. */
+  businessName: string | null;
+  businessLogoUrl: string | null;
   lines: PoLineRow[];
 }
 
@@ -94,6 +125,7 @@ export class PurchaseOrdersController {
     @Inject(AuditService) private readonly audit: AuditService,
     @Inject(WebhookDispatcher) private readonly webhooks: WebhookDispatcher,
     @Inject(SpecialOrdersService) private readonly specialOrders: SpecialOrdersService,
+    @Inject(EmailService) private readonly email: EmailService,
   ) {}
 
   @Get()
@@ -311,16 +343,43 @@ export class PurchaseOrdersController {
       .returning();
     if (!po) throw new BadRequestException('failed to create purchase order');
 
-    await this.db.insert(schema.purchaseOrderLines).values(
-      body.lines.map((l) => ({
-        businessId: tenant.businessId!,
-        purchaseOrderId: po.id,
-        variantId: l.variantId!,
-        quantityOrdered: l.quantity!,
-        unitCostCents: l.unitCostCents!,
-        lineTotalCents: l.quantity! * l.unitCostCents!,
-      })),
-    );
+    for (const l of body.lines) {
+      const [poLine] = await this.db
+        .insert(schema.purchaseOrderLines)
+        .values({
+          businessId: tenant.businessId!,
+          purchaseOrderId: po.id,
+          variantId: l.variantId!,
+          quantityOrdered: l.quantity!,
+          unitCostCents: l.unitCostCents!,
+          lineTotalCents: l.quantity! * l.unitCostCents!,
+        })
+        .returning();
+      if (l.orderLineId && poLine) {
+        const [orderLine] = await this.db
+          .select({
+            id: schema.orderLines.id,
+            variantId: schema.orderLines.variantId,
+            quantity: schema.orderLines.quantity,
+          })
+          .from(schema.orderLines)
+          .where(eq(schema.orderLines.id, l.orderLineId))
+          .limit(1);
+        if (!orderLine) throw new NotFoundException(`Order line not found: ${l.orderLineId}`);
+        if (orderLine.variantId !== l.variantId) {
+          throw new BadRequestException(
+            'lines[].orderLineId must reference an order line for the same variant',
+          );
+        }
+        await this.db.insert(schema.poLineAllocations).values({
+          businessId: tenant.businessId!,
+          poLineId: poLine.id,
+          orderLineId: orderLine.id,
+          quantity: Math.min(l.quantity!, orderLine.quantity),
+          status: 'ordered',
+        });
+      }
+    }
 
     await this.audit.log({
       action: 'purchase_order.create',
@@ -395,92 +454,208 @@ export class PurchaseOrdersController {
       validated.push({ line, qty: r.quantity! });
     }
 
-    let totalReceivedThisTx = 0;
-    for (const v of validated) {
-      // Inventory ledger row.
-      await this.db.insert(schema.inventoryMovements).values({
-        businessId: tenant.businessId!,
-        variantId: v.line.variantId,
-        locationId: po.locationId,
-        delta: v.qty,
-        reason: 'receive_po',
-        referenceType: 'purchase_order',
-        referenceId: po.id,
-        actorUserId: actor.id,
-        notes: body.notes ?? null,
-      });
-      // Inventory level upsert (mirrors the manual /v1/inventory/receive).
-      await this.db
-        .insert(schema.inventoryLevels)
-        .values({
+    // Fast path: dock receipt, inspection, and acceptance in one step.
+    // The staged endpoint below is the granular §6 flow; this one keeps
+    // the one-click "it all arrived fine" behavior.
+    return this.applyReceiving(
+      tenant,
+      actor,
+      po,
+      validated.map((v) => ({ line: v.line, received: v.qty, inspected: v.qty, accepted: v.qty })),
+      body.notes ?? null,
+    );
+  }
+
+  /**
+   * Staged receiving (§6): one screen, per line Received → Inspected →
+   * Accepted, each an increment. Stock and the linked sales-order
+   * reservations move only at ACCEPT; dock receipt and inspection are
+   * bookkeeping until then. The PO auto-completes only when every line
+   * is fully accepted.
+   */
+  @Post(':id/receiving')
+  @RequirePermission('purchase_orders.receive')
+  async receiveStages(
+    @CurrentTenant() tenant: RequestTenantContext,
+    @CurrentUser() actor: CurrentUserPayload,
+    @Param('id') id: string,
+    @Body() body: ReceiveStagesBody,
+  ): Promise<PoDetail> {
+    if (!body.lines || body.lines.length === 0) {
+      throw new BadRequestException('lines must contain at least one entry');
+    }
+    const [po] = await this.db
+      .select()
+      .from(schema.purchaseOrders)
+      .where(eq(schema.purchaseOrders.id, id))
+      .limit(1);
+    if (!po) throw new NotFoundException('Purchase order not found');
+    if (po.status !== 'ordered' && po.status !== 'partially_received') {
+      throw new ForbiddenException(`Cannot receive against a ${po.status} purchase order`);
+    }
+
+    const lines = await this.db
+      .select()
+      .from(schema.purchaseOrderLines)
+      .where(eq(schema.purchaseOrderLines.purchaseOrderId, id));
+    const byId = new Map(lines.map((l) => [l.id, l]));
+
+    const seen = new Set<string>();
+    const entries: {
+      line: (typeof lines)[number];
+      received: number;
+      inspected: number;
+      accepted: number;
+    }[] = [];
+    for (const r of body.lines) {
+      if (!r.lineId) throw new BadRequestException('lines[].lineId is required');
+      if (seen.has(r.lineId)) {
+        throw new BadRequestException(`Duplicate lineId in request: ${r.lineId}`);
+      }
+      seen.add(r.lineId);
+      const line = byId.get(r.lineId);
+      if (!line) throw new NotFoundException(`PO line not found: ${r.lineId}`);
+      const inc = (v: number | undefined, name: string): number => {
+        if (v === undefined) return 0;
+        if (!Number.isInteger(v) || v < 0) {
+          throw new BadRequestException(`lines[].${name} must be a non-negative integer`);
+        }
+        return v;
+      };
+      const received = inc(r.received, 'received');
+      const inspected = inc(r.inspected, 'inspected');
+      const accepted = inc(r.accepted, 'accepted');
+      if (received + inspected + accepted === 0) {
+        throw new BadRequestException('Each line needs at least one stage increment');
+      }
+      // Invariant after the increments: ordered ≥ received ≥ inspected ≥ accepted.
+      const nextReceived = line.quantityReceived + received;
+      const nextInspected = line.quantityInspected + inspected;
+      const nextAccepted = line.quantityAccepted + accepted;
+      if (nextReceived > line.quantityOrdered) {
+        throw new BadRequestException(
+          `Cannot receive ${received}: only ${line.quantityOrdered - line.quantityReceived} of ${line.quantityOrdered} remaining`,
+        );
+      }
+      if (nextInspected > nextReceived) {
+        throw new BadRequestException('Cannot inspect more units than have been received');
+      }
+      if (nextAccepted > nextInspected) {
+        throw new BadRequestException('Cannot accept more units than have been inspected');
+      }
+      entries.push({ line, received, inspected, accepted });
+    }
+
+    return this.applyReceiving(tenant, actor, po, entries, body.notes ?? null);
+  }
+
+  /**
+   * Shared receiving core. Bumps the three stage counters; the accepted
+   * increment is the only one that moves stock (inventory ledger + level
+   * upsert) and walks the special-order allocations (G3) so linked
+   * sales-order lines flip to Reserved and the customer gets the "your
+   * item is in" email. Completion = every line fully ACCEPTED.
+   */
+  private async applyReceiving(
+    tenant: RequestTenantContext,
+    actor: CurrentUserPayload,
+    po: typeof schema.purchaseOrders.$inferSelect,
+    entries: {
+      line: typeof schema.purchaseOrderLines.$inferSelect;
+      received: number;
+      inspected: number;
+      accepted: number;
+    }[],
+    notes: string | null,
+  ): Promise<PoDetail> {
+    let unitsReceived = 0;
+    let unitsAccepted = 0;
+    for (const e of entries) {
+      if (e.accepted > 0) {
+        await this.db.insert(schema.inventoryMovements).values({
           businessId: tenant.businessId!,
-          variantId: v.line.variantId,
+          variantId: e.line.variantId,
           locationId: po.locationId,
-          onHand: v.qty,
-        })
-        .onConflictDoUpdate({
-          target: [schema.inventoryLevels.variantId, schema.inventoryLevels.locationId],
-          set: {
-            onHand: sql`${schema.inventoryLevels.onHand} + ${v.qty}`,
-            updatedAt: new Date(),
-          },
+          delta: e.accepted,
+          reason: 'receive_po',
+          referenceType: 'purchase_order',
+          referenceId: po.id,
+          actorUserId: actor.id,
+          notes,
         });
-      // Bump the PO line counter.
+        await this.db
+          .insert(schema.inventoryLevels)
+          .values({
+            businessId: tenant.businessId!,
+            variantId: e.line.variantId,
+            locationId: po.locationId,
+            onHand: e.accepted,
+          })
+          .onConflictDoUpdate({
+            target: [schema.inventoryLevels.variantId, schema.inventoryLevels.locationId],
+            set: {
+              onHand: sql`${schema.inventoryLevels.onHand} + ${e.accepted}`,
+              updatedAt: new Date(),
+            },
+          });
+      }
       await this.db
         .update(schema.purchaseOrderLines)
         .set({
-          quantityReceived: v.line.quantityReceived + v.qty,
+          quantityReceived: e.line.quantityReceived + e.received,
+          quantityInspected: e.line.quantityInspected + e.inspected,
+          quantityAccepted: e.line.quantityAccepted + e.accepted,
         })
-        .where(eq(schema.purchaseOrderLines.id, v.line.id));
-
-      // Special-order loop (G3): units bought FOR a customer commit to
-      // that customer the moment they hit the dock, and they get the
-      // "your item is in" email.
-      await this.specialOrders.handleReceipt(this.db, {
-        businessId: tenant.businessId!,
-        poLineId: v.line.id,
-        locationId: po.locationId,
-        quantity: v.qty,
-        actorUserId: actor.id ?? null,
-      });
-      totalReceivedThisTx += v.qty;
+        .where(eq(schema.purchaseOrderLines.id, e.line.id));
+      if (e.accepted > 0) {
+        await this.specialOrders.handleReceipt(this.db, {
+          businessId: tenant.businessId!,
+          poLineId: e.line.id,
+          locationId: po.locationId,
+          quantity: e.accepted,
+          actorUserId: actor.id ?? null,
+        });
+      }
+      unitsReceived += e.received;
+      unitsAccepted += e.accepted;
     }
 
-    // Recompute status: all lines fully received → 'received'; else
-    // 'partially_received'. We re-read the lines because we just
-    // mutated them.
+    // §6: the PO auto-completes only when every line is fully accepted;
+    // anything short of that is a partial receipt with "X of Y remaining".
     const refreshed = await this.db
       .select({
         ordered: schema.purchaseOrderLines.quantityOrdered,
         received: schema.purchaseOrderLines.quantityReceived,
+        accepted: schema.purchaseOrderLines.quantityAccepted,
       })
       .from(schema.purchaseOrderLines)
-      .where(eq(schema.purchaseOrderLines.purchaseOrderId, id));
-    const fullyReceived = refreshed.every((l) => l.received >= l.ordered);
-    const nextStatus = fullyReceived ? 'received' : 'partially_received';
-    const closedAt = fullyReceived ? new Date() : null;
+      .where(eq(schema.purchaseOrderLines.purchaseOrderId, po.id));
+    const fullyAccepted = refreshed.every((l) => l.accepted >= l.ordered);
+    const nextStatus = fullyAccepted ? 'received' : 'partially_received';
+    const closedAt = fullyAccepted ? new Date() : null;
     await this.db
       .update(schema.purchaseOrders)
       .set({ status: nextStatus, closedAt, updatedAt: new Date() })
-      .where(eq(schema.purchaseOrders.id, id));
+      .where(eq(schema.purchaseOrders.id, po.id));
 
     await this.audit.log({
       action: 'purchase_order.receive',
       targetType: 'purchase_order',
-      targetId: id,
+      targetId: po.id,
       after: {
         status: nextStatus,
-        unitsReceived: totalReceivedThisTx,
-        lineCount: validated.length,
+        unitsReceived,
+        unitsAccepted,
+        lineCount: entries.length,
       },
     });
 
-    if (fullyReceived) {
+    if (fullyAccepted) {
       void this.webhooks.fire({
         businessId: tenant.businessId!,
         eventType: 'purchase_order.received',
         payload: {
-          purchaseOrderId: id,
+          purchaseOrderId: po.id,
           number: po.number,
           vendorId: po.vendorId,
           locationId: po.locationId,
@@ -488,7 +663,7 @@ export class PurchaseOrdersController {
         },
       });
     }
-    return this.hydrate(id);
+    return this.hydrate(po.id);
   }
 
   @Post(':id/cancel')
@@ -521,6 +696,84 @@ export class PurchaseOrdersController {
     return this.hydrate(id);
   }
 
+  /**
+   * §6: email the PO to the vendor from the system. Replies route to
+   * the admin-set ops.poReplyTo when configured. The email body is the
+   * same data the printable document renders — vendor SKU, quantities,
+   * costs, and the linked sales order #s so the vendor sees which units
+   * are customer-committed.
+   */
+  @Post(':id/email')
+  @RequirePermission('purchase_orders.create')
+  async emailToVendor(
+    @CurrentTenant() tenant: RequestTenantContext,
+    @Param('id') id: string,
+  ): Promise<{ sent: true; to: string }> {
+    const po = await this.hydrate(id);
+    if (po.status === 'draft') {
+      throw new BadRequestException('Place the purchase order before emailing it');
+    }
+    if (!po.vendorEmail) {
+      throw new BadRequestException('This vendor has no email address on file');
+    }
+
+    const [biz] = await this.db
+      .select({ opsSettingsJson: schema.businesses.opsSettingsJson })
+      .from(schema.businesses)
+      .where(eq(schema.businesses.id, tenant.businessId!))
+      .limit(1);
+    const ops = (biz?.opsSettingsJson ?? {}) as { poReplyTo?: string };
+
+    const money = (cents: number) => `$${(cents / 100).toFixed(2)}`;
+    const rows = po.lines
+      .map((l) => {
+        const linked =
+          l.linkedOrders.length > 0
+            ? `<br/><small>For sales order(s): ${l.linkedOrders
+                .map((o) => `${escapeHtml(o.orderNumber)} ×${o.quantity}`)
+                .join(', ')}</small>`
+            : '';
+        return `<tr><td>${escapeHtml(l.vendorSku ?? l.sku ?? '')}</td><td>${escapeHtml(
+          l.productName,
+        )}${l.variantName ? ` — ${escapeHtml(l.variantName)}` : ''}${linked}</td><td align="right">${
+          l.quantityOrdered
+        }</td><td align="right">${money(l.unitCostCents)}</td><td align="right">${money(
+          l.lineTotalCents,
+        )}</td></tr>`;
+      })
+      .join('');
+    const html = `
+      <h2>Purchase Order ${escapeHtml(po.number)}</h2>
+      <p>From: ${escapeHtml(po.businessName ?? '')}<br/>
+      Ship to: ${escapeHtml(po.locationName ?? '')}<br/>
+      ${po.expectedAt ? `Expected: ${new Date(po.expectedAt).toISOString().slice(0, 10)}` : ''}</p>
+      <table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse">
+        <tr><th>SKU</th><th>Item</th><th>Qty</th><th>Unit cost</th><th>Total</th></tr>
+        ${rows}
+        <tr><td colspan="4" align="right"><strong>Subtotal</strong></td><td align="right"><strong>${money(
+          po.subtotalCents,
+        )}</strong></td></tr>
+      </table>
+      ${po.notes ? `<p>${escapeHtml(po.notes)}</p>` : ''}
+    `;
+
+    await this.email.send({
+      to: po.vendorEmail,
+      subject: `Purchase Order ${po.number} — ${po.businessName ?? ''}`.trim(),
+      html,
+      text: `Purchase Order ${po.number}. ${po.lines.length} line(s), subtotal ${money(po.subtotalCents)}.`,
+      replyTo: ops.poReplyTo || undefined,
+    });
+
+    await this.audit.log({
+      action: 'purchase_order.email',
+      targetType: 'purchase_order',
+      targetId: id,
+      metadata: { to: po.vendorEmail, replyTo: ops.poReplyTo ?? null },
+    });
+    return { sent: true, to: po.vendorEmail };
+  }
+
   private async hydrate(id: string): Promise<PoDetail> {
     const [po] = await this.db
       .select({
@@ -534,6 +787,9 @@ export class PurchaseOrdersController {
         vendorPhone: schema.vendors.phone,
         locationId: schema.purchaseOrders.locationId,
         locationName: schema.locations.name,
+        locationAddressJson: schema.locations.addressJson,
+        businessName: schema.businesses.name,
+        businessBrandingJson: schema.businesses.brandingJson,
         expectedAt: schema.purchaseOrders.expectedAt,
         placedAt: schema.purchaseOrders.placedAt,
         closedAt: schema.purchaseOrders.closedAt,
@@ -545,6 +801,7 @@ export class PurchaseOrdersController {
       .from(schema.purchaseOrders)
       .leftJoin(schema.vendors, eq(schema.vendors.id, schema.purchaseOrders.vendorId))
       .leftJoin(schema.locations, eq(schema.locations.id, schema.purchaseOrders.locationId))
+      .leftJoin(schema.businesses, eq(schema.businesses.id, schema.purchaseOrders.businessId))
       .where(eq(schema.purchaseOrders.id, id))
       .limit(1);
     if (!po) throw new NotFoundException('Purchase order not found');
@@ -559,6 +816,8 @@ export class PurchaseOrdersController {
         vendorSku: schema.productVariants.vendorSku,
         quantityOrdered: schema.purchaseOrderLines.quantityOrdered,
         quantityReceived: schema.purchaseOrderLines.quantityReceived,
+        quantityInspected: schema.purchaseOrderLines.quantityInspected,
+        quantityAccepted: schema.purchaseOrderLines.quantityAccepted,
         unitCostCents: schema.purchaseOrderLines.unitCostCents,
         lineTotalCents: schema.purchaseOrderLines.lineTotalCents,
       })
@@ -570,11 +829,53 @@ export class PurchaseOrdersController {
       .innerJoin(schema.products, eq(schema.products.id, schema.productVariants.productId))
       .where(eq(schema.purchaseOrderLines.purchaseOrderId, id));
 
+    // §6: every PO line bought for a customer order carries that sales
+    // order # — resolved through the special-order allocations.
+    const linkedByLine = new Map<
+      string,
+      { orderId: string; orderNumber: string; quantity: number }[]
+    >();
+    if (lines.length > 0) {
+      const allocs = await this.db
+        .select({
+          poLineId: schema.poLineAllocations.poLineId,
+          quantity: schema.poLineAllocations.quantity,
+          status: schema.poLineAllocations.status,
+          orderId: schema.orderLines.orderId,
+          orderNumber: schema.orders.number,
+        })
+        .from(schema.poLineAllocations)
+        .innerJoin(
+          schema.orderLines,
+          eq(schema.orderLines.id, schema.poLineAllocations.orderLineId),
+        )
+        .innerJoin(schema.orders, eq(schema.orders.id, schema.orderLines.orderId))
+        .where(
+          inArray(
+            schema.poLineAllocations.poLineId,
+            lines.map((l) => l.id),
+          ),
+        );
+      for (const a of allocs) {
+        if (a.status === 'cancelled') continue;
+        const list = linkedByLine.get(a.poLineId) ?? [];
+        const existing = list.find((o) => o.orderId === a.orderId);
+        if (existing) existing.quantity += a.quantity;
+        else list.push({ orderId: a.orderId, orderNumber: a.orderNumber, quantity: a.quantity });
+        linkedByLine.set(a.poLineId, list);
+      }
+    }
+
+    const branding = (po.businessBrandingJson ?? {}) as { logoUrl?: string; publicName?: string };
+    const { businessBrandingJson: _branding, ...rest } = po;
     return {
-      ...po,
+      ...rest,
+      businessName: branding.publicName ?? po.businessName ?? null,
+      businessLogoUrl: branding.logoUrl ?? null,
       lines: lines.map((l) => ({
         ...l,
         productName: l.productName ?? '(deleted)',
+        linkedOrders: linkedByLine.get(l.id) ?? [],
       })),
     };
   }
@@ -615,6 +916,14 @@ export class PurchaseOrdersController {
       .toString()
       .padStart(6, '0')}`;
   }
+}
+
+function escapeHtml(raw: string): string {
+  return raw
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;');
 }
 
 function clampLimit(raw: string | undefined, def: number): number {

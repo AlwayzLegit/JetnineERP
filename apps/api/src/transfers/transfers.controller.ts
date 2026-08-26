@@ -75,6 +75,10 @@ interface LineRow {
 interface Detail extends ListRow {
   notes: string | null;
   createdByUserId: string | null;
+  /** From/to store blocks + letterhead for the printed ticket (§11). */
+  fromLocationAddressJson: unknown;
+  toLocationAddressJson: unknown;
+  businessName: string | null;
   lines: LineRow[];
 }
 
@@ -499,8 +503,11 @@ export class TransfersController {
         status: schema.stockTransfers.status,
         fromLocationId: schema.stockTransfers.fromLocationId,
         fromLocationName: fromLoc.name,
+        fromLocationAddressJson: fromLoc.addressJson,
         toLocationId: schema.stockTransfers.toLocationId,
         toLocationName: toLoc.name,
+        toLocationAddressJson: toLoc.addressJson,
+        businessName: schema.businesses.name,
         shippedAt: schema.stockTransfers.shippedAt,
         receivedAt: schema.stockTransfers.receivedAt,
         canceledAt: schema.stockTransfers.canceledAt,
@@ -511,6 +518,7 @@ export class TransfersController {
       .from(schema.stockTransfers)
       .leftJoin(fromLoc, eq(fromLoc.id, schema.stockTransfers.fromLocationId))
       .leftJoin(toLoc, eq(toLoc.id, schema.stockTransfers.toLocationId))
+      .leftJoin(schema.businesses, eq(schema.businesses.id, schema.stockTransfers.businessId))
       .where(eq(schema.stockTransfers.id, id))
       .limit(1);
     if (!row) throw new NotFoundException('Transfer not found');
