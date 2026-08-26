@@ -8,10 +8,11 @@ import { OrderReturnsController } from './order-returns.controller';
 import { OrderReturnsService } from './order-returns.service';
 import { StoreCreditController } from './store-credit.controller';
 import { StoreCreditService } from './store-credit.service';
+import { WriteOffsController } from './write-offs.controller';
 
 @Module({
   imports: [AuthModule, TenancyModule, AuditModule, ControlsModule],
-  controllers: [AsIsController, OrderReturnsController, StoreCreditController],
+  controllers: [AsIsController, OrderReturnsController, StoreCreditController, WriteOffsController],
   providers: [StoreCreditService, OrderReturnsService],
   exports: [StoreCreditService, OrderReturnsService],
 })

@@ -37,8 +37,10 @@ let app: INestApplication;
 let businessId = '';
 let locationId = '';
 let customerId = '';
+let variantId = '';
 let managerCookie = '';
 let cashierCookie = '';
+let clerkCookie = '';
 
 async function resetTestDb() {
   const env = { ...process.env, DATABASE_URL: TEST_DB_URL };
@@ -100,12 +102,29 @@ async function seed() {
     await makeUser('manager@ctrl-test.local', 'Manager');
     await makeUser('cashier@ctrl-test.local', 'Cashier');
     await makeUser('cashier2@ctrl-test.local', 'Cashier');
+    await makeUser('clerk@ctrl-test.local', 'Inventory Clerk');
 
     const [loc] = await db
       .insert(schema.locations)
       .values({ businessId, name: 'Main Store', timezone: 'America/Los_Angeles' })
       .returning();
     locationId = loc!.id;
+
+    const [p] = await db
+      .insert(schema.products)
+      .values({ businessId, sku: 'CTRL-BED', name: 'Controls Fixture Bed' })
+      .returning();
+    const [v] = await db
+      .insert(schema.productVariants)
+      .values({
+        businessId,
+        productId: p!.id,
+        sku: 'CTRL-BED-V1',
+        priceCents: 80000,
+        costCents: 30000,
+      })
+      .returning();
+    variantId = v!.id;
 
     const [cust] = await db
       .insert(schema.customers)
@@ -183,6 +202,7 @@ beforeAll(async () => {
 
   managerCookie = await captureCookie('manager@ctrl-test.local');
   cashierCookie = await captureCookie('cashier@ctrl-test.local');
+  clerkCookie = await captureCookie('clerk@ctrl-test.local');
 });
 
 afterAll(async () => {
@@ -450,5 +470,164 @@ describe('G2 — coded reasons on price adjustments', () => {
       .set('x-business-id', businessId)
       .send({ amountCents: 500, reasonCodeId: code.body.id, refundMethod: 'store_credit' })
       .expect(201);
+  });
+});
+
+describe('G4 — scrap is a write-off; vendor returns carry an R/A', () => {
+  function as(cookie: string) {
+    return {
+      post: (url: string) =>
+        request(app.getHttpServer())
+          .post(url)
+          .set('Cookie', cookie)
+          .set('x-business-id', businessId),
+      get: (url: string) =>
+        request(app.getHttpServer())
+          .get(url)
+          .set('Cookie', cookie)
+          .set('x-business-id', businessId),
+    };
+  }
+
+  async function makeAsIsItem(quantity: number): Promise<string> {
+    const res = await as(clerkCookie)
+      .post('/v1/as-is')
+      .send({ variantId, locationId, quantity, source: 'defect' });
+    expect(res.status).toBe(201);
+    return res.body.id;
+  }
+
+  it('a clerk (no inventory.write_off) hits OVERRIDE_REQUIRED on scrap; manager credentials clear it', async () => {
+    const itemId = await makeAsIsItem(2);
+
+    const blocked = await as(clerkCookie)
+      .post(`/v1/as-is/${itemId}/review`)
+      .send({ action: 'scrap', reason: 'water damage' });
+    expect(blocked.status).toBe(403);
+    expect(blocked.body.code).toBe('OVERRIDE_REQUIRED');
+    expect(blocked.body.permission).toBe('inventory.write_off');
+
+    const ok = await as(clerkCookie)
+      .post(`/v1/as-is/${itemId}/review`)
+      .send({
+        action: 'scrap',
+        reason: 'water damage',
+        override: {
+          email: 'manager@ctrl-test.local',
+          password: PASSWORD,
+          reason: 'water damage',
+        },
+      });
+    expect(ok.status).toBe(201);
+    expect(ok.body.status).toBe('scrapped');
+
+    // Valued at cost on the register: 2 × $300.00.
+    const register = await as(managerCookie).get('/v1/write-offs?days=7');
+    expect(register.status).toBe(200);
+    const row = register.body.rows.find(
+      (r: { totalCostCents: number }) => r.totalCostCents === 60000,
+    );
+    expect(row).toBeTruthy();
+    expect(row.quantity).toBe(2);
+    expect(row.unitCostCents).toBe(30000);
+    expect(register.body.totalCostCents).toBeGreaterThanOrEqual(60000);
+  });
+
+  it('a manager scraps directly — no override row, but the write-off lands in the exception register', async () => {
+    const itemId = await makeAsIsItem(1);
+    await as(managerCookie)
+      .post(`/v1/as-is/${itemId}/review`)
+      .send({ action: 'scrap', reason: 'floor model destroyed' })
+      .expect(201);
+    const exceptions = await as(managerCookie).get('/v1/exceptions?type=write_off');
+    expect(exceptions.status).toBe(200);
+    expect(exceptions.body.some((e: { summary: string }) => e.summary.includes('$300.00'))).toBe(
+      true,
+    );
+  });
+
+  it('vendor return requires the R/A number and opens a credit to chase', async () => {
+    const itemId = await makeAsIsItem(1);
+    const noRa = await as(managerCookie)
+      .post(`/v1/as-is/${itemId}/review`)
+      .send({ action: 'vendor_return' });
+    expect(noRa.status).toBe(400);
+    expect(noRa.body.message).toMatch(/raNumber/);
+
+    const ok = await as(managerCookie)
+      .post(`/v1/as-is/${itemId}/review`)
+      .send({ action: 'vendor_return', raNumber: 'RA-778', expectedCreditCents: 25000 });
+    expect(ok.status).toBe(201);
+    expect(ok.body.vendorRaNumber).toBe('RA-778');
+    expect(ok.body.vendorCreditStatus).toBe('open');
+
+    const closed = await as(managerCookie)
+      .post(`/v1/as-is/${itemId}/vendor-credit`)
+      .send({ action: 'received' });
+    expect(closed.status).toBe(201);
+    expect(closed.body.vendorCreditStatus).toBe('received');
+    // One-shot: no open credit remains.
+    await as(managerCookie)
+      .post(`/v1/as-is/${itemId}/vendor-credit`)
+      .send({ action: 'received' })
+      .expect(400);
+  });
+});
+
+describe('G5 — exception register + ranked digest', () => {
+  function as(cookie: string) {
+    return {
+      post: (url: string) =>
+        request(app.getHttpServer())
+          .post(url)
+          .set('Cookie', cookie)
+          .set('x-business-id', businessId),
+      get: (url: string) =>
+        request(app.getHttpServer())
+          .get(url)
+          .set('Cookie', cookie)
+          .set('x-business-id', businessId),
+    };
+  }
+
+  it('overrides and unlocks land in the register; a cashier cannot read it', async () => {
+    const list = await as(managerCookie).get('/v1/exceptions');
+    expect(list.status).toBe(200);
+    const types = new Set(list.body.map((e: { type: string }) => e.type));
+    // From earlier suites: the cashier's override-authorized unlock and
+    // the scrap write-offs.
+    expect(types.has('security_override')).toBe(true);
+    expect(types.has('order_unlock')).toBe(true);
+    expect(types.has('write_off')).toBe(true);
+
+    await as(cashierCookie).get('/v1/exceptions').expect(403);
+  });
+
+  it('acknowledge is one-shot and stamps who acknowledged', async () => {
+    const list = await as(managerCookie).get('/v1/exceptions?open=1');
+    expect(list.body.length).toBeGreaterThan(0);
+    const target = list.body[0];
+    await as(managerCookie).post(`/v1/exceptions/${target.id}/ack`).send({}).expect(201);
+    await as(managerCookie).post(`/v1/exceptions/${target.id}/ack`).send({}).expect(400);
+    const after = await as(managerCookie).get('/v1/exceptions');
+    const row = after.body.find((e: { id: string }) => e.id === target.id);
+    expect(row.acknowledgedAt).toBeTruthy();
+    expect(row.acknowledgedByEmail).toBe('manager@ctrl-test.local');
+    // The open filter no longer shows it.
+    const open = await as(managerCookie).get('/v1/exceptions?open=1');
+    expect(open.body.some((e: { id: string }) => e.id === target.id)).toBe(false);
+  });
+
+  it('the digest ranks associates by exception count', async () => {
+    const digest = await as(managerCookie).get('/v1/exceptions/digest?days=7');
+    expect(digest.status).toBe(200);
+    expect(digest.body.length).toBeGreaterThan(0);
+    // Ranked descending.
+    for (let i = 1; i < digest.body.length; i++) {
+      expect(digest.body[i - 1].total).toBeGreaterThanOrEqual(digest.body[i].total);
+    }
+    const withEmail = digest.body.find((d: { actorEmail: string | null }) => d.actorEmail);
+    expect(withEmail).toBeTruthy();
+    expect(Object.keys(withEmail.byType).length).toBeGreaterThan(0);
   });
 });

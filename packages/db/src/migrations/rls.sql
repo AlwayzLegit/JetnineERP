@@ -119,6 +119,8 @@ DECLARE
     'security_overrides',
     'order_returns',
     'order_return_lines',
+    'exception_events',
+    'write_offs',
     'serial_units',
     'payment_plans',
     'payment_plan_installments',

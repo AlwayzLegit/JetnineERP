@@ -40,6 +40,12 @@ export const asIsItems = pgTable(
     restockedVariantId: uuid('restocked_variant_id').references(() => productVariants.id, {
       onDelete: 'set null',
     }),
+    /** Vendor return (G4): the R/A number the credit is chased under. */
+    vendorRaNumber: text('vendor_ra_number'),
+    /** Expected vendor credit for a vendor_return disposition. */
+    vendorCreditCents: integer('vendor_credit_cents'),
+    /** 'open' | 'received' | 'written_off' — null unless vendor_return. */
+    vendorCreditStatus: text('vendor_credit_status'),
     notes: text('notes'),
     reviewedByUserId: uuid('reviewed_by_user_id').references(() => users.id, {
       onDelete: 'set null',
@@ -168,5 +174,43 @@ export const orderReturnLines = pgTable(
     returnIdx: index('order_return_lines_return_id_idx').on(t.returnId),
     orderLineIdx: index('order_return_lines_order_line_id_idx').on(t.orderLineId),
     quantityPositive: check('order_return_lines_quantity_positive', sql`${t.quantity} > 0`),
+  }),
+);
+
+/**
+ * Write-off register (PLAN-STORIS-GAP §8 / G4): scrap is not a button,
+ * it's a valued, permissioned exit for physical goods. Every scrapped
+ * unit lands here at cost so the shrink report has a dollar number the
+ * owner reads weekly.
+ */
+export const writeOffs = pgTable(
+  'write_offs',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    businessId: uuid('business_id')
+      .notNull()
+      .references(() => businesses.id, { onDelete: 'cascade' }),
+    asIsItemId: uuid('as_is_item_id').references(() => asIsItems.id, { onDelete: 'set null' }),
+    variantId: uuid('variant_id')
+      .notNull()
+      .references(() => productVariants.id, { onDelete: 'restrict' }),
+    locationId: uuid('location_id')
+      .notNull()
+      .references(() => locations.id, { onDelete: 'restrict' }),
+    quantity: integer('quantity').notNull(),
+    /** Cost basis per unit at write-off time (variant cost; 0 if unknown). */
+    unitCostCents: integer('unit_cost_cents').notNull().default(0),
+    totalCostCents: integer('total_cost_cents').notNull().default(0),
+    reasonCodeId: uuid('reason_code_id').references(() => reasonCodes.id, {
+      onDelete: 'set null',
+    }),
+    reason: text('reason'),
+    actorUserId: uuid('actor_user_id').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    businessIdx: index('write_offs_business_id_idx').on(t.businessId),
+    createdIdx: index('write_offs_created_idx').on(t.businessId, t.createdAt),
+    quantityPositive: check('write_offs_quantity_positive', sql`${t.quantity} > 0`),
   }),
 );

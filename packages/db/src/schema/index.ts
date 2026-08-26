@@ -98,4 +98,6 @@ export const TENANT_SCOPED_TABLES = [
   'security_overrides',
   'order_returns',
   'order_return_lines',
+  'exception_events',
+  'write_offs',
 ] as const;

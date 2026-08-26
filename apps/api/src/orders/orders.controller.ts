@@ -39,6 +39,7 @@ import {
   SecurityOverrideService,
   type OverrideCredentials,
 } from '../controls/security-override.service';
+import { ExceptionsService } from '../controls/exceptions.service';
 import { WebhookDispatcher } from '../webhooks/webhook-dispatcher.service';
 import {
   balanceDueCents,
@@ -344,6 +345,7 @@ export class OrdersController {
     @Inject(StoreCreditService) private readonly storeCredit: StoreCreditService,
     @Inject(SecurityOverrideService) private readonly overrides: SecurityOverrideService,
     @Inject(OrderReturnsService) private readonly orderReturns: OrderReturnsService,
+    @Inject(ExceptionsService) private readonly exceptions: ExceptionsService,
   ) {}
 
   @Get('orders')
@@ -1584,6 +1586,14 @@ export class OrdersController {
           ? { authorizingUserId: overrideResult.authorizingUserId }
           : {}),
       },
+    });
+    await this.exceptions.record({
+      type: 'order_unlock',
+      severity: 'warning',
+      entityType: 'order',
+      entityId: id,
+      summary: `Order ${order.number} unlocked after ticket print`,
+      metadata: { reason: reason.reasonText, reasonCode: reason.reasonCode },
     });
     return this.loadDetail(id);
   }

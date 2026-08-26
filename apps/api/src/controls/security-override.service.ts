@@ -7,6 +7,7 @@ import { AuditService } from '../audit/audit.service';
 import { DRIZZLE, ROOT_DRIZZLE } from '../database/database.module';
 import { getRequestContext } from '../tenancy/request-context';
 import { importESM } from '../utils/import-esm';
+import { ExceptionsService } from './exceptions.service';
 
 /**
  * Second-user credentials + reason supplied by the client when retrying
@@ -65,6 +66,7 @@ export class SecurityOverrideService {
     // the same trust level better-auth's own sign-in uses.
     @Inject(ROOT_DRIZZLE) private readonly rootDb: PostgresJsDatabase,
     @Inject(AuditService) private readonly audit: AuditService,
+    @Inject(ExceptionsService) private readonly exceptions: ExceptionsService,
   ) {}
 
   async require(input: RequireOverrideInput): Promise<OverrideResult> {
@@ -91,10 +93,11 @@ export class SecurityOverrideService {
       ctx.userId,
       ctx.businessId!,
     );
-    const reason = await this.resolveReason('exception', {
-      reasonCodeId: cred.reasonCodeId,
-      reason: cred.reason,
-    });
+    // The override records the *action's* reason — whatever class the
+    // consuming flow prompts for (a scrap carries a write_off code, an
+    // unlock an exception code). Class enforcement stays with the
+    // consumer; here any active code, or free text, is accepted.
+    const reason = await this.lookupReason(cred.reasonCodeId, cred.reason);
 
     const [row] = await this.db
       .insert(schema.securityOverrides)
@@ -127,7 +130,45 @@ export class SecurityOverrideService {
       },
     });
 
+    await this.exceptions.record({
+      type: 'security_override',
+      severity: 'warning',
+      entityType: input.entityType,
+      entityId: input.entityId,
+      summary: `${input.action} — approved by ${authorizer.email}`,
+      metadata: {
+        permission: input.permission,
+        authorizingUserId: authorizer.id,
+        reasonCode: reason.reasonCode,
+        reason: reason.reasonText,
+      },
+    });
+
     return { overridden: true, authorizingUserId: authorizer.id, overrideId: row!.id };
+  }
+
+  /** Class-agnostic reason lookup for the override stamp itself. */
+  private async lookupReason(
+    reasonCodeId: string | null | undefined,
+    reasonText: string | null | undefined,
+  ): Promise<ResolvedReason> {
+    if (reasonCodeId) {
+      const [code] = await this.db
+        .select()
+        .from(schema.reasonCodes)
+        .where(eq(schema.reasonCodes.id, reasonCodeId))
+        .limit(1);
+      if (!code || !code.active) {
+        throw new BadRequestException('reasonCodeId must name an active reason code');
+      }
+      return {
+        reasonCodeId: code.id,
+        reasonCode: code.code,
+        reasonText: reasonText?.trim() || code.description,
+      };
+    }
+    const text = reasonText?.trim() ?? '';
+    return { reasonCodeId: null, reasonCode: null, reasonText: text || null };
   }
 
   /**

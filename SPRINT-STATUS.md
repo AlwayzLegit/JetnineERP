@@ -822,10 +822,25 @@ commission-clawback + digest requirements.
       keep referencing the order (P8 contract); original-tender cap re-checked at
       receipt — a shortfall blocks with "re-authorize as store credit"; SoD: writer
       needs pos.refund.create, receiver needs inventory.receive.*
-- [ ] **G4 — Scrap/write-off control:** permissioned, reason-coded, valued at cost,
-      write-off register; vendor returns carry R/A + open-credit balance
-- [ ] **G5 — Exception register + ranked per-associate digest** (severity/ack/assignee;
-      thresholds not blanket notifications)
+- [x] **G4 — Scrap/write-off control:** migration `0040_write_offs_exceptions`. Scrap in
+      As-Is review is now a write-off: gated on new `inventory.write_off` (Owner/Manager;
+      a clerk goes through the manager-override dialog), coded reason (class `write_off`),
+      valued at variant cost onto the `write_offs` register (`GET /v1/write-offs` w/
+      rolling total, reports.inventory.view). Vendor returns REQUIRE an R/A number and
+      open a credit to chase (`vendorCreditStatus` open → received / written-off via
+      `POST /v1/as-is/:id/vendor-credit`, vendor*invoices.manage; giving up on a credit is
+      itself an exception). — \_2026-08-26.*
+- [x] **G5 — Exception register + ranked digest:** `exception_events` (type, severity,
+      actor, ack state) + `ExceptionsService.record()` wired into the control points:
+      security overrides, order unlocks, over-capacity bookings, write-offs, vendor-credit
+      write-offs. `GET /v1/exceptions` (filters: open/severity/type/actor, audit.view),
+      `POST :id/ack` (one-shot, stamps who), `GET /v1/exceptions/digest?days=` — the §2
+      per-associate ranked digest. New `/exceptions` page (register table + ack + 7-day
+      ranked digest card) in the Insights nav. controls.int.spec 13→19; orders 42/42,
+      deliveries 14/14, RLS 14/14. — _2026-08-26. Convention flagged: the override stamp
+      accepts the action's own reason code (any class) — class enforcement stays with the
+      consuming prompt, so the dialog never asks for two reasons; G6 adds the threshold
+      writers (price variance) to the same register._
 - [ ] **G6 — Price variance 3-tier** + margin floor + tax-exempt permission + layaway
       min-deposit enforcement + recycling-fee-removal coded reason + daily cash refund cap
 - [ ] **G7 — Delivery run object + close-out reconciliation** (run = hard lock; per-piece

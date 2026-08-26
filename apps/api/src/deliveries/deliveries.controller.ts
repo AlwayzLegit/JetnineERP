@@ -15,6 +15,7 @@ import { and, asc, eq, gte, inArray, lte, sql } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { schema } from '@jetnine/db';
 import { AuditService } from '../audit/audit.service';
+import { ExceptionsService } from '../controls/exceptions.service';
 import { CurrentTenant, CurrentUser } from '../auth/current-user.decorator';
 import type { CurrentUserPayload } from '../auth/current-user.decorator';
 import { DRIZZLE } from '../database/database.module';
@@ -147,6 +148,7 @@ export class DeliveriesController {
     @Inject(AuditService) private readonly audit: AuditService,
     @Inject(OrdersService) private readonly orders: OrdersService,
     @Inject(WebhookDispatcher) private readonly webhooks: WebhookDispatcher,
+    @Inject(ExceptionsService) private readonly exceptions: ExceptionsService,
   ) {}
 
   /**
@@ -375,6 +377,14 @@ export class DeliveriesController {
           cap,
           orderNumber: order.number,
         },
+      });
+      await this.exceptions.record({
+        type: 'delivery_cap_override',
+        severity: 'warning',
+        entityType: 'order',
+        entityId: orderId,
+        summary: `Order ${order.number} booked over capacity on ${body.scheduledDate} (${booked + 1}/${cap})`,
+        metadata: { deliveryId: delivery.id, scheduledDate: body.scheduledDate, cap },
       });
     }
 

@@ -90,3 +90,40 @@ export const securityOverrides = pgTable(
     actorIdx: index('security_overrides_actor_idx').on(t.businessId, t.actorUserId),
   }),
 );
+
+/**
+ * Exception register (PLAN-STORIS-GAP §0.3): the reportable file the
+ * owner actually works — severity, type, actor, acknowledged state —
+ * not a scrolling feed. Overrides, unlocks, cap overrides, write-offs
+ * and (with G6) threshold breaches all land here; the per-associate
+ * ranked digest reads from it.
+ */
+export const exceptionEvents = pgTable(
+  'exception_events',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    businessId: uuid('business_id')
+      .notNull()
+      .references(() => businesses.id, { onDelete: 'cascade' }),
+    /** 'security_override' | 'order_unlock' | 'delivery_cap_override' | 'write_off' | 'return_cancel' | … */
+    type: text('type').notNull(),
+    /** 'info' | 'warning' | 'critical' */
+    severity: text('severity').notNull().default('warning'),
+    actorUserId: uuid('actor_user_id').references(() => users.id, { onDelete: 'set null' }),
+    entityType: text('entity_type'),
+    entityId: uuid('entity_id'),
+    summary: text('summary').notNull(),
+    metadataJson: jsonb('metadata_json'),
+    acknowledgedAt: timestamp('acknowledged_at', { withTimezone: true }),
+    acknowledgedByUserId: uuid('acknowledged_by_user_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    businessIdx: index('exception_events_business_id_idx').on(t.businessId),
+    openIdx: index('exception_events_open_idx').on(t.businessId, t.acknowledgedAt, t.createdAt),
+    actorIdx: index('exception_events_actor_idx').on(t.businessId, t.actorUserId, t.createdAt),
+    typeIdx: index('exception_events_type_idx').on(t.businessId, t.type),
+  }),
+);
