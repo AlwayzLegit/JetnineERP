@@ -706,28 +706,36 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
               )}
               <div style={{ marginTop: 8 }}>
                 {creatingCustomer ? (
+                  // Every cell needs min-w-0: grid/flex items refuse to
+                  // shrink below their content width by default, and on a
+                  // narrow column the overflowing Create button lands
+                  // *under* the totals rail, which then swallows its
+                  // clicks (caught by the checkpoint-8 e2e run).
                   <div className="grid gap-2 sm:grid-cols-4">
                     <Input
                       placeholder="First name"
                       value={newCust.firstName}
                       onChange={(e) => setNewCust({ ...newCust, firstName: e.target.value })}
+                      style={{ minWidth: 0 }}
                     />
                     <Input
                       placeholder="Last name"
                       value={newCust.lastName}
                       onChange={(e) => setNewCust({ ...newCust, lastName: e.target.value })}
+                      style={{ minWidth: 0 }}
                     />
                     <Input
                       placeholder="Phone"
                       value={newCust.phone}
                       onChange={(e) => setNewCust({ ...newCust, phone: e.target.value })}
+                      style={{ minWidth: 0 }}
                     />
-                    <div className="flex gap-2">
+                    <div className="flex min-w-0 gap-2">
                       <Input
                         placeholder="Email"
                         value={newCust.email}
                         onChange={(e) => setNewCust({ ...newCust, email: e.target.value })}
-                        style={{ flex: 1 }}
+                        style={{ flex: 1, minWidth: 0 }}
                       />
                       <Button
                         variant="primary"
