@@ -564,6 +564,18 @@ three-step program and is the default POS surface.
   configurator, manual numbers, backdating, Multi-Ship Master.
 - Web typecheck/lint/unit green; api 27/27 orders int tests green. Full e2e runs in CI.
 
+## Checkpoint 7 merged + deployed (2026-08-25)
+
+PR #31 squash-merged to main as `2d3f799` (CI 4/4 green first try, incl. Playwright on
+the new stepper choreography). Deploy branch rolled (`3e34867`), Render deploy
+`dep-da72lkqjnfac73aifv6g` **live 23:54Z** — boot log:
+`Schema migrations: 32/32 applied, head=0031_order_entry_storis_parity; this run
+applied 0031_order_entry_storis_parity.` `/health` + `/ready` 200 on the fresh
+instance. Vercel production READY on main `2d3f799`. Sprint branch restarted from
+main. **"Enter a Sales Order" is live on `lamattress-erp.vercel.app` → POS.**
+Ops unchanged: repoint Render repo URL (deploys still manual-trigger), rotate the
+shared owner password, Resend domain when ready.
+
 ## Test-data ledger (D11 — what lives in the QA tenant and never reaches production)
 
 Production cutover creates a **fresh business**; everything below stays behind in the
