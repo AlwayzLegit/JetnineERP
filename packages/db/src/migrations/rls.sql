@@ -115,6 +115,8 @@ DECLARE
     'vendor_invoices',
     'as_is_items',
     'store_credit_entries',
+    'reason_codes',
+    'security_overrides',
     'serial_units',
     'payment_plans',
     'payment_plan_installments',

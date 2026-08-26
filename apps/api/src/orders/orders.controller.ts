@@ -34,6 +34,10 @@ import { RequirePermission, TenantScoped } from '../tenancy/decorators';
 import type { RequestTenantContext } from '../tenancy/request-context';
 import { CommissionsService } from '../money/commissions.service';
 import { StoreCreditService } from '../returns/store-credit.service';
+import {
+  SecurityOverrideService,
+  type OverrideCredentials,
+} from '../controls/security-override.service';
 import { WebhookDispatcher } from '../webhooks/webhook-dispatcher.service';
 import {
   balanceDueCents,
@@ -337,6 +341,7 @@ export class OrdersController {
     @Inject(WebhookDispatcher) private readonly webhooks: WebhookDispatcher,
     @Inject(CommissionsService) private readonly commissions: CommissionsService,
     @Inject(StoreCreditService) private readonly storeCredit: StoreCreditService,
+    @Inject(SecurityOverrideService) private readonly overrides: SecurityOverrideService,
   ) {}
 
   @Get('orders')
@@ -1511,21 +1516,20 @@ export class OrdersController {
   }
 
   /**
-   * Clear the A1 print lock. Its own permission (`orders.unlock`, Owner
-   * and Manager by default — the §2 matrix and per-user overrides let
-   * the owner choose exactly who) and a typed reason are both required;
-   * the reason lands in the audit log and therefore in the owner
-   * dashboard notifications feed.
+   * Clear the A1 print lock. Gated on `orders.unlock` at the point of
+   * action (PLAN-STORIS-GAP §0.1): a user holding the permission
+   * proceeds; a user without it gets 403 OVERRIDE_REQUIRED and can
+   * retry under an authorized user's credentials — the override is
+   * stamped in the security_overrides register with both identities.
+   * The reason is coded (class `exception`) once the business has codes
+   * defined; free text is the transitional fallback (A9).
    */
   @Post('orders/:id/unlock')
-  @RequirePermission('orders.unlock')
   async unlock(
     @CurrentTenant() _tenant: RequestTenantContext,
     @Param('id') id: string,
-    @Body() body: { reason?: string },
+    @Body() body: { reason?: string; reasonCodeId?: string; override?: OverrideCredentials },
   ): Promise<OrderDetail> {
-    const reason = body.reason?.trim();
-    if (!reason) throw new BadRequestException('A reason is required to unlock an order');
     const [order] = await this.db
       .select()
       .from(schema.orders)
@@ -1533,6 +1537,20 @@ export class OrdersController {
       .limit(1);
     if (!order) throw new NotFoundException('Order not found');
     if (!order.lockedAt) throw new BadRequestException('Order is not locked');
+
+    const overrideResult = await this.overrides.require({
+      permission: 'orders.unlock',
+      action: `Unlock printed order ${order.number}`,
+      entityType: 'order',
+      entityId: id,
+      before: { lockedAt: order.lockedAt.toISOString() },
+      after: { lockedAt: null },
+      override: body.override,
+    });
+    const reason = await this.overrides.resolveReason('exception', {
+      reasonCodeId: body.reasonCodeId ?? body.override?.reasonCodeId,
+      reason: body.reason ?? body.override?.reason,
+    });
 
     await this.db
       .update(schema.orders)
@@ -1542,7 +1560,13 @@ export class OrdersController {
       action: 'order.unlock',
       targetType: 'order',
       targetId: id,
-      metadata: { reason },
+      metadata: {
+        reason: reason.reasonText,
+        reasonCode: reason.reasonCode,
+        ...(overrideResult.overridden
+          ? { authorizingUserId: overrideResult.authorizingUserId }
+          : {}),
+      },
     });
     return this.loadDetail(id);
   }
@@ -1699,14 +1723,22 @@ export class OrdersController {
     @CurrentUser() actor: CurrentUserPayload,
     @Param('id') id: string,
     @Body()
-    body: { amountCents?: number; reason?: string; refundMethod?: 'original' | 'store_credit' },
+    body: {
+      amountCents?: number;
+      reason?: string;
+      reasonCodeId?: string;
+      refundMethod?: 'original' | 'store_credit';
+    },
   ): Promise<OrderDetail> {
     if (!Number.isInteger(body.amountCents) || (body.amountCents ?? 0) <= 0) {
       throw new BadRequestException('amountCents must be a positive integer');
     }
-    if (!body.reason?.trim()) {
-      throw new BadRequestException('A reason is required for a price adjustment');
-    }
+    // Coded reason (class `adjustment`) once the registry has codes;
+    // free text stays as the transitional fallback (gap amendment A9).
+    const adjReason = await this.overrides.resolveReason('adjustment', {
+      reasonCodeId: body.reasonCodeId,
+      reason: body.reason,
+    });
     const [order] = await this.db
       .select()
       .from(schema.orders)
@@ -1732,7 +1764,7 @@ export class OrdersController {
         businessId: tenant.businessId!,
         customerId: order.customerId,
         amountCents: body.amountCents!,
-        reason: body.reason.trim(),
+        reason: adjReason.reasonText ?? adjReason.reasonCode ?? 'price adjustment',
         referenceType: 'order_return',
         referenceId: order.id,
         actorUserId: actor?.id ?? null,
@@ -1763,7 +1795,8 @@ export class OrdersController {
       after: {
         amountCents: body.amountCents,
         refundMethod: toStoreCredit ? 'store_credit' : 'original',
-        reason: body.reason.trim(),
+        reason: adjReason.reasonText,
+        reasonCode: adjReason.reasonCode,
       },
     });
     return this.loadDetail(id);

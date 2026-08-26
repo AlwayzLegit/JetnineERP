@@ -2,7 +2,13 @@
 
 import { Save } from 'lucide-react';
 import { useEffect, useState, type FormEvent } from 'react';
-import { CURRENCY_LABELS, SUPPORTED_CURRENCIES } from '@jetnine/shared';
+import {
+  CURRENCY_LABELS,
+  REASON_USAGE_CLASSES,
+  REASON_USAGE_CLASS_LABELS,
+  SUPPORTED_CURRENCIES,
+  type ReasonUsageClass,
+} from '@jetnine/shared';
 import { Button, Field, Input, LinkButton, LoadingRows, PageHeader, Select } from '@/components/ui';
 import { api } from '@/lib/api';
 
@@ -190,6 +196,8 @@ export default function SettingsPage() {
       </form>
 
       <OpsCard settings={settings} onSaved={setSettings} />
+
+      <ReasonCodesCard />
 
       <BrandingCard settings={settings} onSaved={setSettings} />
     </div>
@@ -417,5 +425,194 @@ function BrandingCard({
         {saving ? 'Saving…' : 'Save branding'}
       </Button>
     </form>
+  );
+}
+
+/**
+ * Reason-code registry (PLAN-STORIS-GAP §0.2): the coded, admin-managed
+ * reasons every prompt in the app draws from — unlocks, adjustments,
+ * returns, write-offs, transfer variances. Codes deactivate rather than
+ * delete; restricted codes will require manager authorization to use
+ * once the consuming flows land.
+ */
+function ReasonCodesCard() {
+  const [codes, setCodes] = useState<
+    | {
+        id: string;
+        code: string;
+        description: string;
+        usageClass: string;
+        isRestricted: boolean;
+        active: boolean;
+      }[]
+    | null
+  >(null);
+  const [newCode, setNewCode] = useState('');
+  const [newDescription, setNewDescription] = useState('');
+  const [newClass, setNewClass] = useState<string>('exception');
+  const [newRestricted, setNewRestricted] = useState(false);
+  const [working, setWorking] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  async function load() {
+    try {
+      setCodes(await api<NonNullable<typeof codes>>('/v1/reason-codes?includeInactive=1'));
+    } catch {
+      setCodes([]);
+    }
+  }
+  useEffect(() => {
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function add() {
+    if (!newCode.trim() || !newDescription.trim()) {
+      setErrorMsg('Code and description are required.');
+      return;
+    }
+    setWorking(true);
+    setErrorMsg(null);
+    try {
+      await api('/v1/reason-codes', {
+        method: 'POST',
+        body: JSON.stringify({
+          code: newCode.trim(),
+          description: newDescription.trim(),
+          usageClass: newClass,
+          isRestricted: newRestricted,
+        }),
+      });
+      setNewCode('');
+      setNewDescription('');
+      setNewRestricted(false);
+      await load();
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : String(err));
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function toggle(id: string, active: boolean) {
+    setWorking(true);
+    try {
+      await api(`/v1/reason-codes/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ active }),
+      });
+      await load();
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : String(err));
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  return (
+    <div className="card mt-4 grid max-w-[640px] gap-3">
+      <h3 className="card-title" style={{ margin: 0 }}>
+        Reason codes
+      </h3>
+      <p className="muted" style={{ fontSize: 12.5, margin: 0 }}>
+        Every reason prompt (unlocks, price adjustments, returns, write-offs…) draws from these
+        codes. Until a class has codes, that prompt accepts free text.
+      </p>
+      {codes === null ? (
+        <LoadingRows rows={2} />
+      ) : codes.length > 0 ? (
+        <div className="overflow-x-auto">
+          <table className="table" data-testid="reason-codes-table">
+            <thead>
+              <tr>
+                <th>Code</th>
+                <th>Description</th>
+                <th>Class</th>
+                <th>Restricted</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {codes.map((c) => (
+                <tr key={c.id} style={c.active ? undefined : { opacity: 0.5 }}>
+                  <td style={{ fontWeight: 600 }}>{c.code}</td>
+                  <td>{c.description}</td>
+                  <td>
+                    {REASON_USAGE_CLASS_LABELS[c.usageClass as ReasonUsageClass] ?? c.usageClass}
+                  </td>
+                  <td>{c.isRestricted ? 'yes' : ''}</td>
+                  <td>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={working}
+                      onClick={() => void toggle(c.id, !c.active)}
+                    >
+                      {c.active ? 'Deactivate' : 'Reactivate'}
+                    </Button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <p className="muted" style={{ fontSize: 13, margin: 0 }}>
+          No codes yet.
+        </p>
+      )}
+      <div className="flex flex-wrap items-end gap-2" style={{ fontSize: 13 }}>
+        <label style={{ display: 'grid', gap: 2, fontSize: 12 }}>
+          Code
+          <Input
+            value={newCode}
+            onChange={(e) => setNewCode(e.target.value)}
+            placeholder="e.g. DMG"
+            data-testid="reason-code-code"
+            style={{ width: 90, minWidth: 0 }}
+          />
+        </label>
+        <label style={{ display: 'grid', gap: 2, fontSize: 12, flex: 1, minWidth: 140 }}>
+          Description
+          <Input
+            value={newDescription}
+            onChange={(e) => setNewDescription(e.target.value)}
+            data-testid="reason-code-description"
+            style={{ minWidth: 0 }}
+          />
+        </label>
+        <label style={{ display: 'grid', gap: 2, fontSize: 12 }}>
+          Class
+          <Select
+            value={newClass}
+            onChange={(e) => setNewClass(e.target.value)}
+            data-testid="reason-code-class"
+          >
+            {REASON_USAGE_CLASSES.map((uc) => (
+              <option key={uc} value={uc}>
+                {REASON_USAGE_CLASS_LABELS[uc]}
+              </option>
+            ))}
+          </Select>
+        </label>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
+          <input
+            type="checkbox"
+            checked={newRestricted}
+            onChange={(e) => setNewRestricted(e.target.checked)}
+          />
+          Restricted
+        </label>
+        <Button
+          variant="secondary"
+          disabled={working}
+          onClick={() => void add()}
+          data-testid="reason-code-add"
+        >
+          Add code
+        </Button>
+      </div>
+      {errorMsg && <p style={{ color: 'var(--danger)', fontSize: 13, margin: 0 }}>{errorMsg}</p>}
+    </div>
   );
 }

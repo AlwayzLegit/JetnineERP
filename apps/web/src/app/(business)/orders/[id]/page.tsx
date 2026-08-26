@@ -9,6 +9,7 @@ import { formatMoney } from '@jetnine/shared';
 import { api } from '@/lib/api';
 import { Money } from '@/components/money';
 import { Button, Card, Input, LinkButton, LoadingRows, Select, StatusBadge } from '@/components/ui';
+import { SecurityOverrideDialog } from '@/components/security-override-dialog';
 
 /**
  * Order detail (STORIS cutover Day 2): the working view of one sales
@@ -159,6 +160,7 @@ export default function OrderDetailPage() {
   const [deliveries, setDeliveries] = useState<DeliveryRow[]>([]);
   const [deliveryDate, setDeliveryDate] = useState('');
   const [dayCapacity, setDayCapacity] = useState<{ booked: number; cap: number } | null>(null);
+  const [unlockOpen, setUnlockOpen] = useState(false);
 
   // §7: the associate sees the day's remaining capacity while booking.
   useEffect(() => {
@@ -340,18 +342,26 @@ export default function OrderDetailPage() {
             variant="secondary"
             data-testid="unlock-order"
             disabled={busy}
-            onClick={async () => {
-              const reason = window.prompt(
-                'Unlocking is logged to the owner dashboard. Reason for unlocking:',
-              );
-              if (reason == null) return;
-              await act('/unlock', { reason });
-            }}
+            onClick={() => setUnlockOpen(true)}
           >
             Unlock…
           </Button>
         </div>
       )}
+
+      <SecurityOverrideDialog
+        open={unlockOpen}
+        title={`Unlock order ${order.number}`}
+        usageClass="exception"
+        submitLabel="Unlock order"
+        perform={(payload) =>
+          api(`/v1/orders/${id}/unlock`, { method: 'POST', body: JSON.stringify(payload) }).then(
+            () => undefined,
+          )
+        }
+        onClose={() => setUnlockOpen(false)}
+        onSuccess={() => void load()}
+      />
 
       <div className="grid gap-4 lg:grid-cols-[2fr_1fr]">
         <div className="min-w-0">
@@ -990,6 +1000,19 @@ function ReturnsCard({
   const [reason, setReason] = useState('');
   const [adjustAmount, setAdjustAmount] = useState('');
   const [working, setWorking] = useState(false);
+  // Coded adjustment reasons (gap sprint G2). While the business has no
+  // codes of class `adjustment`, the shared free-text reason is sent.
+  const [adjustCodes, setAdjustCodes] = useState<
+    { id: string; code: string; description: string }[]
+  >([]);
+  const [adjustCodeId, setAdjustCodeId] = useState('');
+  useEffect(() => {
+    api<{ id: string; code: string; description: string }[]>(
+      '/v1/reason-codes?usageClass=adjustment',
+    )
+      .then(setAdjustCodes)
+      .catch(() => setAdjustCodes([]));
+  }, []);
 
   const returnable = order.lines.filter((l) => l.qtyFulfilled - l.qtyReturned > 0);
   if (returnable.length === 0 && !order.originalOrderId && order.paidCents === 0) return null;
@@ -1021,7 +1044,8 @@ function ReturnsCard({
 
   async function processAdjustment() {
     const cents = Math.round(Number(adjustAmount) * 100);
-    if (!Number.isFinite(cents) || cents <= 0 || !reason.trim()) {
+    const hasReason = adjustCodes.length > 0 ? Boolean(adjustCodeId) : Boolean(reason.trim());
+    if (!Number.isFinite(cents) || cents <= 0 || !hasReason) {
       toast.error('Enter an adjustment amount and a reason.');
       return;
     }
@@ -1029,7 +1053,12 @@ function ReturnsCard({
     try {
       await api(`/v1/orders/${order.id}/price-adjustment`, {
         method: 'POST',
-        body: JSON.stringify({ amountCents: cents, reason: reason.trim(), refundMethod: method }),
+        body: JSON.stringify({
+          amountCents: cents,
+          ...(adjustCodeId ? { reasonCodeId: adjustCodeId } : {}),
+          ...(reason.trim() ? { reason: reason.trim() } : {}),
+          refundMethod: method,
+        }),
       });
       toast.success('Price adjustment recorded.');
       setAdjustAmount('');
@@ -1135,6 +1164,24 @@ function ReturnsCard({
             style={{ width: 110 }}
           />
         </label>
+        {adjustCodes.length > 0 && (
+          <label style={{ display: 'grid', gap: 2, fontSize: 12 }}>
+            Adjustment reason
+            <select
+              className="select"
+              value={adjustCodeId}
+              data-testid="adjust-reason-code"
+              onChange={(e) => setAdjustCodeId(e.target.value)}
+            >
+              <option value="">Select…</option>
+              {adjustCodes.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.code} — {c.description}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         <Button
           variant="secondary"
           disabled={busy || working}

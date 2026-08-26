@@ -112,6 +112,9 @@ export const PERMISSIONS = {
 
   'audit.view': 'View audit log',
 
+  'reason_codes.manage': 'Manage the reason-code registry (add / deactivate / restrict codes)',
+  'security_overrides.view': 'View the security-override register',
+
   // Super-admin only — platform surfaces, never granted to a business role.
   'platform.templates.manage': 'Create and apply business templates (snapshots)',
   'platform.agencies.manage': 'Manage agencies and their business assignments',

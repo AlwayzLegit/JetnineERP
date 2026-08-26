@@ -771,6 +771,66 @@ is live on `lamattress-erp.vercel.app`.** P9 (commissions, dashboards, auto-clos
 remains. Ops unchanged: repoint Render repo URL (deploys still manual-trigger), rotate
 the shared owner password, Resend domain when ready, sample invoices into `docs/`.
 
+## STORIS gap-closure build (PLAN-STORIS-GAP.md) — ranked tracker
+
+Owner delivered a full STORIS gap analysis 2026-08-26 ("we need to add all which is
+missing"); committed verbatim as `PLAN-STORIS-GAP.md` with amendments A5–A9 (soft print
+lock / run hard-lock, 3-tier price variance, refund gated on goods receipt, as-is piece
+ids, coded reasons everywhere). Build in the doc's ranked order; each item is a vertical
+slice. P9 (commissions/dashboards/auto-close) stays queued and will absorb the gap doc's
+commission-clawback + digest requirements.
+
+- [x] **G1 — Security Override primitive:** migration `0038_reason_codes_security_overrides`;
+      `SecurityOverrideService.require()` gates at the point of action — actor with the
+      permission passes, actor without gets 403 `code:OVERRIDE_REQUIRED` (names the action +
+      permission), retry with a _different_ authorized user's email+password verifies the
+      credential (root connection — the accounts owner-only RLS policy rightly blocks the
+      request tx), checks the authorizer's effective permissions (role + per-user overrides),
+      refuses self-authorization, and stamps `security_overrides` with both identities +
+      before/after. `GET /v1/security-overrides` register (new `security_overrides.view`
+      perm; Owner/Manager/Bookkeeper). Reusable `<SecurityOverrideDialog>` (reason select →
+      manager-credentials section appears on 403; used by order unlock). Pilot consumer:
+      order unlock — `orders.unlock` holders proceed as before, others via override; the
+      `ApiError` class now carries structured bodies so the client can react to codes.
+      controls.int.spec 13/13; orders 39/39, business 24/24, RLS 14/14 unaffected.
+      — _2026-08-26._
+- [x] **G2 — Reason Code registry:** `reason_codes` (usage classes from shared
+      `REASON_USAGE_CLASSES`, restricted flag, active flag; unique per business+class+code;
+      deactivate-not-delete). CRUD API (`reason_codes.manage`; listing open to any member —
+      every prompt reads it), Settings → "Reason codes" card. Consumers wired: unlock
+      (class `exception`) + price adjustment (class `adjustment`) — once a class has active
+      codes, free text is refused and the resolved code lands in audit metadata; while a
+      class is empty, free text is the transitional fallback (amendment A9). — _2026-08-26.
+      Conventions flagged: restricted-code enforcement (manager auth to *use* a restricted
+      code) lands with its first consumer (as-is flows, G4/G10); return-line coded reasons
+      ride with G3._
+- [ ] **G3 — Return lifecycle:** Authorized → Goods Received → Completed; refund fires at
+      goods receipt; drop-off refunds immediately (flagged); per-line coded return reasons
+- [ ] **G4 — Scrap/write-off control:** permissioned, reason-coded, valued at cost,
+      write-off register; vendor returns carry R/A + open-credit balance
+- [ ] **G5 — Exception register + ranked per-associate digest** (severity/ack/assignee;
+      thresholds not blanket notifications)
+- [ ] **G6 — Price variance 3-tier** + margin floor + tax-exempt permission + layaway
+      min-deposit enforcement + recycling-fee-removal coded reason + daily cash refund cap
+- [ ] **G7 — Delivery run object + close-out reconciliation** (run = hard lock; per-piece
+      outcomes; COD due vs collected; outcome codes; postponement counter)
+- [ ] **G8 — Transfer in-transit state + variance investigation** + aging alert + types
+- [ ] **G9 — Ticket print preconditions** (scheduled date / reserved / balance cap w/
+      override) + reprint counter + unlock expiry/escalation
+- [ ] **G10 — As-is piece-level reference ids** (condition, gated price, storage location,
+      photos, aging)
+- [ ] **G11 — Blind receiving + SoD invoice approval + vendor remit-to alert** + third
+      bucket out of staged receiving + PO hold/release
+- [ ] **G12 — Multi-dimensional capacity + zip→route mapping**
+- [ ] **G13 — Line-status roll-up + Past Due view + Auto Stock Release** + reservation
+      drift reconciliation
+- [ ] **G14 — Duplicate-order/consolidate prompt + ATP-vs-promise warning**
+- [ ] **G15 — Pick list (no prices) separate from delivery ticket**
+- [ ] **§2 audit coverage:** log line qty/discount/date/salesperson/customer-swap/
+      tax-exempt/fee-removal/tender-void/deposit-transfer events; append-only audit table
+- [ ] **Build P9 (pre-existing):** commissions (equal-split, exchange clawback per gap §8),
+      owner + manager dashboards, 22:00 auto-close job
+
 ## Test-data ledger (D11 — what lives in the QA tenant and never reaches production)
 
 Production cutover creates a **fresh business**; everything below stays behind in the
