@@ -37,11 +37,21 @@ export default function CustomerDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [credit, setCredit] = useState<{
+    balanceCents: number;
+    entries: { id: string; deltaCents: number; reason: string | null; createdAt: string }[];
+  } | null>(null);
 
   async function load() {
     setError(null);
     try {
       setC(await api<Customer>(`/v1/customers/${id}`));
+      void api<{
+        balanceCents: number;
+        entries: { id: string; deltaCents: number; reason: string | null; createdAt: string }[];
+      }>(`/v1/customers/${id}/store-credit`)
+        .then(setCredit)
+        .catch(() => setCredit(null));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -148,6 +158,30 @@ export default function CustomerDetailPage() {
           </div>
         </form>
       </Card>
+
+      {credit && (credit.balanceCents > 0 || credit.entries.length > 0) && (
+        <Card title="Store credit" style={{ marginTop: 16 }}>
+          <p style={{ fontSize: 14, marginTop: 0 }} data-testid="store-credit-balance">
+            Balance: <strong>${(credit.balanceCents / 100).toFixed(2)}</strong>
+            <span className="muted" style={{ fontSize: 12, marginLeft: 8 }}>
+              never expires — auto-surfaces at checkout (§10)
+            </span>
+          </p>
+          {credit.entries.length > 0 && (
+            <ul style={{ margin: 0, paddingLeft: 16, fontSize: 13 }}>
+              {credit.entries.slice(0, 10).map((e) => (
+                <li key={e.id}>
+                  {new Date(e.createdAt).toLocaleDateString()} —{' '}
+                  <span style={{ color: e.deltaCents > 0 ? 'var(--success)' : 'var(--danger)' }}>
+                    {e.deltaCents > 0 ? '+' : ''}${(e.deltaCents / 100).toFixed(2)}
+                  </span>
+                  {e.reason ? ` · ${e.reason}` : ''}
+                </li>
+              ))}
+            </ul>
+          )}
+        </Card>
+      )}
 
       <Card title="Recent purchases">
         {c.recentSales.length === 0 ? (

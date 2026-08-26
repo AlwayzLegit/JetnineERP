@@ -1,5 +1,6 @@
 import {
   boolean,
+  date,
   index,
   integer,
   jsonb,
@@ -102,6 +103,14 @@ export const purchaseOrderLines = pgTable(
       .references(() => productVariants.id, { onDelete: 'restrict' }),
     quantityOrdered: integer('quantity_ordered').notNull(),
     quantityReceived: integer('quantity_received').notNull().default(0),
+    /**
+     * Receiving stages (PLAN-POS-OPERATIONS §6): received at the dock →
+     * inspected → accepted into sellable stock. Invariant per line:
+     * ordered ≥ received ≥ inspected ≥ accepted. Stock and the linked
+     * sales-order reservation move at ACCEPT, not at dock receipt.
+     */
+    quantityInspected: integer('quantity_inspected').notNull().default(0),
+    quantityAccepted: integer('quantity_accepted').notNull().default(0),
     unitCostCents: integer('unit_cost_cents').notNull(),
     lineTotalCents: integer('line_total_cents').notNull(),
   },
@@ -140,5 +149,51 @@ export const poLineAllocations = pgTable(
     businessIdx: index('po_line_allocations_business_id_idx').on(t.businessId),
     poLineIdx: index('po_line_allocations_po_line_id_idx').on(t.poLineId),
     orderLineIdx: index('po_line_allocations_order_line_id_idx').on(t.orderLineId),
+  }),
+);
+
+/**
+ * Vendor invoices (PLAN-POS-OPERATIONS §6): the vendor's bill, recorded
+ * and auto-matched to a purchase order by PO number for approval. No
+ * landed cost / freight allocation in v1 — the variance against the
+ * PO's subtotal is surfaced, not allocated.
+ */
+export const vendorInvoices = pgTable(
+  'vendor_invoices',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    businessId: uuid('business_id')
+      .notNull()
+      .references(() => businesses.id, { onDelete: 'cascade' }),
+    vendorId: uuid('vendor_id')
+      .notNull()
+      .references(() => vendors.id, { onDelete: 'restrict' }),
+    /** NULL until (auto-)matched to a PO. */
+    purchaseOrderId: uuid('purchase_order_id').references(() => purchaseOrders.id, {
+      onDelete: 'set null',
+    }),
+    /** The vendor's own invoice number. */
+    number: text('number').notNull(),
+    invoiceDate: date('invoice_date'),
+    totalCents: integer('total_cents').notNull(),
+    /** 'unmatched' | 'matched' | 'approved' */
+    status: text('status').notNull().default('unmatched'),
+    notes: text('notes'),
+    matchedAt: timestamp('matched_at', { withTimezone: true }),
+    approvedAt: timestamp('approved_at', { withTimezone: true }),
+    approvedByUserId: uuid('approved_by_user_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    businessIdx: index('vendor_invoices_business_id_idx').on(t.businessId),
+    vendorIdx: index('vendor_invoices_vendor_id_idx').on(t.vendorId),
+    poIdx: index('vendor_invoices_purchase_order_id_idx').on(t.purchaseOrderId),
+    statusIdx: index('vendor_invoices_status_idx').on(t.businessId, t.status),
+    // One row per vendor invoice number per vendor — re-recording the
+    // same bill is a mistake, not a new payable.
+    numberUnique: uniqueIndex('vendor_invoices_vendor_number_unique').on(t.vendorId, t.number),
   }),
 );

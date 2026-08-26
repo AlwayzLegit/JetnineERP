@@ -27,6 +27,7 @@ interface LocationRow {
   timezone: string;
   taxRateBps: number | null;
   addressJson: unknown;
+  orderPrefix: string | null;
   isActive: boolean;
   createdAt: Date;
 }
@@ -36,10 +37,21 @@ interface CreateBody {
   timezone?: string;
   taxRateBps?: number | null;
   addressJson?: unknown;
+  /** Store code for per-store order numbering, e.g. "WL" (1-4 A-Z). */
+  orderPrefix?: string | null;
 }
 
 interface UpdateBody extends CreateBody {
   isActive?: boolean;
+}
+
+function normalizeOrderPrefix(raw: string | null | undefined): string | null {
+  if (raw == null || raw.trim() === '') return null;
+  const prefix = raw.trim().toUpperCase();
+  if (!/^[A-Z]{1,4}$/.test(prefix)) {
+    throw new BadRequestException('orderPrefix must be 1-4 letters, e.g. "WL"');
+  }
+  return prefix;
 }
 
 /**
@@ -75,6 +87,7 @@ export class LocationsController {
         timezone: schema.locations.timezone,
         taxRateBps: schema.locations.taxRateBps,
         addressJson: schema.locations.addressJson,
+        orderPrefix: schema.locations.orderPrefix,
         isActive: schema.locations.isActive,
         createdAt: schema.locations.createdAt,
       })
@@ -105,6 +118,7 @@ export class LocationsController {
         timezone,
         taxRateBps: body.taxRateBps ?? null,
         addressJson: (body.addressJson ?? null) as never,
+        orderPrefix: normalizeOrderPrefix(body.orderPrefix),
       })
       .returning();
     if (!row) throw new BadRequestException('failed to create location');
@@ -158,6 +172,14 @@ export class LocationsController {
       update.addressJson = body.addressJson as never;
       before.addressJson = existing.addressJson;
       after.addressJson = body.addressJson;
+    }
+    if (body.orderPrefix !== undefined) {
+      const prefix = normalizeOrderPrefix(body.orderPrefix);
+      if (prefix !== existing.orderPrefix) {
+        update.orderPrefix = prefix;
+        before.orderPrefix = existing.orderPrefix;
+        after.orderPrefix = prefix;
+      }
     }
     if (body.isActive !== undefined && body.isActive !== existing.isActive) {
       update.isActive = body.isActive;
@@ -275,6 +297,7 @@ function toRow(row: typeof schema.locations.$inferSelect): LocationRow {
     timezone: row.timezone,
     taxRateBps: row.taxRateBps ?? null,
     addressJson: row.addressJson,
+    orderPrefix: row.orderPrefix ?? null,
     isActive: row.isActive,
     createdAt: row.createdAt,
   };

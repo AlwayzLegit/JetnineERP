@@ -399,3 +399,24 @@ describe('Phase 2.4 — Stock transfers', () => {
     expect(await levelAt(variantAId, warehouseLocationId)).toBe(before - 2);
   });
 });
+
+describe('Transfer ticket data (PLAN-POS-OPERATIONS P7)', () => {
+  it('detail carries the from/to store blocks and letterhead the printed ticket needs', async () => {
+    const created = await request(app.getHttpServer())
+      .post('/v1/stock-transfers')
+      .set('Cookie', clerkCookie)
+      .set('X-Business-Id', businessId)
+      .send({
+        fromLocationId: warehouseLocationId,
+        toLocationId: mainLocationId,
+        lines: [{ variantId: variantAId, quantity: 1 }],
+      });
+    expect(created.status).toBe(201);
+    expect(created.body.businessName).toBe('Transfer Test Co');
+    expect(created.body.fromLocationName).toBe('Warehouse');
+    expect(created.body.toLocationName).toBe('Main Store');
+    // Address blocks round-trip (null when the location has none on file).
+    expect(created.body).toHaveProperty('fromLocationAddressJson');
+    expect(created.body).toHaveProperty('toLocationAddressJson');
+  });
+});

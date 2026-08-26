@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
-import { CheckCircle2, CreditCard, Share2, Truck } from 'lucide-react';
+import { CheckCircle2, CreditCard, Lock, Printer, Share2, Truck } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatMoney } from '@jetnine/shared';
 import { api } from '@/lib/api';
@@ -24,6 +24,7 @@ interface OrderLine {
   quantity: number;
   qtyReserved: number;
   qtyFulfilled: number;
+  qtyReturned: number;
   lineType: string;
   unitPriceCents: number;
   discountCents: number;
@@ -54,6 +55,9 @@ interface OrderDetail {
   depositRequiredCents: number;
   paidCents: number;
   balanceDueCents: number;
+  creditDueCents: number;
+  orderKind: string;
+  originalOrderId: string | null;
   addressLine1: string | null;
   addressLine2: string | null;
   addressCity: string | null;
@@ -63,6 +67,7 @@ interface OrderDetail {
   notes: string | null;
   internalNotes: string | null;
   legacyNumber: string | null;
+  lockedAt: string | null;
   createdAt: string;
   completedAt: string | null;
   cancelledAt: string | null;
@@ -84,11 +89,51 @@ interface DeliveryRow {
   windowEnd: string | null;
   lines: { id: string; description: string; quantity: number }[];
 }
+interface ReturnableLine {
+  id: string;
+  description: string;
+  qtyFulfilled: number;
+  qtyReturned: number;
+}
+
 interface AuditRow {
   id: string;
   action: string;
   createdAt: string;
   actorUserId: string | null;
+  actorEmail: string | null;
+  changesJson: {
+    before?: Record<string, unknown>;
+    after?: Record<string, unknown>;
+    metadata?: Record<string, unknown>;
+  } | null;
+}
+
+/** "$1,234.56" for *_cents fields, plain stringification otherwise. */
+function formatAuditValue(field: string, value: unknown): string {
+  if (value == null || value === '') return '—';
+  if (/cents$/i.test(field) && typeof value === 'number') {
+    return `$${(value / 100).toFixed(2)}`;
+  }
+  if (typeof value === 'object') return JSON.stringify(value);
+  return String(value);
+}
+
+/**
+ * The change-history line for one audit entry: each changed field with
+ * its before → after values (PLAN-POS-OPERATIONS §8 — "every field
+ * change attributed"). The audit service stores a minimal diff, so
+ * every key present actually changed.
+ */
+function auditChanges(row: AuditRow): { field: string; from: string; to: string }[] {
+  const before = row.changesJson?.before ?? {};
+  const after = row.changesJson?.after ?? {};
+  const fields = [...new Set([...Object.keys(before), ...Object.keys(after)])];
+  return fields.map((field) => ({
+    field,
+    from: formatAuditValue(field, before[field]),
+    to: formatAuditValue(field, after[field]),
+  }));
 }
 
 const PAYMENT_METHODS = [
@@ -113,6 +158,26 @@ export default function OrderDetailPage() {
   const [payMethod, setPayMethod] = useState<(typeof PAYMENT_METHODS)[number]>('cash');
   const [deliveries, setDeliveries] = useState<DeliveryRow[]>([]);
   const [deliveryDate, setDeliveryDate] = useState('');
+  const [dayCapacity, setDayCapacity] = useState<{ booked: number; cap: number } | null>(null);
+
+  // §7: the associate sees the day's remaining capacity while booking.
+  useEffect(() => {
+    if (!deliveryDate) {
+      setDayCapacity(null);
+      return;
+    }
+    let stale = false;
+    api<{ cap: number; days: { booked: number }[] }>(
+      `/v1/deliveries/capacity?from=${deliveryDate}&to=${deliveryDate}`,
+    )
+      .then((r) => {
+        if (!stale) setDayCapacity({ booked: r.days[0]?.booked ?? 0, cap: r.cap });
+      })
+      .catch(() => setDayCapacity(null));
+    return () => {
+      stale = true;
+    };
+  }, [deliveryDate]);
 
   async function load() {
     try {
@@ -200,7 +265,25 @@ export default function OrderDetailPage() {
             STORIS #{order.legacyNumber}
           </span>
         )}
-        <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 8 }}>
+        <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 8, flexWrap: 'wrap' }}>
+          <LinkButton
+            href={`/print/orders/${id}/invoice`}
+            variant="secondary"
+            size="sm"
+            target="_blank"
+            data-testid="print-invoice"
+          >
+            <Printer size={13} aria-hidden /> Invoice
+          </LinkButton>
+          <LinkButton
+            href={`/print/orders/${id}/delivery-ticket`}
+            variant="secondary"
+            size="sm"
+            target="_blank"
+            data-testid="print-delivery-ticket"
+          >
+            <Printer size={13} aria-hidden /> Delivery ticket
+          </LinkButton>
           <Button
             size="sm"
             variant="secondary"
@@ -232,6 +315,43 @@ export default function OrderDetailPage() {
         {order.requestedDate ? ` · promised ${order.requestedDate}` : ''} · written{' '}
         {new Date(order.createdAt).toLocaleString()}
       </p>
+
+      {order.lockedAt && (
+        <div
+          data-testid="locked-banner"
+          className="card"
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10,
+            padding: '10px 14px',
+            marginBottom: 16,
+            borderColor: 'var(--warning)',
+            fontSize: 13,
+          }}
+        >
+          <Lock size={15} aria-hidden style={{ color: 'var(--warning)', flexShrink: 0 }} />
+          <span style={{ flex: 1 }}>
+            <strong>Locked</strong> — the delivery ticket was printed{' '}
+            {new Date(order.lockedAt).toLocaleString()}. No edits while it&apos;s on the truck.
+          </span>
+          <Button
+            size="sm"
+            variant="secondary"
+            data-testid="unlock-order"
+            disabled={busy}
+            onClick={async () => {
+              const reason = window.prompt(
+                'Unlocking is logged to the owner dashboard. Reason for unlocking:',
+              );
+              if (reason == null) return;
+              await act('/unlock', { reason });
+            }}
+          >
+            Unlock…
+          </Button>
+        </div>
+      )}
 
       <div className="grid gap-4 lg:grid-cols-[2fr_1fr]">
         <div className="min-w-0">
@@ -410,12 +530,47 @@ export default function OrderDetailPage() {
                     />
                     <Button
                       variant="primary"
-                      onClick={() => {
+                      onClick={async () => {
                         if (!deliveryDate) {
                           setError('Pick a delivery date first.');
                           return;
                         }
-                        void act('/deliveries', { scheduledDate: deliveryDate });
+                        // Over-cap booking is allowed but deliberate:
+                        // the 409 becomes a confirm, and the retry
+                        // carries the override flag (logged to the
+                        // owner feed server-side).
+                        setBusy(true);
+                        setError(null);
+                        try {
+                          await api(`/v1/orders/${id}/deliveries`, {
+                            method: 'POST',
+                            body: JSON.stringify({ scheduledDate: deliveryDate }),
+                          });
+                          await load();
+                        } catch (err) {
+                          const msg = err instanceof Error ? err.message : String(err);
+                          if (
+                            msg.includes('at capacity') &&
+                            window.confirm(`${msg}\n\nBook beyond the cap anyway?`)
+                          ) {
+                            try {
+                              await api(`/v1/orders/${id}/deliveries`, {
+                                method: 'POST',
+                                body: JSON.stringify({
+                                  scheduledDate: deliveryDate,
+                                  confirmOverCapacity: true,
+                                }),
+                              });
+                              await load();
+                            } catch (err2) {
+                              setError(err2 instanceof Error ? err2.message : String(err2));
+                            }
+                          } else {
+                            setError(msg);
+                          }
+                        } finally {
+                          setBusy(false);
+                        }
                       }}
                       disabled={busy}
                       data-testid="schedule-delivery"
@@ -423,6 +578,16 @@ export default function OrderDetailPage() {
                       <Truck size={14} aria-hidden />
                       Schedule delivery
                     </Button>
+                    {dayCapacity && (
+                      <span
+                        className={`badge badge-${
+                          dayCapacity.booked >= dayCapacity.cap ? 'danger' : 'info'
+                        }`}
+                        data-testid="capacity-hint"
+                      >
+                        {dayCapacity.booked}/{dayCapacity.cap} stops booked
+                      </span>
+                    )}
                   </>
                 ) : (
                   <Button
@@ -438,21 +603,45 @@ export default function OrderDetailPage() {
             )}
           </Card>
 
-          <Card title="Timeline" style={{ marginBottom: 16 }}>
+          <ReturnsCard order={order} busy={busy} onChanged={load} />
+
+          <Card title="Change history" style={{ marginBottom: 16 }}>
             {timeline.length === 0 ? (
               <p className="muted" style={{ fontSize: 13, margin: 0 }}>
                 No events recorded.
               </p>
             ) : (
-              <ul style={{ margin: 0, paddingLeft: 16, fontSize: 13 }}>
-                {timeline.map((t) => (
-                  <li key={t.id} style={{ marginBottom: 4 }}>
-                    <span style={{ color: 'var(--text-secondary)' }}>
-                      {new Date(t.createdAt).toLocaleString()}
-                    </span>{' '}
-                    — {t.action.replace('order.', '').replace(/[._]/g, ' ')}
-                  </li>
-                ))}
+              <ul style={{ margin: 0, paddingLeft: 16, fontSize: 13 }} data-testid="order-timeline">
+                {timeline.map((t) => {
+                  const changes = auditChanges(t);
+                  return (
+                    <li key={t.id} style={{ marginBottom: 6 }}>
+                      <span style={{ color: 'var(--text-secondary)' }}>
+                        {new Date(t.createdAt).toLocaleString()}
+                      </span>{' '}
+                      — {t.action.replace('order.', '').replace(/[._]/g, ' ')}
+                      {t.actorEmail && (
+                        <span style={{ color: 'var(--text-muted)' }}> by {t.actorEmail}</span>
+                      )}
+                      {changes.length > 0 && (
+                        <ul
+                          style={{
+                            margin: '2px 0 0',
+                            paddingLeft: 14,
+                            color: 'var(--text-secondary)',
+                            fontSize: 12,
+                          }}
+                        >
+                          {changes.map((c) => (
+                            <li key={c.field}>
+                              {c.field}: {c.from} → {c.to}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </li>
+                  );
+                })}
               </ul>
             )}
           </Card>
@@ -768,6 +957,206 @@ function PaymentPlanCard(props: {
           </div>
         </>
       )}
+    </Card>
+  );
+}
+
+/**
+ * §10 Returns & exchange: delivered units come back through here — the
+ * refund reverses original tenders or lands as store credit, the goods
+ * go to the As-Is review queue (never straight to stock), and an
+ * Exchange Order can be written against this invoice. Price adjustments
+ * are the money-only variant.
+ */
+function ReturnsCard({
+  order,
+  busy,
+  onChanged,
+}: {
+  order: {
+    id: string;
+    number: string;
+    orderKind: string;
+    originalOrderId?: string | null;
+    paidCents: number;
+    creditDueCents?: number;
+    lines: ReturnableLine[];
+  };
+  busy: boolean;
+  onChanged: () => Promise<void> | void;
+}) {
+  const [qty, setQty] = useState<Record<string, number>>({});
+  const [method, setMethod] = useState<'original' | 'store_credit'>('original');
+  const [reason, setReason] = useState('');
+  const [adjustAmount, setAdjustAmount] = useState('');
+  const [working, setWorking] = useState(false);
+
+  const returnable = order.lines.filter((l) => l.qtyFulfilled - l.qtyReturned > 0);
+  if (returnable.length === 0 && !order.originalOrderId && order.paidCents === 0) return null;
+
+  async function processReturn() {
+    const lines = Object.entries(qty)
+      .filter(([, q]) => q > 0)
+      .map(([lineId, quantity]) => ({ lineId, quantity }));
+    if (lines.length === 0) {
+      toast.error('Enter a quantity on at least one line.');
+      return;
+    }
+    setWorking(true);
+    try {
+      await api(`/v1/orders/${order.id}/return`, {
+        method: 'POST',
+        body: JSON.stringify({ lines, refundMethod: method, reason: reason || null }),
+      });
+      toast.success('Return processed — goods staged in As-Is review.');
+      setQty({});
+      setReason('');
+      await onChanged();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function processAdjustment() {
+    const cents = Math.round(Number(adjustAmount) * 100);
+    if (!Number.isFinite(cents) || cents <= 0 || !reason.trim()) {
+      toast.error('Enter an adjustment amount and a reason.');
+      return;
+    }
+    setWorking(true);
+    try {
+      await api(`/v1/orders/${order.id}/price-adjustment`, {
+        method: 'POST',
+        body: JSON.stringify({ amountCents: cents, reason: reason.trim(), refundMethod: method }),
+      });
+      toast.success('Price adjustment recorded.');
+      setAdjustAmount('');
+      setReason('');
+      await onChanged();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  return (
+    <Card title="Returns & exchange" style={{ marginBottom: 16 }}>
+      {order.originalOrderId && (
+        <p style={{ fontSize: 13, marginTop: 0 }}>
+          This is an <strong>Exchange Order</strong> —{' '}
+          <Link href={`/orders/${order.originalOrderId}`}>view the original invoice</Link>.
+          {(order.creditDueCents ?? 0) > 0 && (
+            <>
+              {' '}
+              Credit due to customer: <Money cents={order.creditDueCents!} />.
+            </>
+          )}
+        </p>
+      )}
+      {returnable.length > 0 && (
+        <>
+          <table className="table" style={{ marginBottom: 8 }}>
+            <thead>
+              <tr>
+                <th>Delivered item</th>
+                <th className="num">Returnable</th>
+                <th>Return qty</th>
+              </tr>
+            </thead>
+            <tbody>
+              {returnable.map((l) => {
+                const max = l.qtyFulfilled - l.qtyReturned;
+                return (
+                  <tr key={l.id}>
+                    <td>{l.description}</td>
+                    <td className="num">{max}</td>
+                    <td>
+                      <Input
+                        type="number"
+                        min={0}
+                        max={max}
+                        value={qty[l.id] ?? 0}
+                        data-testid="return-qty"
+                        onChange={(e) =>
+                          setQty((prev) => ({
+                            ...prev,
+                            [l.id]: Math.max(0, Math.min(max, Number(e.target.value) || 0)),
+                          }))
+                        }
+                        style={{ width: 70 }}
+                      />
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </>
+      )}
+      <div className="flex flex-wrap items-end gap-2" style={{ fontSize: 13 }}>
+        <label style={{ display: 'grid', gap: 2, fontSize: 12 }}>
+          Refund to
+          <select
+            className="select"
+            value={method}
+            data-testid="refund-method"
+            onChange={(e) => setMethod(e.target.value as 'original' | 'store_credit')}
+          >
+            <option value="original">Original tenders</option>
+            <option value="store_credit">Store credit</option>
+          </select>
+        </label>
+        <label style={{ display: 'grid', gap: 2, fontSize: 12, flex: 1, minWidth: 160 }}>
+          Reason
+          <Input value={reason} onChange={(e) => setReason(e.target.value)} />
+        </label>
+        {returnable.length > 0 && (
+          <Button
+            variant="primary"
+            disabled={busy || working}
+            onClick={() => void processReturn()}
+            data-testid="process-return"
+          >
+            Process return
+          </Button>
+        )}
+        <label style={{ display: 'grid', gap: 2, fontSize: 12 }}>
+          Adjustment ($)
+          <Input
+            type="number"
+            step="0.01"
+            min={0}
+            value={adjustAmount}
+            onChange={(e) => setAdjustAmount(e.target.value)}
+            data-testid="adjust-amount"
+            style={{ width: 110 }}
+          />
+        </label>
+        <Button
+          variant="secondary"
+          disabled={busy || working}
+          onClick={() => void processAdjustment()}
+          data-testid="process-adjustment"
+        >
+          Price adjustment
+        </Button>
+        {!order.originalOrderId && (
+          <LinkButton
+            href={`/orders/new?exchangeOf=${order.id}`}
+            variant="secondary"
+            data-testid="write-exchange"
+          >
+            Write exchange order
+          </LinkButton>
+        )}
+      </div>
+      <p className="muted" style={{ fontSize: 11.5, margin: '8px 0 0' }}>
+        No restocking fee. Returned goods go to the As-Is queue for manager/warehouse review — never
+        straight back to sellable stock.
+      </p>
     </Card>
   );
 }

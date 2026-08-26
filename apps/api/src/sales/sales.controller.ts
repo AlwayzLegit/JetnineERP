@@ -27,6 +27,7 @@ import {
 import { DRIZZLE } from '../database/database.module';
 import { CommissionsService } from '../money/commissions.service';
 import { GiftCardsService } from '../gift-cards/gift-cards.service';
+import { StoreCreditService } from '../returns/store-credit.service';
 import { StripeService } from '../stripe/stripe.service';
 import { RequirePermission, TenantScoped } from '../tenancy/decorators';
 import type { RequestTenantContext } from '../tenancy/request-context';
@@ -101,6 +102,12 @@ interface RefundLine {
 interface RefundBody {
   reason?: string | null;
   lines?: RefundLine[];
+  /**
+   * §10: 'original' (default) reverses the original tenders;
+   * 'store_credit' issues the amount to the customer's store-credit
+   * ledger instead (requires the sale to have a customer).
+   */
+  refundMethod?: 'original' | 'store_credit';
 }
 
 interface SaleListRow {
@@ -163,6 +170,7 @@ export class SalesController {
     @Inject(GiftCardsService) private readonly giftCards: GiftCardsService,
     @Inject(WebhookDispatcher) private readonly webhooks: WebhookDispatcher,
     @Inject(CommissionsService) private readonly commissions: CommissionsService,
+    @Inject(StoreCreditService) private readonly storeCredit: StoreCreditService,
   ) {}
 
   /**
@@ -170,6 +178,109 @@ export class SalesController {
    * (so a scan auto-resolves), then falls back to product name / SKU
    * substring search. Returns active variants only.
    */
+  /**
+   * New Sale product popup (PLAN-POS-OPERATIONS §4): searchable, vendor-
+   * filterable results carrying live stock at the selling location plus
+   * everywhere, and — when a variant is out of stock — the ATP date: the
+   * earliest expected date among open POs that still owe units of it.
+   */
+  @Get('pos/product-search')
+  @RequirePermission('pos.access')
+  async productSearch(
+    @CurrentTenant() tenant: RequestTenantContext,
+    @Query('q') q?: string,
+    @Query('vendorId') vendorId?: string,
+    @Query('inStock') inStock?: string,
+    @Query('locationId') locationId?: string,
+    @Query('limit') limitStr?: string,
+  ): Promise<
+    {
+      variantId: string;
+      productId: string;
+      productName: string;
+      variantName: string | null;
+      sku: string | null;
+      priceCents: number;
+      vendorId: string | null;
+      vendorName: string | null;
+      availableHere: number;
+      availableTotal: number;
+      atpDate: string | null;
+    }[]
+  > {
+    const query = (q ?? '').trim();
+    const limit = clampLimit(limitStr, 30);
+    const filters = [eq(schema.productVariants.isActive, true), eq(schema.products.isActive, true)];
+    if (query) {
+      filters.push(
+        sql`(${schema.products.name} ILIKE ${'%' + query + '%'} OR ${schema.productVariants.name} ILIKE ${'%' + query + '%'} OR ${schema.productVariants.sku} ILIKE ${'%' + query + '%'})`,
+      );
+    }
+    if (vendorId) filters.push(eq(schema.productVariants.preferredVendorId, vendorId));
+
+    const rows = await this.db
+      .select({
+        variantId: schema.productVariants.id,
+        productId: schema.products.id,
+        productName: schema.products.name,
+        variantName: schema.productVariants.name,
+        sku: schema.productVariants.sku,
+        priceCents: schema.productVariants.priceCents,
+        vendorId: schema.productVariants.preferredVendorId,
+        vendorName: schema.vendors.name,
+        availableHere: locationId
+          ? sql<number>`coalesce(sum(${schema.inventoryLevels.onHand} - ${schema.inventoryLevels.reserved}) FILTER (WHERE ${schema.inventoryLevels.locationId} = ${locationId}), 0)::int`
+          : sql<number>`0`,
+        availableTotal: sql<number>`coalesce(sum(${schema.inventoryLevels.onHand} - ${schema.inventoryLevels.reserved}), 0)::int`,
+      })
+      .from(schema.productVariants)
+      .innerJoin(schema.products, eq(schema.products.id, schema.productVariants.productId))
+      .leftJoin(schema.vendors, eq(schema.vendors.id, schema.productVariants.preferredVendorId))
+      .leftJoin(
+        schema.inventoryLevels,
+        eq(schema.inventoryLevels.variantId, schema.productVariants.id),
+      )
+      .where(and(...filters))
+      .groupBy(schema.productVariants.id, schema.products.id, schema.vendors.name)
+      .having(
+        inStock === '1'
+          ? sql`coalesce(sum(${schema.inventoryLevels.onHand} - ${schema.inventoryLevels.reserved}), 0) > 0`
+          : inStock === '0'
+            ? sql`coalesce(sum(${schema.inventoryLevels.onHand} - ${schema.inventoryLevels.reserved}), 0) <= 0`
+            : sql`true`,
+      )
+      .orderBy(schema.products.name)
+      .limit(limit);
+
+    // ATP only matters for the out-of-stock rows the popup is warning about.
+    const outIds = rows.filter((r) => r.availableTotal <= 0).map((r) => r.variantId);
+    const atp = new Map<string, string>();
+    if (outIds.length > 0) {
+      const pos = await this.db
+        .select({
+          variantId: schema.purchaseOrderLines.variantId,
+          expectedAt: sql<string | null>`min(${schema.purchaseOrders.expectedAt})::text`,
+        })
+        .from(schema.purchaseOrderLines)
+        .innerJoin(
+          schema.purchaseOrders,
+          eq(schema.purchaseOrders.id, schema.purchaseOrderLines.purchaseOrderId),
+        )
+        .where(
+          and(
+            inArray(schema.purchaseOrderLines.variantId, outIds),
+            inArray(schema.purchaseOrders.status, ['draft', 'ordered', 'partially_received']),
+            sql`${schema.purchaseOrderLines.quantityOrdered} > ${schema.purchaseOrderLines.quantityReceived}`,
+            sql`${schema.purchaseOrders.expectedAt} IS NOT NULL`,
+          ),
+        )
+        .groupBy(schema.purchaseOrderLines.variantId);
+      for (const r of pos) if (r.variantId && r.expectedAt) atp.set(r.variantId, r.expectedAt);
+    }
+
+    return rows.map((r) => ({ ...r, atpDate: atp.get(r.variantId) ?? null }));
+  }
+
   @Get('pos/lookup')
   @RequirePermission('pos.access')
   async lookup(
@@ -958,6 +1069,16 @@ export class SalesController {
       amountCents += perUnit * r.quantity;
     }
 
+    // §10: refunds go back to the original tenders unless the customer
+    // takes store credit instead — then no money moves at all, the
+    // amount lands on their ledger.
+    const toStoreCredit = body.refundMethod === 'store_credit';
+    if (toStoreCredit && !sale.customerId) {
+      throw new BadRequestException(
+        'Store-credit refunds need a customer on the sale — attach one first',
+      );
+    }
+
     // If the sale was paid (in part) on a Stripe-charged card, reverse
     // the matching PaymentIntent on the merchant's connected account
     // before we record any refund rows. Allocate the refund amount to
@@ -970,7 +1091,9 @@ export class SalesController {
       .where(eq(schema.payments.saleId, id))
       .orderBy(schema.payments.createdAt);
 
-    const stripePayments = allPayments.filter((p) => p.processor === 'stripe' && p.processorRef);
+    const stripePayments = toStoreCredit
+      ? []
+      : allPayments.filter((p) => p.processor === 'stripe' && p.processorRef);
     if (stripePayments.length > 0) {
       const [merchant] = await this.db
         .select({ stripeAccountId: schema.merchantStripeAccounts.stripeAccountId })
@@ -1016,9 +1139,9 @@ export class SalesController {
     // so a mixed-tender sale (card + gift card) refunds card first
     // (matches what the customer expects) and only touches the gift
     // card if the refund exceeds the card-paid portion.
-    const giftCardPayments = allPayments.filter(
-      (p) => p.processor === 'gift_card' && p.processorRef,
-    );
+    const giftCardPayments = toStoreCredit
+      ? []
+      : allPayments.filter((p) => p.processor === 'gift_card' && p.processorRef);
     if (giftCardPayments.length > 0) {
       const stripeTotalRefunded = stripePayments.reduce(
         (s, p) => s + Math.min(amountCents, p.amountCents),
@@ -1038,7 +1161,9 @@ export class SalesController {
       }
     }
 
-    // Insert refund lines + restore inventory.
+    // Insert refund lines. Returned goods do NOT go back to sellable
+    // stock (§10) — they land in the As-Is queue and wait for a
+    // manager/warehouse review to decide restock / vendor / scrap.
     for (const v of validated) {
       await this.db.insert(schema.refundLines).values({
         businessId: tenant.businessId!,
@@ -1050,33 +1175,31 @@ export class SalesController {
       });
 
       if (v.line.variantId) {
-        await this.db.insert(schema.inventoryMovements).values({
+        await this.db.insert(schema.asIsItems).values({
           businessId: tenant.businessId!,
           variantId: v.line.variantId,
           locationId: sale.locationId,
-          delta: v.quantity,
-          reason: 'refund',
+          quantity: v.quantity,
+          source: 'return',
           referenceType: 'refund',
           referenceId: refund.id,
-          actorUserId: actor.id,
-          notes: null,
+          notes: body.reason ?? null,
         });
-        await this.db
-          .insert(schema.inventoryLevels)
-          .values({
-            businessId: tenant.businessId!,
-            variantId: v.line.variantId,
-            locationId: sale.locationId,
-            onHand: v.quantity,
-          })
-          .onConflictDoUpdate({
-            target: [schema.inventoryLevels.variantId, schema.inventoryLevels.locationId],
-            set: {
-              onHand: sql`${schema.inventoryLevels.onHand} + ${v.quantity}`,
-              updatedAt: new Date(),
-            },
-          });
       }
+    }
+
+    // Store-credit refunds land on the customer's ledger; the balance
+    // auto-surfaces at their next checkout.
+    if (toStoreCredit) {
+      await this.storeCredit.issue(this.db, {
+        businessId: tenant.businessId!,
+        customerId: sale.customerId!,
+        amountCents,
+        reason: body.reason ?? `Refund on ${sale.number}`,
+        referenceType: 'refund',
+        referenceId: refund.id,
+        actorUserId: actor.id,
+      });
     }
 
     // Compute new sale status: all lines fully refunded → 'refunded';

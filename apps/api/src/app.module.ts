@@ -39,6 +39,7 @@ import { ReportsModule } from './reports/reports.module';
 import { SalesModule } from './sales/sales.module';
 import { StripeModule } from './stripe/stripe.module';
 import { TenancyModule } from './tenancy/tenancy.module';
+import { ReturnsModule } from './returns/returns.module';
 import { TransfersModule } from './transfers/transfers.module';
 import { WebhooksModule } from './webhooks/webhooks.module';
 
@@ -90,6 +91,7 @@ import { WebhooksModule } from './webhooks/webhooks.module';
     InventoryModule,
     PurchasingModule,
     TransfersModule,
+    ReturnsModule,
     SalesModule,
     OrdersModule,
     DeliveriesModule,

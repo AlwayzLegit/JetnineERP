@@ -81,6 +81,9 @@ const bookkeeperPermissions: Permission[] = [
   'reports.export',
   'sales.view',
   'audit.view',
+  // §6: the books record and approve vendor invoices against POs.
+  'vendor_invoices.manage',
+  'purchase_orders.view',
   // Cutover: the books need order revenue, receivables, and the
   // commission run — read-only.
   'orders.view',

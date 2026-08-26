@@ -12,6 +12,14 @@ interface Branding {
   publicName?: string | null;
 }
 
+interface OpsSettings {
+  recyclingFeeCents?: number | null;
+  invoiceHeaderNote?: string | null;
+  invoiceFooterNote?: string | null;
+  deliveryDailyCap?: number | null;
+  poReplyTo?: string | null;
+}
+
 interface Settings {
   id: string;
   slug: string;
@@ -22,6 +30,7 @@ interface Settings {
   receiptHeader: string | null;
   receiptFooter: string | null;
   branding: Branding | null;
+  ops: OpsSettings | null;
 }
 
 export default function SettingsPage() {
@@ -180,8 +189,126 @@ export default function SettingsPage() {
         </Button>
       </form>
 
+      <OpsCard settings={settings} onSaved={setSettings} />
+
       <BrandingCard settings={settings} onSaved={setSettings} />
     </div>
+  );
+}
+
+/**
+ * POS-operations knobs (PLAN-POS-OPERATIONS): the per-unit recycling
+ * fee New Sale auto-adds, the admin-editable invoice header/footer
+ * notes (§11), the daily delivery stop cap (§7), and the PO reply-to.
+ * Saved separately, same as branding.
+ */
+function OpsCard({ settings, onSaved }: { settings: Settings; onSaved: (s: Settings) => void }) {
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const ops = settings.ops ?? {};
+
+  async function submit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    setSaving(true);
+    setMessage(null);
+    setErrorMsg(null);
+    try {
+      const data = new FormData(e.currentTarget);
+      const feeStr = String(data.get('recyclingFee') ?? '').trim();
+      const capStr = String(data.get('deliveryDailyCap') ?? '').trim();
+      const body: OpsSettings = {
+        recyclingFeeCents: feeStr === '' ? null : Math.round(Number(feeStr) * 100),
+        deliveryDailyCap: capStr === '' ? null : Number(capStr),
+        invoiceHeaderNote: String(data.get('invoiceHeaderNote') ?? '').trim() || null,
+        invoiceFooterNote: String(data.get('invoiceFooterNote') ?? '').trim() || null,
+        poReplyTo: String(data.get('poReplyTo') ?? '').trim() || null,
+      };
+      const updated = await api<Settings>('/v1/business/settings', {
+        method: 'PATCH',
+        body: JSON.stringify({ ops: body }),
+      });
+      onSaved(updated);
+      setMessage('Saved.');
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <form onSubmit={submit} className="card mt-4 grid max-w-[640px] gap-3 sm:grid-cols-2">
+      <h3 className="card-title sm:col-span-2" style={{ margin: 0 }}>
+        Store operations
+      </h3>
+      <Field label="Recycling fee per unit ($; blank = default 10.50)">
+        <Input
+          name="recyclingFee"
+          type="number"
+          step="0.01"
+          min={0}
+          defaultValue={
+            ops.recyclingFeeCents != null ? (ops.recyclingFeeCents / 100).toFixed(2) : ''
+          }
+          data-testid="ops-recycling-fee"
+          style={{ width: '100%' }}
+        />
+      </Field>
+      <Field label="Delivery stops per day (soft cap; blank = 15)">
+        <Input
+          name="deliveryDailyCap"
+          type="number"
+          min={1}
+          defaultValue={ops.deliveryDailyCap ?? ''}
+          style={{ width: '100%' }}
+        />
+      </Field>
+      <Field label="Invoice header note (printed top-center)">
+        <Input
+          name="invoiceHeaderNote"
+          defaultValue={ops.invoiceHeaderNote ?? ''}
+          placeholder="WE CALL 6-8PM NIGHT BEFORE DEL"
+          data-testid="ops-header-note"
+          style={{ width: '100%' }}
+        />
+      </Field>
+      <Field label="PO reply-to email">
+        <Input
+          name="poReplyTo"
+          type="email"
+          defaultValue={ops.poReplyTo ?? ''}
+          style={{ width: '100%' }}
+        />
+      </Field>
+      <Field label="Invoice footer" className="sm:col-span-2">
+        <textarea
+          name="invoiceFooterNote"
+          defaultValue={ops.invoiceFooterNote ?? ''}
+          rows={3}
+          className="textarea"
+          style={{ width: '100%', resize: 'vertical' }}
+        />
+      </Field>
+      {errorMsg && (
+        <p className="sm:col-span-2" style={{ color: 'var(--danger)', fontSize: 13, margin: 0 }}>
+          {errorMsg}
+        </p>
+      )}
+      {message && (
+        <p
+          data-testid="ops-success"
+          className="sm:col-span-2"
+          style={{ color: 'var(--success)', fontSize: 13, margin: 0 }}
+        >
+          {message}
+        </p>
+      )}
+      <Button type="submit" variant="primary" disabled={saving} style={{ width: 'fit-content' }}>
+        <Save size={14} aria-hidden />
+        {saving ? 'Saving…' : 'Save operations'}
+      </Button>
+    </form>
   );
 }
 

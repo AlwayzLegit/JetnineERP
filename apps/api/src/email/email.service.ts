@@ -8,6 +8,8 @@ export interface SendEmailInput {
   subject: string;
   html: string;
   text?: string;
+  /** Reply-To header — e.g. the admin-set PO reply address (§6). */
+  replyTo?: string;
 }
 
 export interface CapturedEmail extends SendEmailInput {
@@ -51,6 +53,7 @@ class ResendTransport implements EmailTransport {
       subject: input.subject,
       html: input.html,
       text: input.text,
+      ...(input.replyTo ? { replyTo: input.replyTo } : {}),
     });
     if (error) {
       this.logger.error({ error }, 'resend send failed');

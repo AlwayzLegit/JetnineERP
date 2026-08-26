@@ -208,9 +208,16 @@ export function deriveFulfillmentStatus(
  * Order statuses from which stock is still committed and money can still
  * move. Used to gate deposits, line edits, and reservation.
  */
-export const LIVE_ORDER_STATUSES = ['quote', 'open', 'partially_fulfilled', 'fulfilled'] as const;
+export const LIVE_ORDER_STATUSES = [
+  'draft',
+  'quote',
+  'open',
+  'partially_fulfilled',
+  'fulfilled',
+] as const;
 
 export type OrderStatus =
+  | 'draft'
   | 'quote'
   | 'open'
   | 'partially_fulfilled'

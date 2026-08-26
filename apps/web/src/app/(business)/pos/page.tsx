@@ -1,59 +1,32 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import { PageHeader } from '@/components/ui';
-import { OrderEntry } from '@/components/order-entry';
-import { RegisterView } from './register-view';
+import { NewSale } from '@/components/new-sale';
+import { api } from '@/lib/api';
 
 /**
- * POS home. The default surface is the STORIS-style three-step
- * "Enter a Sales Order" flow; the legacy quick-sale register stays one
- * tab away until its offline queue and drawer flows are fully ported
- * into the step flow, then it retires.
+ * POS home = New Sale, the single-screen order entry
+ * (PLAN-POS-OPERATIONS §4; amendments A3/A4 — the step wizard and the
+ * legacy quick-sale register are both retired; take-with rings through
+ * here). Login lands here, so this page owns the same fresh-signup
+ * bounce the dashboard has: no memberships → /welcome.
  */
 export default function PosPage() {
-  const [tab, setTab] = useState<'order' | 'register'>('order');
+  const router = useRouter();
+  useEffect(() => {
+    void api<unknown | null>('/v1/onboarding/checklist')
+      .then((result) => {
+        if (result == null) router.replace('/welcome');
+      })
+      .catch(() => undefined);
+  }, [router]);
 
   return (
     <div>
-      <div className="mb-3 flex items-center gap-2">
-        <button
-          className="btn"
-          onClick={() => setTab('order')}
-          style={tab === 'order' ? activeTab : inactiveTab}
-          data-testid="pos-tab-order-entry"
-        >
-          Enter a Sales Order
-        </button>
-        <button
-          className="btn"
-          onClick={() => setTab('register')}
-          style={tab === 'register' ? activeTab : inactiveTab}
-          data-testid="pos-tab-register"
-        >
-          Register (quick sale)
-        </button>
-      </div>
-      {tab === 'order' ? (
-        <>
-          <PageHeader title="Enter a Sales Order" />
-          <OrderEntry />
-        </>
-      ) : (
-        <RegisterView />
-      )}
+      <PageHeader title="New Sale" />
+      <NewSale />
     </div>
   );
 }
-
-const activeTab = {
-  background: 'var(--brand)',
-  color: '#fff',
-  border: '1px solid var(--brand)',
-  fontWeight: 600,
-} as const;
-const inactiveTab = {
-  background: 'var(--surface)',
-  color: 'var(--text-secondary)',
-  border: '1px solid var(--border-strong)',
-} as const;

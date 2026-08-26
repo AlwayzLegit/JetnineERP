@@ -140,6 +140,19 @@ export class TenancyGuard implements CanActivate {
     }
 
     const permissions = await this.loadPermissions(membership.roleId);
+    // Per-user matrix adjustments (PLAN-POS-OPERATIONS §2): role defaults
+    // first, then explicit grants/revokes for this membership.
+    const overrides = await this.db
+      .select({
+        permission: schema.membershipPermissionOverrides.permission,
+        allowed: schema.membershipPermissionOverrides.allowed,
+      })
+      .from(schema.membershipPermissionOverrides)
+      .where(eq(schema.membershipPermissionOverrides.membershipId, membership.membershipId));
+    for (const o of overrides) {
+      if (o.allowed) permissions.add(o.permission as Permission);
+      else permissions.delete(o.permission as Permission);
+    }
     req.tenant = {
       userId: user.id,
       isSuperAdmin: user.isSuperAdmin,

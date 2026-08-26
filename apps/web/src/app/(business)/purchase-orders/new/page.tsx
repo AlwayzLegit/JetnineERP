@@ -28,6 +28,33 @@ interface Line {
   description: string;
   quantity: number;
   unitCostStr: string;
+  /** Set when the line buys for a specific customer order (queue pre-load). */
+  orderLineId?: string;
+  /** Display-only: the sales order this line is bought for. */
+  orderNumber?: string;
+}
+
+interface ReorderSuggestion {
+  variantId: string;
+  productName: string;
+  variantName: string | null;
+  sku: string | null;
+  available: number;
+  reorderPoint: number;
+  suggestedQty: number;
+  unitCostCents: number | null;
+}
+
+interface QueueRow {
+  orderLineId: string;
+  orderNumber: string;
+  customerName: string | null;
+  variantId: string | null;
+  sku: string | null;
+  preferredVendorId: string | null;
+  unitCostCents: number | null;
+  description: string;
+  toOrder: number;
 }
 
 export default function NewPurchaseOrderPage() {
@@ -43,6 +70,32 @@ export default function NewPurchaseOrderPage() {
   const [results, setResults] = useState<VariantRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [reorder, setReorder] = useState<ReorderSuggestion[]>([]);
+  const [queue, setQueue] = useState<QueueRow[]>([]);
+
+  // §6 builder pre-load for the selected vendor: (a) items at/below
+  // their reorder point, (b) sold-not-in-stock special-order lines.
+  useEffect(() => {
+    if (!vendorId) return;
+    let stale = false;
+    void api<{
+      vendors: { vendorId: string | null; lines: ReorderSuggestion[] }[];
+    }>('/v1/purchase-orders/reorder-suggestions')
+      .then((r) => {
+        if (stale) return;
+        setReorder(r.vendors.find((v) => v.vendorId === vendorId)?.lines ?? []);
+      })
+      .catch(() => setReorder([]));
+    void api<QueueRow[]>('/v1/special-orders/queue')
+      .then((rows) => {
+        if (stale) return;
+        setQueue(rows.filter((r) => r.variantId && r.preferredVendorId === vendorId));
+      })
+      .catch(() => setQueue([]));
+    return () => {
+      stale = true;
+    };
+  }, [vendorId]);
 
   useEffect(() => {
     void (async () => {
@@ -115,6 +168,7 @@ export default function NewPurchaseOrderPage() {
           variantId: l.variantId,
           quantity: Number(l.quantity),
           unitCostCents: Math.round(Number(l.unitCostStr) * 100),
+          orderLineId: l.orderLineId,
         })),
       };
       for (const l of body.lines) {
@@ -204,6 +258,107 @@ export default function NewPurchaseOrderPage() {
           </Field>
         </Card>
 
+        {(reorder.length > 0 || queue.length > 0) && (
+          <Card title="Suggested for this vendor" data-testid="builder-suggestions">
+            {reorder.length > 0 && (
+              <>
+                <p className="muted" style={{ fontSize: 12.5, margin: '0 0 6px' }}>
+                  At or below reorder point:
+                </p>
+                {reorder.map((s) => (
+                  <div
+                    key={s.variantId}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 8,
+                      fontSize: 13,
+                      padding: '4px 0',
+                    }}
+                  >
+                    <span style={{ flex: 1 }}>
+                      {s.productName}
+                      {s.variantName ? ` — ${s.variantName}` : ''}{' '}
+                      <span style={{ color: 'var(--text-muted)' }}>
+                        ({s.available} avail, point {s.reorderPoint})
+                      </span>
+                    </span>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="secondary"
+                      disabled={lines.some((l) => l.variantId === s.variantId && !l.orderLineId)}
+                      onClick={() =>
+                        setLines((prev) => [
+                          ...prev,
+                          {
+                            variantId: s.variantId,
+                            description: [s.productName, s.variantName].filter(Boolean).join(' — '),
+                            quantity: s.suggestedQty,
+                            unitCostStr:
+                              s.unitCostCents != null ? (s.unitCostCents / 100).toFixed(2) : '',
+                          },
+                        ])
+                      }
+                    >
+                      Add {s.suggestedQty}
+                    </Button>
+                  </div>
+                ))}
+              </>
+            )}
+            {queue.length > 0 && (
+              <>
+                <p className="muted" style={{ fontSize: 12.5, margin: '8px 0 6px' }}>
+                  Sold, not in stock (order carries the sales order #):
+                </p>
+                {queue.map((q) => (
+                  <div
+                    key={q.orderLineId}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 8,
+                      fontSize: 13,
+                      padding: '4px 0',
+                    }}
+                  >
+                    <span style={{ flex: 1 }}>
+                      {q.description}{' '}
+                      <span style={{ color: 'var(--text-muted)' }}>
+                        for {q.orderNumber}
+                        {q.customerName ? ` (${q.customerName})` : ''}
+                      </span>
+                    </span>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="secondary"
+                      disabled={lines.some((l) => l.orderLineId === q.orderLineId)}
+                      onClick={() =>
+                        setLines((prev) => [
+                          ...prev,
+                          {
+                            variantId: q.variantId!,
+                            description: q.description,
+                            quantity: q.toOrder,
+                            unitCostStr:
+                              q.unitCostCents != null ? (q.unitCostCents / 100).toFixed(2) : '',
+                            orderLineId: q.orderLineId,
+                            orderNumber: q.orderNumber,
+                          },
+                        ])
+                      }
+                    >
+                      Add {q.toOrder}
+                    </Button>
+                  </div>
+                ))}
+              </>
+            )}
+          </Card>
+        )}
+
         <Card title="Add items">
           <div className="flex flex-wrap gap-2">
             <Input
@@ -273,8 +428,18 @@ export default function NewPurchaseOrderPage() {
                     const lineTotal =
                       Math.round(Number(l.unitCostStr) * 100) * Number(l.quantity || 0);
                     return (
-                      <tr key={l.variantId}>
-                        <td>{l.description}</td>
+                      <tr key={`${l.variantId}-${l.orderLineId ?? i}`}>
+                        <td>
+                          {l.description}
+                          {l.orderNumber && (
+                            <span
+                              className="badge badge-info"
+                              style={{ marginLeft: 6, fontSize: 11 }}
+                            >
+                              for {l.orderNumber}
+                            </span>
+                          )}
+                        </td>
                         <td>
                           <Input
                             type="number"

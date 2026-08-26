@@ -564,6 +564,190 @@ three-step program and is the default POS surface.
   configurator, manual numbers, backdating, Multi-Ship Master.
 - Web typecheck/lint/unit green; api 27/27 orders int tests green. Full e2e runs in CI.
 
+## Checkpoint 7 merged + deployed (2026-08-25)
+
+PR #31 squash-merged to main as `2d3f799` (CI 4/4 green first try, incl. Playwright on
+the new stepper choreography). Deploy branch rolled (`3e34867`), Render deploy
+`dep-da72lkqjnfac73aifv6g` **live 23:54Z** — boot log:
+`Schema migrations: 32/32 applied, head=0031_order_entry_storis_parity; this run
+applied 0031_order_entry_storis_parity.` `/health` + `/ready` 200 on the fresh
+instance. Vercel production READY on main `2d3f799`. Sprint branch restarted from
+main. **"Enter a Sales Order" is live on `lamattress-erp.vercel.app` → POS.**
+Ops unchanged: repoint Render repo URL (deploys still manual-trigger), rotate the
+shared owner password, Resend domain when ready.
+
+## POS / Operations build (PLAN-POS-OPERATIONS.md) — phase tracker
+
+Owner handoff spec committed as `PLAN-POS-OPERATIONS.md` with amendments A1–A4
+(batch print doesn't lock; LB=La Brea keeps its name+history; single-screen New Sale
+supersedes the checkpoint-7 wizard; legacy register + its offline mode retire).
+
+- [x] **Build P1 (schema+API core):** migration `0032_pos_ops_phase1` — `locations.order_prefix`
+      (validated 1–4 letters, unique per business, admin-editable via locations API),
+      `order_sequences` per-store atomic counters (orders at a prefixed location number
+      `{PREFIX}-{seq}` from 10001; unprefixed locations keep the legacy SO-YYYY sequence),
+      `businesses.ops_settings_json` (recycling rate / doc notes / unlock roles / delivery
+      cap / PO reply-to — editors ride with their consuming phases),
+      `orders.original_order_id` (exchange link), `membership_permission_overrides`
+      (per-user grant/revoke applied in the tenancy guard on top of role defaults). RLS
+      registered; verified from empty DB (33/33). business.int.spec +2 (WL-10001/WL-10002/
+      K-10001 numbering, duplicate-prefix rejection; override grant→200 / revoke→403);
+      orders suite 27/27 unaffected. — _2026-08-25. Remaining P1 surface (permission-matrix
+      UI, ops-settings editor, new role set, store-scoped visibility) rides with P2/P3._
+- [x] **Build P2:** New Sale screen — single-screen order entry live at `/pos` (and
+      `/orders/new`), login lands there. Universal customer search (name/phone/email/
+      address via the widened tsvector, migration 0033) with disambiguating dropdown +
+      inline create; Ship-To toggle defaulting to billing; Add Product popup
+      (`/v1/pos/product-search`: text/vendor/in-stock filters, here/all availability,
+      ATP date from open POs) with out-of-stock ATP banners on lines; click-to-edit
+      price override + per-line & order discounts; auto Recycling Fee line per
+      qualifying unit (rate from ops settings, removable) + "+ Removal ($0)" +
+      installation/delivery fee fields; up to two salespeople with equal split;
+      pinned totals rail (merchandise/discounts/install/delivery/recycling/tax/total/
+      paid/balance); payments list over nine tenders; layaway enforces the \$100
+      minimum deposit; take-with fully-paid fast lane posts a register sale;
+      store-wide drafts (chips to resume; completing supersedes the draft). Wizard
+      (`order-entry.tsx`), legacy register, `/pos/pending` offline tray and the
+      offline e2e spec all retired per A3/A4; auth/sweep/orders e2e rewritten for the
+      new flow; fresh-signup welcome bounce ported to `/pos`.
+      — _2026-08-25/26. v1 conventions flagged: recycling detection is a name-keyword
+      match (mattress/foundation/adjustable base/box spring) pending a category flag;
+      salespeople capped at two by the split schema; store-credit tender records
+      without a balance check until P8's ledger._
+- [x] **Build P3:** Orders list + slide-over + change-history timeline + notifications feed.
+      `/v1/orders/list-view` returns the spec table page (Order #, Customer, derived
+      display Status w/ PO #, Delivery Date, Balance Due, Salesperson) — display status
+      computed per row from real state (draft/quote/cancelled/completed → Draft/Quote/
+      Cancelled/Delivered; layaway w/ balance → Layaway; undelivered trip → Scheduled/
+      Out for Delivery; open PO allocation w/ unreceived qty → On PO (#); under-reserved
+      stock line → Pending; else Reserved), never stored. `/orders` page rebuilt as that
+      table (search over order #/customer, raw-status filter, cursor "Load more"); row
+      click opens a read-only slide-over (lines/totals/payments/balance) with an
+      "Open full page" link, Esc/backdrop closes. Order-detail Timeline card upgraded to
+      the spec change history: actor email per entry + field-level before → after values
+      from the audit diff (cents fields rendered as dollars). `/v1/notifications`
+      (audit.view-gated) derives the owner feed from audit rows (order.update/line.add/
+      line.remove/cancel/payment.take — order.create excluded as not post-creation),
+      joined to actor + live order number; dashboard gained a "Notifications — order
+      changes" card that hides on 403. orders.int.spec +3 (display statuses + balance,
+      q filter, feed contents/attribution/gating) → 33/33; orders e2e board assertions
+      → table + slide-over. — _2026-08-26. Cap/lock overrides and close-out exceptions
+      join the same feed when P5/P9 land (they'll be audit actions too)._
+- [x] **Build P4:** Documents — invoice, delivery ticket + individual-print lock, batch
+      print. `GET /v1/orders/:id/document` bundles everything §11 needs (business name/
+      logo + admin header/footer notes from ops settings, store block from the location,
+      Sold To/Ship To, salesperson names, scheduled date from the earliest undelivered
+      trip, per-line Model = variant SKU / Brand = preferred vendor). Print views live in
+      a chrome-free `(print)` route group: `/print/orders/:id/invoice` (§11 layout: header
+      note box, SO#/date boxes, info strip w/ salesperson initials, Ln#/F-code/Model/Brand
+      line grid printing $0 lines, payments-by-method table, Merchandise→Amount Due totals
+      rail, footer), `/print/orders/:id/delivery-ticket` (signature + date lines, collect-
+      on-delivery amount), and `/print/deliveries?date=` batch — one ticket per undelivered
+      trip, page-broken, not-ready trips printed WITH a bold flag (failed attempt / stock
+      not fully reserved) per §7. **A1 lock**: `orders.locked_at` (migration 0034);
+      individual print posts `/delivery-ticket-print` → locks; PATCH/line-add/line-remove/
+      cancel all 409 while locked; batch never locks. `POST :id/unlock` requires the new
+      `orders.unlock` permission (Owner+Manager via catalog, backfilled by the boot-time
+      system-role sync; owner narrows via the §2 matrix/per-user overrides) + a typed
+      reason → audit `order.unlock` → notifications feed. Order detail: locked banner w/
+      unlock prompt + Print invoice/ticket buttons; day-sheet gained "All tickets (no
+      lock)". Settings page gained the Store operations card (recycling fee $, delivery
+      cap, invoice header/footer notes, PO reply-to). orders.int.spec +2 → 35/35.
+      — _2026-08-26. Conventions flagged: Brand column = preferred vendor (catalog has no
+      brand field); Terms prints "Balance due"/"Paid in full"; ops.unlockRoleIds is
+      superseded by the `orders.unlock` permission and ignored; payments on the order
+      stay allowed while locked (the office collects at delivery close-out)._
+- [x] **Build P5:** Delivery dispatch table + 15-stop capacity + zip routes.
+      `deliveries.route` (migration 0035) auto-suggested from the ship-to zip at
+      scheduling ("91205" → "912xx"), free-text editable via PATCH. `GET
+/v1/deliveries/capacity?from&to` returns per-day booked/remaining against
+      ops.deliveryDailyCap (default 15; counted business-wide — one fleet, flagged as v1
+      convention). Booking a full day now 409s unless `confirmOverCapacity: true`; the
+      override writes audit `delivery.cap_override` (targeting the order) → owner
+      notifications feed ("Delivery booked over capacity"). Web: `/deliveries/dispatch` —
+      the §7 dispatcher table for a date (stop # + route inline-editable, order link,
+      customer, address+phone, window, items, collect amount, status) with the "12/15
+      stops" chip (amber near cap, red at cap) and All-tickets/Calendar links; calendar
+      header gained Dispatch. Order detail's schedule box shows the day's booked/cap and
+      turns the 409 into a confirm that retries with the override flag; New Sale shows
+      "N of 15 stops left that day" under the delivery date (red "Full — booking will
+      need a capacity override" at cap). deliveries.int.spec +2 → 14/14; orders 35/35.
+      — _2026-08-26. Conventions flagged: cap counts stops business-wide, not per store;
+      route suggestion is zip-prefix ("912xx") pending real route areas._
+- [x] **Build P6:** Purchasing — builder pre-load, PO email, staged receiving, invoice
+      matching. **Receiving** (migration 0036): purchase*order_lines gained
+      quantity_inspected/quantity_accepted; new `POST :id/receiving` takes per-line stage
+      increments with the invariant ordered ≥ received ≥ inspected ≥ accepted — stock and
+      the special-order allocation flip (customer line → Reserved + arrival email) happen
+      at ACCEPT, not dock receipt; PO auto-completes only when every unit is accepted;
+      legacy `POST :id/receive` is now the "receive+inspect+accept in one" fast path over
+      the same core, so nothing downstream changed. PO detail rebuilt as the single
+      receiving screen (Ordered/Rcvd/Insp/Acc columns, three increment inputs per line,
+      "X of Y accepted — N remaining", linked-SO chips, "Receive & accept all remaining").
+      **Builder pre-load (§5/§6)**: /purchase-orders/new shows "Suggested for this vendor"
+      — (a) at/below reorder point (existing endpoint, filtered to vendor) and (b)
+      sold-not-in-stock queue rows (queue now exposes preferredVendorId + cost); queue
+      adds carry `orderLineId`, which PO create now accepts to write the po_line_allocation
+      so the SO # rides the PO (printed doc + emailed doc + detail chips all show it).
+      **Email**: `POST :id/email` sends the PO to the vendor via the existing Resend/memory
+      transport with Reply-To = ops.poReplyTo (SendEmailInput grew replyTo). **Invoices**
+      (vendor_invoices table, RLS'd, unique per vendor+number): `POST /v1/vendor-invoices`
+      auto-matches by PO # (or vendor+amount fallback), surfaces varianceCents vs the PO
+      subtotal, `POST :id/approve` one-click (no queue per §13); new `vendor_invoices.manage`
+      permission (Owner/Manager + Bookkeeper via role sync); PO page gained the invoice
+      card (record & match, variance badge, approve). purchasing.int.spec +7 → 24/24,
+      special-orders +1 → 6/6, orders 35/35; sweep e2e receiving flow updated.
+      — \_2026-08-26. Conventions flagged: no-PO-number auto-match falls back to newest
+      same-vendor PO with an equal subtotal; inspection is bookkeeping only (no damaged/
+      reject disposition until P8's As-Is flow).*
+- [x] **Build P7:** Transfers with ticket + sign + receive-confirm workflow. The spine
+      already existed (draft → ship deducts origin → partial receives increment the
+      destination → received; drafts cancellable); P7 added the §11 **Transfer Ticket**:
+      `/print/transfers/:id` in the chrome-free print group — from/to store blocks with
+      addresses, letterhead, lines with a blank hand-tally "Received" column, driver +
+      received-by signature lines and a "confirm in the system to complete" footer;
+      detail hydrate now carries fromLocationAddressJson/toLocationAddressJson/
+      businessName; transfer detail page gained the Transfer ticket print button.
+      Printing never changes state — the §5 workflow is create → print → deliver → sign
+      on paper → receiving side confirms via the existing receive endpoint (actor
+      recorded in the audit trail). transfers.int.spec +1 → 13/13.
+      — _2026-08-26. Convention: signatures live on paper only (drivers work off printed
+      tickets, §7); the system records who confirmed receipt, not a captured signature._
+- [x] **Build P8:** Returns/exchanges, As-Is review flow, store credit. Migration 0037:
+      `as_is_items` (review queue), `store_credit_entries` (ledger; balance = SUM, never
+      stored), `order_lines.qty_returned`. **As-Is (§10/§5)**: every refunded/returned
+      unit now lands in the pending-review queue instead of sellable stock (sales refund
+      flow rerouted; existing tests updated to the new rule); `/v1/as-is` + `:id/review`
+      (restock — optionally into the `-AS` variant via targetVariantId — / vendor*return /
+      scrap; only restock touches inventory, one-shot, inventory.adjust-gated); web page
+      `/as-is` in the Catalog nav with per-row Restock/Vendor/Scrap. **Store credit**:
+      issue on refunds (`refundMethod: 'store_credit'` on sale refunds and order returns),
+      redeem on order `store_credit` tenders with a hard balance check inside the request
+      transaction; `GET /v1/customers/:id/store-credit`; New Sale shows the "Store credit
+      available" chip when a customer is picked; customer page gained the ledger card.
+      **Order returns**: `POST /v1/orders/:id/return` — per-line qty capped at delivered−
+      returned, refund = line total + tax share per unit, reversed as negative payment
+      rows (kind 'refund') walking original tenders newest-first, goods → As-Is; no
+      restocking fee. `POST :id/price-adjustment` = the §10 distinct money-only type
+      (kind 'adjustment', reason required). Both feed the owner notifications.
+      **Exchanges**: `POST :id/exchange` writes an orderKind 'exchange' order linked via
+      original_order_id; invoice doc prints "Exchange Order" + Original Invoice # box +
+      Credit Due row; New Sale takes `?exchangeOf=` (banner, pinned customer, no take-with
+      fast lane); order detail gained the Returns & exchange card (return qtys, refund
+      method, adjustment, Write exchange order). List-view display statuses gained
+      **Returned** (all delivered units returned) and **Exchanged** (a live exchange
+      references the original). orders.int.spec +4 → 39/39; sales 11/11 + reports 14/14
+      re-baselined to the As-Is rule; business 24/24.
+      — \_2026-08-26. Conventions flagged: order-return tender reversal is newest-tender-
+      first rather than strictly proportional (matches the sales-refund allocation);
+      no Stripe reversal on order returns in v1 (office terminal); selling As-Is at a
+      discount = restock then adjust onto the `-AS` SKU; service orders already link to
+      sales (existing G6 module).*
+- [ ] **Build P9:** Commissions (equal-split default, exchange clawback), owner +
+      manager dashboards, 22:00 auto-close job
+- [ ] **Ops:** Provide the two sample invoices into `docs/` for the document templates
+      (P4); confirm PO reply-to address; pick unlock-capable roles in settings once P1 ships
+
 ## Test-data ledger (D11 — what lives in the QA tenant and never reaches production)
 
 Production cutover creates a **fresh business**; everything below stays behind in the

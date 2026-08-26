@@ -24,6 +24,8 @@ interface QueueRow {
   customerName: string | null;
   variantId: string | null;
   sku: string | null;
+  preferredVendorId: string | null;
+  unitCostCents: number | null;
   description: string;
   quantity: number;
   allocated: number;
@@ -110,22 +112,32 @@ export class SpecialOrdersController {
     const variantIds = lines.map((l) => l.variantId).filter((v): v is string => Boolean(v));
     const variants = variantIds.length
       ? await this.db
-          .select({ id: schema.productVariants.id, sku: schema.productVariants.sku })
+          .select({
+            id: schema.productVariants.id,
+            sku: schema.productVariants.sku,
+            costCents: schema.productVariants.costCents,
+            preferredVendorId: schema.productVariants.preferredVendorId,
+          })
           .from(schema.productVariants)
           .where(inArray(schema.productVariants.id, variantIds))
       : [];
-    const skuBy = new Map(variants.map((v) => [v.id, v.sku]));
+    const variantBy = new Map(variants.map((v) => [v.id, v]));
 
     return lines
       .map((l) => {
         const allocated = allocatedBy.get(l.orderLineId) ?? 0;
+        const variant = l.variantId ? variantBy.get(l.variantId) : undefined;
         return {
           orderLineId: l.orderLineId,
           orderId: l.orderId,
           orderNumber: l.orderNumber,
           customerName: nameBy.get(l.customerId) ?? null,
           variantId: l.variantId,
-          sku: l.variantId ? (skuBy.get(l.variantId) ?? null) : null,
+          sku: variant?.sku ?? null,
+          // §6: lets the PO builder pre-load "sold-not-in-stock for
+          // that vendor" and pre-fill the cost.
+          preferredVendorId: variant?.preferredVendorId ?? null,
+          unitCostCents: variant?.costCents ?? null,
           description: l.description,
           quantity: l.quantity,
           allocated,

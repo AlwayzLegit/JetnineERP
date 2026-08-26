@@ -315,3 +315,56 @@ describe('G3 — special orders: queue → PO → receive → customer', () => {
     expect(await level()).toEqual({ onHand: 0, reserved: 0 });
   });
 });
+
+describe('PO builder pre-load: sold-not-in-stock lines carry the SO # (P6)', () => {
+  it('a PO created with orderLineId writes the allocation and shows the linked order', async () => {
+    // Fresh special-order line for one unit.
+    const order = await ownerReq()
+      .post('/v1/orders')
+      .send({
+        locationId,
+        customerId,
+        lines: [{ variantId: baseVariantId, quantity: 1, lineType: 'special_order' }],
+        confirm: true,
+      });
+    expect(order.status).toBe(201);
+    const orderLineId = order.body.lines[0].id;
+
+    // The queue exposes the variant's preferred vendor for the builder filter.
+    const setVendor = await request(app.getHttpServer())
+      .patch(`/v1/products/variants/${baseVariantId}/reorder`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ preferredVendorId: vendorId });
+    expect(setVendor.status).toBe(200);
+
+    const queue = await ownerReq().get('/v1/special-orders/queue');
+    const row = queue.body.find((r: { orderLineId: string }) => r.orderLineId === orderLineId);
+    expect(row).toBeTruthy();
+    expect(row.preferredVendorId).toBe(vendorId);
+
+    // The generic PO create accepts the orderLineId and links the sale.
+    const po = await ownerReq()
+      .post('/v1/purchase-orders')
+      .send({
+        vendorId,
+        locationId,
+        lines: [{ variantId: baseVariantId, quantity: 1, unitCostCents: 30000, orderLineId }],
+      });
+    expect(po.status).toBe(201);
+    expect(po.body.lines[0].linkedOrders).toEqual([
+      { orderId: order.body.id, orderNumber: order.body.number, quantity: 1 },
+    ]);
+
+    // Accepting the unit commits it to the customer (allocation flips).
+    const received = await ownerReq()
+      .post(`/v1/purchase-orders/${po.body.id}/receiving`)
+      .send({ lines: [{ lineId: po.body.lines[0].id, received: 1, inspected: 1, accepted: 1 }] });
+    expect(received.status).toBe(201);
+    expect(received.body.status).toBe('received');
+
+    const after = await ownerReq().get(`/v1/orders/${order.body.id}`);
+    expect(after.status).toBe(200);
+    expect(after.body.lines[0].qtyReserved).toBe(1);
+  });
+});
