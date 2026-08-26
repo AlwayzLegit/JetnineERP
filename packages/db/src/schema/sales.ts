@@ -68,6 +68,14 @@ export const saleLines = pgTable(
     quantity: integer('quantity').notNull(),
     unitPriceCents: integer('unit_price_cents').notNull(),
     discountCents: integer('discount_cents').notNull().default(0),
+    /**
+     * This line's share of the SALE-level discount, allocated pro-rata at
+     * sale time. Persisted rather than re-derived: a refund has to return
+     * exactly what the customer paid, and the pro-rata rounding residue
+     * cannot be reconstructed later (line order isn't stored). Legacy rows
+     * predating this column read 0 and fall back to reconstruction.
+     */
+    orderDiscountShareCents: integer('order_discount_share_cents').notNull().default(0),
     taxCents: integer('tax_cents').notNull().default(0),
     totalCents: integer('total_cents').notNull(),
   },

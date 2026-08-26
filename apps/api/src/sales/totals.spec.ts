@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { computeTotals, refundUnitCents } from './totals';
+import { computeTotals, reconstructOrderDiscountShares, refundUnitCents } from './totals';
 
 describe('computeTotals', () => {
   it('sums line gross and applies tax', () => {
@@ -203,5 +203,69 @@ describe('refundUnitCents', () => {
   it('subtracts the per-unit discount', () => {
     // 3 @ $5 with $3 line discount → net $12 / 3 = $4 per unit
     expect(refundUnitCents({ quantity: 3, unitPriceCents: 500, discountCents: 300 })).toBe(400);
+  });
+
+  // QA 2026-08-26 (D1): INV-2026-000005 sold a $1,000 line under a 30%
+  // cart discount — $700 collected — and refunded $1,000. The line's own
+  // discount_cents is 0; the discount lived at the sale level.
+  it('subtracts the line share of a SALE-level discount', () => {
+    expect(
+      refundUnitCents({
+        quantity: 1,
+        unitPriceCents: 100_000,
+        discountCents: 0,
+        orderDiscountShareCents: 30_000,
+      }),
+    ).toBe(70_000);
+  });
+
+  it('adds back the tax the customer actually paid', () => {
+    // 2 @ $10, 10% tax on the $20 base = $2 → $11 per unit returned.
+    expect(
+      refundUnitCents({ quantity: 2, unitPriceCents: 1000, discountCents: 0, taxCents: 200 }),
+    ).toBe(1100);
+  });
+
+  it('never returns a negative per-unit amount', () => {
+    expect(
+      refundUnitCents({
+        quantity: 1,
+        unitPriceCents: 100,
+        discountCents: 0,
+        orderDiscountShareCents: 500,
+      }),
+    ).toBe(0);
+  });
+});
+
+describe('reconstructOrderDiscountShares (legacy sale_lines)', () => {
+  it('splits pro-rata by net and sums to the whole discount', () => {
+    const lines = [
+      { quantity: 1, unitPriceCents: 100_000, discountCents: 0 },
+      { quantity: 1, unitPriceCents: 300_000, discountCents: 0 },
+    ];
+    const shares = reconstructOrderDiscountShares(lines, 40_000);
+    expect(shares.reduce((s, n) => s + n, 0)).toBe(40_000);
+    expect(shares[0]).toBe(10_000); // 25% of net
+    expect(shares[1]).toBe(30_000);
+  });
+
+  it('matches what computeTotals allocated, for the same cart', () => {
+    const totals = computeTotals({
+      taxRateBps: 0,
+      orderDiscountCents: 777,
+      lines: [
+        { variantId: 'a', description: 'A', quantity: 3, unitPriceCents: 333 },
+        { variantId: 'b', description: 'B', quantity: 1, unitPriceCents: 1000 },
+      ],
+    });
+    const reconstructed = reconstructOrderDiscountShares(totals.lines, 777);
+    expect(reconstructed).toEqual(totals.lines.map((l) => l.orderDiscountShareCents));
+  });
+
+  it('is a no-op without a sale-level discount', () => {
+    expect(
+      reconstructOrderDiscountShares([{ quantity: 1, unitPriceCents: 500, discountCents: 0 }], 0),
+    ).toEqual([0]);
   });
 });

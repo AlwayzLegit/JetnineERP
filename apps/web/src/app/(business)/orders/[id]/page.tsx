@@ -6,7 +6,7 @@ import { useParams } from 'next/navigation';
 import { CheckCircle2, CreditCard, Lock, Printer, Share2, Truck } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatMoney } from '@jetnine/shared';
-import { api } from '@/lib/api';
+import { api, ApiError } from '@/lib/api';
 import { Money } from '@/components/money';
 import { Button, Card, Input, LinkButton, LoadingRows, Select, StatusBadge } from '@/components/ui';
 import { SecurityOverrideDialog } from '@/components/security-override-dialog';
@@ -69,6 +69,7 @@ interface OrderDetail {
   internalNotes: string | null;
   legacyNumber: string | null;
   lockedAt: string | null;
+  onOpenRun: { runId: string; runDate: string } | null;
   createdAt: string;
   completedAt: string | null;
   cancelledAt: string | null;
@@ -327,6 +328,32 @@ export default function OrderDetailPage() {
         {new Date(order.createdAt).toLocaleString()}
       </p>
 
+      {order.onOpenRun && (
+        <div
+          data-testid="run-locked-banner"
+          className="card"
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10,
+            padding: '10px 14px',
+            marginBottom: 16,
+            borderColor: 'var(--danger)',
+            fontSize: 13,
+          }}
+        >
+          <Truck size={15} aria-hidden style={{ color: 'var(--danger)', flexShrink: 0 }} />
+          <span style={{ flex: 1 }}>
+            <strong>On the {order.onOpenRun.runDate} delivery run</strong> — the goods are
+            manifested against a truck, so this order is locked until the run closes out. Pull the
+            stop off the run (with a reason) to edit it first.
+          </span>
+          <LinkButton href="/deliveries/dispatch" size="sm" variant="secondary">
+            Dispatch →
+          </LinkButton>
+        </div>
+      )}
+
       {order.lockedAt && (
         <div
           data-testid="locked-banner"
@@ -569,7 +596,8 @@ export default function OrderDetailPage() {
                         } catch (err) {
                           const msg = err instanceof Error ? err.message : String(err);
                           if (
-                            msg.includes('at capacity') &&
+                            err instanceof ApiError &&
+                            err.code === 'OVER_CAPACITY' &&
                             window.confirm(`${msg}\n\nBook beyond the cap anyway?`)
                           ) {
                             try {
@@ -1027,6 +1055,10 @@ function ReturnsCard({
     { id: string; code: string; description: string }[]
   >([]);
   const [returnCodeId, setReturnCodeId] = useState('');
+  // Cancelling a return authorization is override-gated server-side, so
+  // it needs the dialog rather than a native prompt. Declared with the
+  // other state — ReturnsCard returns early below.
+  const [cancellingReturnId, setCancellingReturnId] = useState<string | null>(null);
   async function loadReturns() {
     try {
       setReturns(await api(`/v1/order-returns?orderId=${order.id}`));
@@ -1115,24 +1147,6 @@ function ReturnsCard({
     }
   }
 
-  async function cancelReturn(id: string) {
-    const why = window.prompt('Reason for cancelling this return authorization:');
-    if (why == null || !why.trim()) return;
-    setWorking(true);
-    try {
-      await api(`/v1/order-returns/${id}/cancel`, {
-        method: 'POST',
-        body: JSON.stringify({ reason: why.trim() }),
-      });
-      await onChanged();
-      await loadReturns();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err));
-    } finally {
-      setWorking(false);
-    }
-  }
-
   async function processAdjustment() {
     const cents = Math.round(Number(adjustAmount) * 100);
     const hasReason = adjustCodes.length > 0 ? Boolean(adjustCodeId) : Boolean(reason.trim());
@@ -1204,7 +1218,7 @@ function ReturnsCard({
                         size="sm"
                         variant="ghost"
                         disabled={working}
-                        onClick={() => void cancelReturn(r.id)}
+                        onClick={() => setCancellingReturnId(r.id)}
                       >
                         Cancel
                       </Button>
@@ -1216,6 +1230,24 @@ function ReturnsCard({
           </tbody>
         </table>
       )}
+
+      <SecurityOverrideDialog
+        open={cancellingReturnId != null}
+        title="Cancel this return authorization"
+        usageClass="exception"
+        submitLabel="Cancel return"
+        perform={(payload) =>
+          api(`/v1/order-returns/${cancellingReturnId}/cancel`, {
+            method: 'POST',
+            body: JSON.stringify(payload),
+          }).then(() => undefined)
+        }
+        onClose={() => setCancellingReturnId(null)}
+        onSuccess={() => {
+          void onChanged();
+          void loadReturns();
+        }}
+      />
       {order.originalOrderId && (
         <p style={{ fontSize: 13, marginTop: 0 }}>
           This is an <strong>Exchange Order</strong> —{' '}

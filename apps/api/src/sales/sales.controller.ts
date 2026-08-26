@@ -32,7 +32,9 @@ import { StripeService } from '../stripe/stripe.service';
 import { RequirePermission, TenantScoped } from '../tenancy/decorators';
 import type { RequestTenantContext } from '../tenancy/request-context';
 import { WebhookDispatcher } from '../webhooks/webhook-dispatcher.service';
-import { computeTotals, refundUnitCents } from './totals';
+import { computeTotals, reconstructOrderDiscountShares, refundUnitCents } from './totals';
+import { PriceVarianceService } from '../controls/price-variance.service';
+import type { OverrideCredentials } from '../controls/security-override.service';
 
 interface LookupRow {
   variantId: string;
@@ -92,6 +94,14 @@ interface CreateSaleBody {
    */
   discountCode?: string;
   payments?: PaymentInput[];
+  /**
+   * G6 price-variance control, same shape the order endpoints take: a
+   * coded reason for a tier-2 discount, and manager credentials when
+   * the discount is tier 3 or below cost.
+   */
+  priceReasonCodeId?: string;
+  priceReason?: string;
+  override?: OverrideCredentials;
 }
 
 interface RefundLine {
@@ -171,6 +181,7 @@ export class SalesController {
     @Inject(WebhookDispatcher) private readonly webhooks: WebhookDispatcher,
     @Inject(CommissionsService) private readonly commissions: CommissionsService,
     @Inject(StoreCreditService) private readonly storeCredit: StoreCreditService,
+    @Inject(PriceVarianceService) private readonly priceVariance: PriceVarianceService,
   ) {}
 
   /**
@@ -531,6 +542,8 @@ export class SalesController {
         productId: schema.productVariants.productId,
         sku: schema.productVariants.sku,
         priceCents: schema.productVariants.priceCents,
+        // Needed by the G6 variance gate to spot a below-cost sale.
+        costCents: schema.productVariants.costCents,
         productName: schema.products.name,
         variantName: schema.productVariants.name,
         // The product's tax class id (may be null). The resolved rate
@@ -683,6 +696,37 @@ export class SalesController {
       }
     })();
 
+    // G6 price variance — the register discounts money exactly like an
+    // order does, so it passes through exactly the same gate. Missed
+    // originally, which left the till side wide open: a 30% discount
+    // rang straight through to cash with no reason, no authorization
+    // and no exception (QA 2026-08-26, D2). New Sale's fully-paid
+    // take-with fast lane posts here too, so this closes that as well.
+    // Runs before any tender is touched.
+    await this.priceVariance.enforce(
+      tenant.businessId!,
+      body.lines.map((l) => {
+        const v = byId.get(l.variantId!)!;
+        return {
+          quantity: l.quantity!,
+          unitPriceCents: l.unitPriceCents ?? v.priceCents,
+          lineDiscountCents: l.lineDiscountCents ?? 0,
+          lineType: 'stock',
+          listPriceCents: v.priceCents,
+          costCents: v.costCents ?? null,
+          description: [v.productName, v.variantName].filter(Boolean).join(' — '),
+        };
+      }),
+      // A discount CODE is a pre-authorized instrument — someone with
+      // `discounts.manage` created it with its own limits — so it is not
+      // associate discretion and does not need a reason at the till.
+      // Only an ad-hoc cart discount goes through the gate. (Line-level
+      // discounts always do, above.)
+      appliedDiscount ? 0 : (resolvedOrderDiscount ?? 0),
+      body,
+      { action: 'Register sale discount' },
+    );
+
     // Validate payments cover the total exactly.
     const paymentSum = body.payments.reduce((s, p) => s + (p.amountCents ?? 0), 0);
     if (paymentSum !== totals.totalCents) {
@@ -825,6 +869,7 @@ export class SalesController {
           quantity: l.quantity,
           unitPriceCents: l.unitPriceCents,
           discountCents: l.discountCents,
+          orderDiscountShareCents: l.orderDiscountShareCents,
           taxCents: l.taxCents,
           totalCents: l.totalCents,
         })),
@@ -1036,6 +1081,21 @@ export class SalesController {
       .where(eq(schema.saleLines.saleId, id));
     const lineById = new Map(saleLines.map((l) => [l.id, l]));
 
+    // Sale-level discount shares are persisted per line; sales written
+    // before that column existed carry 0, so reconstruct pro-rata from
+    // the header. Without this a cart-wide discount is refunded as if it
+    // were never given.
+    const shareByLine = new Map<string, number>(
+      saleLines.map((l) => [l.id, l.orderDiscountShareCents]),
+    );
+    const storedShares = saleLines.reduce((s, l) => s + l.orderDiscountShareCents, 0);
+    const lineDiscounts = saleLines.reduce((s, l) => s + l.discountCents, 0);
+    const legacyOrderDiscount = sale.discountCents - lineDiscounts;
+    if (storedShares === 0 && legacyOrderDiscount > 0) {
+      const shares = reconstructOrderDiscountShares(saleLines, legacyOrderDiscount);
+      saleLines.forEach((l, i) => shareByLine.set(l.id, shares[i]!));
+    }
+
     // Tally previously-refunded quantities per line so we can enforce
     // that we never refund more units than were sold.
     const priorRefunded = await this.db
@@ -1064,7 +1124,10 @@ export class SalesController {
           `cannot refund ${r.quantity} units of line ${line.id}: only ${line.quantity - already} remaining`,
         );
       }
-      const perUnit = refundUnitCents(line);
+      const perUnit = refundUnitCents({
+        ...line,
+        orderDiscountShareCents: shareByLine.get(line.id) ?? 0,
+      });
       validated.push({ line, quantity: r.quantity, perUnit });
       amountCents += perUnit * r.quantity;
     }

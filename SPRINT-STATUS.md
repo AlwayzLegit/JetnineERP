@@ -771,6 +771,46 @@ is live on `lamattress-erp.vercel.app`.** P9 (commissions, dashboards, auto-clos
 remains. Ops unchanged: repoint Render repo URL (deploys still manual-trigger), rotate
 the shared owner password, Resend domain when ready, sample invoices into `docs/`.
 
+## Checkpoint 9 merged + deployed (2026-08-26)
+
+PR #33 (the whole STORIS gap closure G1–G15 + §2 append-only audit + P9) squash-merged to
+main as `5930f90`. CI took three passes, each a real defect in the sprint's own work, none
+a flake:
+
+1. `next lint` rejected a bare apostrophe in the new morning-brief heading
+   (`react/no-unescaped-entities`). **Root cause of the miss:** the local verification
+   grepped for lowercase `"error "`, and `next lint` prints `Error:` — so a red lint read
+   as green. Every gate is now verified on its **exit code**, not on grepped output.
+2. Both new suites died on `FATAL: database "jetnine_controls"/"jetnine_closeout" does not
+exist` — CI provisions each spec's database explicitly and the two new ones were never
+   added. Fixed by diffing every `jetnine_*` name the specs reference against the
+   `createdb` list (only `jetnine_rehearsal` is legitimately absent — that spec self-skips
+   without `STORIS_REHEARSAL_DIR`); added the two `createdb` lines plus their
+   `*_TEST_DATABASE_URL` env vars.
+3. Green 4/4 — and Playwright ran for the first time on this PR (it had been `skipped`
+   both prior rounds because it `needs: verify`). Before the third push the e2e suite was
+   also run **locally** (8/8) against a fresh `jetnine_e2e` using the temp
+   `playwright.local.config.ts` recipe pointing at `/opt/pw-browsers/chromium` — deleted
+   before committing, never committed.
+
+Deploy branch rolled (`8126b48`), Render deploy `dep-da7cpuu1egvs73e7vk50` **live 11:26Z** —
+boot log: `Schema migrations: 48/48 applied, head=0047_daily_closeouts; this run applied
+0038_reason_codes_security_overrides, 0039_order_returns, 0040_write_offs_exceptions,
+0041_delivery_runs, 0042_transfer_variance, 0043_print_preconditions, 0044_as_is_pieces,
+0045_purchasing_controls, 0046_capacity_units, 0047_daily_closeouts.` — all ten applied in
+one run, clean. `/health` ok + `/ready` 200 on the fresh instance; `CloseoutService` logged
+`Daily close-out scheduled at 22:00 store-local time`; the overdue sweep still arms at
+09:00 UTC. Every new endpoint (`/v1/exceptions`, `/v1/closeouts`, `/v1/dashboard/morning`,
+`/v1/write-offs`, `/v1/reason-codes`, `/v1/order-returns`, `/v1/delivery-runs`) answers 401
+on staging **and** through the prod proxy — routed and auth-gated. Vercel production READY
+on main `5930f90`; `lamattress-erp.vercel.app` serving 200. New permissions
+(`reason_codes.manage`, `security_overrides.view`, `inventory.write_off`, and the rest)
+backfilled into system roles by the boot-time role sync. Sprint branch restarted from main.
+
+**The 9-phase POS-operations build and the 15-item gap closure are both complete and live.**
+Ops unchanged: repoint the Render repo URL (deploys still manual-trigger), rotate the shared
+owner password, Resend domain when ready, sample invoices into `docs/`.
+
 ## STORIS gap-closure build (PLAN-STORIS-GAP.md) — ranked tracker
 
 Owner delivered a full STORIS gap analysis 2026-08-26 ("we need to add all which is

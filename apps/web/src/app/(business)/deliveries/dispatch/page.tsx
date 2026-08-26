@@ -5,6 +5,7 @@ import { Suspense, useCallback, useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Printer } from 'lucide-react';
 import { api } from '@/lib/api';
+import { SecurityOverrideDialog } from '@/components/security-override-dialog';
 import { Money } from '@/components/money';
 import { toast } from 'sonner';
 import {
@@ -118,11 +119,11 @@ function RunCard({
     }
   }
 
-  async function removeStop(deliveryId: string) {
-    const reason = window.prompt('Reason for pulling this stop off the run (logged):');
-    if (reason == null || !reason.trim()) return;
-    await act('/remove-delivery', { deliveryId, reason: reason.trim() });
-  }
+  // Pulling a stop off a run is a manifest-removal exception in STORIS
+  // terms — it needs a CODED reason and can need a manager. A native
+  // window.prompt could carry neither (and froze the QA browser), so it
+  // goes through the same dialog every other gated action uses.
+  const [removingStopId, setRemovingStopId] = useState<string | null>(null);
 
   async function submitClose() {
     const missing = openStops.filter((s) => !outcomes[s.id]?.outcome);
@@ -279,7 +280,8 @@ function RunCard({
                   size="sm"
                   variant="ghost"
                   disabled={busy}
-                  onClick={() => void removeStop(s.id)}
+                  data-testid="pull-off-run"
+                  onClick={() => setRemovingStopId(s.id)}
                 >
                   Pull off run
                 </Button>
@@ -287,6 +289,21 @@ function RunCard({
           </div>
         ))}
       </div>
+
+      <SecurityOverrideDialog
+        open={removingStopId != null}
+        title="Pull this stop off the run"
+        usageClass="manifest_removal"
+        submitLabel="Pull off run"
+        perform={async (payload) => {
+          await api(`/v1/delivery-runs/${run.id}/remove-delivery`, {
+            method: 'POST',
+            body: JSON.stringify({ deliveryId: removingStopId, ...payload }),
+          });
+        }}
+        onClose={() => setRemovingStopId(null)}
+        onSuccess={() => void onChanged()}
+      />
 
       {closing && (
         <div
