@@ -771,6 +771,38 @@ is live on `lamattress-erp.vercel.app`.** P9 (commissions, dashboards, auto-clos
 remains. Ops unchanged: repoint Render repo URL (deploys still manual-trigger), rotate
 the shared owner password, Resend domain when ready, sample invoices into `docs/`.
 
+## Invite email — root-caused and unblocked (2026-08-26)
+
+The owner reported an invite that never arrived. Two independent faults, both visible in
+one Render log line for `POST /v1/business/members/:id/resend-invite` at 17:53:21Z:
+
+1. **Nothing was ever sent.** `RESEND_API_KEY` is unset on the Render service, so
+   `createEmailTransport` fell back to `MemoryTransport` (`"email captured (no Resend key
+configured)"`) while the endpoint still returned 201 and the UI said "Invitation
+   re-sent." Confirmed at the source: the Resend account has **no API keys and no
+   verified domains** — production email has never worked.
+2. **The link pointed at a stale preview.** `WEB_BASE_URL` was the deploy-branch Vercel
+   preview alias, so even with working mail every invite would land on the wrong build.
+
+**Fixed (bde4d23) — the dead end, not just the symptom.** `EmailTransport` now declares
+`delivers`. When it is false, `POST /members/invite` and `/resend-invite` return
+`inviteLink`, and the members page renders it with a Copy button instead of claiming the
+mail was sent. The caller already holds `users.invite`, so handing them the link they
+were about to email grants nothing extra; when a real transport is configured the field
+is omitted entirely. `business.int` asserts the returned link carries the same token the
+email does. 24/24 + admin 11/11 green, all gates verified by exit code.
+
+**Ops done:** `WEB_BASE_URL` set to `https://lamattress-erp.vercel.app` on
+`srv-da4tua3m8hqs73apsflg`; deploy `dep-da7ivn5g1s2s7381pql0` live 18:28:13Z.
+
+**Ops still open — Resend sending domain.** Owner is deciding; `lamattress-erp.vercel.app`
+is _not_ a candidate (Vercel owns that zone, so the DKIM/SPF records can't be added).
+Domains the owner controls, from DNS: `lamattress.com` (GoDaddy DNS, Zoho Mail),
+`lamattressstores.com` (GoDaddy, GoDaddy mail), `jetnine.com` (Cloudflare, Google
+Workspace). A dedicated subdomain is the safe shape — it keeps Resend's SPF/DKIM off the
+zone that already carries live mail. Until then, account creation runs on the copy-link
+path above.
+
 ## QA steps 6 + 3 completed against the deployed build (2026-08-26)
 
 Driven through the staging API (browser tools were unavailable), so these exercise the
