@@ -857,8 +857,20 @@ export class OrdersController {
     @Body() body: UpdateOrderBody,
   ): Promise<OrderDetail> {
     const order = await this.requireLiveOrder(id);
-    this.assertUnlocked(order);
-    await this.assertNotOnOpenRun(id);
+    // G9 (§3): the locked-state allowlist. If staff must unlock to fix
+    // a phone number, unlocking becomes routine and the lock is
+    // worthless — contact/notes fixes pass through the lock.
+    const SAFE_WHILE_LOCKED = new Set([
+      'deliveryInstructions',
+      'notes',
+      'internalNotes',
+      'address',
+    ]);
+    const touchesGuardedFields = Object.keys(body).some((k) => !SAFE_WHILE_LOCKED.has(k));
+    if (touchesGuardedFields) {
+      this.assertUnlocked(order);
+      await this.assertNotOnOpenRun(id);
+    }
 
     const patch: Record<string, unknown> = { updatedAt: new Date() };
     if (body.fulfillmentType !== undefined) {
@@ -1604,9 +1616,10 @@ export class OrdersController {
   @Post('orders/:id/delivery-ticket-print')
   @RequirePermission('orders.update')
   async deliveryTicketPrint(
-    @CurrentTenant() _tenant: RequestTenantContext,
+    @CurrentTenant() tenant: RequestTenantContext,
     @Param('id') id: string,
-  ): Promise<{ lockedAt: Date | null }> {
+    @Body() body: { override?: OverrideCredentials },
+  ): Promise<{ lockedAt: Date | null; copyNumber: number }> {
     const [order] = await this.db
       .select()
       .from(schema.orders)
@@ -1614,20 +1627,127 @@ export class OrdersController {
       .limit(1);
     if (!order) throw new NotFoundException('Order not found');
 
-    if (!isLiveOrderStatus(order.status)) return { lockedAt: order.lockedAt };
+    if (!isLiveOrderStatus(order.status)) {
+      return { lockedAt: order.lockedAt, copyNumber: order.ticketPrintCount };
+    }
+
+    // G9 / STORIS print preconditions — enforced server-side, reported
+    // as a pass/fail checklist so the blocked user knows exactly why.
+    const checks: { check: string; ok: boolean; detail: string }[] = [];
+    const lines = await this.db
+      .select({
+        lineType: schema.orderLines.lineType,
+        quantity: schema.orderLines.quantity,
+        qtyReserved: schema.orderLines.qtyReserved,
+        qtyFulfilled: schema.orderLines.qtyFulfilled,
+        description: schema.orderLines.description,
+      })
+      .from(schema.orderLines)
+      .where(eq(schema.orderLines.orderId, id));
+    const shortLines = lines.filter(
+      (l) => l.lineType === 'stock' && l.qtyReserved + l.qtyFulfilled < l.quantity,
+    );
+    checks.push({
+      check: 'merchandise_reserved',
+      ok: shortLines.length === 0,
+      detail:
+        shortLines.length === 0
+          ? 'All stock lines reserved'
+          : `Not reserved: ${shortLines.map((l) => l.description).join(', ')}`,
+    });
+
+    if (order.fulfillmentType === 'delivery') {
+      const [trip] = await this.db
+        .select({ id: schema.deliveries.id })
+        .from(schema.deliveries)
+        .where(
+          and(
+            eq(schema.deliveries.orderId, id),
+            inArray(schema.deliveries.status, ['scheduled', 'loaded', 'out_for_delivery']),
+          ),
+        )
+        .limit(1);
+      checks.push({
+        check: 'scheduled_date',
+        ok: Boolean(trip),
+        detail: trip ? 'Delivery scheduled' : 'No scheduled delivery on this order',
+      });
+    } else {
+      checks.push({
+        check: 'scheduled_date',
+        ok: Boolean(order.requestedDate),
+        detail: order.requestedDate ? `Promised ${order.requestedDate}` : 'No promised date set',
+      });
+    }
+
+    const payments = await this.db
+      .select({ amountCents: schema.payments.amountCents, status: schema.payments.status })
+      .from(schema.payments)
+      .where(eq(schema.payments.orderId, id));
+    const balance = Math.max(0, order.totalCents - paidCents(payments));
+    const [biz] = await this.db
+      .select({ opsSettingsJson: schema.businesses.opsSettingsJson })
+      .from(schema.businesses)
+      .where(eq(schema.businesses.id, tenant.businessId!))
+      .limit(1);
+    const maxBalance = (
+      (biz?.opsSettingsJson ?? {}) as { maxBalanceForTicketPrintCents?: number | null }
+    ).maxBalanceForTicketPrintCents;
+    const overBalance = maxBalance != null && balance > maxBalance;
+    checks.push({
+      check: 'balance_cap',
+      ok: !overBalance,
+      detail: overBalance
+        ? `Balance due $${(balance / 100).toFixed(2)} exceeds the $${((maxBalance ?? 0) / 100).toFixed(2)} ticket cap`
+        : `Balance due $${(balance / 100).toFixed(2)}`,
+    });
+
+    const hardBlocked = checks.some((c) => !c.ok && c.check !== 'balance_cap');
+    if (hardBlocked) {
+      throw new ConflictException({
+        statusCode: 409,
+        code: 'PRINT_BLOCKED',
+        message: 'The delivery ticket cannot print yet',
+        checks,
+      });
+    }
+    if (overBalance) {
+      // The balance cap alone has an override path — a manager can
+      // release the ticket (STORIS Maximum Balance behavior).
+      await this.overrides.require({
+        permission: 'orders.complete_with_balance',
+        action: `Print delivery ticket for ${order.number} with $${(balance / 100).toFixed(2)} still due`,
+        entityType: 'order',
+        entityId: id,
+        override: body.override,
+      });
+    }
 
     const lockedAt = new Date();
+    const copyNumber = order.ticketPrintCount + 1;
     await this.db
       .update(schema.orders)
-      .set({ lockedAt, updatedAt: lockedAt })
+      .set({ lockedAt, ticketPrintCount: copyNumber, relockAt: null, updatedAt: lockedAt })
       .where(eq(schema.orders.id, id));
     await this.audit.log({
       action: 'order.lock',
       targetType: 'order',
       targetId: id,
-      metadata: { trigger: 'delivery_ticket_print' },
+      metadata: { trigger: 'delivery_ticket_print', copyNumber },
     });
-    return { lockedAt };
+    if (copyNumber > 1) {
+      // Reprints are how goods walk out twice — every copy 2+ is on
+      // the register.
+      await this.exceptions.record({
+        type: 'ticket_reprint',
+        severity: 'info',
+        entityType: 'order',
+        entityId: id,
+        summary: `Delivery ticket for ${order.number} printed again (copy ${copyNumber})`,
+        metadata: { copyNumber },
+      });
+    }
+    return { lockedAt, copyNumber };
   }
 
   /**
@@ -1651,7 +1771,11 @@ export class OrdersController {
       .where(eq(schema.orders.id, id))
       .limit(1);
     if (!order) throw new NotFoundException('Order not found');
-    if (!order.lockedAt) throw new BadRequestException('Order is not locked');
+    const relockEngaged =
+      order.ticketPrintCount > 0 && order.relockAt != null && order.relockAt.getTime() < Date.now();
+    if (!order.lockedAt && !relockEngaged) {
+      throw new BadRequestException('Order is not locked');
+    }
     // A5: while manifested on an open run there is no unlock — the run
     // is the hard lock; pull the order off the run first.
     await this.assertNotOnOpenRun(id);
@@ -1661,7 +1785,7 @@ export class OrdersController {
       action: `Unlock printed order ${order.number}`,
       entityType: 'order',
       entityId: id,
-      before: { lockedAt: order.lockedAt.toISOString() },
+      before: { lockedAt: order.lockedAt?.toISOString() ?? 'relock_engaged' },
       after: { lockedAt: null },
       override: body.override,
     });
@@ -1672,7 +1796,13 @@ export class OrdersController {
 
     await this.db
       .update(schema.orders)
-      .set({ lockedAt: null, updatedAt: new Date() })
+      // G9: the unlock is a 15-minute window — past relockAt the lock
+      // lazily re-engages (assertUnlocked derives it, no cron).
+      .set({
+        lockedAt: null,
+        relockAt: new Date(Date.now() + 15 * 60 * 1000),
+        updatedAt: new Date(),
+      })
       .where(eq(schema.orders.id, id));
     await this.audit.log({
       action: 'order.unlock',
@@ -1686,13 +1816,23 @@ export class OrdersController {
           : {}),
       },
     });
+    // G9 escalation: the 3rd unlock on the same order stops being
+    // routine — it goes to the register as critical.
+    const [unlockCountRow] = await this.db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(schema.auditLogs)
+      .where(and(eq(schema.auditLogs.targetId, id), eq(schema.auditLogs.action, 'order.unlock')));
+    const unlockCount = unlockCountRow?.count ?? 1;
     await this.exceptions.record({
       type: 'order_unlock',
-      severity: 'warning',
+      severity: unlockCount >= 3 ? 'critical' : 'warning',
       entityType: 'order',
       entityId: id,
-      summary: `Order ${order.number} unlocked after ticket print`,
-      metadata: { reason: reason.reasonText, reasonCode: reason.reasonCode },
+      summary:
+        unlockCount >= 3
+          ? `Order ${order.number} unlocked for the ${unlockCount}th time — review this order`
+          : `Order ${order.number} unlocked after ticket print`,
+      metadata: { reason: reason.reasonText, reasonCode: reason.reasonCode, unlockCount },
     });
     return this.loadDetail(id);
   }
@@ -2489,10 +2629,25 @@ export class OrdersController {
     }
   }
 
-  private assertUnlocked(order: { lockedAt: Date | null }): void {
+  private assertUnlocked(order: {
+    lockedAt: Date | null;
+    relockAt?: Date | null;
+    ticketPrintCount?: number;
+  }): void {
     if (order.lockedAt) {
       throw new ConflictException(
         'Order is locked — its delivery ticket has been printed. Unlock it with a reason before editing.',
+      );
+    }
+    // G9: an unlock is a 15-minute window. Past it, a printed order
+    // counts as locked again — no cron needed, the check is lazy.
+    if (
+      (order.ticketPrintCount ?? 0) > 0 &&
+      order.relockAt &&
+      order.relockAt.getTime() < Date.now()
+    ) {
+      throw new ConflictException(
+        'The unlock window expired and the lock re-engaged. Unlock again with a reason.',
       );
     }
   }

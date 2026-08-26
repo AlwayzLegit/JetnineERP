@@ -595,6 +595,9 @@ describe('Documents + A1 print lock (PLAN-POS-OPERATIONS P4)', () => {
         locationId,
         customerId,
         confirm: true,
+        // Pickup + promised date satisfies the G9 print preconditions
+        // without needing a scheduled truck in this suite.
+        fulfillmentType: 'pickup',
         requestedDate: '2026-09-10',
         lines: [{ variantId: p4VariantId, quantity: 1 }],
       });
@@ -629,13 +632,20 @@ describe('Documents + A1 print lock (PLAN-POS-OPERATIONS P4)', () => {
     expect(printed.status).toBe(201);
     expect(printed.body.lockedAt).toBeTruthy();
 
-    // All edit surfaces refuse while locked.
+    // All guarded edit surfaces refuse while locked…
     await request(app.getHttpServer())
       .patch(`/v1/orders/${order.id}`)
       .set('Cookie', cashierCookie)
       .set('X-Business-Id', businessId)
-      .send({ notes: 'sneaky edit' })
+      .send({ requestedDate: '2026-09-12' })
       .expect(409);
+    // …but the G9 allowlist lets contact/notes fixes through the lock.
+    await request(app.getHttpServer())
+      .patch(`/v1/orders/${order.id}`)
+      .set('Cookie', cashierCookie)
+      .set('X-Business-Id', businessId)
+      .send({ notes: 'gate code 4411' })
+      .expect(200);
     await request(app.getHttpServer())
       .post(`/v1/orders/${order.id}/lines`)
       .set('Cookie', cashierCookie)
@@ -1752,5 +1762,146 @@ describe('Price variance 3-tier + §5 gates (PLAN-STORIS-GAP G6)', () => {
     expect(register.body.some((e: { entityId: string | null }) => e.entityId === res.body.id)).toBe(
       true,
     );
+  });
+});
+
+describe('Print preconditions + reprint counter + unlock expiry (PLAN-STORIS-GAP G9)', () => {
+  function as(cookie: string) {
+    return {
+      post: (url: string) =>
+        request(app.getHttpServer())
+          .post(url)
+          .set('Cookie', cookie)
+          .set('X-Business-Id', businessId),
+      patch: (url: string) =>
+        request(app.getHttpServer())
+          .patch(url)
+          .set('Cookie', cookie)
+          .set('X-Business-Id', businessId),
+      get: (url: string) =>
+        request(app.getHttpServer())
+          .get(url)
+          .set('Cookie', cookie)
+          .set('X-Business-Id', businessId),
+    };
+  }
+
+  async function makeOrder(over: Record<string, unknown> = {}): Promise<{
+    id: string;
+    number: string;
+    totalCents: number;
+  }> {
+    const res = await as(ownerCookie)
+      .post('/v1/orders')
+      .send({
+        locationId,
+        customerId,
+        confirm: true,
+        fulfillmentType: 'pickup',
+        requestedDate: '2026-10-01',
+        lines: [{ variantId: sofaVariantId, quantity: 1 }],
+        ...over,
+      });
+    expect(res.status).toBe(201);
+    return res.body;
+  }
+
+  it('a delivery order with no scheduled trip cannot print — checklist names why', async () => {
+    const order = await makeOrder({ fulfillmentType: 'delivery', requestedDate: null });
+    const res = await as(ownerCookie).post(`/v1/orders/${order.id}/delivery-ticket-print`).send({});
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe('PRINT_BLOCKED');
+    const failed = res.body.checks.filter((c: { ok: boolean }) => !c.ok);
+    expect(failed.map((c: { check: string }) => c.check)).toContain('scheduled_date');
+  });
+
+  it('the balance cap blocks the ticket for a cashier; a manager releases it', async () => {
+    await as(ownerCookie)
+      .patch('/v1/business/settings')
+      .send({ ops: { maxBalanceForTicketPrintCents: 1000 } })
+      .expect(200);
+    try {
+      const order = await makeOrder();
+      // Fully unpaid — way over the $10 cap.
+      const refused = await as(cashierCookie)
+        .post(`/v1/orders/${order.id}/delivery-ticket-print`)
+        .send({});
+      expect(refused.status).toBe(403);
+      expect(refused.body.code).toBe('OVERRIDE_REQUIRED');
+      expect(refused.body.permission).toBe('orders.complete_with_balance');
+
+      // The owner holds the permission — the ticket releases.
+      const ok = await as(ownerCookie)
+        .post(`/v1/orders/${order.id}/delivery-ticket-print`)
+        .send({});
+      expect(ok.status).toBe(201);
+      expect(ok.body.copyNumber).toBe(1);
+    } finally {
+      await as(ownerCookie)
+        .patch('/v1/business/settings')
+        .send({ ops: { maxBalanceForTicketPrintCents: null } })
+        .expect(200);
+    }
+  });
+
+  it('reprints count copies and land on the exception register', async () => {
+    const order = await makeOrder();
+    await as(ownerCookie)
+      .post(`/v1/orders/${order.id}/payments`)
+      .send({ method: 'cash', amountCents: order.totalCents })
+      .expect(201);
+    const first = await as(ownerCookie)
+      .post(`/v1/orders/${order.id}/delivery-ticket-print`)
+      .send({});
+    expect(first.status).toBe(201);
+    expect(first.body.copyNumber).toBe(1);
+    const second = await as(ownerCookie)
+      .post(`/v1/orders/${order.id}/delivery-ticket-print`)
+      .send({});
+    expect(second.body.copyNumber).toBe(2);
+    const reprints = await as(ownerCookie).get('/v1/exceptions?type=ticket_reprint');
+    expect(reprints.body.some((e: { entityId: string | null }) => e.entityId === order.id)).toBe(
+      true,
+    );
+  });
+
+  it('an unlock is a 15-minute window — past it the lock re-engages', async () => {
+    const order = await makeOrder();
+    await as(ownerCookie).post(`/v1/orders/${order.id}/delivery-ticket-print`).send({}).expect(201);
+    await as(ownerCookie)
+      .post(`/v1/orders/${order.id}/unlock`)
+      .send({ reason: 'fix a size' })
+      .expect(201);
+    // Inside the window guarded edits work.
+    await as(ownerCookie)
+      .patch(`/v1/orders/${order.id}`)
+      .send({ requestedDate: '2026-10-02' })
+      .expect(200);
+
+    // Simulate the window passing.
+    const sql2 = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    const db = drizzle(sql2);
+    try {
+      await db
+        .update(schema.orders)
+        .set({ relockAt: new Date(Date.now() - 60_000) })
+        .where(eq(schema.orders.id, order.id));
+    } finally {
+      await sql2.end({ timeout: 5 });
+    }
+    const relocked = await as(ownerCookie)
+      .patch(`/v1/orders/${order.id}`)
+      .send({ requestedDate: '2026-10-03' });
+    expect(relocked.status).toBe(409);
+    expect(relocked.body.message).toMatch(/re-engaged/);
+    // A fresh unlock (with reason) reopens the window.
+    await as(ownerCookie)
+      .post(`/v1/orders/${order.id}/unlock`)
+      .send({ reason: 'still fixing' })
+      .expect(201);
+    await as(ownerCookie)
+      .patch(`/v1/orders/${order.id}`)
+      .send({ requestedDate: '2026-10-04' })
+      .expect(200);
   });
 });

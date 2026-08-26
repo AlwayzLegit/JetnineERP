@@ -286,6 +286,15 @@ export default function OrderDetailPage() {
           >
             <Printer size={13} aria-hidden /> Delivery ticket
           </LinkButton>
+          <LinkButton
+            href={`/print/orders/${id}/pick-list`}
+            variant="secondary"
+            size="sm"
+            target="_blank"
+            data-testid="print-pick-list"
+          >
+            <Printer size={13} aria-hidden /> Pick list
+          </LinkButton>
           <Button
             size="sm"
             variant="secondary"

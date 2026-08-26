@@ -881,7 +881,7 @@ commission-clawback + digest requirements.
 - [x] **G8 — Transfer variance + aging + types:** migration `0042_transfer_variance`.
       (In-transit was already a real bucket — ship deducts origin, receive credits
       destination, so road goods are sellable nowhere; kept.) New: **`POST
-    /v1/stock-transfers/:id/close-short`** — a short transfer can't be dismissed, only
+  /v1/stock-transfers/:id/close-short`** — a short transfer can't be dismissed, only
       resolved: needs `inventory.write_off` (clerk → manager-override dialog), a coded
       reason (class `transfer_variance`), values the missing units at cost onto the
       write-off register (attributed to origin), registers a `transfer_variance`
@@ -893,8 +893,25 @@ commission-clawback + digest requirements.
       destination; the request workflow (store asks → warehouse approves) and a
       coded creation reason are deferred; receiving identity already captured in
       movements/audit._
-- [ ] **G9 — Ticket print preconditions** (scheduled date / reserved / balance cap w/
-      override) + reprint counter + unlock expiry/escalation
+- [x] **G9 — Print preconditions + reprint counter + unlock window** + **G15 pick
+      list:** migration `0043_print_preconditions` (`orders.ticket_print_count`,
+      `orders.relock_at`). Delivery-ticket print now checks server-side and answers a
+      pass/fail checklist (409 `code:PRINT_BLOCKED`): stock lines reserved; a scheduled
+      trip (delivery orders) / promised date (pickups); balance ≤ new ops setting
+      `maxBalanceForTicketPrintCents` — the balance cap alone is override-able
+      (orders.complete*with_balance, manager dialog). Every print bumps the copy
+      counter; copy 2+ registers a `ticket_reprint` exception and the print page shows
+      "REPRINT — copy #n". **Unlock is a 15-minute window** (relock re-engages lazily,
+      no cron; fresh unlock re-opens it) and the **3rd unlock on one order escalates to
+      a critical exception**. Locked-state allowlist per §3: delivery instructions /
+      notes / address fixes pass through the lock so unlocking never becomes routine.
+      **G15**: `/print/orders/:id/pick-list` — warehouse pull sheet with qty, item,
+      model/SKU, pulled checkbox, pulled-by/checked-by lines and **no prices**; button
+      on the order page; never locks. orders.int.spec 48→52 (P4 suite adapted: pickup
+      fixture satisfies preconditions; notes edits now pass the lock by design). —
+      \_2026-08-26. Conventions flagged: reserved/date failures are hard blocks (fix the
+      data), only the balance cap has an override path; credit-hold check waits for a
+      credit-hold field to exist; document id/revision on invoices deferred.*
 - [ ] **G10 — As-is piece-level reference ids** (condition, gated price, storage location,
       photos, aging)
 - [ ] **G11 — Blind receiving + SoD invoice approval + vendor remit-to alert** + third
@@ -903,7 +920,6 @@ commission-clawback + digest requirements.
 - [ ] **G13 — Line-status roll-up + Past Due view + Auto Stock Release** + reservation
       drift reconciliation
 - [ ] **G14 — Duplicate-order/consolidate prompt + ATP-vs-promise warning**
-- [ ] **G15 — Pick list (no prices) separate from delivery ticket**
 - [ ] **§2 audit coverage:** log line qty/discount/date/salesperson/customer-swap/
       tax-exempt/fee-removal/tender-void/deposit-transfer events; append-only audit table
 - [ ] **Build P9 (pre-existing):** commissions (equal-split, exchange clawback per gap §8),

@@ -145,6 +145,18 @@ export const orders = pgTable(
      * this). NULL = unlocked.
      */
     lockedAt: timestamp('locked_at', { withTimezone: true }),
+    /**
+     * G9: how many times the delivery ticket has printed — reprints are
+     * how merchandise walks out twice, so copy 2+ is logged and
+     * registered.
+     */
+    ticketPrintCount: integer('ticket_print_count').notNull().default(0),
+    /**
+     * G9: an unlock is a 15-minute window, not a permanent state. Set
+     * to now()+15min at unlock; past it, a printed order counts as
+     * locked again (lazily — no job needed).
+     */
+    relockAt: timestamp('relock_at', { withTimezone: true }),
     // D8: legacy history imports carry these and are excluded from the
     // cash drawer, commission accrual, and webhook emission.
     importedAt: timestamp('imported_at', { withTimezone: true }),

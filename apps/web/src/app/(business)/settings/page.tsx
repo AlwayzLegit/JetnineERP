@@ -24,6 +24,7 @@ interface OpsSettings {
   invoiceFooterNote?: string | null;
   deliveryDailyCap?: number | null;
   poReplyTo?: string | null;
+  maxBalanceForTicketPrintCents?: number | null;
   priceVariance?: {
     tier1Pct?: number | null;
     tier1MaxCents?: number | null;
@@ -237,6 +238,8 @@ function OpsCard({ settings, onSaved }: { settings: Settings; onSaved: (s: Setti
         invoiceFooterNote: String(data.get('invoiceFooterNote') ?? '').trim() || null,
         poReplyTo: String(data.get('poReplyTo') ?? '').trim() || null,
       };
+      const capBal = String(data.get('maxBalanceForTicket') ?? '').trim();
+      body.maxBalanceForTicketPrintCents = capBal === '' ? null : Math.round(Number(capBal) * 100);
       const t1 = String(data.get('pvTier1Pct') ?? '').trim();
       const t1max = String(data.get('pvTier1Max') ?? '').trim();
       const t2 = String(data.get('pvTier2Pct') ?? '').trim();
@@ -302,6 +305,20 @@ function OpsCard({ settings, onSaved }: { settings: Settings; onSaved: (s: Setti
           name="poReplyTo"
           type="email"
           defaultValue={ops.poReplyTo ?? ''}
+          style={{ width: '100%' }}
+        />
+      </Field>
+      <Field label="Max balance for ticket print ($; blank = no cap)">
+        <Input
+          name="maxBalanceForTicket"
+          type="number"
+          step="0.01"
+          min={0}
+          defaultValue={
+            ops.maxBalanceForTicketPrintCents != null
+              ? (ops.maxBalanceForTicketPrintCents / 100).toFixed(2)
+              : ''
+          }
           style={{ width: '100%' }}
         />
       </Field>

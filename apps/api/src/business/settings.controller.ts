@@ -41,6 +41,8 @@ interface OpsSettings {
   unlockRoleIds?: string[] | null;
   deliveryDailyCap?: number | null;
   poReplyTo?: string | null;
+  /** G9: block delivery-ticket print above this balance due (null = off). */
+  maxBalanceForTicketPrintCents?: number | null;
   /** G6 three-tier price-variance thresholds (defaults 5% / $50 / 15%). */
   priceVariance?: {
     tier1Pct?: number | null;
@@ -93,6 +95,18 @@ function validateOps(input: OpsSettings): OpsSettings {
       throw new BadRequestException('ops.unlockRoleIds must be an array of role ids');
     }
     out.unlockRoleIds = input.unlockRoleIds;
+  }
+  if (input.maxBalanceForTicketPrintCents !== undefined) {
+    if (
+      input.maxBalanceForTicketPrintCents !== null &&
+      (!Number.isInteger(input.maxBalanceForTicketPrintCents) ||
+        input.maxBalanceForTicketPrintCents < 0)
+    ) {
+      throw new BadRequestException(
+        'ops.maxBalanceForTicketPrintCents must be a non-negative integer',
+      );
+    }
+    out.maxBalanceForTicketPrintCents = input.maxBalanceForTicketPrintCents;
   }
   if (input.priceVariance !== undefined) {
     if (input.priceVariance !== null) {
