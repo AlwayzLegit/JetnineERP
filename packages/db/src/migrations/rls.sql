@@ -117,6 +117,8 @@ DECLARE
     'store_credit_entries',
     'reason_codes',
     'security_overrides',
+    'order_returns',
+    'order_return_lines',
     'serial_units',
     'payment_plans',
     'payment_plan_installments',

@@ -34,6 +34,7 @@ import { RequirePermission, TenantScoped } from '../tenancy/decorators';
 import type { RequestTenantContext } from '../tenancy/request-context';
 import { CommissionsService } from '../money/commissions.service';
 import { StoreCreditService } from '../returns/store-credit.service';
+import { OrderReturnsService } from '../returns/order-returns.service';
 import {
   SecurityOverrideService,
   type OverrideCredentials,
@@ -342,6 +343,7 @@ export class OrdersController {
     @Inject(CommissionsService) private readonly commissions: CommissionsService,
     @Inject(StoreCreditService) private readonly storeCredit: StoreCreditService,
     @Inject(SecurityOverrideService) private readonly overrides: SecurityOverrideService,
+    @Inject(OrderReturnsService) private readonly orderReturns: OrderReturnsService,
   ) {}
 
   @Get('orders')
@@ -465,6 +467,7 @@ export class OrdersController {
     const reservedShort = new Set<string>();
     const fullyReturned = new Set<string>();
     const exchangedOriginals = new Set<string>();
+    const awaitingPickup = new Set<string>();
     if (ids.length > 0) {
       const pays = await this.db
         .select({
@@ -551,6 +554,19 @@ export class OrdersController {
         if (r.originalOrderId) exchangedOriginals.add(r.originalOrderId);
       }
 
+      // Gap §1/§8: an authorized return whose goods haven't come back
+      // shows as "Awaiting Return Pickup" — the truck still owes a stop.
+      const openReturns = await this.db
+        .select({ orderId: schema.orderReturns.orderId })
+        .from(schema.orderReturns)
+        .where(
+          and(
+            inArray(schema.orderReturns.orderId, ids),
+            eq(schema.orderReturns.status, 'authorized'),
+          ),
+        );
+      for (const r of openReturns) awaitingPickup.add(r.orderId);
+
       // Stock lines not yet fully reserved → still "Pending".
       const shorts = await this.db
         .select({ orderId: schema.orderLines.orderId })
@@ -572,6 +588,7 @@ export class OrdersController {
       if (r.status === 'draft') displayStatus = 'Draft';
       else if (r.status === 'quote') displayStatus = 'Quote';
       else if (r.status === 'cancelled') displayStatus = 'Cancelled';
+      else if (awaitingPickup.has(r.id)) displayStatus = 'Awaiting Return Pickup';
       else if (fullyReturned.has(r.id)) displayStatus = 'Returned';
       else if (exchangedOriginals.has(r.id)) displayStatus = 'Exchanged';
       else if (r.status === 'completed' || r.status === 'fulfilled') displayStatus = 'Delivered';
@@ -1572,11 +1589,14 @@ export class OrdersController {
   }
 
   /**
-   * §10 return: goods come back, money goes out, and every returned
-   * unit lands in the As-Is queue — never straight back to sellable
-   * stock. No restocking fee. Refunds reverse the original tenders
-   * proportionally (negative payment rows, newest tender first) or land
-   * on the customer's store-credit ledger.
+   * §10 / gap A7 return authorization: the return document is written
+   * here — lines, per-line coded reasons (class `return`), refund
+   * method, RMA number — but no money moves and no inventory changes.
+   * The refund fires when the goods are physically received back
+   * (`POST /v1/order-returns/:id/receive`). The one exception is a
+   * counter drop-off (`fulfillment: 'drop_off'`, the default — goods in
+   * hand): authorization and receipt happen in the same request and the
+   * refund is immediate, flagged as drop-off on the record.
    */
   @Post('orders/:id/return')
   @RequirePermission('pos.refund.create')
@@ -1586,13 +1606,18 @@ export class OrdersController {
     @Param('id') id: string,
     @Body()
     body: {
-      lines?: { lineId?: string; quantity?: number }[];
+      lines?: { lineId?: string; quantity?: number; reasonCodeId?: string; reason?: string }[];
       refundMethod?: 'original' | 'store_credit';
+      fulfillment?: 'drop_off' | 'pickup';
       reason?: string | null;
     },
   ): Promise<OrderDetail> {
     if (!body.lines || body.lines.length === 0) {
       throw new BadRequestException('lines must contain at least one entry');
+    }
+    const fulfillment = body.fulfillment ?? 'drop_off';
+    if (!['drop_off', 'pickup'].includes(fulfillment)) {
+      throw new BadRequestException('fulfillment must be drop_off or pickup');
     }
     const [order] = await this.db
       .select()
@@ -1610,8 +1635,31 @@ export class OrdersController {
       .where(eq(schema.orderLines.orderId, id));
     const byId = new Map(lines.map((l) => [l.id, l]));
 
+    // Units already spoken for by open (authorized) returns count
+    // against what's still returnable.
+    const openReturns = await this.db
+      .select({
+        orderLineId: schema.orderReturnLines.orderLineId,
+        quantity: schema.orderReturnLines.quantity,
+      })
+      .from(schema.orderReturnLines)
+      .innerJoin(schema.orderReturns, eq(schema.orderReturns.id, schema.orderReturnLines.returnId))
+      .where(
+        and(eq(schema.orderReturns.orderId, id), eq(schema.orderReturns.status, 'authorized')),
+      );
+    const pendingByLine = new Map<string, number>();
+    for (const r of openReturns) {
+      pendingByLine.set(r.orderLineId, (pendingByLine.get(r.orderLineId) ?? 0) + r.quantity);
+    }
+
     let amountCents = 0;
-    const validated: { line: (typeof lines)[number]; quantity: number; perUnit: number }[] = [];
+    const validated: {
+      line: (typeof lines)[number];
+      quantity: number;
+      perUnit: number;
+      reasonCodeId: string | null;
+      reason: string | null;
+    }[] = [];
     for (const r of body.lines) {
       if (!r.lineId) throw new BadRequestException('lines[].lineId is required');
       const line = byId.get(r.lineId);
@@ -1619,95 +1667,97 @@ export class OrdersController {
       if (!Number.isInteger(r.quantity) || (r.quantity ?? 0) <= 0) {
         throw new BadRequestException('lines[].quantity must be a positive integer');
       }
-      const returnable = line.qtyFulfilled - line.qtyReturned;
+      const returnable = line.qtyFulfilled - line.qtyReturned - (pendingByLine.get(line.id) ?? 0);
       if (r.quantity! > returnable) {
         throw new BadRequestException(
           `Cannot return ${r.quantity} of line ${line.id}: only ${returnable} delivered unit(s) remain returnable`,
         );
       }
+      // Coded per-line return reason (mandatory once class `return` has
+      // codes; the shared free-text reason is the A9 fallback).
+      const lineReason = await this.overrides.resolveReason(
+        'return',
+        { reasonCodeId: r.reasonCodeId, reason: r.reason ?? body.reason ?? null },
+        { required: false },
+      );
       // Refund what the customer actually paid for the unit: the line
       // total plus its tax share (order lines keep tax separately).
       const perUnit = Math.round((line.totalCents + line.taxCents) / line.quantity);
-      validated.push({ line, quantity: r.quantity!, perUnit });
+      validated.push({
+        line,
+        quantity: r.quantity!,
+        perUnit,
+        reasonCodeId: lineReason.reasonCodeId,
+        reason: lineReason.reasonText,
+      });
       amountCents += perUnit * r.quantity!;
     }
 
+    // Authorization-time sanity check on an original-tender refund; the
+    // binding check re-runs at goods receipt.
     const toStoreCredit = body.refundMethod === 'store_credit';
-    const payments = await this.db
-      .select()
-      .from(schema.payments)
-      .where(eq(schema.payments.orderId, id))
-      .orderBy(desc(schema.payments.createdAt));
-    const collected = paidCents(payments);
-    if (!toStoreCredit && amountCents > collected) {
-      throw new BadRequestException(
-        `Refund (${amountCents}) exceeds the money collected (${collected}) — use store credit for the difference`,
-      );
-    }
-
-    // Goods: bump the returned counters and stage everything in As-Is.
-    for (const v of validated) {
-      await this.db
-        .update(schema.orderLines)
-        .set({ qtyReturned: v.line.qtyReturned + v.quantity })
-        .where(eq(schema.orderLines.id, v.line.id));
-      if (v.line.variantId) {
-        await this.db.insert(schema.asIsItems).values({
-          businessId: tenant.businessId!,
-          variantId: v.line.variantId,
-          locationId: order.locationId,
-          quantity: v.quantity,
-          source: 'return',
-          referenceType: 'order',
-          referenceId: order.id,
-          notes: body.reason ?? null,
-        });
+    if (!toStoreCredit) {
+      const payments = await this.db
+        .select()
+        .from(schema.payments)
+        .where(eq(schema.payments.orderId, id));
+      const collected = paidCents(payments);
+      if (amountCents > collected) {
+        throw new BadRequestException(
+          `Refund (${amountCents}) exceeds the money collected (${collected}) — use store credit for the difference`,
+        );
       }
     }
 
-    // Money: proportional-enough reversal — walk the original tenders
-    // newest first, writing negative payment rows until the refund is
-    // covered (mirrors the sales refund's allocation order).
-    if (toStoreCredit) {
-      await this.storeCredit.issue(this.db, {
+    const priorReturns = await this.db
+      .select({ id: schema.orderReturns.id })
+      .from(schema.orderReturns)
+      .where(eq(schema.orderReturns.orderId, id));
+    const rmaNumber = `RMA-${order.number}-${priorReturns.length + 1}`;
+
+    const [ret] = await this.db
+      .insert(schema.orderReturns)
+      .values({
         businessId: tenant.businessId!,
-        customerId: order.customerId,
+        orderId: id,
+        rmaNumber,
+        status: 'authorized',
+        fulfillment,
+        refundMethod: toStoreCredit ? 'store_credit' : 'original',
         amountCents,
-        reason: body.reason ?? `Return on ${order.number}`,
-        referenceType: 'order_return',
-        referenceId: order.id,
-        actorUserId: actor?.id ?? null,
-      });
-    } else {
-      let remaining = amountCents;
-      for (const p of payments) {
-        if (remaining <= 0) break;
-        if (p.status !== 'succeeded' || p.amountCents <= 0) continue;
-        const slice = Math.min(remaining, p.amountCents);
-        await this.db.insert(schema.payments).values({
-          businessId: tenant.businessId!,
-          saleId: null,
-          orderId: id,
-          kind: 'refund',
-          method: p.method,
-          amountCents: -slice,
-          status: 'succeeded',
-        });
-        remaining -= slice;
-      }
-    }
-
+        reason: body.reason ?? null,
+        createdByUserId: actor?.id ?? null,
+      })
+      .returning();
+    await this.db.insert(schema.orderReturnLines).values(
+      validated.map((v) => ({
+        businessId: tenant.businessId!,
+        returnId: ret!.id,
+        orderLineId: v.line.id,
+        quantity: v.quantity,
+        perUnitCents: v.perUnit,
+        reasonCodeId: v.reasonCodeId,
+        reason: v.reason,
+      })),
+    );
     await this.audit.log({
-      action: 'order.return',
+      action: 'order.return_authorized',
       targetType: 'order',
       targetId: id,
       after: {
+        rmaNumber,
         amountCents,
         refundMethod: toStoreCredit ? 'store_credit' : 'original',
+        fulfillment,
         unitCount: validated.reduce((s, v) => s + v.quantity, 0),
         reason: body.reason ?? null,
       },
     });
+
+    // Drop-off: the goods are in hand — receive (and refund) now.
+    if (fulfillment === 'drop_off') {
+      await this.orderReturns.receiveGoods(ret!.id, actor?.id ?? null);
+    }
     return this.loadDetail(id);
   }
 

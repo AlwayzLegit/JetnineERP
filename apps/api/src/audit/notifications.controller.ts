@@ -28,8 +28,11 @@ const NOTABLE_ACTIONS = [
   'order.payment.take',
   'order.unlock',
   'order.return',
+  'order.return_authorized',
+  'order_return.cancel',
   'order.price_adjustment',
   'delivery.cap_override',
+  'security.override',
 ] as const;
 
 const ACTION_LABELS: Record<string, string> = {
@@ -39,9 +42,12 @@ const ACTION_LABELS: Record<string, string> = {
   'order.cancel': 'Order cancelled',
   'order.payment.take': 'Payment taken',
   'order.unlock': 'Order unlocked (lock override)',
-  'order.return': 'Return processed',
+  'order.return': 'Return completed — goods received, refund issued',
+  'order.return_authorized': 'Return authorized (awaiting goods)',
+  'order_return.cancel': 'Return authorization cancelled',
   'order.price_adjustment': 'Price adjustment / partial refund',
   'delivery.cap_override': 'Delivery booked over capacity',
+  'security.override': 'Security override (second-user authorization)',
 };
 
 interface NotificationRow {

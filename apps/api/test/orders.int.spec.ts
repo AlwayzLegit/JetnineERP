@@ -1418,3 +1418,179 @@ describe('Returns, As-Is, store credit, exchanges (PLAN-POS-OPERATIONS P8)', () 
     expect(row.displayStatus).toBe('Exchanged');
   });
 });
+
+describe('Return lifecycle — refund gated on goods receipt (PLAN-STORIS-GAP G3)', () => {
+  let g3VariantId = '';
+
+  function as(cookie: string) {
+    return {
+      post: (url: string) =>
+        request(app.getHttpServer())
+          .post(url)
+          .set('Cookie', cookie)
+          .set('X-Business-Id', businessId),
+      get: (url: string) =>
+        request(app.getHttpServer())
+          .get(url)
+          .set('Cookie', cookie)
+          .set('X-Business-Id', businessId),
+    };
+  }
+  const owner = () => as(ownerCookie);
+
+  beforeAll(async () => {
+    const sql2 = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    const db = drizzle(sql2);
+    try {
+      const [p] = await db
+        .insert(schema.products)
+        .values({ businessId, sku: 'G3-BED', name: 'Lifecycle Fixture Bed' })
+        .returning();
+      const [v] = await db
+        .insert(schema.productVariants)
+        .values({ businessId, productId: p!.id, sku: 'G3-BED-V1', priceCents: 50000 })
+        .returning();
+      g3VariantId = v!.id;
+      await db.insert(schema.inventoryLevels).values({
+        businessId,
+        variantId: g3VariantId,
+        locationId,
+        onHand: 30,
+        reserved: 0,
+      });
+    } finally {
+      await sql2.end({ timeout: 5 });
+    }
+  });
+
+  async function fulfilledPaidOrder(quantity: number): Promise<{
+    id: string;
+    number: string;
+    lineId: string;
+    totalCents: number;
+  }> {
+    const created = await owner()
+      .post('/v1/orders')
+      .send({
+        locationId,
+        customerId,
+        fulfillmentType: 'pickup',
+        confirm: true,
+        lines: [{ variantId: g3VariantId, quantity }],
+      });
+    expect(created.status).toBe(201);
+    await owner()
+      .post(`/v1/orders/${created.body.id}/payments`)
+      .send({ method: 'cash', amountCents: created.body.totalCents })
+      .expect(201);
+    await owner().post(`/v1/orders/${created.body.id}/fulfill`).send({}).expect(201);
+    return {
+      id: created.body.id,
+      number: created.body.number,
+      lineId: created.body.lines[0].id,
+      totalCents: created.body.totalCents,
+    };
+  }
+
+  it('pickup return: authorization moves no money and no goods; receipt fires both', async () => {
+    const order = await fulfilledPaidOrder(2);
+    const perUnit = Math.round(order.totalCents / 2);
+
+    const auth = await owner()
+      .post(`/v1/orders/${order.id}/return`)
+      .send({
+        lines: [{ lineId: order.lineId, quantity: 1 }],
+        fulfillment: 'pickup',
+        reason: 'sagging',
+      });
+    expect(auth.status).toBe(201);
+    // Nothing moved yet: full payment stands, nothing marked returned.
+    expect(auth.body.paidCents).toBe(order.totalCents);
+    expect(auth.body.lines[0].qtyReturned).toBe(0);
+
+    const listed = await owner().get(`/v1/order-returns?orderId=${order.id}`);
+    expect(listed.status).toBe(200);
+    expect(listed.body).toHaveLength(1);
+    const ret = listed.body[0];
+    expect(ret.status).toBe('authorized');
+    expect(ret.rmaNumber).toBe(`RMA-${order.number}-1`);
+    expect(ret.amountCents).toBe(perUnit);
+    expect(ret.lines[0].quantity).toBe(1);
+
+    // The order now reads "Awaiting Return Pickup" on the list view.
+    const lv = await owner().get('/v1/orders/list-view?limit=100');
+    const row = lv.body.data.find((r: { id: string }) => r.id === order.id);
+    expect(row.displayStatus).toBe('Awaiting Return Pickup');
+
+    // Units on an open authorization are no longer returnable again.
+    const over = await owner()
+      .post(`/v1/orders/${order.id}/return`)
+      .send({ lines: [{ lineId: order.lineId, quantity: 2 }], fulfillment: 'pickup' });
+    expect(over.status).toBe(400);
+
+    // No As-Is row yet.
+    const queueBefore = await owner().get('/v1/as-is?status=pending_review');
+    expect(
+      queueBefore.body.filter((r: { referenceId: string | null }) => r.referenceId === order.id),
+    ).toHaveLength(0);
+
+    // Goods received → refund row + As-Is + qtyReturned, return completed.
+    await owner().post(`/v1/order-returns/${ret.id}/receive`).send({}).expect(201);
+    const detail = await owner().get(`/v1/orders/${order.id}`);
+    expect(detail.body.paidCents).toBe(order.totalCents - perUnit);
+    expect(detail.body.lines[0].qtyReturned).toBe(1);
+    const refundRow = detail.body.payments.find((p: { kind: string }) => p.kind === 'refund');
+    expect(refundRow.amountCents).toBe(-perUnit);
+    const queueAfter = await owner().get('/v1/as-is?status=pending_review');
+    expect(
+      queueAfter.body.filter((r: { referenceId: string | null }) => r.referenceId === order.id),
+    ).toHaveLength(1);
+    const after = await owner().get(`/v1/order-returns?orderId=${order.id}`);
+    expect(after.body[0].status).toBe('completed');
+    expect(after.body[0].goodsReceivedAt).toBeTruthy();
+
+    // Receiving twice is refused.
+    await owner().post(`/v1/order-returns/${ret.id}/receive`).send({}).expect(409);
+  });
+
+  it('cancelling an authorized return frees the units and moves no money', async () => {
+    const order = await fulfilledPaidOrder(1);
+    const auth = await owner()
+      .post(`/v1/orders/${order.id}/return`)
+      .send({ lines: [{ lineId: order.lineId, quantity: 1 }], fulfillment: 'pickup' });
+    expect(auth.status).toBe(201);
+    const [ret] = (await owner().get(`/v1/order-returns?orderId=${order.id}`)).body;
+
+    await owner()
+      .post(`/v1/order-returns/${ret.id}/cancel`)
+      .send({ reason: 'customer kept it' })
+      .expect(201);
+    const detail = await owner().get(`/v1/orders/${order.id}`);
+    expect(detail.body.paidCents).toBe(order.totalCents);
+    expect(detail.body.lines[0].qtyReturned).toBe(0);
+
+    // The unit is returnable again (drop-off completes immediately).
+    const again = await owner()
+      .post(`/v1/orders/${order.id}/return`)
+      .send({ lines: [{ lineId: order.lineId, quantity: 1 }] });
+    expect(again.status).toBe(201);
+    expect(again.body.lines[0].qtyReturned).toBe(1);
+    expect(again.body.paidCents).toBe(0);
+    // A cancelled and a completed return both carry order-scoped RMAs.
+    const all = await owner().get(`/v1/order-returns?orderId=${order.id}`);
+    expect(all.body.map((r: { rmaNumber: string }) => r.rmaNumber).sort()).toEqual([
+      `RMA-${order.number}-1`,
+      `RMA-${order.number}-2`,
+    ]);
+  });
+
+  it('receiving is warehouse-gated: a cashier (no inventory.receive) is refused', async () => {
+    const order = await fulfilledPaidOrder(1);
+    await owner()
+      .post(`/v1/orders/${order.id}/return`)
+      .send({ lines: [{ lineId: order.lineId, quantity: 1 }], fulfillment: 'pickup' })
+      .expect(201);
+    const [ret] = (await owner().get(`/v1/order-returns?orderId=${order.id}`)).body;
+    await as(cashierCookie).post(`/v1/order-returns/${ret.id}/receive`).send({}).expect(403);
+  });
+});

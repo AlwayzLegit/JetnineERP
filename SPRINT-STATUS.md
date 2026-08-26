@@ -804,8 +804,24 @@ commission-clawback + digest requirements.
       Conventions flagged: restricted-code enforcement (manager auth to *use* a restricted
       code) lands with its first consumer (as-is flows, G4/G10); return-line coded reasons
       ride with G3._
-- [ ] **G3 — Return lifecycle:** Authorized → Goods Received → Completed; refund fires at
-      goods receipt; drop-off refunds immediately (flagged); per-line coded return reasons
+- [x] **G3 — Return lifecycle:** migration `0039_order_returns` — `order_returns`
+      (RMA `RMA-{order#}-{n}`, status authorized/completed/cancelled, fulfillment
+      drop*off/pickup, refund method + amount captured at authorization) +
+      `order_return_lines` (per-line qty, per-unit cents, coded reason class `return`).
+      `POST /orders/:id/return` now *authorizes* (no money, no inventory; open
+      authorizations count against returnable qty; list-view shows "Awaiting Return
+      Pickup"); `POST /order-returns/:id/receive` (inventory.receive — warehouse-side)
+      fires the whole physical+financial event: qtyReturned, As-Is intake, tender
+      reversal / store credit, status completed; drop-off (default — goods in hand)
+      authorizes + receives in one request, flagged. `:id/cancel` voids an authorization
+      (reason; override-gated on pos.refund.create). UI: fulfillment select, coded
+      return-reason select, per-order returns table w/ "Goods received"/Cancel.
+      Notifications feed += return_authorized / cancel / security.override labels.
+      orders.int.spec 39→42. — \_2026-08-26. Conventions flagged: one reason code applies
+      to all lines of a return (per-line selects when a real need shows); As-Is rows
+      keep referencing the order (P8 contract); original-tender cap re-checked at
+      receipt — a shortfall blocks with "re-authorize as store credit"; SoD: writer
+      needs pos.refund.create, receiver needs inventory.receive.*
 - [ ] **G4 — Scrap/write-off control:** permissioned, reason-coded, valued at cost,
       write-off register; vendor returns carry R/A + open-credit balance
 - [ ] **G5 — Exception register + ranked per-associate digest** (severity/ack/assignee;

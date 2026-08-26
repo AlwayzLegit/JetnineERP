@@ -96,4 +96,6 @@ export const TENANT_SCOPED_TABLES = [
   'store_credit_entries',
   'reason_codes',
   'security_overrides',
+  'order_returns',
+  'order_return_lines',
 ] as const;

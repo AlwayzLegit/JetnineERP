@@ -997,9 +997,41 @@ function ReturnsCard({
 }) {
   const [qty, setQty] = useState<Record<string, number>>({});
   const [method, setMethod] = useState<'original' | 'store_credit'>('original');
+  const [fulfillment, setFulfillment] = useState<'drop_off' | 'pickup'>('drop_off');
   const [reason, setReason] = useState('');
   const [adjustAmount, setAdjustAmount] = useState('');
   const [working, setWorking] = useState(false);
+  // A7 lifecycle: authorized returns wait here for the goods; receiving
+  // fires the refund. Completed/cancelled returns stay as history.
+  const [returns, setReturns] = useState<
+    {
+      id: string;
+      rmaNumber: string;
+      status: string;
+      fulfillment: string;
+      refundMethod: string;
+      amountCents: number;
+      authorizedAt: string;
+    }[]
+  >([]);
+  const [returnCodes, setReturnCodes] = useState<
+    { id: string; code: string; description: string }[]
+  >([]);
+  const [returnCodeId, setReturnCodeId] = useState('');
+  async function loadReturns() {
+    try {
+      setReturns(await api(`/v1/order-returns?orderId=${order.id}`));
+    } catch {
+      setReturns([]);
+    }
+  }
+  useEffect(() => {
+    void loadReturns();
+    api<{ id: string; code: string; description: string }[]>('/v1/reason-codes?usageClass=return')
+      .then(setReturnCodes)
+      .catch(() => setReturnCodes([]));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [order.id]);
   // Coded adjustment reasons (gap sprint G2). While the business has no
   // codes of class `adjustment`, the shared free-text reason is sent.
   const [adjustCodes, setAdjustCodes] = useState<
@@ -1020,21 +1052,71 @@ function ReturnsCard({
   async function processReturn() {
     const lines = Object.entries(qty)
       .filter(([, q]) => q > 0)
-      .map(([lineId, quantity]) => ({ lineId, quantity }));
+      .map(([lineId, quantity]) => ({
+        lineId,
+        quantity,
+        ...(returnCodeId ? { reasonCodeId: returnCodeId } : {}),
+      }));
     if (lines.length === 0) {
       toast.error('Enter a quantity on at least one line.');
+      return;
+    }
+    if (returnCodes.length > 0 && !returnCodeId) {
+      toast.error('Select a return reason.');
       return;
     }
     setWorking(true);
     try {
       await api(`/v1/orders/${order.id}/return`, {
         method: 'POST',
-        body: JSON.stringify({ lines, refundMethod: method, reason: reason || null }),
+        body: JSON.stringify({
+          lines,
+          refundMethod: method,
+          fulfillment,
+          reason: reason || null,
+        }),
       });
-      toast.success('Return processed — goods staged in As-Is review.');
+      toast.success(
+        fulfillment === 'drop_off'
+          ? 'Return processed — goods staged in As-Is review.'
+          : 'Return authorized — the refund fires when the goods are received back.',
+      );
       setQty({});
       setReason('');
       await onChanged();
+      await loadReturns();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function receiveReturn(id: string) {
+    setWorking(true);
+    try {
+      await api(`/v1/order-returns/${id}/receive`, { method: 'POST' });
+      toast.success('Goods received — refund issued.');
+      await onChanged();
+      await loadReturns();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function cancelReturn(id: string) {
+    const why = window.prompt('Reason for cancelling this return authorization:');
+    if (why == null || !why.trim()) return;
+    setWorking(true);
+    try {
+      await api(`/v1/order-returns/${id}/cancel`, {
+        method: 'POST',
+        body: JSON.stringify({ reason: why.trim() }),
+      });
+      await onChanged();
+      await loadReturns();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err));
     } finally {
@@ -1073,6 +1155,58 @@ function ReturnsCard({
 
   return (
     <Card title="Returns & exchange" style={{ marginBottom: 16 }}>
+      {returns.length > 0 && (
+        <table className="table" style={{ marginBottom: 12 }} data-testid="returns-table">
+          <thead>
+            <tr>
+              <th>RMA</th>
+              <th>Status</th>
+              <th>Refund</th>
+              <th className="num">Amount</th>
+              <th />
+            </tr>
+          </thead>
+          <tbody>
+            {returns.map((r) => (
+              <tr key={r.id}>
+                <td style={{ fontWeight: 600 }}>{r.rmaNumber}</td>
+                <td>
+                  {r.status === 'authorized'
+                    ? `awaiting ${r.fulfillment === 'pickup' ? 'pickup' : 'drop-off'}`
+                    : r.status}
+                </td>
+                <td>{r.refundMethod === 'store_credit' ? 'store credit' : 'original tenders'}</td>
+                <td className="num">
+                  <Money cents={r.amountCents} />
+                </td>
+                <td style={{ whiteSpace: 'nowrap' }}>
+                  {r.status === 'authorized' && (
+                    <>
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        disabled={working}
+                        data-testid="receive-return"
+                        onClick={() => void receiveReturn(r.id)}
+                      >
+                        Goods received
+                      </Button>{' '}
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        disabled={working}
+                        onClick={() => void cancelReturn(r.id)}
+                      >
+                        Cancel
+                      </Button>
+                    </>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
       {order.originalOrderId && (
         <p style={{ fontSize: 13, marginTop: 0 }}>
           This is an <strong>Exchange Order</strong> —{' '}
@@ -1138,6 +1272,36 @@ function ReturnsCard({
             <option value="store_credit">Store credit</option>
           </select>
         </label>
+        <label style={{ display: 'grid', gap: 2, fontSize: 12 }}>
+          Goods come back by
+          <select
+            className="select"
+            value={fulfillment}
+            data-testid="return-fulfillment"
+            onChange={(e) => setFulfillment(e.target.value as 'drop_off' | 'pickup')}
+          >
+            <option value="drop_off">Customer drop-off (refund now)</option>
+            <option value="pickup">Truck pickup (refund on receipt)</option>
+          </select>
+        </label>
+        {returnCodes.length > 0 && (
+          <label style={{ display: 'grid', gap: 2, fontSize: 12 }}>
+            Return reason
+            <select
+              className="select"
+              value={returnCodeId}
+              data-testid="return-reason-code"
+              onChange={(e) => setReturnCodeId(e.target.value)}
+            >
+              <option value="">Select…</option>
+              {returnCodes.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.code} — {c.description}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         <label style={{ display: 'grid', gap: 2, fontSize: 12, flex: 1, minWidth: 160 }}>
           Reason
           <Input value={reason} onChange={(e) => setReason(e.target.value)} />
