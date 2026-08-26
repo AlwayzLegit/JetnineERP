@@ -1206,3 +1206,215 @@ describe('Customer-facing status link', () => {
     expect(malformed.status).toBe(404);
   });
 });
+
+describe('Returns, As-Is, store credit, exchanges (PLAN-POS-OPERATIONS P8)', () => {
+  let p8VariantId = '';
+
+  function owner() {
+    return {
+      post: (url: string) =>
+        request(app.getHttpServer())
+          .post(url)
+          .set('Cookie', ownerCookie)
+          .set('X-Business-Id', businessId),
+      get: (url: string) =>
+        request(app.getHttpServer())
+          .get(url)
+          .set('Cookie', ownerCookie)
+          .set('X-Business-Id', businessId),
+    };
+  }
+
+  beforeAll(async () => {
+    const sql2 = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    const db = drizzle(sql2);
+    try {
+      const [p] = await db
+        .insert(schema.products)
+        .values({ businessId, sku: 'P8-BED', name: 'Returns Fixture Bed' })
+        .returning();
+      const [v] = await db
+        .insert(schema.productVariants)
+        .values({ businessId, productId: p!.id, sku: 'P8-BED-V1', priceCents: 100000 })
+        .returning();
+      p8VariantId = v!.id;
+      await db.insert(schema.inventoryLevels).values({
+        businessId,
+        variantId: p8VariantId,
+        locationId,
+        onHand: 20,
+        reserved: 0,
+      });
+    } finally {
+      await sql2.end({ timeout: 5 });
+    }
+  });
+
+  async function fulfilledPaidOrder(quantity: number): Promise<{
+    id: string;
+    number: string;
+    lineId: string;
+    totalCents: number;
+  }> {
+    const created = await owner()
+      .post('/v1/orders')
+      .send({
+        locationId,
+        customerId,
+        fulfillmentType: 'pickup',
+        confirm: true,
+        lines: [{ variantId: p8VariantId, quantity }],
+      });
+    expect(created.status).toBe(201);
+    const pay = await owner()
+      .post(`/v1/orders/${created.body.id}/payments`)
+      .send({ method: 'cash', amountCents: created.body.totalCents });
+    expect(pay.status).toBe(201);
+    const ful = await owner().post(`/v1/orders/${created.body.id}/fulfill`).send({});
+    expect(ful.status).toBe(201);
+    return {
+      id: created.body.id,
+      number: created.body.number,
+      lineId: created.body.lines[0].id,
+      totalCents: created.body.totalCents,
+    };
+  }
+
+  async function stockOf(variantId: string): Promise<number> {
+    return levelOf(variantId).then((l) => l.onHand);
+  }
+
+  it('return: money reverses to the original tender, goods land in As-Is, not stock', async () => {
+    const order = await fulfilledPaidOrder(2);
+    const stockBefore = await stockOf(p8VariantId);
+
+    const perUnit = Math.round(order.totalCents / 2);
+    const ret = await owner()
+      .post(`/v1/orders/${order.id}/return`)
+      .send({ lines: [{ lineId: order.lineId, quantity: 1 }], reason: 'too firm' });
+    expect(ret.status).toBe(201);
+    expect(ret.body.lines[0].qtyReturned).toBe(1);
+    expect(ret.body.paidCents).toBe(order.totalCents - perUnit); // negative cash row
+    const refundRow = ret.body.payments.find(
+      (p: { kind: string; amountCents: number }) => p.kind === 'refund',
+    );
+    expect(refundRow.amountCents).toBe(-perUnit);
+    expect(refundRow.method).toBe('cash');
+
+    // Goods: As-Is pending review, sellable stock untouched.
+    expect(await stockOf(p8VariantId)).toBe(stockBefore);
+    const queue = await owner().get('/v1/as-is?status=pending_review');
+    const item = queue.body.find((r: { referenceId: string | null }) => r.referenceId === order.id);
+    expect(item).toBeTruthy();
+    expect(item.quantity).toBe(1);
+    expect(item.source).toBe('return');
+
+    // Over-returning is refused.
+    const over = await owner()
+      .post(`/v1/orders/${order.id}/return`)
+      .send({ lines: [{ lineId: order.lineId, quantity: 2 }] });
+    expect(over.status).toBe(400);
+
+    // Returning the rest flips the list-view display status to Returned.
+    const rest = await owner()
+      .post(`/v1/orders/${order.id}/return`)
+      .send({ lines: [{ lineId: order.lineId, quantity: 1 }] });
+    expect(rest.status).toBe(201);
+    const lv = await owner().get('/v1/orders/list-view?limit=100');
+    const row = lv.body.data.find((r: { id: string }) => r.id === order.id);
+    expect(row.displayStatus).toBe('Returned');
+
+    // Review the As-Is item: restock puts it back into sellable stock.
+    const reviewed = await owner().post(`/v1/as-is/${item.id}/review`).send({ action: 'restock' });
+    expect(reviewed.status).toBe(201);
+    expect(reviewed.body.status).toBe('restocked');
+    expect(await stockOf(p8VariantId)).toBe(stockBefore + 1);
+    await owner().post(`/v1/as-is/${item.id}/review`).send({ action: 'scrap' }).expect(400);
+  });
+
+  it('store credit: issued by a return, surfaces on the customer, redeems with a balance check', async () => {
+    const order = await fulfilledPaidOrder(1);
+    const ret = await owner()
+      .post(`/v1/orders/${order.id}/return`)
+      .send({
+        lines: [{ lineId: order.lineId, quantity: 1 }],
+        refundMethod: 'store_credit',
+        reason: 'exchange credit',
+      });
+    expect(ret.status).toBe(201);
+    // Store-credit return keeps the money: paid is unchanged.
+    expect(ret.body.paidCents).toBe(order.totalCents);
+
+    const credit = await owner().get(`/v1/customers/${customerId}/store-credit`);
+    expect(credit.status).toBe(200);
+    expect(credit.body.balanceCents).toBeGreaterThanOrEqual(order.totalCents);
+    const balance = credit.body.balanceCents;
+
+    // Redeem on a new order — within balance succeeds and debits the ledger…
+    const next = await owner()
+      .post('/v1/orders')
+      .send({
+        locationId,
+        customerId,
+        confirm: true,
+        lines: [{ variantId: p8VariantId, quantity: 1 }],
+      });
+    expect(next.status).toBe(201);
+    const redeem = await owner()
+      .post(`/v1/orders/${next.body.id}/payments`)
+      .send({ method: 'store_credit', amountCents: 5000 });
+    expect(redeem.status).toBe(201);
+    const after = await owner().get(`/v1/customers/${customerId}/store-credit`);
+    expect(after.body.balanceCents).toBe(balance - 5000);
+
+    // …and over-balance is refused.
+    const tooMuch = await owner()
+      .post(`/v1/orders/${next.body.id}/payments`)
+      .send({ method: 'store_credit', amountCents: after.body.balanceCents + 100000 });
+    expect([400]).toContain(tooMuch.status);
+  });
+
+  it('price adjustment: money-only, distinct kind, reason required', async () => {
+    const order = await fulfilledPaidOrder(1);
+    await owner()
+      .post(`/v1/orders/${order.id}/price-adjustment`)
+      .send({ amountCents: 500 })
+      .expect(400); // no reason
+
+    const adj = await owner()
+      .post(`/v1/orders/${order.id}/price-adjustment`)
+      .send({ amountCents: 500, reason: 'price match' });
+    expect(adj.status).toBe(201);
+    expect(adj.body.paidCents).toBe(order.totalCents - 500);
+    const row = adj.body.payments.find((p: { kind: string }) => p.kind === 'adjustment');
+    expect(row.amountCents).toBe(-500);
+    // No goods moved: nothing new in As-Is for this order.
+    const queue = await owner().get('/v1/as-is');
+    expect(queue.body.some((r: { referenceId: string | null }) => r.referenceId === order.id)).toBe(
+      false,
+    );
+  });
+
+  it('exchange order: linked to the original, documents as Exchange Order', async () => {
+    const original = await fulfilledPaidOrder(1);
+    const ex = await owner()
+      .post(`/v1/orders/${original.id}/exchange`)
+      .send({
+        confirm: true,
+        lines: [{ variantId: p8VariantId, quantity: 1 }],
+      });
+    expect(ex.status).toBe(201);
+    expect(ex.body.orderKind).toBe('exchange');
+    expect(ex.body.originalOrderId).toBe(original.id);
+
+    const doc = await owner().get(`/v1/orders/${ex.body.id}/document`);
+    expect(doc.status).toBe(200);
+    expect(doc.body.originalOrderNumber).toBe(original.number);
+    expect(doc.body.order.creditDueCents).toBe(0);
+
+    // The original shows as Exchanged on the orders table.
+    const lv = await owner().get('/v1/orders/list-view?limit=100');
+    const row = lv.body.data.find((r: { id: string }) => r.id === original.id);
+    expect(row.displayStatus).toBe('Exchanged');
+  });
+});

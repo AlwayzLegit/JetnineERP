@@ -713,7 +713,36 @@ supersedes the checkpoint-7 wizard; legacy register + its offline mode retire).
       recorded in the audit trail). transfers.int.spec +1 → 13/13.
       — _2026-08-26. Convention: signatures live on paper only (drivers work off printed
       tickets, §7); the system records who confirmed receipt, not a captured signature._
-- [ ] **Build P8:** Returns/exchanges/service, As-Is review flow, store credit
+- [x] **Build P8:** Returns/exchanges, As-Is review flow, store credit. Migration 0037:
+      `as_is_items` (review queue), `store_credit_entries` (ledger; balance = SUM, never
+      stored), `order_lines.qty_returned`. **As-Is (§10/§5)**: every refunded/returned
+      unit now lands in the pending-review queue instead of sellable stock (sales refund
+      flow rerouted; existing tests updated to the new rule); `/v1/as-is` + `:id/review`
+      (restock — optionally into the `-AS` variant via targetVariantId — / vendor*return /
+      scrap; only restock touches inventory, one-shot, inventory.adjust-gated); web page
+      `/as-is` in the Catalog nav with per-row Restock/Vendor/Scrap. **Store credit**:
+      issue on refunds (`refundMethod: 'store_credit'` on sale refunds and order returns),
+      redeem on order `store_credit` tenders with a hard balance check inside the request
+      transaction; `GET /v1/customers/:id/store-credit`; New Sale shows the "Store credit
+      available" chip when a customer is picked; customer page gained the ledger card.
+      **Order returns**: `POST /v1/orders/:id/return` — per-line qty capped at delivered−
+      returned, refund = line total + tax share per unit, reversed as negative payment
+      rows (kind 'refund') walking original tenders newest-first, goods → As-Is; no
+      restocking fee. `POST :id/price-adjustment` = the §10 distinct money-only type
+      (kind 'adjustment', reason required). Both feed the owner notifications.
+      **Exchanges**: `POST :id/exchange` writes an orderKind 'exchange' order linked via
+      original_order_id; invoice doc prints "Exchange Order" + Original Invoice # box +
+      Credit Due row; New Sale takes `?exchangeOf=` (banner, pinned customer, no take-with
+      fast lane); order detail gained the Returns & exchange card (return qtys, refund
+      method, adjustment, Write exchange order). List-view display statuses gained
+      **Returned** (all delivered units returned) and **Exchanged** (a live exchange
+      references the original). orders.int.spec +4 → 39/39; sales 11/11 + reports 14/14
+      re-baselined to the As-Is rule; business 24/24.
+      — \_2026-08-26. Conventions flagged: order-return tender reversal is newest-tender-
+      first rather than strictly proportional (matches the sales-refund allocation);
+      no Stripe reversal on order returns in v1 (office terminal); selling As-Is at a
+      discount = restock then adjust onto the `-AS` SKU; service orders already link to
+      sales (existing G6 module).*
 - [ ] **Build P9:** Commissions (equal-split default, exchange clawback), owner +
       manager dashboards, 22:00 auto-close job
 - [ ] **Ops:** Provide the two sample invoices into `docs/` for the document templates

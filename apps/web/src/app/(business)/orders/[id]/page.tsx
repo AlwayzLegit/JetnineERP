@@ -24,6 +24,7 @@ interface OrderLine {
   quantity: number;
   qtyReserved: number;
   qtyFulfilled: number;
+  qtyReturned: number;
   lineType: string;
   unitPriceCents: number;
   discountCents: number;
@@ -54,6 +55,9 @@ interface OrderDetail {
   depositRequiredCents: number;
   paidCents: number;
   balanceDueCents: number;
+  creditDueCents: number;
+  orderKind: string;
+  originalOrderId: string | null;
   addressLine1: string | null;
   addressLine2: string | null;
   addressCity: string | null;
@@ -85,6 +89,13 @@ interface DeliveryRow {
   windowEnd: string | null;
   lines: { id: string; description: string; quantity: number }[];
 }
+interface ReturnableLine {
+  id: string;
+  description: string;
+  qtyFulfilled: number;
+  qtyReturned: number;
+}
+
 interface AuditRow {
   id: string;
   action: string;
@@ -592,6 +603,8 @@ export default function OrderDetailPage() {
             )}
           </Card>
 
+          <ReturnsCard order={order} busy={busy} onChanged={load} />
+
           <Card title="Change history" style={{ marginBottom: 16 }}>
             {timeline.length === 0 ? (
               <p className="muted" style={{ fontSize: 13, margin: 0 }}>
@@ -944,6 +957,206 @@ function PaymentPlanCard(props: {
           </div>
         </>
       )}
+    </Card>
+  );
+}
+
+/**
+ * §10 Returns & exchange: delivered units come back through here — the
+ * refund reverses original tenders or lands as store credit, the goods
+ * go to the As-Is review queue (never straight to stock), and an
+ * Exchange Order can be written against this invoice. Price adjustments
+ * are the money-only variant.
+ */
+function ReturnsCard({
+  order,
+  busy,
+  onChanged,
+}: {
+  order: {
+    id: string;
+    number: string;
+    orderKind: string;
+    originalOrderId?: string | null;
+    paidCents: number;
+    creditDueCents?: number;
+    lines: ReturnableLine[];
+  };
+  busy: boolean;
+  onChanged: () => Promise<void> | void;
+}) {
+  const [qty, setQty] = useState<Record<string, number>>({});
+  const [method, setMethod] = useState<'original' | 'store_credit'>('original');
+  const [reason, setReason] = useState('');
+  const [adjustAmount, setAdjustAmount] = useState('');
+  const [working, setWorking] = useState(false);
+
+  const returnable = order.lines.filter((l) => l.qtyFulfilled - l.qtyReturned > 0);
+  if (returnable.length === 0 && !order.originalOrderId && order.paidCents === 0) return null;
+
+  async function processReturn() {
+    const lines = Object.entries(qty)
+      .filter(([, q]) => q > 0)
+      .map(([lineId, quantity]) => ({ lineId, quantity }));
+    if (lines.length === 0) {
+      toast.error('Enter a quantity on at least one line.');
+      return;
+    }
+    setWorking(true);
+    try {
+      await api(`/v1/orders/${order.id}/return`, {
+        method: 'POST',
+        body: JSON.stringify({ lines, refundMethod: method, reason: reason || null }),
+      });
+      toast.success('Return processed — goods staged in As-Is review.');
+      setQty({});
+      setReason('');
+      await onChanged();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function processAdjustment() {
+    const cents = Math.round(Number(adjustAmount) * 100);
+    if (!Number.isFinite(cents) || cents <= 0 || !reason.trim()) {
+      toast.error('Enter an adjustment amount and a reason.');
+      return;
+    }
+    setWorking(true);
+    try {
+      await api(`/v1/orders/${order.id}/price-adjustment`, {
+        method: 'POST',
+        body: JSON.stringify({ amountCents: cents, reason: reason.trim(), refundMethod: method }),
+      });
+      toast.success('Price adjustment recorded.');
+      setAdjustAmount('');
+      setReason('');
+      await onChanged();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  return (
+    <Card title="Returns & exchange" style={{ marginBottom: 16 }}>
+      {order.originalOrderId && (
+        <p style={{ fontSize: 13, marginTop: 0 }}>
+          This is an <strong>Exchange Order</strong> —{' '}
+          <Link href={`/orders/${order.originalOrderId}`}>view the original invoice</Link>.
+          {(order.creditDueCents ?? 0) > 0 && (
+            <>
+              {' '}
+              Credit due to customer: <Money cents={order.creditDueCents!} />.
+            </>
+          )}
+        </p>
+      )}
+      {returnable.length > 0 && (
+        <>
+          <table className="table" style={{ marginBottom: 8 }}>
+            <thead>
+              <tr>
+                <th>Delivered item</th>
+                <th className="num">Returnable</th>
+                <th>Return qty</th>
+              </tr>
+            </thead>
+            <tbody>
+              {returnable.map((l) => {
+                const max = l.qtyFulfilled - l.qtyReturned;
+                return (
+                  <tr key={l.id}>
+                    <td>{l.description}</td>
+                    <td className="num">{max}</td>
+                    <td>
+                      <Input
+                        type="number"
+                        min={0}
+                        max={max}
+                        value={qty[l.id] ?? 0}
+                        data-testid="return-qty"
+                        onChange={(e) =>
+                          setQty((prev) => ({
+                            ...prev,
+                            [l.id]: Math.max(0, Math.min(max, Number(e.target.value) || 0)),
+                          }))
+                        }
+                        style={{ width: 70 }}
+                      />
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </>
+      )}
+      <div className="flex flex-wrap items-end gap-2" style={{ fontSize: 13 }}>
+        <label style={{ display: 'grid', gap: 2, fontSize: 12 }}>
+          Refund to
+          <select
+            className="select"
+            value={method}
+            data-testid="refund-method"
+            onChange={(e) => setMethod(e.target.value as 'original' | 'store_credit')}
+          >
+            <option value="original">Original tenders</option>
+            <option value="store_credit">Store credit</option>
+          </select>
+        </label>
+        <label style={{ display: 'grid', gap: 2, fontSize: 12, flex: 1, minWidth: 160 }}>
+          Reason
+          <Input value={reason} onChange={(e) => setReason(e.target.value)} />
+        </label>
+        {returnable.length > 0 && (
+          <Button
+            variant="primary"
+            disabled={busy || working}
+            onClick={() => void processReturn()}
+            data-testid="process-return"
+          >
+            Process return
+          </Button>
+        )}
+        <label style={{ display: 'grid', gap: 2, fontSize: 12 }}>
+          Adjustment ($)
+          <Input
+            type="number"
+            step="0.01"
+            min={0}
+            value={adjustAmount}
+            onChange={(e) => setAdjustAmount(e.target.value)}
+            data-testid="adjust-amount"
+            style={{ width: 110 }}
+          />
+        </label>
+        <Button
+          variant="secondary"
+          disabled={busy || working}
+          onClick={() => void processAdjustment()}
+          data-testid="process-adjustment"
+        >
+          Price adjustment
+        </Button>
+        {!order.originalOrderId && (
+          <LinkButton
+            href={`/orders/new?exchangeOf=${order.id}`}
+            variant="secondary"
+            data-testid="write-exchange"
+          >
+            Write exchange order
+          </LinkButton>
+        )}
+      </div>
+      <p className="muted" style={{ fontSize: 11.5, margin: '8px 0 0' }}>
+        No restocking fee. Returned goods go to the As-Is queue for manager/warehouse review — never
+        straight back to sellable stock.
+      </p>
     </Card>
   );
 }

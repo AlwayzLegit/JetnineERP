@@ -27,6 +27,7 @@ import {
 import { DRIZZLE } from '../database/database.module';
 import { CommissionsService } from '../money/commissions.service';
 import { GiftCardsService } from '../gift-cards/gift-cards.service';
+import { StoreCreditService } from '../returns/store-credit.service';
 import { StripeService } from '../stripe/stripe.service';
 import { RequirePermission, TenantScoped } from '../tenancy/decorators';
 import type { RequestTenantContext } from '../tenancy/request-context';
@@ -101,6 +102,12 @@ interface RefundLine {
 interface RefundBody {
   reason?: string | null;
   lines?: RefundLine[];
+  /**
+   * §10: 'original' (default) reverses the original tenders;
+   * 'store_credit' issues the amount to the customer's store-credit
+   * ledger instead (requires the sale to have a customer).
+   */
+  refundMethod?: 'original' | 'store_credit';
 }
 
 interface SaleListRow {
@@ -163,6 +170,7 @@ export class SalesController {
     @Inject(GiftCardsService) private readonly giftCards: GiftCardsService,
     @Inject(WebhookDispatcher) private readonly webhooks: WebhookDispatcher,
     @Inject(CommissionsService) private readonly commissions: CommissionsService,
+    @Inject(StoreCreditService) private readonly storeCredit: StoreCreditService,
   ) {}
 
   /**
@@ -1061,6 +1069,16 @@ export class SalesController {
       amountCents += perUnit * r.quantity;
     }
 
+    // §10: refunds go back to the original tenders unless the customer
+    // takes store credit instead — then no money moves at all, the
+    // amount lands on their ledger.
+    const toStoreCredit = body.refundMethod === 'store_credit';
+    if (toStoreCredit && !sale.customerId) {
+      throw new BadRequestException(
+        'Store-credit refunds need a customer on the sale — attach one first',
+      );
+    }
+
     // If the sale was paid (in part) on a Stripe-charged card, reverse
     // the matching PaymentIntent on the merchant's connected account
     // before we record any refund rows. Allocate the refund amount to
@@ -1073,7 +1091,9 @@ export class SalesController {
       .where(eq(schema.payments.saleId, id))
       .orderBy(schema.payments.createdAt);
 
-    const stripePayments = allPayments.filter((p) => p.processor === 'stripe' && p.processorRef);
+    const stripePayments = toStoreCredit
+      ? []
+      : allPayments.filter((p) => p.processor === 'stripe' && p.processorRef);
     if (stripePayments.length > 0) {
       const [merchant] = await this.db
         .select({ stripeAccountId: schema.merchantStripeAccounts.stripeAccountId })
@@ -1119,9 +1139,9 @@ export class SalesController {
     // so a mixed-tender sale (card + gift card) refunds card first
     // (matches what the customer expects) and only touches the gift
     // card if the refund exceeds the card-paid portion.
-    const giftCardPayments = allPayments.filter(
-      (p) => p.processor === 'gift_card' && p.processorRef,
-    );
+    const giftCardPayments = toStoreCredit
+      ? []
+      : allPayments.filter((p) => p.processor === 'gift_card' && p.processorRef);
     if (giftCardPayments.length > 0) {
       const stripeTotalRefunded = stripePayments.reduce(
         (s, p) => s + Math.min(amountCents, p.amountCents),
@@ -1141,7 +1161,9 @@ export class SalesController {
       }
     }
 
-    // Insert refund lines + restore inventory.
+    // Insert refund lines. Returned goods do NOT go back to sellable
+    // stock (§10) — they land in the As-Is queue and wait for a
+    // manager/warehouse review to decide restock / vendor / scrap.
     for (const v of validated) {
       await this.db.insert(schema.refundLines).values({
         businessId: tenant.businessId!,
@@ -1153,33 +1175,31 @@ export class SalesController {
       });
 
       if (v.line.variantId) {
-        await this.db.insert(schema.inventoryMovements).values({
+        await this.db.insert(schema.asIsItems).values({
           businessId: tenant.businessId!,
           variantId: v.line.variantId,
           locationId: sale.locationId,
-          delta: v.quantity,
-          reason: 'refund',
+          quantity: v.quantity,
+          source: 'return',
           referenceType: 'refund',
           referenceId: refund.id,
-          actorUserId: actor.id,
-          notes: null,
+          notes: body.reason ?? null,
         });
-        await this.db
-          .insert(schema.inventoryLevels)
-          .values({
-            businessId: tenant.businessId!,
-            variantId: v.line.variantId,
-            locationId: sale.locationId,
-            onHand: v.quantity,
-          })
-          .onConflictDoUpdate({
-            target: [schema.inventoryLevels.variantId, schema.inventoryLevels.locationId],
-            set: {
-              onHand: sql`${schema.inventoryLevels.onHand} + ${v.quantity}`,
-              updatedAt: new Date(),
-            },
-          });
       }
+    }
+
+    // Store-credit refunds land on the customer's ledger; the balance
+    // auto-surfaces at their next checkout.
+    if (toStoreCredit) {
+      await this.storeCredit.issue(this.db, {
+        businessId: tenant.businessId!,
+        customerId: sale.customerId!,
+        amountCents,
+        reason: body.reason ?? `Refund on ${sale.number}`,
+        referenceType: 'refund',
+        referenceId: refund.id,
+        actorUserId: actor.id,
+      });
     }
 
     // Compute new sale status: all lines fully refunded → 'refunded';

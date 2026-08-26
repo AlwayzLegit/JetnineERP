@@ -113,6 +113,8 @@ DECLARE
     'integrations',
     'po_line_allocations',
     'vendor_invoices',
+    'as_is_items',
+    'store_credit_entries',
     'serial_units',
     'payment_plans',
     'payment_plan_installments',

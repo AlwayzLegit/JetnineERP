@@ -29,6 +29,7 @@ import {
   UserCog,
   Users,
   Wrench,
+  Recycle,
   type LucideIcon,
 } from 'lucide-react';
 import { ActiveBusinessBadge } from '@/components/active-business-badge';
@@ -74,6 +75,7 @@ const NAV: NavGroup[] = [
       { href: '/purchase-orders', label: 'Purchasing', icon: ClipboardList },
       { href: '/vendors', label: 'Vendors', icon: Factory },
       { href: '/transfers', label: 'Transfers', icon: ArrowLeftRight },
+      { href: '/as-is', label: 'As-Is review', icon: Recycle },
       { href: '/gift-cards', label: 'Gift cards', icon: Gift },
     ],
   },

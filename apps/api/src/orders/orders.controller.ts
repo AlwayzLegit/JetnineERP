@@ -33,6 +33,7 @@ import { DRIZZLE } from '../database/database.module';
 import { RequirePermission, TenantScoped } from '../tenancy/decorators';
 import type { RequestTenantContext } from '../tenancy/request-context';
 import { CommissionsService } from '../money/commissions.service';
+import { StoreCreditService } from '../returns/store-credit.service';
 import { WebhookDispatcher } from '../webhooks/webhook-dispatcher.service';
 import {
   balanceDueCents,
@@ -72,7 +73,7 @@ type PaymentMethod = (typeof PAYMENT_METHODS)[number];
 
 const FULFILLMENT_TYPES = ['delivery', 'pickup', 'take_with', 'direct_ship'] as const;
 const DELIVERY_STATUSES = ['scheduled', 'estimated', 'asap', 'will_call'] as const;
-const ORDER_KINDS = ['sales_order', 'layaway'] as const;
+const ORDER_KINDS = ['sales_order', 'layaway', 'exchange'] as const;
 const LINE_TYPES = ['stock', 'special_order', 'custom'] as const;
 
 interface OrderLineInput {
@@ -195,6 +196,7 @@ interface OrderLineRow {
   quantity: number;
   qtyReserved: number;
   qtyFulfilled: number;
+  qtyReturned: number;
   lineType: string;
   unitPriceCents: number;
   discountCents: number;
@@ -227,6 +229,8 @@ interface OrderDetail extends OrderListRow {
   paidCents: number;
   /** Derived: total - paid, floored at zero. */
   balanceDueCents: number;
+  /** Derived (§10 exchanges): paid - total, floored at zero. */
+  creditDueCents: number;
   addressLine1: string | null;
   addressLine2: string | null;
   addressCity: string | null;
@@ -235,6 +239,8 @@ interface OrderDetail extends OrderListRow {
   addressPhone: string | null;
   notes: string | null;
   internalNotes: string | null;
+  /** §10: the original order this exchange was written against. */
+  originalOrderId: string | null;
   salespersonMembershipId: string | null;
   secondSalespersonMembershipId: string | null;
   splitBps: number | null;
@@ -278,6 +284,8 @@ interface OrderDocument {
   } | null;
   salespersonName: string | null;
   secondSalespersonName: string | null;
+  /** §10: set on exchange orders — the Original Invoice #. */
+  originalOrderNumber: string | null;
   /** Earliest undelivered trip date, falling back to the requested date. */
   scheduledDate: string | null;
   order: OrderDetail;
@@ -328,6 +336,7 @@ export class OrdersController {
     @Inject(OrdersService) private readonly orders: OrdersService,
     @Inject(WebhookDispatcher) private readonly webhooks: WebhookDispatcher,
     @Inject(CommissionsService) private readonly commissions: CommissionsService,
+    @Inject(StoreCreditService) private readonly storeCredit: StoreCreditService,
   ) {}
 
   @Get('orders')
@@ -449,6 +458,8 @@ export class OrdersController {
     const deliveryState = new Map<string, { date: string | null; status: string }>();
     const poByOrder = new Map<string, string>();
     const reservedShort = new Set<string>();
+    const fullyReturned = new Set<string>();
+    const exchangedOriginals = new Set<string>();
     if (ids.length > 0) {
       const pays = await this.db
         .select({
@@ -508,6 +519,33 @@ export class OrdersController {
         );
       for (const a of allocs) if (!poByOrder.has(a.orderId)) poByOrder.set(a.orderId, a.poNumber);
 
+      // §10 display statuses: fully-returned orders and originals with
+      // an exchange written against them.
+      const returnAgg = await this.db
+        .select({
+          orderId: schema.orderLines.orderId,
+          fulfilled: sql<number>`coalesce(sum(${schema.orderLines.qtyFulfilled}), 0)::int`,
+          returned: sql<number>`coalesce(sum(${schema.orderLines.qtyReturned}), 0)::int`,
+        })
+        .from(schema.orderLines)
+        .where(inArray(schema.orderLines.orderId, ids))
+        .groupBy(schema.orderLines.orderId);
+      for (const r of returnAgg) {
+        if (r.returned > 0 && r.returned >= r.fulfilled) fullyReturned.add(r.orderId);
+      }
+      const exchangeChildren = await this.db
+        .select({ originalOrderId: schema.orders.originalOrderId })
+        .from(schema.orders)
+        .where(
+          and(
+            inArray(schema.orders.originalOrderId, ids),
+            sql`${schema.orders.status} != 'cancelled'`,
+          ),
+        );
+      for (const r of exchangeChildren) {
+        if (r.originalOrderId) exchangedOriginals.add(r.originalOrderId);
+      }
+
       // Stock lines not yet fully reserved → still "Pending".
       const shorts = await this.db
         .select({ orderId: schema.orderLines.orderId })
@@ -529,6 +567,8 @@ export class OrdersController {
       if (r.status === 'draft') displayStatus = 'Draft';
       else if (r.status === 'quote') displayStatus = 'Quote';
       else if (r.status === 'cancelled') displayStatus = 'Cancelled';
+      else if (fullyReturned.has(r.id)) displayStatus = 'Returned';
+      else if (exchangedOriginals.has(r.id)) displayStatus = 'Exchanged';
       else if (r.status === 'completed' || r.status === 'fulfilled') displayStatus = 'Delivered';
       else if (r.orderKind === 'layaway' && balance > 0) displayStatus = 'Layaway';
       else if (trip?.status === 'out_for_delivery') displayStatus = 'Out for Delivery';
@@ -1134,6 +1174,21 @@ export class OrdersController {
       })
       .returning();
 
+    // §10: store credit is a real ledger — the tender checks the
+    // customer's balance and writes the redemption (throws 400 when the
+    // balance can't cover it, before any of this commits… the request
+    // transaction rolls the payment row back with it).
+    if (body.method === 'store_credit') {
+      await this.storeCredit.redeem(this.db, {
+        businessId: tenant.businessId!,
+        customerId: order.customerId,
+        amountCents: body.amountCents,
+        referenceType: 'payment',
+        referenceId: payment!.id,
+        actorUserId: actor?.id ?? null,
+      });
+    }
+
     await this.audit.log({
       action: 'order.payment.take',
       targetType: 'order',
@@ -1493,6 +1548,282 @@ export class OrdersController {
   }
 
   /**
+   * §10 return: goods come back, money goes out, and every returned
+   * unit lands in the As-Is queue — never straight back to sellable
+   * stock. No restocking fee. Refunds reverse the original tenders
+   * proportionally (negative payment rows, newest tender first) or land
+   * on the customer's store-credit ledger.
+   */
+  @Post('orders/:id/return')
+  @RequirePermission('pos.refund.create')
+  async returnGoods(
+    @CurrentTenant() tenant: RequestTenantContext,
+    @CurrentUser() actor: CurrentUserPayload,
+    @Param('id') id: string,
+    @Body()
+    body: {
+      lines?: { lineId?: string; quantity?: number }[];
+      refundMethod?: 'original' | 'store_credit';
+      reason?: string | null;
+    },
+  ): Promise<OrderDetail> {
+    if (!body.lines || body.lines.length === 0) {
+      throw new BadRequestException('lines must contain at least one entry');
+    }
+    const [order] = await this.db
+      .select()
+      .from(schema.orders)
+      .where(eq(schema.orders.id, id))
+      .limit(1);
+    if (!order) throw new NotFoundException('Order not found');
+    if (order.status === 'cancelled' || order.status === 'draft' || order.status === 'quote') {
+      throw new BadRequestException(`Cannot return against a ${order.status} order`);
+    }
+
+    const lines = await this.db
+      .select()
+      .from(schema.orderLines)
+      .where(eq(schema.orderLines.orderId, id));
+    const byId = new Map(lines.map((l) => [l.id, l]));
+
+    let amountCents = 0;
+    const validated: { line: (typeof lines)[number]; quantity: number; perUnit: number }[] = [];
+    for (const r of body.lines) {
+      if (!r.lineId) throw new BadRequestException('lines[].lineId is required');
+      const line = byId.get(r.lineId);
+      if (!line) throw new NotFoundException(`Order line not found: ${r.lineId}`);
+      if (!Number.isInteger(r.quantity) || (r.quantity ?? 0) <= 0) {
+        throw new BadRequestException('lines[].quantity must be a positive integer');
+      }
+      const returnable = line.qtyFulfilled - line.qtyReturned;
+      if (r.quantity! > returnable) {
+        throw new BadRequestException(
+          `Cannot return ${r.quantity} of line ${line.id}: only ${returnable} delivered unit(s) remain returnable`,
+        );
+      }
+      // Refund what the customer actually paid for the unit: the line
+      // total plus its tax share (order lines keep tax separately).
+      const perUnit = Math.round((line.totalCents + line.taxCents) / line.quantity);
+      validated.push({ line, quantity: r.quantity!, perUnit });
+      amountCents += perUnit * r.quantity!;
+    }
+
+    const toStoreCredit = body.refundMethod === 'store_credit';
+    const payments = await this.db
+      .select()
+      .from(schema.payments)
+      .where(eq(schema.payments.orderId, id))
+      .orderBy(desc(schema.payments.createdAt));
+    const collected = paidCents(payments);
+    if (!toStoreCredit && amountCents > collected) {
+      throw new BadRequestException(
+        `Refund (${amountCents}) exceeds the money collected (${collected}) — use store credit for the difference`,
+      );
+    }
+
+    // Goods: bump the returned counters and stage everything in As-Is.
+    for (const v of validated) {
+      await this.db
+        .update(schema.orderLines)
+        .set({ qtyReturned: v.line.qtyReturned + v.quantity })
+        .where(eq(schema.orderLines.id, v.line.id));
+      if (v.line.variantId) {
+        await this.db.insert(schema.asIsItems).values({
+          businessId: tenant.businessId!,
+          variantId: v.line.variantId,
+          locationId: order.locationId,
+          quantity: v.quantity,
+          source: 'return',
+          referenceType: 'order',
+          referenceId: order.id,
+          notes: body.reason ?? null,
+        });
+      }
+    }
+
+    // Money: proportional-enough reversal — walk the original tenders
+    // newest first, writing negative payment rows until the refund is
+    // covered (mirrors the sales refund's allocation order).
+    if (toStoreCredit) {
+      await this.storeCredit.issue(this.db, {
+        businessId: tenant.businessId!,
+        customerId: order.customerId,
+        amountCents,
+        reason: body.reason ?? `Return on ${order.number}`,
+        referenceType: 'order_return',
+        referenceId: order.id,
+        actorUserId: actor?.id ?? null,
+      });
+    } else {
+      let remaining = amountCents;
+      for (const p of payments) {
+        if (remaining <= 0) break;
+        if (p.status !== 'succeeded' || p.amountCents <= 0) continue;
+        const slice = Math.min(remaining, p.amountCents);
+        await this.db.insert(schema.payments).values({
+          businessId: tenant.businessId!,
+          saleId: null,
+          orderId: id,
+          kind: 'refund',
+          method: p.method,
+          amountCents: -slice,
+          status: 'succeeded',
+        });
+        remaining -= slice;
+      }
+    }
+
+    await this.audit.log({
+      action: 'order.return',
+      targetType: 'order',
+      targetId: id,
+      after: {
+        amountCents,
+        refundMethod: toStoreCredit ? 'store_credit' : 'original',
+        unitCount: validated.reduce((s, v) => s + v.quantity, 0),
+        reason: body.reason ?? null,
+      },
+    });
+    return this.loadDetail(id);
+  }
+
+  /**
+   * §10 price adjustment / partial refund — money only, no goods. A
+   * distinct transaction type from a return: nothing enters As-Is and
+   * no quantities change.
+   */
+  @Post('orders/:id/price-adjustment')
+  @RequirePermission('pos.refund.create')
+  async priceAdjustment(
+    @CurrentTenant() tenant: RequestTenantContext,
+    @CurrentUser() actor: CurrentUserPayload,
+    @Param('id') id: string,
+    @Body()
+    body: { amountCents?: number; reason?: string; refundMethod?: 'original' | 'store_credit' },
+  ): Promise<OrderDetail> {
+    if (!Number.isInteger(body.amountCents) || (body.amountCents ?? 0) <= 0) {
+      throw new BadRequestException('amountCents must be a positive integer');
+    }
+    if (!body.reason?.trim()) {
+      throw new BadRequestException('A reason is required for a price adjustment');
+    }
+    const [order] = await this.db
+      .select()
+      .from(schema.orders)
+      .where(eq(schema.orders.id, id))
+      .limit(1);
+    if (!order) throw new NotFoundException('Order not found');
+
+    const payments = await this.db
+      .select()
+      .from(schema.payments)
+      .where(eq(schema.payments.orderId, id))
+      .orderBy(desc(schema.payments.createdAt));
+    const collected = paidCents(payments);
+    const toStoreCredit = body.refundMethod === 'store_credit';
+    if (!toStoreCredit && body.amountCents! > collected) {
+      throw new BadRequestException(
+        `Adjustment (${body.amountCents}) exceeds the money collected (${collected})`,
+      );
+    }
+
+    if (toStoreCredit) {
+      await this.storeCredit.issue(this.db, {
+        businessId: tenant.businessId!,
+        customerId: order.customerId,
+        amountCents: body.amountCents!,
+        reason: body.reason.trim(),
+        referenceType: 'order_return',
+        referenceId: order.id,
+        actorUserId: actor?.id ?? null,
+      });
+    } else {
+      let remaining = body.amountCents!;
+      for (const p of payments) {
+        if (remaining <= 0) break;
+        if (p.status !== 'succeeded' || p.amountCents <= 0) continue;
+        const slice = Math.min(remaining, p.amountCents);
+        await this.db.insert(schema.payments).values({
+          businessId: tenant.businessId!,
+          saleId: null,
+          orderId: id,
+          kind: 'adjustment',
+          method: p.method,
+          amountCents: -slice,
+          status: 'succeeded',
+        });
+        remaining -= slice;
+      }
+    }
+
+    await this.audit.log({
+      action: 'order.price_adjustment',
+      targetType: 'order',
+      targetId: id,
+      after: {
+        amountCents: body.amountCents,
+        refundMethod: toStoreCredit ? 'store_credit' : 'original',
+        reason: body.reason.trim(),
+      },
+    });
+    return this.loadDetail(id);
+  }
+
+  /**
+   * §10 Exchange Order: a new order written against the original
+   * invoice. The document prints as "Exchange Order" with the Original
+   * Invoice # prominent; the return portion is handled by the return
+   * endpoint (old goods → As-Is; credit covers the new goods).
+   */
+  @Post('orders/:id/exchange')
+  @RequirePermission('orders.create')
+  async createExchange(
+    @CurrentTenant() tenant: RequestTenantContext,
+    @CurrentUser() actor: CurrentUserPayload,
+    @Param('id') id: string,
+    @Body() body: CreateOrderBody,
+  ): Promise<OrderDetail> {
+    const [original] = await this.db
+      .select({
+        id: schema.orders.id,
+        number: schema.orders.number,
+        status: schema.orders.status,
+        customerId: schema.orders.customerId,
+        locationId: schema.orders.locationId,
+      })
+      .from(schema.orders)
+      .where(eq(schema.orders.id, id))
+      .limit(1);
+    if (!original) throw new NotFoundException('Original order not found');
+    if (
+      original.status === 'draft' ||
+      original.status === 'quote' ||
+      original.status === 'cancelled'
+    ) {
+      throw new BadRequestException(`Cannot write an exchange against a ${original.status} order`);
+    }
+
+    const created = await this.create(tenant, actor, {
+      ...body,
+      customerId: original.customerId,
+      locationId: body.locationId ?? original.locationId,
+      orderKind: 'exchange',
+    });
+    await this.db
+      .update(schema.orders)
+      .set({ originalOrderId: original.id, updatedAt: new Date() })
+      .where(eq(schema.orders.id, created.id));
+
+    await this.audit.log({
+      action: 'order.exchange.create',
+      targetType: 'order',
+      targetId: created.id,
+      metadata: { originalOrderId: original.id, originalNumber: original.number },
+    });
+    return this.loadDetail(created.id);
+  }
+
+  /**
    * Everything a printed document needs in one payload (PLAN-POS-
    * OPERATIONS §11): the order detail plus business branding + admin
    * header/footer notes, the store block, the customer (Sold To),
@@ -1587,6 +1918,17 @@ export class OrdersController {
       for (const r of rows) lineMeta.set(r.variantId, { model: r.model, brand: r.brand });
     }
 
+    // §10 Exchange Order doc: the Original Invoice # prints prominently.
+    let originalOrderNumber: string | null = null;
+    if (detail.originalOrderId) {
+      const [orig] = await this.db
+        .select({ number: schema.orders.number })
+        .from(schema.orders)
+        .where(eq(schema.orders.id, detail.originalOrderId))
+        .limit(1);
+      originalOrderNumber = orig?.number ?? null;
+    }
+
     return {
       business: {
         name: branding.publicName ?? biz?.name ?? '',
@@ -1611,6 +1953,7 @@ export class OrdersController {
         : null,
       salespersonName: await salespersonName(detail.salespersonMembershipId),
       secondSalespersonName: await salespersonName(detail.secondSalespersonMembershipId),
+      originalOrderNumber,
       scheduledDate: trip?.scheduledDate ?? detail.requestedDate,
       order: detail,
       lines: detail.lines.map((l) => ({
@@ -1826,6 +2169,7 @@ export class OrdersController {
       totalCents: order.totalCents,
       paidCents: paidCents(payments),
       balanceDueCents: balanceDueCents(order.totalCents, payments),
+      creditDueCents: Math.max(0, paidCents(payments) - order.totalCents),
       depositRequiredCents: order.depositRequiredCents,
       fulfillmentType: order.fulfillmentType,
       requestedDate: order.requestedDate,
@@ -1837,6 +2181,7 @@ export class OrdersController {
       addressPhone: order.addressPhone,
       notes: order.notes,
       internalNotes: order.internalNotes,
+      originalOrderId: order.originalOrderId,
       salespersonMembershipId: order.salespersonMembershipId,
       secondSalespersonMembershipId: order.secondSalespersonMembershipId,
       splitBps: order.splitBps,
@@ -1863,6 +2208,7 @@ export class OrdersController {
         quantity: l.quantity,
         qtyReserved: l.qtyReserved,
         qtyFulfilled: l.qtyFulfilled,
+        qtyReturned: l.qtyReturned,
         lineType: l.lineType,
         unitPriceCents: l.unitPriceCents,
         discountCents: l.discountCents,

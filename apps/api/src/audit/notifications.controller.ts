@@ -27,6 +27,8 @@ const NOTABLE_ACTIONS = [
   'order.cancel',
   'order.payment.take',
   'order.unlock',
+  'order.return',
+  'order.price_adjustment',
   'delivery.cap_override',
 ] as const;
 
@@ -37,6 +39,8 @@ const ACTION_LABELS: Record<string, string> = {
   'order.cancel': 'Order cancelled',
   'order.payment.take': 'Payment taken',
   'order.unlock': 'Order unlocked (lock override)',
+  'order.return': 'Return processed',
+  'order.price_adjustment': 'Price adjustment / partial refund',
   'delivery.cap_override': 'Delivery booked over capacity',
 };
 

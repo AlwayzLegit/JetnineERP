@@ -112,7 +112,7 @@ interface DraftRow {
 let lineKeySeq = 0;
 const nextKey = () => `l${++lineKeySeq}`;
 
-export function NewSale() {
+export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
   const router = useRouter();
 
   // --- reference data ---
@@ -126,6 +126,11 @@ export function NewSale() {
 
   // --- customer ---
   const [customer, setCustomer] = useState<CustomerHit | null>(null);
+  const [storeCredit, setStoreCredit] = useState<number | null>(null);
+  const [exchangeOriginal, setExchangeOriginal] = useState<{
+    id: string;
+    number: string;
+  } | null>(null);
   const [custQuery, setCustQuery] = useState('');
   const [custHits, setCustHits] = useState<CustomerHit[]>([]);
   const [custOpen, setCustOpen] = useState(false);
@@ -191,6 +196,45 @@ export function NewSale() {
       stale = true;
     };
   }, [fulfillment, requestedDate]);
+
+  // §10: store credit auto-surfaces at checkout.
+  useEffect(() => {
+    if (!customer) {
+      setStoreCredit(null);
+      return;
+    }
+    let stale = false;
+    api<{ balanceCents: number }>(`/v1/customers/${customer.id}/store-credit`)
+      .then((r) => {
+        if (!stale) setStoreCredit(r.balanceCents);
+      })
+      .catch(() => setStoreCredit(null));
+    return () => {
+      stale = true;
+    };
+  }, [customer]);
+
+  // §10 exchange mode: pull the original order and pin its customer.
+  useEffect(() => {
+    if (!exchangeOf) return;
+    let stale = false;
+    api<{
+      id: string;
+      number: string;
+      customerId: string;
+    }>(`/v1/orders/${exchangeOf}`)
+      .then(async (o) => {
+        if (stale) return;
+        setExchangeOriginal({ id: o.id, number: o.number });
+        const c = await api<CustomerHit>(`/v1/customers/${o.customerId}`).catch(() => null);
+        if (!stale && c) setCustomer(c);
+      })
+      .catch(() => setExchangeOriginal(null));
+    return () => {
+      stale = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [exchangeOf]);
 
   const loadDrafts = useCallback(() => {
     void api<{ data: DraftRow[] }>('/v1/orders?status=draft&limit=10')
@@ -417,8 +461,11 @@ export function NewSale() {
       }));
 
       // Take-with fully paid, all real stock → a plain register sale.
+      // (Exchanges always stay orders — the document must print as an
+      // Exchange Order against the original invoice.)
       const allSellable = lines.every((l) => l.lineType !== 'special_order');
       if (
+        !exchangeOriginal &&
         mode === 'complete' &&
         orderType === 'sales_order' &&
         fulfillment === 'take_with' &&
@@ -454,7 +501,10 @@ export function NewSale() {
       }
 
       const sp = salespeople.filter(Boolean);
-      const order = await api<{ id: string; number: string; totalCents: number }>('/v1/orders', {
+      const createPath = exchangeOriginal
+        ? `/v1/orders/${exchangeOriginal.id}/exchange`
+        : '/v1/orders';
+      const order = await api<{ id: string; number: string; totalCents: number }>(createPath, {
         method: 'POST',
         body: JSON.stringify({
           locationId,
@@ -570,6 +620,17 @@ export function NewSale() {
   return (
     <div className="grid gap-4 xl:grid-cols-[1fr_340px]" data-testid="new-sale">
       <div className="min-w-0">
+        {exchangeOriginal && (
+          <div
+            className="card mb-3"
+            data-testid="exchange-banner"
+            style={{ padding: '10px 14px', borderColor: 'var(--warning)', fontSize: 13 }}
+          >
+            Writing an <strong>Exchange Order</strong> against original invoice{' '}
+            <strong>{exchangeOriginal.number}</strong> — the document prints with the original
+            number, and the customer is fixed to the original order&apos;s.
+          </div>
+        )}
         {drafts.length > 0 && (
           <div className="mb-3 flex flex-wrap items-center gap-2" data-testid="draft-chips">
             <span style={{ fontSize: 12.5, color: 'var(--text-secondary)' }}>Drafts:</span>
@@ -1021,6 +1082,15 @@ export function NewSale() {
           </Card>
 
           <Card title="Payments" style={{ marginBottom: 14 }}>
+            {storeCredit != null && storeCredit > 0 && (
+              <p
+                data-testid="store-credit-chip"
+                style={{ fontSize: 12.5, margin: '0 0 8px', color: 'var(--success)' }}
+              >
+                Store credit available: <strong>{formatMoney(storeCredit)}</strong> — use the “Store
+                credit” tender to apply it.
+              </p>
+            )}
             {payments.map((p) => (
               <div key={p.key} className="mb-1 flex items-center gap-2" style={{ fontSize: 13 }}>
                 <span style={{ flex: 1 }}>

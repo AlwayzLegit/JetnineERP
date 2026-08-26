@@ -196,6 +196,8 @@ export const orderLines = pgTable(
     quantity: integer('quantity').notNull(),
     qtyReserved: integer('qty_reserved').notNull().default(0),
     qtyFulfilled: integer('qty_fulfilled').notNull().default(0),
+    /** §10: units taken back on a return (never exceeds qty_fulfilled). */
+    qtyReturned: integer('qty_returned').notNull().default(0),
     /** 'stock' | 'special_order' */
     lineType: text('line_type').notNull().default('stock'),
     unitPriceCents: integer('unit_price_cents').notNull(),

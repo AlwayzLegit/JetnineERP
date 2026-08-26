@@ -19,6 +19,8 @@ export interface OrderDocumentPayload {
   customer: { id: string; name: string; email: string | null; phone: string | null } | null;
   salespersonName: string | null;
   secondSalespersonName: string | null;
+  /** §10: set on exchange orders — the Original Invoice #. */
+  originalOrderNumber: string | null;
   scheduledDate: string | null;
   order: {
     id: string;
@@ -33,6 +35,7 @@ export interface OrderDocumentPayload {
     totalCents: number;
     paidCents: number;
     balanceDueCents: number;
+    creditDueCents: number;
     deliveryFeeCents: number;
     installFeeCents: number;
     otherFeeCents: number;
@@ -145,7 +148,13 @@ function ShipTo({ doc }: { doc: OrderDocumentPayload }) {
 export function InvoiceDoc({ doc, printedAt }: { doc: OrderDocumentPayload; printedAt: Date }) {
   const o = doc.order;
   const title =
-    o.orderKind === 'layaway' ? 'Layaway' : o.status === 'quote' ? 'Quote' : 'Sales Order';
+    o.orderKind === 'exchange'
+      ? 'Exchange Order'
+      : o.orderKind === 'layaway'
+        ? 'Layaway'
+        : o.status === 'quote'
+          ? 'Quote'
+          : 'Sales Order';
   const initials = (name: string | null) =>
     name
       ? name
@@ -197,6 +206,12 @@ export function InvoiceDoc({ doc, printedAt }: { doc: OrderDocumentPayload; prin
             <div style={label}>{title} #</div>
             <div style={{ fontSize: 16, fontWeight: 700 }}>{o.number}</div>
           </div>
+          {doc.originalOrderNumber && (
+            <div style={{ ...box, textAlign: 'center', marginBottom: 6 }}>
+              <div style={label}>Original Invoice #</div>
+              <div style={{ fontSize: 14, fontWeight: 700 }}>{doc.originalOrderNumber}</div>
+            </div>
+          )}
           <div style={{ display: 'flex', gap: 6 }}>
             <div style={{ ...box, flex: 1, textAlign: 'center' }}>
               <div style={label}>Scheduled Date</div>
@@ -337,7 +352,11 @@ export function InvoiceDoc({ doc, printedAt }: { doc: OrderDocumentPayload; prin
             <TotalRow label="Tax" value={usd(o.taxCents)} />
             <TotalRow label={`Total ${title}`} value={usd(o.totalCents)} bold />
             <TotalRow label="Amount Paid" value={usd(o.paidCents)} />
-            <TotalRow label="Amount Due" value={usd(o.balanceDueCents)} bold boxed />
+            {o.creditDueCents > 0 ? (
+              <TotalRow label="Credit Due" value={usd(o.creditDueCents)} bold boxed />
+            ) : (
+              <TotalRow label="Amount Due" value={usd(o.balanceDueCents)} bold boxed />
+            )}
           </tbody>
         </table>
       </div>

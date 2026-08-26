@@ -3,7 +3,7 @@
  * on that earlier specs don't already cover (POS sale, order + deposit +
  * delivery + balance live in orders.spec):
  *
- *   1. POS cash sale → refund from the sale detail (stock restored)
+ *   1. POS cash sale → refund from the sale detail (goods go to As-Is)
  *   2. Layaway: order → payment plan → pay an installment
  *   3. Service ticket: intake → labor charge → ready → collect → complete
  *   4. Special order → generate PO → receive → line committed + arrival email

@@ -341,7 +341,7 @@ describe('Epic 1.10 — POS register & sales', () => {
     expect(res.body.message).toMatch(/pos\.refund\.create/);
   });
 
-  it('Owner refunds 1 unit of line A, inventory restores, sale becomes partially_refunded', async () => {
+  it('Owner refunds 1 unit of line A — goods go to As-Is (not stock), sale partially_refunded', async () => {
     const before = await levelOf(variantAId);
     const res = await request(app.getHttpServer())
       .post(`/v1/sales/${saleId}/refund`)
@@ -354,7 +354,20 @@ describe('Epic 1.10 — POS register & sales', () => {
     expect(res.status).toBe(201);
     expect(res.body.amountCents).toBe(200); // 1 unit * $2.00
     expect(res.body.saleStatus).toBe('partially_refunded');
-    expect(await levelOf(variantAId)).toBe(before + 1);
+    // §10 (P8): returned goods land in the As-Is review queue, NOT
+    // straight back into sellable stock.
+    expect(await levelOf(variantAId)).toBe(before);
+    const queue = await request(app.getHttpServer())
+      .get('/v1/as-is?status=pending_review')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId);
+    expect(queue.status).toBe(200);
+    expect(
+      queue.body.some(
+        (r: { variantId: string; quantity: number }) =>
+          r.variantId === variantAId && r.quantity === 1,
+      ),
+    ).toBe(true);
 
     // Detail shows refunded quantity.
     const detail = await request(app.getHttpServer())
@@ -395,8 +408,10 @@ describe('Epic 1.10 — POS register & sales', () => {
       });
     expect(res.status).toBe(201);
     expect(res.body.saleStatus).toBe('refunded');
-    expect(await levelOf(variantAId)).toBe(10);
-    expect(await levelOf(variantBId)).toBe(5);
+    // P8 (§10): refunded units sit in As-Is review, not sellable stock —
+    // levels stay where the sale left them until a restock review.
+    expect(await levelOf(variantAId)).toBe(8);
+    expect(await levelOf(variantBId)).toBe(4);
   });
 
   it('Sale numbers increment within the same year', async () => {
