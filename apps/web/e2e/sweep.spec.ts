@@ -99,7 +99,7 @@ async function loginAndPickBusiness(page: Page): Promise<void> {
   await page.getByLabel('Password').fill(PASSWORD);
   await page.getByRole('button', { name: 'Sign in' }).click();
   // Generous: on a cold dev server the first compile of /dashboard is slow.
-  await page.waitForURL(/\/(dashboard|business-picker)/, { timeout: 60_000 });
+  await page.waitForURL(/\/(pos|business-picker)/, { timeout: 60_000 });
   await page.evaluate(
     async ({ apiUrl, businessId }) => {
       await fetch(`${apiUrl}/v1/auth/active-business`, {
@@ -128,17 +128,24 @@ test.describe('Day 9 — QA sweep', () => {
     await loginAndPickBusiness(page);
 
     await page.goto('/pos');
-    await page.getByTestId('pos-tab-register').click();
-    await expect(page.getByRole('heading', { name: 'Register' })).toBeVisible();
-    await page.getByPlaceholder(/scan|search/i).fill(variantSku);
-    await page.keyboard.press('Enter');
-    const hit = page.getByText(/Widget/i).first();
+    await expect(page.getByRole('heading', { name: 'New Sale' })).toBeVisible();
+    // Walk-in cash take-with: customer, product, cash covering the total —
+    // the fast lane posts a plain register sale.
+    await page.getByRole('button', { name: 'New customer' }).click();
+    await page.getByPlaceholder('First name').fill('Cash');
+    await page.getByPlaceholder('Last name').fill('Walkin');
+    await page.getByTestId('create-customer').click();
+    await page.getByTestId('add-product').click();
+    await page.getByTestId('product-query').fill(variantSku);
+    const hit = page.getByTestId('product-result').first();
     await expect(hit).toBeVisible();
     await hit.click();
-    await page.getByRole('button', { name: /^Pay/ }).click();
-    await page.getByLabel(/Cash tendered/i).fill('10.00');
-    await page.getByRole('button', { name: /Confirm payment/i }).click();
-    await expect(page.getByRole('heading', { name: /Sale complete/i })).toBeVisible({
+    await page.getByTestId('fulfillment-method').selectOption('take_with');
+    await page.getByTestId('pay-method').selectOption('cash');
+    await page.getByTestId('pay-amount').fill('10.00');
+    await page.getByTestId('add-payment').click();
+    await page.getByTestId('complete-sale').click();
+    await expect(page.getByRole('heading', { name: /complete/i })).toBeVisible({
       timeout: 15_000,
     });
 

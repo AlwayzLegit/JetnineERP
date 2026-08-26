@@ -56,7 +56,7 @@ const NAV: NavGroup[] = [
     label: 'Sell',
     items: [
       { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
-      { href: '/pos', label: 'POS', icon: Monitor },
+      { href: '/pos', label: 'New Sale', icon: Monitor },
       { href: '/orders', label: 'Orders', icon: ShoppingCart },
       { href: '/deliveries', label: 'Deliveries', icon: Truck },
       { href: '/service', label: 'Service', icon: Wrench },

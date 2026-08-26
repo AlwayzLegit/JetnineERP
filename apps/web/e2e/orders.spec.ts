@@ -69,7 +69,7 @@ async function loginAndPickBusiness(page: import('@playwright/test').Page): Prom
   await page.getByLabel('Email').fill(EMAIL);
   await page.getByLabel('Password').fill(PASSWORD);
   await page.getByRole('button', { name: 'Sign in' }).click();
-  await page.waitForURL(/\/(dashboard|business-picker)/);
+  await page.waitForURL(/\/(pos|business-picker)/);
   await page.evaluate(
     async ({ apiUrl, businessId }) => {
       await fetch(`${apiUrl}/v1/auth/active-business`, {
@@ -90,26 +90,23 @@ test.describe('Day 2 — order writer', () => {
 
     // --- Write the order ---
     await page.goto('/orders/new');
-    // Step 1 — customer first (STORIS order of operations).
-    await page.getByRole('button', { name: 'Attach customer' }).click();
-    await page.getByRole('button', { name: '+ New customer' }).click();
+    // Single-screen New Sale: create the customer inline...
+    await page.getByRole('button', { name: 'New customer' }).click();
     await page.getByPlaceholder('First name').fill('Dana');
     await page.getByPlaceholder('Last name').fill('Buyer');
-    await page.getByRole('button', { name: 'Create & attach' }).click();
+    await page.getByTestId('create-customer').click();
     await expect(page.getByTestId('order-customer')).toContainText('Dana Buyer');
-    await page.getByTestId('to-step-2').click();
 
-    // Step 2 — merchandise.
-    const scan = page.getByTestId('order-entry-scan');
-    await scan.fill(variantSku);
-    await scan.press('Enter');
-    const result = page.getByTestId('lookup-result').first();
+    // ...add the product through the popup search...
+    await page.getByTestId('add-product').click();
+    await page.getByTestId('product-query').fill(variantSku);
+    const result = page.getByTestId('product-result').first();
     await expect(result).toBeVisible();
     await result.click();
-    await page.getByTestId('to-step-3').click();
 
-    // Step 3 — confirm without money down (deposit is taken on the detail page).
-    await page.getByTestId('order-entry-submit').click();
+    // ...and complete with no money down (deposit is taken on the detail page).
+    await page.getByTestId('complete-sale').click();
+    await page.getByRole('button', { name: 'Open order' }).click();
     await page.waitForURL(/\/orders\/[0-9a-f-]{36}$/);
 
     // --- Detail: open, line reserved, no money yet ---
@@ -151,21 +148,18 @@ test.describe('Day 2 — order writer', () => {
 
     // Write and confirm a fresh order for 1 unit.
     await page.goto('/orders/new');
-    await page.getByRole('button', { name: 'Attach customer' }).click();
-    await page.getByRole('button', { name: '+ New customer' }).click();
+    await page.getByRole('button', { name: 'New customer' }).click();
     await page.getByPlaceholder('First name').fill('Del');
     await page.getByPlaceholder('Last name').fill('Ivery');
-    await page.getByRole('button', { name: 'Create & attach' }).click();
+    await page.getByTestId('create-customer').click();
     await expect(page.getByTestId('order-customer')).toContainText('Del Ivery');
-    await page.getByTestId('to-step-2').click();
-    const scan = page.getByTestId('order-entry-scan');
-    await scan.fill(variantSku);
-    await scan.press('Enter');
-    const result = page.getByTestId('lookup-result').first();
+    await page.getByTestId('add-product').click();
+    await page.getByTestId('product-query').fill(variantSku);
+    const result = page.getByTestId('product-result').first();
     await expect(result).toBeVisible();
     await result.click();
-    await page.getByTestId('to-step-3').click();
-    await page.getByTestId('order-entry-submit').click();
+    await page.getByTestId('complete-sale').click();
+    await page.getByRole('button', { name: 'Open order' }).click();
     await page.waitForURL(/\/orders\/[0-9a-f-]{36}$/);
     await expect(page.getByTestId('order-status')).toHaveText(/open/i);
 
@@ -198,37 +192,29 @@ test.describe('Day 2 — order writer', () => {
     await expect(page.getByTestId('order-status')).toHaveText(/completed/i);
   });
 
-  test('POS cart saves as a confirmed order with deposit', async ({ page }) => {
+  test('New Sale saves a confirmed order with deposit', async ({ page }) => {
     test.slow();
     await loginAndPickBusiness(page);
 
     await page.goto('/pos');
-    await page.getByTestId('pos-tab-register').click();
-    const scan = page.getByPlaceholder('Scan barcode or type to search…');
-    await scan.fill(variantSku);
-    await scan.press('Enter');
-    // The seeded variant has a SKU but no barcode, so the result list
-    // always renders (no barcode auto-add) and must be clicked — never
-    // probe it with an instantaneous isVisible(), that races the lookup.
-    const result = page.locator('button:has(strong)').first();
-    await expect(result).toBeVisible();
-    await result.click();
-    await expect(page.getByTestId('save-as-order')).toBeEnabled();
-
-    // No customer yet: the dialog demands one first.
-    await page.getByTestId('save-as-order').click();
-    await page.getByTestId('order-attach-customer').click();
-    await page.getByRole('button', { name: '+ New customer' }).click();
+    await page.getByRole('button', { name: 'New customer' }).click();
     await page.getByPlaceholder('First name').fill('Kim');
     await page.getByPlaceholder('Last name').fill('Walkin');
-    await page.getByRole('button', { name: 'Create & attach' }).click();
+    await page.getByTestId('create-customer').click();
+    await expect(page.getByTestId('order-customer')).toContainText('Kim Walkin');
 
-    // Re-open the dialog now that a customer is attached.
-    await page.getByTestId('save-as-order').click();
-    await expect(page.getByTestId('order-deposit')).toBeVisible();
-    // Suggested deposit prefills at 25% of $10.00.
-    await expect(page.getByTestId('order-deposit')).toHaveValue('2.50');
-    await page.getByTestId('order-save-confirm').click();
+    await page.getByTestId('add-product').click();
+    await page.getByTestId('product-query').fill(variantSku);
+    const result = page.getByTestId('product-result').first();
+    await expect(result).toBeVisible();
+    await result.click();
+
+    // Partial payment = a deposit on a delivery order.
+    await page.getByTestId('pay-amount').fill('2.50');
+    await page.getByTestId('add-payment').click();
+    await expect(page.getByTestId('balance-due')).toContainText('$7.50');
+    await page.getByTestId('complete-sale').click();
+    await page.getByRole('button', { name: 'Open order' }).click();
 
     await page.waitForURL(/\/orders\/[0-9a-f-]{36}$/);
     await expect(page.getByTestId('order-status')).toHaveText(/open/i);

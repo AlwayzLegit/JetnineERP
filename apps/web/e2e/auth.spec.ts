@@ -84,7 +84,8 @@ test.describe('auth golden path', () => {
       await page.getByLabel('Email').fill(email);
       await page.getByLabel('Password').fill(password1);
       await page.getByRole('button', { name: 'Sign in' }).click();
-      await page.waitForURL('**/dashboard');
+      await page.waitForURL('**/pos'); // login lands on New Sale now
+      await page.goto('/dashboard');
       await expect(page.getByTestId('dashboard-email')).toContainText(email);
     });
 
@@ -127,7 +128,7 @@ test.describe('auth golden path', () => {
       // the onboarding checklist, so asserting dashboard content here races
       // that redirect. Landing on either page proves the TOTP sign-in
       // worked; the session endpoint proves who signed in.
-      await page.waitForURL(/\/(dashboard|welcome)/);
+      await page.waitForURL(/\/(pos|welcome)/);
       const sessionEmail = await page.evaluate(async (apiUrl) => {
         const res = await fetch(`${apiUrl}/api/auth/get-session`, { credentials: 'include' });
         const data = (await res.json()) as { user?: { email?: string } } | null;
@@ -177,7 +178,7 @@ test.describe('auth golden path', () => {
       const code = authenticator.generate(totpSecret);
       await page.getByLabel('6-digit code').fill(code);
       await page.getByRole('button', { name: 'Verify' }).click();
-      await page.waitForURL('**/dashboard');
+      await page.waitForURL('**/pos');
     });
 
     await api.dispose();

@@ -11,7 +11,7 @@ export default function LoginPage() {
   const [needsTwoFactor, setNeedsTwoFactor] = useState(false);
 
   if (needsTwoFactor) {
-    return <TwoFactorChallenge onSuccess={() => router.push('/dashboard')} />;
+    return <TwoFactorChallenge onSuccess={() => router.push('/pos')} />;
   }
 
   return (
@@ -45,7 +45,7 @@ export default function LoginPage() {
           setNeedsTwoFactor(true);
           return { ok: true, message: 'Enter your 6-digit code to continue.' };
         }
-        router.push('/dashboard');
+        router.push('/pos');
         return { ok: true };
       }}
     />

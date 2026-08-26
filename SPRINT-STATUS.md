@@ -594,7 +594,26 @@ supersedes the checkpoint-7 wizard; legacy register + its offline mode retire).
       K-10001 numbering, duplicate-prefix rejection; override grant→200 / revoke→403);
       orders suite 27/27 unaffected. — _2026-08-25. Remaining P1 surface (permission-matrix
       UI, ops-settings editor, new role set, store-scoped visibility) rides with P2/P3._
-- [ ] **Build P2:** New Sale screen (single-screen; replaces wizard + register)
+- [x] **Build P2:** New Sale screen — single-screen order entry live at `/pos` (and
+      `/orders/new`), login lands there. Universal customer search (name/phone/email/
+      address via the widened tsvector, migration 0033) with disambiguating dropdown +
+      inline create; Ship-To toggle defaulting to billing; Add Product popup
+      (`/v1/pos/product-search`: text/vendor/in-stock filters, here/all availability,
+      ATP date from open POs) with out-of-stock ATP banners on lines; click-to-edit
+      price override + per-line & order discounts; auto Recycling Fee line per
+      qualifying unit (rate from ops settings, removable) + "+ Removal ($0)" +
+      installation/delivery fee fields; up to two salespeople with equal split;
+      pinned totals rail (merchandise/discounts/install/delivery/recycling/tax/total/
+      paid/balance); payments list over nine tenders; layaway enforces the \$100
+      minimum deposit; take-with fully-paid fast lane posts a register sale;
+      store-wide drafts (chips to resume; completing supersedes the draft). Wizard
+      (`order-entry.tsx`), legacy register, `/pos/pending` offline tray and the
+      offline e2e spec all retired per A3/A4; auth/sweep/orders e2e rewritten for the
+      new flow; fresh-signup welcome bounce ported to `/pos`.
+      — _2026-08-25/26. v1 conventions flagged: recycling detection is a name-keyword
+      match (mattress/foundation/adjustable base/box spring) pending a category flag;
+      salespeople capped at two by the split schema; store-credit tender records
+      without a balance check until P8's ledger._
 - [ ] **Build P3:** Orders list + slide-over + change-history timeline + notifications feed
 - [ ] **Build P4:** Documents — invoice (sample layout), delivery ticket + individual-print
       lock, batch print (no lock, A1)
