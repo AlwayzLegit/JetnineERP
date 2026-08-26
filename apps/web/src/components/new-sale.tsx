@@ -552,6 +552,9 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
                 lineDiscountCents: l.lineDiscountCents || undefined,
               })),
             orderDiscountCents: parseDollars(orderDiscount) || undefined,
+            // The register honours the same G6 discount gate as an
+            // order, so the reason/override travels with it.
+            ...(control ?? {}),
             payments: [
               {
                 method: payments[0]?.method === 'cash' ? 'cash' : 'card',

@@ -38,6 +38,11 @@ export interface CartLineTotals {
   discountCents: number;
   /** quantity*unit - lineDiscount. (Pre-order-discount-share, pre-tax.) */
   totalCents: number;
+  /**
+   * This line's pro-rata share of the order-level discount. Persisted at
+   * sale time so refunds can return exactly what was paid.
+   */
+  orderDiscountShareCents: number;
   /** The effective tax rate this line was charged at, in basis points. */
   taxRateBps: number;
   /** Tax dollars assessed on this line, after its order-discount share. */
@@ -129,6 +134,7 @@ export function computeTotals(input: CartTotalsInput): CartTotals {
       unitPriceCents: row.line.unitPriceCents,
       discountCents: row.lineDiscount,
       totalCents: row.net,
+      orderDiscountShareCents: allocations[i]!,
       taxRateBps: rate,
       taxCents,
     };
@@ -145,15 +151,57 @@ export function computeTotals(input: CartTotalsInput): CartTotals {
 }
 
 /**
- * Compute the per-unit refund amount for a sale line, accounting for any
- * line-level discount that was applied at sale time. Returns cents per unit.
+ * Per-unit refund for a sale line: exactly what the customer paid for one
+ * unit — line price, less its line discount, less its share of the
+ * SALE-level discount, plus the tax that was actually charged on it.
+ *
+ * Getting any of those three wrong moves real money. The sale-level
+ * discount share was the one previously missed: `sale_lines.discount_cents`
+ * holds only the line's own discount, so a cart-wide discount refunded at
+ * full list price (a $1,000 line sold for $700 under a 30% cart discount
+ * refunded $1,000). Tax was the other: the customer paid it, so a return
+ * gives it back — matching the order-return path.
  */
 export function refundUnitCents(line: {
   quantity: number;
   unitPriceCents: number;
   discountCents: number;
+  orderDiscountShareCents?: number;
+  taxCents?: number;
 }): number {
   if (line.quantity <= 0) return 0;
-  const lineNet = line.quantity * line.unitPriceCents - line.discountCents;
-  return Math.round(lineNet / line.quantity);
+  const paid =
+    line.quantity * line.unitPriceCents -
+    line.discountCents -
+    (line.orderDiscountShareCents ?? 0) +
+    (line.taxCents ?? 0);
+  return Math.round(Math.max(0, paid) / line.quantity);
+}
+
+/**
+ * Reconstruct each line's share of a sale-level discount for rows written
+ * before `order_discount_share_cents` existed. Same pro-rata-by-net rule
+ * as `computeTotals`; the residue may land on a different line than it did
+ * at sale time (line order was never stored), but the shares still sum to
+ * the whole discount, so a full refund is exact and a partial one is at
+ * most a few cents out — versus refunding the entire discount as profit.
+ */
+export function reconstructOrderDiscountShares(
+  lines: readonly { quantity: number; unitPriceCents: number; discountCents: number }[],
+  orderDiscountCents: number,
+): number[] {
+  const shares = new Array<number>(lines.length).fill(0);
+  if (orderDiscountCents <= 0 || lines.length === 0) return shares;
+  const nets = lines.map((l) => Math.max(0, l.quantity * l.unitPriceCents - l.discountCents));
+  const totalNet = nets.reduce((s, n) => s + n, 0);
+  if (totalNet <= 0) return shares;
+  const capped = Math.min(orderDiscountCents, totalNet);
+  let allocated = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const share =
+      i === lines.length - 1 ? capped - allocated : Math.floor((capped * nets[i]!) / totalNet);
+    shares[i] = share;
+    allocated += share;
+  }
+  return shares;
 }

@@ -58,43 +58,17 @@ export default function AsIsPage() {
   const [scrapId, setScrapId] = useState<string | null>(null);
   const [pricePending, setPricePending] = useState<{ id: string; cents: number } | null>(null);
 
-  async function setPrice(id: string) {
-    const v = window.prompt('As-is selling price ($):');
-    if (v == null) return;
-    const cents = Math.round(Number(v) * 100);
-    if (!Number.isFinite(cents) || cents < 0) return;
-    try {
-      await api(`/v1/as-is/${id}`, {
-        method: 'PATCH',
-        body: JSON.stringify({ asIsPriceCents: cents }),
-      });
-      await load(status);
-    } catch (err) {
-      if (err instanceof ApiError && err.code === 'OVERRIDE_REQUIRED') {
-        setPricePending({ id, cents });
-      } else {
-        toast.error(err instanceof Error ? err.message : String(err));
-      }
-    }
-  }
+  // The as-is selling price is manager-gated (G10), so it needs a
+  // dialog that can carry both the price and a manager challenge — a
+  // native prompt could do neither.
+  const [pricingId, setPricingId] = useState<string | null>(null);
+  const [vendorReturnId, setVendorReturnId] = useState<string | null>(null);
 
-  async function review(id: string, action: 'restock' | 'vendor_return') {
-    let extra: Record<string, unknown> = {};
-    if (action === 'restock') {
-      if (!window.confirm('Restock into sellable inventory?')) return;
-    } else {
-      // G4: a vendor return needs the R/A number — that's the handle
-      // the credit gets chased under.
-      const ra = window.prompt('Vendor R/A number (required):');
-      if (ra == null || !ra.trim()) return;
-      const credit = window.prompt('Expected vendor credit in dollars (blank if unknown):');
-      extra = {
-        raNumber: ra.trim(),
-        ...(credit && Number(credit) > 0
-          ? { expectedCreditCents: Math.round(Number(credit) * 100) }
-          : {}),
-      };
-    }
+  async function review(
+    id: string,
+    action: 'restock' | 'vendor_return',
+    extra: Record<string, unknown> = {},
+  ) {
     setBusy(true);
     try {
       await api(`/v1/as-is/${id}/review`, {
@@ -193,7 +167,7 @@ export default function AsIsPage() {
                             className="btn btn-ghost btn-sm"
                             style={{ padding: '0 4px', fontSize: 11 }}
                             disabled={busy}
-                            onClick={() => void setPrice(r.id)}
+                            onClick={() => setPricingId(r.id)}
                           >
                             price…
                           </button>
@@ -226,7 +200,7 @@ export default function AsIsPage() {
                           size="sm"
                           variant="secondary"
                           disabled={busy}
-                          onClick={() => void review(r.id, 'vendor_return')}
+                          onClick={() => setVendorReturnId(r.id)}
                         >
                           Vendor
                         </Button>
@@ -282,20 +256,56 @@ export default function AsIsPage() {
       </p>
 
       <SecurityOverrideDialog
-        open={pricePending != null}
-        title="As-is price needs manager approval"
+        open={pricingId != null}
+        title="Set the as-is selling price"
         usageClass={null}
         submitLabel="Set price"
+        fields={[
+          {
+            name: 'price',
+            label: 'As-is selling price ($)',
+            type: 'number',
+            step: '0.01',
+            min: 0,
+            required: true,
+          },
+        ]}
         perform={(payload) =>
-          api(`/v1/as-is/${pricePending!.id}`, {
+          api(`/v1/as-is/${pricingId}`, {
             method: 'PATCH',
             body: JSON.stringify({
-              asIsPriceCents: pricePending!.cents,
+              asIsPriceCents: Math.round(Number(payload.values?.price ?? '0') * 100),
               override: payload.override,
             }),
           }).then(() => undefined)
         }
-        onClose={() => setPricePending(null)}
+        onClose={() => setPricingId(null)}
+        onSuccess={() => void load(status)}
+      />
+
+      <SecurityOverrideDialog
+        open={vendorReturnId != null}
+        title="Return to vendor"
+        usageClass={null}
+        submitLabel="Send back"
+        fields={[
+          { name: 'ra', label: 'Vendor R/A number', required: true, placeholder: 'RA-…' },
+          {
+            name: 'credit',
+            label: 'Expected vendor credit ($, blank if unknown)',
+            type: 'number',
+            step: '0.01',
+            min: 0,
+          },
+        ]}
+        perform={async (payload) => {
+          const credit = Number(payload.values?.credit ?? '');
+          await review(vendorReturnId!, 'vendor_return', {
+            raNumber: (payload.values?.ra ?? '').trim(),
+            ...(credit > 0 ? { expectedCreditCents: Math.round(credit * 100) } : {}),
+          });
+        }}
+        onClose={() => setVendorReturnId(null)}
         onSuccess={() => void load(status)}
       />
 

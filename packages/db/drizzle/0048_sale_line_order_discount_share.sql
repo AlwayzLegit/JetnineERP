@@ -1,0 +1,1 @@
+ALTER TABLE "sale_lines" ADD COLUMN "order_discount_share_cents" integer DEFAULT 0 NOT NULL;

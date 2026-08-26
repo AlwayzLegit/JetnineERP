@@ -5,10 +5,10 @@ export default function HomePage() {
       <p>Phase 0 bootstrap is live. Web app is running on Next.js 15.</p>
       <ul>
         <li>
-          <a href="http://localhost:4000/health">API /health</a>
+          <a href="/health">API /health</a>
         </li>
         <li>
-          <a href="http://localhost:4000/ready">API /ready</a>
+          <a href="/ready">API /ready</a>
         </li>
       </ul>
     </main>

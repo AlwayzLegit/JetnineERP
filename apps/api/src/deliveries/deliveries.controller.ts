@@ -404,9 +404,16 @@ export class DeliveriesController {
     }
     const overCapacity = overDimensions.length > 0;
     if (overCapacity && !body.confirmOverCapacity) {
-      throw new ConflictException(
-        `${body.scheduledDate} is over capacity on ${overDimensions.join(' and ')}. Confirm to book beyond the cap.`,
-      );
+      // Structured code, not just prose: the client used to sniff the
+      // message for "at capacity", so the G12 rewrite to multi-dimension
+      // wording silently disabled the confirm affordance and made the
+      // documented override unreachable (QA 2026-08-26, D6).
+      throw new ConflictException({
+        statusCode: 409,
+        code: 'OVER_CAPACITY',
+        dimensions: overDimensions,
+        message: `${body.scheduledDate} is over capacity on ${overDimensions.join(' and ')}. Confirm to book beyond the cap.`,
+      });
     }
 
     // Route position: append to the end of that day's route.

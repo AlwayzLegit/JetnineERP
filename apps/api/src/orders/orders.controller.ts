@@ -39,6 +39,7 @@ import {
   SecurityOverrideService,
   type OverrideCredentials,
 } from '../controls/security-override.service';
+import { PriceVarianceService } from '../controls/price-variance.service';
 import { ExceptionsService } from '../controls/exceptions.service';
 import { WebhookDispatcher } from '../webhooks/webhook-dispatcher.service';
 import {
@@ -271,6 +272,8 @@ interface OrderDetail extends OrderListRow {
   legacyNumber: string | null;
   /** A1 print lock: set when an individual delivery ticket was printed. */
   lockedAt: Date | null;
+  /** Set while a stop for this order sits on an open/departed run. */
+  onOpenRun: { runId: string; runDate: string } | null;
   completedAt: Date | null;
   cancelledAt: Date | null;
   lines: OrderLineRow[];
@@ -354,6 +357,7 @@ export class OrdersController {
     @Inject(SecurityOverrideService) private readonly overrides: SecurityOverrideService,
     @Inject(OrderReturnsService) private readonly orderReturns: OrderReturnsService,
     @Inject(ExceptionsService) private readonly exceptions: ExceptionsService,
+    @Inject(PriceVarianceService) private readonly priceVariance: PriceVarianceService,
   ) {}
 
   @Get('orders')
@@ -949,7 +953,7 @@ export class OrdersController {
     // completed through this endpoint again (drafts are superseded by a
     // fresh create, never confirmed in place).
     if (!body.draft) {
-      await this.enforcePriceVariance(tenant, priced, orderDiscountCents, body, {
+      await this.priceVariance.enforce(tenant.businessId!, priced, orderDiscountCents, body, {
         action: 'Write order below list price',
       });
     }
@@ -1205,8 +1209,8 @@ export class OrdersController {
       (body.status === 'open' && (order.status === 'draft' || order.status === 'quote'))
     ) {
       const lines = await this.varianceLinesFor(id);
-      await this.enforcePriceVariance(
-        tenant,
+      await this.priceVariance.enforce(
+        tenant.businessId!,
         lines,
         body.orderDiscountCents ?? order.orderDiscountCents,
         body,
@@ -1265,7 +1269,7 @@ export class OrdersController {
     await this.assertNotOnOpenRun(id);
     const [priced] = await this.priceLines(tenant, order.locationId, [body]);
     if (order.status !== 'draft') {
-      await this.enforcePriceVariance(tenant, [priced!], 0, body, {
+      await this.priceVariance.enforce(tenant.businessId!, [priced!], 0, body, {
         action: `Add discounted line to ${order.number}`,
         entityType: 'order',
         entityId: id,
@@ -2719,122 +2723,6 @@ export class OrdersController {
   }
 
   /**
-   * G6 three-tier price variance (PLAN-STORIS-GAP §5 / amendment A6),
-   * applied to line price overrides, line discounts, and the order
-   * discount against catalog list prices:
-   *
-   *   tier 1 — ≤ tier1Pct (5%) OR ≤ tier1MaxCents ($50): logged only.
-   *   tier 2 — up to tier2Pct (15%): a coded reason is required
-   *            (class `exception`) and the discount hits the register.
-   *   tier 3 — beyond tier2Pct, or selling below cost: a manager
-   *            security override (`orders.price_override`) on top.
-   *
-   * Thresholds are admin-editable via ops settings `priceVariance`.
-   */
-  private async enforcePriceVariance(
-    tenant: RequestTenantContext,
-    priced: readonly {
-      quantity: number;
-      unitPriceCents: number;
-      lineDiscountCents: number;
-      lineType: string;
-      listPriceCents: number;
-      costCents: number | null;
-      description: string;
-    }[],
-    orderDiscountCents: number,
-    body: { priceReasonCodeId?: string; priceReason?: string; override?: OverrideCredentials },
-    context: { action: string; entityType?: string; entityId?: string },
-  ): Promise<void> {
-    const [biz] = await this.db
-      .select({ opsSettingsJson: schema.businesses.opsSettingsJson })
-      .from(schema.businesses)
-      .where(eq(schema.businesses.id, tenant.businessId!))
-      .limit(1);
-    const pv = (
-      (biz?.opsSettingsJson ?? {}) as {
-        priceVariance?: { tier1Pct?: number; tier1MaxCents?: number; tier2Pct?: number } | null;
-      }
-    ).priceVariance;
-    const tier1Pct = pv?.tier1Pct ?? 5;
-    const tier1MaxCents = pv?.tier1MaxCents ?? 5000;
-    const tier2Pct = pv?.tier2Pct ?? 15;
-
-    let worstTier = 1;
-    let belowCost = false;
-    let totalDiscountCents = 0;
-    let listTotalCents = 0;
-    const flagged: string[] = [];
-
-    for (const l of priced) {
-      if (l.lineType === 'custom') continue;
-      const listTotal = l.listPriceCents * l.quantity;
-      listTotalCents += listTotal;
-      const effectiveTotal = l.unitPriceCents * l.quantity - l.lineDiscountCents;
-      const discount = listTotal - effectiveTotal;
-      if (discount <= 0) continue;
-      totalDiscountCents += discount;
-      const pct = listTotal > 0 ? (discount / listTotal) * 100 : 0;
-      const lineBelowCost = l.costCents != null && effectiveTotal / l.quantity < l.costCents;
-      if (lineBelowCost) belowCost = true;
-      const tier =
-        pct > tier2Pct || lineBelowCost ? 3 : pct > tier1Pct && discount > tier1MaxCents ? 2 : 1;
-      if (tier > 1) flagged.push(`${l.description}: -${pct.toFixed(1)}%`);
-      worstTier = Math.max(worstTier, tier);
-    }
-    if (orderDiscountCents > 0 && listTotalCents > 0) {
-      const pct = (orderDiscountCents / listTotalCents) * 100;
-      const tier =
-        pct > tier2Pct ? 3 : pct > tier1Pct && orderDiscountCents > tier1MaxCents ? 2 : 1;
-      if (tier > 1) flagged.push(`order discount: -${pct.toFixed(1)}%`);
-      worstTier = Math.max(worstTier, tier);
-      totalDiscountCents += orderDiscountCents;
-    }
-    if (worstTier === 1) return;
-
-    if (worstTier === 3) {
-      await this.overrides.require({
-        permission: 'orders.price_override',
-        action: `${context.action}: ${flagged.join('; ')}${belowCost ? ' (below cost)' : ''}`,
-        entityType: context.entityType,
-        entityId: context.entityId,
-        override: body.override,
-      });
-    }
-    if (
-      !body.priceReasonCodeId &&
-      !body.priceReason?.trim() &&
-      !body.override?.reasonCodeId &&
-      !body.override?.reason?.trim()
-    ) {
-      throw new BadRequestException({
-        statusCode: 400,
-        code: 'REASON_REQUIRED',
-        usageClass: 'exception',
-        message: `This discount (${flagged.join('; ')}) needs a reason`,
-      });
-    }
-    const reason = await this.overrides.resolveReason('exception', {
-      reasonCodeId: body.priceReasonCodeId ?? body.override?.reasonCodeId,
-      reason: body.priceReason ?? body.override?.reason,
-    });
-    await this.exceptions.record({
-      type: 'price_override',
-      severity: belowCost ? 'critical' : worstTier === 3 ? 'warning' : 'info',
-      entityType: context.entityType,
-      entityId: context.entityId,
-      summary: `${context.action}: ${flagged.join('; ')} — $${(totalDiscountCents / 100).toFixed(2)} off list${belowCost ? ', BELOW COST' : ''}`,
-      metadata: {
-        totalDiscountCents,
-        tier: worstTier,
-        belowCost,
-        reasonCode: reason.reasonCode,
-        reason: reason.reasonText,
-      },
-    });
-  }
-
-  /**
    * A1: an individually-printed delivery ticket freezes the order — no
    * edits while it's on the truck. Unlocking (POST :id/unlock, its own
    * permission, typed reason) clears the freeze.
@@ -2911,6 +2799,22 @@ export class OrdersController {
       .limit(1);
     if (!order) throw new NotFoundException('Order not found');
 
+    // A5/G7: run membership is the hard lock the server enforces on
+    // every edit path. Surface it on the detail so the UI can say so
+    // and disable the controls — it enforced this silently before, and
+    // the page looked fully editable until you clicked (QA D5).
+    const [openRun] = await this.db
+      .select({ runId: schema.deliveryRuns.id, runDate: schema.deliveryRuns.runDate })
+      .from(schema.deliveries)
+      .innerJoin(schema.deliveryRuns, eq(schema.deliveryRuns.id, schema.deliveries.runId))
+      .where(
+        and(
+          eq(schema.deliveries.orderId, id),
+          inArray(schema.deliveryRuns.status, ['open', 'out']),
+        ),
+      )
+      .limit(1);
+
     const lines = await this.db
       .select()
       .from(schema.orderLines)
@@ -2965,6 +2869,7 @@ export class OrdersController {
       importedAt: order.importedAt,
       legacyNumber: order.legacyNumber,
       lockedAt: order.lockedAt,
+      onOpenRun: openRun ? { runId: openRun.runId, runDate: openRun.runDate } : null,
       completedAt: order.completedAt,
       cancelledAt: order.cancelledAt,
       createdAt: order.createdAt,
