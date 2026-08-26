@@ -5,7 +5,8 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { Mail, PackageCheck, Printer } from 'lucide-react';
 import { toast } from 'sonner';
-import { api } from '@/lib/api';
+import { api, ApiError } from '@/lib/api';
+import { SecurityOverrideDialog } from '@/components/security-override-dialog';
 import { Money } from '@/components/money';
 import { PrintablePurchaseOrder } from '@/components/printable-purchase-order';
 import { Button, Card, Field, Input, LoadingRows, PageHeader, StatusBadge } from '@/components/ui';
@@ -22,6 +23,7 @@ interface PoLine {
   quantityReceived: number;
   quantityInspected: number;
   quantityAccepted: number;
+  quantityRejected: number;
   unitCostCents: number;
   lineTotalCents: number;
   linkedOrders: { orderId: string; orderNumber: string; quantity: number }[];
@@ -43,6 +45,7 @@ interface Po {
   subtotalCents: number;
   notes: string | null;
   createdAt: string;
+  blindReceiving: boolean;
   lines: PoLine[];
 }
 
@@ -58,7 +61,10 @@ interface VendorInvoice {
 }
 
 /** Per-line stage increments the receiving screen accumulates. */
-type StageDraft = Record<string, { received: string; inspected: string; accepted: string }>;
+type StageDraft = Record<
+  string,
+  { received: string; inspected: string; accepted: string; rejected: string }
+>;
 
 export default function PurchaseOrderDetailPage() {
   const params = useParams<{ id: string }>();
@@ -86,16 +92,18 @@ export default function PurchaseOrderDetailPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
-  function stageValue(lineId: string, stage: 'received' | 'inspected' | 'accepted'): string {
+  type Stage = 'received' | 'inspected' | 'accepted' | 'rejected';
+  function stageValue(lineId: string, stage: Stage): string {
     return draft[lineId]?.[stage] ?? '';
   }
-  function setStage(lineId: string, stage: 'received' | 'inspected' | 'accepted', value: string) {
+  function setStage(lineId: string, stage: Stage, value: string) {
     setDraft((prev) => ({
       ...prev,
       [lineId]: {
         received: prev[lineId]?.received ?? '',
         inspected: prev[lineId]?.inspected ?? '',
         accepted: prev[lineId]?.accepted ?? '',
+        rejected: prev[lineId]?.rejected ?? '',
         [stage]: value,
       },
     }));
@@ -110,8 +118,9 @@ export default function PurchaseOrderDetailPage() {
         received: Number(s.received) || 0,
         inspected: Number(s.inspected) || 0,
         accepted: Number(s.accepted) || 0,
+        rejected: Number(s.rejected) || 0,
       }))
-      .filter((l) => l.received + l.inspected + l.accepted > 0);
+      .filter((l) => l.received + l.inspected + l.accepted + l.rejected > 0);
     if (lines.length === 0) {
       toast.error('Enter a quantity in at least one stage.');
       return;
@@ -232,8 +241,9 @@ export default function PurchaseOrderDetailPage() {
         {receivable && (
           <p style={{ color: 'var(--text-secondary)', fontSize: 12, margin: '0 0 8px' }}>
             Per line: <strong>Received</strong> at the dock → <strong>Inspected</strong> →{' '}
-            <strong>Accepted</strong> into sellable stock. Stock (and any linked sales-order
-            reservation) moves at Accept. Enter increments and record below.
+            <strong>Accepted</strong> into sellable stock, or <strong>Rejected</strong> into the
+            As-Is review queue (damage never silently becomes sellable). Stock moves at Accept.
+            Enter increments and record below.
           </p>
         )}
         <div className="overflow-x-auto">
@@ -241,14 +251,16 @@ export default function PurchaseOrderDetailPage() {
             <thead>
               <tr>
                 <th>Item</th>
-                <th className="num">Ordered</th>
+                {!po.blindReceiving && <th className="num">Ordered</th>}
                 <th className="num">Rcvd</th>
                 <th className="num">Insp</th>
                 <th className="num">Acc</th>
-                <th className="num">Unit cost</th>
+                <th className="num">Rej</th>
+                {!po.blindReceiving && <th className="num">Unit cost</th>}
                 {receivable && <th>+Received</th>}
                 {receivable && <th>+Inspected</th>}
                 {receivable && <th>+Accepted</th>}
+                {receivable && <th>+Rejected</th>}
               </tr>
             </thead>
             <tbody>
@@ -280,7 +292,7 @@ export default function PurchaseOrderDetailPage() {
                           ))}
                         </div>
                       )}
-                      {remaining > 0 && l.quantityReceived > 0 && (
+                      {!po.blindReceiving && remaining > 0 && l.quantityReceived > 0 && (
                         <div
                           style={{ fontSize: 11.5, color: 'var(--warning)' }}
                           data-testid="remaining-note"
@@ -290,7 +302,7 @@ export default function PurchaseOrderDetailPage() {
                         </div>
                       )}
                     </td>
-                    <td className="num">{l.quantityOrdered}</td>
+                    {!po.blindReceiving && <td className="num">{l.quantityOrdered}</td>}
                     <td className="num">{l.quantityReceived}</td>
                     <td className="num">{l.quantityInspected}</td>
                     <td className="num">
@@ -300,11 +312,14 @@ export default function PurchaseOrderDetailPage() {
                         l.quantityAccepted
                       )}
                     </td>
-                    <td className="num">
-                      <Money cents={l.unitCostCents} />
-                    </td>
+                    <td className="num">{l.quantityRejected || ''}</td>
+                    {!po.blindReceiving && (
+                      <td className="num">
+                        <Money cents={l.unitCostCents} />
+                      </td>
+                    )}
                     {receivable &&
-                      (['received', 'inspected', 'accepted'] as const).map((stage) => (
+                      (['received', 'inspected', 'accepted', 'rejected'] as const).map((stage) => (
                         <td key={stage}>
                           <Input
                             type="number"
@@ -429,14 +444,24 @@ function InvoicesCard({
     }
   }
 
+  const [sodInvoiceId, setSodInvoiceId] = useState<string | null>(null);
+
   async function approve(id: string) {
     setBusy(true);
     try {
-      await api(`/v1/vendor-invoices/${id}/approve`, { method: 'POST' });
+      await api(`/v1/vendor-invoices/${id}/approve`, {
+        method: 'POST',
+        body: JSON.stringify({}),
+      });
       toast.success('Invoice approved.');
       await onChanged();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err));
+      // G11 segregation of duties: you keyed it, so someone else signs.
+      if (err instanceof ApiError && err.code === 'OVERRIDE_REQUIRED') {
+        setSodInvoiceId(id);
+      } else {
+        toast.error(err instanceof Error ? err.message : String(err));
+      }
     } finally {
       setBusy(false);
     }
@@ -444,6 +469,20 @@ function InvoicesCard({
 
   return (
     <Card title="Vendor invoices" style={{ marginBottom: 16 }}>
+      <SecurityOverrideDialog
+        open={sodInvoiceId != null}
+        title="Second sign-off needed — you recorded this invoice"
+        usageClass={null}
+        submitLabel="Approve invoice"
+        perform={(payload) =>
+          api(`/v1/vendor-invoices/${sodInvoiceId}/approve`, {
+            method: 'POST',
+            body: JSON.stringify({ override: payload.override }),
+          }).then(() => undefined)
+        }
+        onClose={() => setSodInvoiceId(null)}
+        onSuccess={() => void onChanged()}
+      />
       {invoices.length === 0 ? (
         <p className="muted" style={{ fontSize: 13, marginTop: 0 }}>
           No vendor invoice recorded against this PO yet.

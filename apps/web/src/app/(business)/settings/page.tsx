@@ -25,6 +25,8 @@ interface OpsSettings {
   deliveryDailyCap?: number | null;
   poReplyTo?: string | null;
   maxBalanceForTicketPrintCents?: number | null;
+  invoiceVarianceToleranceCents?: number | null;
+  blindReceiving?: boolean | null;
   priceVariance?: {
     tier1Pct?: number | null;
     tier1MaxCents?: number | null;
@@ -238,6 +240,9 @@ function OpsCard({ settings, onSaved }: { settings: Settings; onSaved: (s: Setti
         invoiceFooterNote: String(data.get('invoiceFooterNote') ?? '').trim() || null,
         poReplyTo: String(data.get('poReplyTo') ?? '').trim() || null,
       };
+      const invTol = String(data.get('invoiceTolerance') ?? '').trim();
+      body.invoiceVarianceToleranceCents = invTol === '' ? null : Math.round(Number(invTol) * 100);
+      body.blindReceiving = data.get('blindReceiving') === 'on' ? true : null;
       const capBal = String(data.get('maxBalanceForTicket') ?? '').trim();
       body.maxBalanceForTicketPrintCents = capBal === '' ? null : Math.round(Number(capBal) * 100);
       const t1 = String(data.get('pvTier1Pct') ?? '').trim();
@@ -321,6 +326,30 @@ function OpsCard({ settings, onSaved }: { settings: Settings; onSaved: (s: Setti
           }
           style={{ width: '100%' }}
         />
+      </Field>
+      <Field label="Invoice auto-clear tolerance ($; blank = manual approval)">
+        <Input
+          name="invoiceTolerance"
+          type="number"
+          step="0.01"
+          min={0}
+          defaultValue={
+            ops.invoiceVarianceToleranceCents != null
+              ? (ops.invoiceVarianceToleranceCents / 100).toFixed(2)
+              : ''
+          }
+          style={{ width: '100%' }}
+        />
+      </Field>
+      <Field label="Blind receiving (hide expected quantities at the dock)">
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
+          <input
+            type="checkbox"
+            name="blindReceiving"
+            defaultChecked={Boolean(ops.blindReceiving)}
+          />
+          Receivers count what arrived, not what was expected
+        </label>
       </Field>
       <Field label="Price variance — no-friction tier (%; blank = 5)">
         <Input

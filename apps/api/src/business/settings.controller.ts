@@ -43,6 +43,10 @@ interface OpsSettings {
   poReplyTo?: string | null;
   /** G9: block delivery-ticket print above this balance due (null = off). */
   maxBalanceForTicketPrintCents?: number | null;
+  /** G11: auto-clear matched invoices within this variance (null = manual). */
+  invoiceVarianceToleranceCents?: number | null;
+  /** G11: hide expected quantities on the receiving grid. */
+  blindReceiving?: boolean | null;
   /** G6 three-tier price-variance thresholds (defaults 5% / $50 / 15%). */
   priceVariance?: {
     tier1Pct?: number | null;
@@ -107,6 +111,24 @@ function validateOps(input: OpsSettings): OpsSettings {
       );
     }
     out.maxBalanceForTicketPrintCents = input.maxBalanceForTicketPrintCents;
+  }
+  if (input.invoiceVarianceToleranceCents !== undefined) {
+    if (
+      input.invoiceVarianceToleranceCents !== null &&
+      (!Number.isInteger(input.invoiceVarianceToleranceCents) ||
+        input.invoiceVarianceToleranceCents < 0)
+    ) {
+      throw new BadRequestException(
+        'ops.invoiceVarianceToleranceCents must be a non-negative integer',
+      );
+    }
+    out.invoiceVarianceToleranceCents = input.invoiceVarianceToleranceCents;
+  }
+  if (input.blindReceiving !== undefined) {
+    if (input.blindReceiving !== null && typeof input.blindReceiving !== 'boolean') {
+      throw new BadRequestException('ops.blindReceiving must be a boolean');
+    }
+    out.blindReceiving = input.blindReceiving;
   }
   if (input.priceVariance !== undefined) {
     if (input.priceVariance !== null) {

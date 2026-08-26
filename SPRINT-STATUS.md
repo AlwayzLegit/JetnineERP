@@ -925,8 +925,26 @@ commission-clawback + digest requirements.
       19→22; orders/sales/reports 77/77 unaffected. — \_2026-08-26. Conventions flagged:
       photos deferred (needs the storage decision already on the backlog); max discount
       off original not enforced yet (price is manager-gated instead).*
-- [ ] **G11 — Blind receiving + SoD invoice approval + vendor remit-to alert** + third
-      bucket out of staged receiving + PO hold/release
+- [x] **G11 — Purchasing controls:** migration `0045_purchasing_controls`
+      (`purchase_order_lines.quantity_rejected`, `vendor_invoices.created_by_user_id`,
+      `vendors.remit_to`). **Third bucket**: staged receiving takes `rejected` —
+      invariant ordered ≥ received ≥ inspected ≥ accepted+rejected; rejects become
+      As-Is pieces (never silently sellable, reviewer disposes → vendor return w/ R/A
+      or valued scrap), register a `po_reject` exception, and count as dispositioned so
+      the PO still completes (no pressure to accept damage). **SoD on invoice
+      approval**: the recorder cannot self-approve — a _different_ holder of
+      vendor*invoices.manage signs (override dialog; `force` mode added to the
+      override primitive). **Tolerance auto-clear**: matched invoices within ops
+      `invoiceVarianceToleranceCents` approve themselves — reviewers only see
+      exceptions. **Remit-to alert**: `vendors.remit_to` changes register a CRITICAL
+      `vendor_remit_change` exception (vendor-master fraud). **Blind receiving**: ops
+      toggle hides Ordered/expected/cost columns on the receiving grid (PO detail
+      carries the flag). Settings knobs for tolerance + blind mode. purchasing.int.spec
+      24→27 (P6 approve updated: manager signs per SoD). — \_2026-08-26. Conventions
+      flagged: PO hold/release deferred (POs here are buyer-created, not auto-created
+      from order entry — the hold's driver); landed cost, receiving-error reversal as a
+      distinct transaction, R/A field on POs, email-PO ack capture deferred; remit-to
+      is API-level until the vendor edit UI lands (existing backlog item).*
 - [ ] **G12 — Multi-dimensional capacity + zip→route mapping**
 - [ ] **G13 — Line-status roll-up + Past Due view + Auto Stock Release** + reservation
       drift reconciliation

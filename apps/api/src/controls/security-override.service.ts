@@ -32,6 +32,12 @@ export interface RequireOverrideInput {
   after?: Record<string, unknown> | null;
   /** Credentials from the retry; absent on the first attempt. */
   override?: OverrideCredentials;
+  /**
+   * Segregation-of-duties mode (G11): demand a second user even when
+   * the actor holds the permission — e.g. approving an invoice you
+   * keyed yourself.
+   */
+  force?: boolean;
 }
 
 export interface OverrideResult {
@@ -71,7 +77,7 @@ export class SecurityOverrideService {
 
   async require(input: RequireOverrideInput): Promise<OverrideResult> {
     const ctx = getRequestContext();
-    if (ctx.isSuperAdmin || ctx.permissions.has(input.permission)) {
+    if (!input.force && (ctx.isSuperAdmin || ctx.permissions.has(input.permission))) {
       return { overridden: false, authorizingUserId: null, overrideId: null };
     }
 
