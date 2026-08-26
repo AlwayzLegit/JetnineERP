@@ -490,10 +490,18 @@ describe('G4 — scrap is a write-off; vendor returns carry an R/A', () => {
   }
 
   async function makeAsIsItem(quantity: number): Promise<string> {
+    // The G2 suite defined an as_is code (DMG) — per A9 a coded intake
+    // reason is now mandatory.
+    const codes = await as(clerkCookie).get('/v1/reason-codes?usageClass=as_is');
+    const dmg = codes.body.find((c: { code: string }) => c.code === 'DMG');
     const res = await as(clerkCookie)
       .post('/v1/as-is')
-      .send({ variantId, locationId, quantity, source: 'defect' });
+      .send({ variantId, locationId, quantity, source: 'defect', reasonCodeId: dmg.id });
     expect(res.status).toBe(201);
+    // G10: intakes explode into one piece per unit; this returns the
+    // first piece's id.
+    expect(res.body.quantity).toBe(1);
+    expect(res.body.pieceNumber).toMatch(/^AS-/);
     return res.body.id;
   }
 
@@ -521,16 +529,16 @@ describe('G4 — scrap is a write-off; vendor returns carry an R/A', () => {
     expect(ok.status).toBe(201);
     expect(ok.body.status).toBe('scrapped');
 
-    // Valued at cost on the register: 2 × $300.00.
+    // Valued at cost on the register: the scrapped piece at $300.00.
     const register = await as(managerCookie).get('/v1/write-offs?days=7');
     expect(register.status).toBe(200);
     const row = register.body.rows.find(
-      (r: { totalCostCents: number }) => r.totalCostCents === 60000,
+      (r: { totalCostCents: number }) => r.totalCostCents === 30000,
     );
     expect(row).toBeTruthy();
-    expect(row.quantity).toBe(2);
+    expect(row.quantity).toBe(1);
     expect(row.unitCostCents).toBe(30000);
-    expect(register.body.totalCostCents).toBeGreaterThanOrEqual(60000);
+    expect(register.body.totalCostCents).toBeGreaterThanOrEqual(30000);
   });
 
   it('a manager scraps directly — no override row, but the write-off lands in the exception register', async () => {
@@ -629,5 +637,108 @@ describe('G5 — exception register + ranked digest', () => {
     const withEmail = digest.body.find((d: { actorEmail: string | null }) => d.actorEmail);
     expect(withEmail).toBeTruthy();
     expect(Object.keys(withEmail.byType).length).toBeGreaterThan(0);
+  });
+});
+
+describe('G10 — as-is piece identity, gated pricing, restricted reasons, aging', () => {
+  function as(cookie: string) {
+    return {
+      post: (url: string) =>
+        request(app.getHttpServer())
+          .post(url)
+          .set('Cookie', cookie)
+          .set('x-business-id', businessId),
+      patch: (url: string) =>
+        request(app.getHttpServer())
+          .patch(url)
+          .set('Cookie', cookie)
+          .set('x-business-id', businessId),
+      get: (url: string) =>
+        request(app.getHttpServer())
+          .get(url)
+          .set('Cookie', cookie)
+          .set('x-business-id', businessId),
+    };
+  }
+
+  it('a restricted as-is reason needs write-off authority (or a manager override)', async () => {
+    const restricted = await as(managerCookie)
+      .post('/v1/reason-codes')
+      .send({
+        code: 'FLOODED',
+        description: 'Flood-damaged stock',
+        usageClass: 'as_is',
+        isRestricted: true,
+      })
+      .expect(201);
+
+    const blocked = await as(clerkCookie)
+      .post('/v1/as-is')
+      .send({ variantId, locationId, quantity: 1, reasonCodeId: restricted.body.id });
+    expect(blocked.status).toBe(403);
+    expect(blocked.body.code).toBe('OVERRIDE_REQUIRED');
+
+    const ok = await as(clerkCookie)
+      .post('/v1/as-is')
+      .send({
+        variantId,
+        locationId,
+        quantity: 1,
+        reasonCodeId: restricted.body.id,
+        condition: 'damaged',
+        storageLocation: 'Back rack B3',
+        override: { email: 'manager@ctrl-test.local', password: PASSWORD, reason: 'verified' },
+      });
+    expect(ok.status).toBe(201);
+    expect(ok.body.condition).toBe('damaged');
+    expect(ok.body.storageLocation).toBe('Back rack B3');
+    expect(ok.body.pieceNumber).toMatch(/^AS-/);
+  });
+
+  it('the as-is price is its own permission; a clerk needs a manager', async () => {
+    const codes = await as(clerkCookie).get('/v1/reason-codes?usageClass=as_is');
+    const dmg = codes.body.find((c: { code: string }) => c.code === 'DMG');
+    const piece = await as(clerkCookie)
+      .post('/v1/as-is')
+      .send({ variantId, locationId, quantity: 1, reasonCodeId: dmg.id });
+    expect(piece.status).toBe(201);
+
+    const blocked = await as(clerkCookie)
+      .patch(`/v1/as-is/${piece.body.id}`)
+      .send({ asIsPriceCents: 39900 });
+    expect(blocked.status).toBe(403);
+    expect(blocked.body.permission).toBe('as_is.price.set');
+
+    const priced = await as(managerCookie)
+      .patch(`/v1/as-is/${piece.body.id}`)
+      .send({ asIsPriceCents: 39900 });
+    expect(priced.status).toBe(200);
+    expect(priced.body.asIsPriceCents).toBe(39900);
+    // Condition edits need no special authority.
+    const cond = await as(clerkCookie)
+      .patch(`/v1/as-is/${piece.body.id}`)
+      .send({ condition: 'light_wear' });
+    expect(cond.status).toBe(200);
+  });
+
+  it('aging surfaces pieces stuck in review', async () => {
+    const codes = await as(clerkCookie).get('/v1/reason-codes?usageClass=as_is');
+    const dmg = codes.body.find((c: { code: string }) => c.code === 'DMG');
+    const piece = await as(clerkCookie)
+      .post('/v1/as-is')
+      .send({ variantId, locationId, quantity: 1, reasonCodeId: dmg.id });
+    const sql2 = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    const db = drizzle(sql2);
+    try {
+      await db
+        .update(schema.asIsItems)
+        .set({ createdAt: new Date(Date.now() - 90 * 86_400_000) })
+        .where(eq(schema.asIsItems.id, piece.body.id));
+    } finally {
+      await sql2.end({ timeout: 5 });
+    }
+    const aging = await as(managerCookie).get('/v1/as-is/aging?days=60');
+    expect(aging.status).toBe(200);
+    expect(aging.body.some((r: { id: string }) => r.id === piece.body.id)).toBe(true);
   });
 });

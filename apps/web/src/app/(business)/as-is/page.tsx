@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { api } from '@/lib/api';
+import { api, ApiError } from '@/lib/api';
 import { Button, EmptyState, LoadingRows, PageHeader, Select, StatusBadge } from '@/components/ui';
 import { SecurityOverrideDialog } from '@/components/security-override-dialog';
 
@@ -23,6 +23,10 @@ interface AsIsRow {
   sku: string | null;
   locationName: string | null;
   quantity: number;
+  pieceNumber: string | null;
+  condition: string | null;
+  asIsPriceCents: number | null;
+  storageLocation: string | null;
   source: string;
   status: string;
   vendorRaNumber: string | null;
@@ -52,6 +56,27 @@ export default function AsIsPage() {
   }, [status, load]);
 
   const [scrapId, setScrapId] = useState<string | null>(null);
+  const [pricePending, setPricePending] = useState<{ id: string; cents: number } | null>(null);
+
+  async function setPrice(id: string) {
+    const v = window.prompt('As-is selling price ($):');
+    if (v == null) return;
+    const cents = Math.round(Number(v) * 100);
+    if (!Number.isFinite(cents) || cents < 0) return;
+    try {
+      await api(`/v1/as-is/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ asIsPriceCents: cents }),
+      });
+      await load(status);
+    } catch (err) {
+      if (err instanceof ApiError && err.code === 'OVERRIDE_REQUIRED') {
+        setPricePending({ id, cents });
+      } else {
+        toast.error(err instanceof Error ? err.message : String(err));
+      }
+    }
+  }
 
   async function review(id: string, action: 'restock' | 'vendor_return') {
     let extra: Record<string, unknown> = {};
@@ -154,6 +179,27 @@ export default function AsIsPage() {
                     {r.notes && (
                       <div style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>{r.notes}</div>
                     )}
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                      {r.pieceNumber && <code>{r.pieceNumber}</code>}
+                      {r.condition && <> · {r.condition.replace(/_/g, ' ')}</>}
+                      {r.storageLocation && <> · {r.storageLocation}</>}
+                      {r.asIsPriceCents != null && (
+                        <> · as-is ${(r.asIsPriceCents / 100).toFixed(2)}</>
+                      )}
+                      {r.status === 'pending_review' && (
+                        <>
+                          {' '}
+                          <button
+                            className="btn btn-ghost btn-sm"
+                            style={{ padding: '0 4px', fontSize: 11 }}
+                            disabled={busy}
+                            onClick={() => void setPrice(r.id)}
+                          >
+                            price…
+                          </button>
+                        </>
+                      )}
+                    </div>
                   </td>
                   <td className="num">{r.quantity}</td>
                   <td>{r.locationName ?? '—'}</td>
@@ -234,6 +280,24 @@ export default function AsIsPage() {
         permission (or a manager&apos;s approval), a coded reason, and lands on the write-off
         register at cost.
       </p>
+
+      <SecurityOverrideDialog
+        open={pricePending != null}
+        title="As-is price needs manager approval"
+        usageClass={null}
+        submitLabel="Set price"
+        perform={(payload) =>
+          api(`/v1/as-is/${pricePending!.id}`, {
+            method: 'PATCH',
+            body: JSON.stringify({
+              asIsPriceCents: pricePending!.cents,
+              override: payload.override,
+            }),
+          }).then(() => undefined)
+        }
+        onClose={() => setPricePending(null)}
+        onSuccess={() => void load(status)}
+      />
 
       <SecurityOverrideDialog
         open={scrapId != null}

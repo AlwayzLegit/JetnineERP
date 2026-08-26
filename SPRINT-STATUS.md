@@ -881,7 +881,7 @@ commission-clawback + digest requirements.
 - [x] **G8 — Transfer variance + aging + types:** migration `0042_transfer_variance`.
       (In-transit was already a real bucket — ship deducts origin, receive credits
       destination, so road goods are sellable nowhere; kept.) New: **`POST
-  /v1/stock-transfers/:id/close-short`** — a short transfer can't be dismissed, only
+/v1/stock-transfers/:id/close-short`** — a short transfer can't be dismissed, only
       resolved: needs `inventory.write_off` (clerk → manager-override dialog), a coded
       reason (class `transfer_variance`), values the missing units at cost onto the
       write-off register (attributed to origin), registers a `transfer_variance`
@@ -912,8 +912,19 @@ commission-clawback + digest requirements.
       \_2026-08-26. Conventions flagged: reserved/date failures are hard blocks (fix the
       data), only the balance cap has an override path; credit-hold check waits for a
       credit-hold field to exist; document id/revision on invoices deferred.*
-- [ ] **G10 — As-is piece-level reference ids** (condition, gated price, storage location,
-      photos, aging)
+- [x] **G10 — As-is piece identity:** migration `0044_as_is_pieces` — `as_is_items` +=
+      piece*number, condition, as_is_price_cents, storage_location, reason_code_id.
+      Intakes and return receipts now explode into **one row per unit** with a piece
+      reference (`AS-XXXXXXXX`, id-derived — no sequence race); legacy qty>1 rows stay
+      valid. Coded intake reason (class `as_is`) mandatory once codes exist; a
+      **restricted** code (STORIS "As-Is Restricted") needs `inventory.write_off` or a
+      manager override. `PATCH /v1/as-is/:id` — condition + storage location free,
+      as-is price gated on new `as_is.price.set` (Owner/Manager; override dialog for
+      others). `GET /v1/as-is/aging?days=60` — pieces stuck in review. UI: piece #,
+      condition, storage, as-is price shown per row + "price…" action. controls.int.spec
+      19→22; orders/sales/reports 77/77 unaffected. — \_2026-08-26. Conventions flagged:
+      photos deferred (needs the storage decision already on the backlog); max discount
+      off original not enforced yet (price is manager-gated instead).*
 - [ ] **G11 — Blind receiving + SoD invoice approval + vendor remit-to alert** + third
       bucket out of staged receiving + PO hold/release
 - [ ] **G12 — Multi-dimensional capacity + zip→route mapping**

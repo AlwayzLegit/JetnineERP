@@ -40,6 +40,22 @@ export const asIsItems = pgTable(
     restockedVariantId: uuid('restocked_variant_id').references(() => productVariants.id, {
       onDelete: 'set null',
     }),
+    /**
+     * G10 piece identity (STORIS: "tracks as-is items by piece"). New
+     * intakes create one row per unit with a piece reference; legacy
+     * rows may still carry quantity > 1.
+     */
+    pieceNumber: text('piece_number'),
+    /** 'like_new' | 'light_wear' | 'damaged' | 'parts' — free text ok. */
+    condition: text('condition'),
+    /** Permission-gated as-is selling price for the piece. */
+    asIsPriceCents: integer('as_is_price_cents'),
+    /** Where the piece physically sits ("Back rack B3"). */
+    storageLocation: text('storage_location'),
+    /** Coded intake reason (class `as_is`; restricted codes gated). */
+    reasonCodeId: uuid('reason_code_id').references(() => reasonCodes.id, {
+      onDelete: 'set null',
+    }),
     /** Vendor return (G4): the R/A number the credit is chased under. */
     vendorRaNumber: text('vendor_ra_number'),
     /** Expected vendor credit for a vendor_return disposition. */

@@ -6,6 +6,7 @@ import {
   Inject,
   NotFoundException,
   Param,
+  Patch,
   Post,
   Query,
 } from '@nestjs/common';
@@ -32,6 +33,11 @@ interface IntakeBody {
   locationId?: string;
   quantity?: number;
   source?: (typeof SOURCES)[number];
+  condition?: string | null;
+  storageLocation?: string | null;
+  reasonCodeId?: string;
+  reason?: string;
+  override?: OverrideCredentials;
   notes?: string | null;
 }
 
@@ -66,6 +72,10 @@ interface AsIsRow {
   referenceType: string | null;
   referenceId: string | null;
   restockedVariantId: string | null;
+  pieceNumber: string | null;
+  condition: string | null;
+  asIsPriceCents: number | null;
+  storageLocation: string | null;
   vendorRaNumber: string | null;
   vendorCreditCents: number | null;
   vendorCreditStatus: string | null;
@@ -111,6 +121,10 @@ export class AsIsController {
         referenceType: schema.asIsItems.referenceType,
         referenceId: schema.asIsItems.referenceId,
         restockedVariantId: schema.asIsItems.restockedVariantId,
+        pieceNumber: schema.asIsItems.pieceNumber,
+        condition: schema.asIsItems.condition,
+        asIsPriceCents: schema.asIsItems.asIsPriceCents,
+        storageLocation: schema.asIsItems.storageLocation,
         vendorRaNumber: schema.asIsItems.vendorRaNumber,
         vendorCreditCents: schema.asIsItems.vendorCreditCents,
         vendorCreditStatus: schema.asIsItems.vendorCreditStatus,
@@ -151,26 +165,142 @@ export class AsIsController {
       .limit(1);
     if (!variant) throw new NotFoundException('Variant not found');
 
-    const [row] = await this.db
+    // G10: coded intake reason (class `as_is`); a RESTRICTED code needs
+    // write-off authority or a manager override (STORIS "As-Is
+    // Restricted" behavior).
+    const reason = await this.overrides.resolveReason(
+      'as_is',
+      { reasonCodeId: body.reasonCodeId, reason: body.reason },
+      { required: false },
+    );
+    if (reason.reasonCodeId) {
+      const [code] = await this.db
+        .select({ isRestricted: schema.reasonCodes.isRestricted })
+        .from(schema.reasonCodes)
+        .where(eq(schema.reasonCodes.id, reason.reasonCodeId))
+        .limit(1);
+      if (code?.isRestricted) {
+        await this.overrides.require({
+          permission: 'inventory.write_off',
+          action: `Use restricted as-is reason ${reason.reasonCode}`,
+          entityType: 'as_is_item',
+          override: body.override,
+        });
+      }
+    }
+
+    // G10 piece identity: one row per unit, each with its own
+    // reference. The piece number derives from the row id — unique
+    // without a sequence race.
+    const inserted = await this.db
       .insert(schema.asIsItems)
-      .values({
-        businessId: tenant.businessId!,
-        variantId: body.variantId,
-        locationId: body.locationId,
-        quantity: body.quantity!,
-        source,
-        referenceType: 'manual',
-        notes: body.notes ?? null,
-      })
+      .values(
+        Array.from({ length: body.quantity! }, () => ({
+          businessId: tenant.businessId!,
+          variantId: body.variantId!,
+          locationId: body.locationId!,
+          quantity: 1,
+          source,
+          referenceType: 'manual',
+          condition: body.condition ?? null,
+          storageLocation: body.storageLocation ?? null,
+          reasonCodeId: reason.reasonCodeId,
+          notes: body.notes ?? reason.reasonText ?? null,
+        })),
+      )
       .returning();
-    if (!row) throw new BadRequestException('failed to record as-is item');
+    for (const row of inserted) {
+      await this.db
+        .update(schema.asIsItems)
+        .set({ pieceNumber: `AS-${row.id.slice(0, 8).toUpperCase()}` })
+        .where(eq(schema.asIsItems.id, row.id));
+    }
     await this.audit.log({
       action: 'as_is.intake',
       targetType: 'as_is_item',
-      targetId: row.id,
-      after: { variantId: row.variantId, quantity: row.quantity, source },
+      targetId: inserted[0]!.id,
+      after: {
+        variantId: body.variantId,
+        pieces: inserted.length,
+        source,
+        reasonCode: reason.reasonCode,
+      },
     });
-    return this.load(row.id);
+    return this.load(inserted[0]!.id);
+  }
+
+  /**
+   * G10: the as-is selling price is its own permission (STORIS "Set or
+   * change as-is selling price"), and condition / storage location are
+   * editable in place.
+   */
+  @Patch(':id')
+  @RequirePermission('inventory.view')
+  async updatePiece(
+    @CurrentTenant() _tenant: RequestTenantContext,
+    @Param('id') id: string,
+    @Body()
+    body: {
+      asIsPriceCents?: number | null;
+      condition?: string | null;
+      storageLocation?: string | null;
+      override?: OverrideCredentials;
+    },
+  ): Promise<AsIsRow> {
+    const [item] = await this.db
+      .select()
+      .from(schema.asIsItems)
+      .where(eq(schema.asIsItems.id, id))
+      .limit(1);
+    if (!item) throw new NotFoundException('As-Is item not found');
+    const patch: Partial<typeof schema.asIsItems.$inferInsert> = {};
+    if (body.asIsPriceCents !== undefined) {
+      if (
+        body.asIsPriceCents !== null &&
+        (!Number.isInteger(body.asIsPriceCents) || body.asIsPriceCents < 0)
+      ) {
+        throw new BadRequestException('asIsPriceCents must be a non-negative integer');
+      }
+      await this.overrides.require({
+        permission: 'as_is.price.set',
+        action: `Set as-is price on piece ${item.pieceNumber ?? item.id}`,
+        entityType: 'as_is_item',
+        entityId: id,
+        override: body.override,
+      });
+      patch.asIsPriceCents = body.asIsPriceCents;
+    }
+    if (body.condition !== undefined) patch.condition = body.condition;
+    if (body.storageLocation !== undefined) patch.storageLocation = body.storageLocation;
+    if (Object.keys(patch).length === 0) {
+      throw new BadRequestException('Nothing to update');
+    }
+    await this.db.update(schema.asIsItems).set(patch).where(eq(schema.asIsItems.id, id));
+    await this.audit.log({
+      action: 'as_is.update',
+      targetType: 'as_is_item',
+      targetId: id,
+      before: {
+        asIsPriceCents: item.asIsPriceCents,
+        condition: item.condition,
+        storageLocation: item.storageLocation,
+      },
+      after: patch as Record<string, unknown>,
+    });
+    return this.load(id);
+  }
+
+  /** G10 aging: pieces waiting in review longer than `days` (default 60). */
+  @Get('aging')
+  @RequirePermission('inventory.view')
+  async aging(
+    @CurrentTenant() tenant: RequestTenantContext,
+    @Query('days') daysStr?: string,
+  ): Promise<AsIsRow[]> {
+    const days = Math.min(365, Math.max(1, Number(daysStr) || 60));
+    const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+    const rows = await this.list(tenant, 'pending_review');
+    return rows.filter((r) => new Date(r.createdAt).getTime() < cutoff.getTime());
   }
 
   /**
@@ -409,6 +539,10 @@ export class AsIsController {
         referenceType: schema.asIsItems.referenceType,
         referenceId: schema.asIsItems.referenceId,
         restockedVariantId: schema.asIsItems.restockedVariantId,
+        pieceNumber: schema.asIsItems.pieceNumber,
+        condition: schema.asIsItems.condition,
+        asIsPriceCents: schema.asIsItems.asIsPriceCents,
+        storageLocation: schema.asIsItems.storageLocation,
         vendorRaNumber: schema.asIsItems.vendorRaNumber,
         vendorCreditCents: schema.asIsItems.vendorCreditCents,
         vendorCreditStatus: schema.asIsItems.vendorCreditStatus,

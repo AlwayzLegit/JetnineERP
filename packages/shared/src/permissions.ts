@@ -31,6 +31,7 @@ export const PERMISSIONS = {
   'inventory.transfer': 'Transfer between locations',
   'inventory.write_off':
     'Write off (scrap) physical goods — valued at cost on the write-off register',
+  'as_is.price.set': 'Set or change the as-is selling price on a piece',
 
   'vendors.view': 'View vendors',
   'vendors.manage': 'Create / update / delete vendors',

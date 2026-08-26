@@ -82,18 +82,32 @@ export class OrderReturnsService {
         .set({ qtyReturned: line.qtyReturned + rl.quantity })
         .where(eq(schema.orderLines.id, line.id));
       if (line.variantId) {
-        await this.db.insert(schema.asIsItems).values({
-          businessId: ret.businessId,
-          variantId: line.variantId,
-          locationId: order.locationId,
-          quantity: rl.quantity,
-          source: 'return',
-          // Reference the order (matching the P8 contract the As-Is UI
-          // links from); the return doc itself is on order_returns.
-          referenceType: 'order',
-          referenceId: ret.orderId,
-          notes: rl.reason ?? ret.reason ?? null,
-        });
+        // G10 piece identity: one As-Is row per returned unit, each
+        // with its own reference number.
+        const inserted = await this.db
+          .insert(schema.asIsItems)
+          .values(
+            Array.from({ length: rl.quantity }, () => ({
+              businessId: ret.businessId,
+              variantId: line.variantId!,
+              locationId: order.locationId,
+              quantity: 1,
+              source: 'return',
+              // Reference the order (matching the P8 contract the As-Is
+              // UI links from); the return doc itself is on order_returns.
+              referenceType: 'order',
+              referenceId: ret.orderId,
+              reasonCodeId: rl.reasonCodeId,
+              notes: rl.reason ?? ret.reason ?? null,
+            })),
+          )
+          .returning({ id: schema.asIsItems.id });
+        for (const piece of inserted) {
+          await this.db
+            .update(schema.asIsItems)
+            .set({ pieceNumber: `AS-${piece.id.slice(0, 8).toUpperCase()}` })
+            .where(eq(schema.asIsItems.id, piece.id));
+        }
       }
     }
 
