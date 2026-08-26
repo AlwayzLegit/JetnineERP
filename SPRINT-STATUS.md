@@ -945,10 +945,39 @@ commission-clawback + digest requirements.
       from order entry — the hold's driver); landed cost, receiving-error reversal as a
       distinct transaction, R/A field on POs, email-PO ack capture deferred; remit-to
       is API-level until the vendor edit UI lands (existing backlog item).*
-- [ ] **G12 — Multi-dimensional capacity + zip→route mapping**
-- [ ] **G13 — Line-status roll-up + Past Due view + Auto Stock Release** + reservation
-      drift reconciliation
-- [ ] **G14 — Duplicate-order/consolidate prompt + ATP-vs-promise warning**
+- [x] **G12 — Multi-dimensional capacity + zip→route mapping:** migration
+      `0046_capacity_units` (`product_variants.capacity_units`, default 1 — a king set
+      is not a twin). Capacity is now stops + optional per-day piece budget
+      (`deliveryDailyPieceCap`) + optional capacity-unit budget
+      (`deliveryDailyCapacityUnits`); scheduling refuses 409 **naming the over
+      dimension** ("over capacity on capacity units (4 + 3 > 4)"), override still
+      deliberate+registered; `/deliveries/capacity` reports pieces + units per day.
+      `ops.zipRoutes` ("912" → "Glendale AM") wins route suggestion by longest prefix,
+      falling back to the zip-prefix label. Settings knobs for both budgets.
+      deliveries.int.spec 16→17. — _2026-08-26. Conventions: zipRoutes edited via API/
+      settings JSON for now (no dedicated editor); stop times/windows already exist on
+      deliveries; truck lanes wait for a truck entity (G7 note)._
+- [x] **G13 — Line roll-up + Past Due + Auto Stock Release + drift:** list-view rows
+      carry `lineSummary` (units/reserved/fulfilled/special-order, rendered "2 of 3
+      reserved · 1 SO" under the status chip) and `?view=past_due` — undelivered orders
+      past their promised date, one chip on /orders. `POST /v1/orders/auto-stock-release`
+      (inventory.adjust; {days, dryRun}) frees reservations on open orders promised >N
+      days ago with nothing on a truck and no lock — each release audited + registered
+      (`auto_stock_release`); P9's nightly job will call it. `GET
+    /v1/orders/reservation-drift` (reports.inventory.view): SUM(line reserved) vs
+      level reserved per variant+location, drift rows only. orders.int.spec 52→56. —
+      _2026-08-26. Conventions: past-due keyed on requestedDate (scheduled-trip lateness
+      shows via Scheduled status + date already); per-line Hold, credit hold, EST-vs-SCH
+      date distinction, and manual reservation re-assignment still open (rolled into the
+      backlog); postponement counter still deferred to P9._
+- [x] **G14 — Duplicate-order prompt + ATP-vs-promise warning:** `GET
+    /v1/customers/:id/open-orders` (open orders w/ promised + next-trip dates); New
+      Sale shows a warning banner when the picked customer already has open orders
+      ("consider one truck"), and completing with a promised date EARLIER than any
+      line's ATP date demands an explicit confirm naming the late lines. —
+      _2026-08-26. Conventions: the consolidate prompt is advisory (banner), not a
+      blocking dialog; credit-application gate for Synchrony/Acima still open (needs a
+      credit-app entity)._
 - [ ] **§2 audit coverage:** log line qty/discount/date/salesperson/customer-swap/
       tax-exempt/fee-removal/tender-void/deposit-transfer events; append-only audit table
 - [ ] **Build P9 (pre-existing):** commissions (equal-split, exchange clawback per gap §8),

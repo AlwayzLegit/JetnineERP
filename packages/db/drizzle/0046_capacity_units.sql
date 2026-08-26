@@ -1,0 +1,1 @@
+ALTER TABLE "product_variants" ADD COLUMN "capacity_units" integer DEFAULT 1 NOT NULL;

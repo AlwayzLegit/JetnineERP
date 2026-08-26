@@ -418,6 +418,7 @@ export class OrdersController {
     @Query('cursor') cursorStr?: string,
     @Query('status') status?: string,
     @Query('q') q?: string,
+    @Query('view') view?: string,
   ): Promise<
     PageResponse<{
       id: string;
@@ -430,12 +431,27 @@ export class OrdersController {
       salespersonName: string | null;
       totalCents: number;
       createdAt: Date;
+      lineSummary: {
+        units: number;
+        reserved: number;
+        fulfilled: number;
+        specialOrder: number;
+      } | null;
     }>
   > {
     const limit = clampLimit(limitStr);
     const cursor = decodeCursor(cursorStr);
     const filters = [];
     if (status) filters.push(eq(schema.orders.status, status));
+    // G13 saved view: "Past Due" — the most useful list in the building.
+    // Undelivered orders whose promised date has passed.
+    if (view === 'past_due') {
+      const today = new Date().toISOString().slice(0, 10);
+      filters.push(
+        inArray(schema.orders.status, ['open', 'partially_fulfilled']),
+        sql`${schema.orders.requestedDate} < ${today}`,
+      );
+    }
     if (q?.trim()) {
       const like = `%${q.trim()}%`;
       filters.push(
@@ -478,6 +494,10 @@ export class OrdersController {
     const fullyReturned = new Set<string>();
     const exchangedOriginals = new Set<string>();
     const awaitingPickup = new Set<string>();
+    const lineSummaryByOrder = new Map<
+      string,
+      { units: number; reserved: number; fulfilled: number; specialOrder: number }
+    >();
     if (ids.length > 0) {
       const pays = await this.db
         .select({
@@ -564,6 +584,33 @@ export class OrdersController {
         if (r.originalOrderId) exchangedOriginals.add(r.originalOrderId);
       }
 
+      // G13 line-level roll-up: a 5-line order isn't one status. The
+      // list shows "3 of 5 reserved · 1 SO" style summaries per row.
+      const lineAgg = await this.db
+        .select({
+          orderId: schema.orderLines.orderId,
+          units: sql<number>`coalesce(sum(${schema.orderLines.quantity}), 0)::int`,
+          reserved: sql<number>`coalesce(sum(${schema.orderLines.qtyReserved}), 0)::int`,
+          fulfilled: sql<number>`coalesce(sum(${schema.orderLines.qtyFulfilled}), 0)::int`,
+          specialOrder: sql<number>`coalesce(sum(${schema.orderLines.quantity}) filter (where ${schema.orderLines.lineType} = 'special_order'), 0)::int`,
+        })
+        .from(schema.orderLines)
+        .where(
+          and(
+            inArray(schema.orderLines.orderId, ids),
+            sql`${schema.orderLines.lineType} != 'custom'`,
+          ),
+        )
+        .groupBy(schema.orderLines.orderId);
+      for (const a of lineAgg) {
+        lineSummaryByOrder.set(a.orderId, {
+          units: a.units,
+          reserved: a.reserved,
+          fulfilled: a.fulfilled,
+          specialOrder: a.specialOrder,
+        });
+      }
+
       // Gap §1/§8: an authorized return whose goods haven't come back
       // shows as "Awaiting Return Pickup" — the truck still owes a stop.
       const openReturns = await this.db
@@ -617,6 +664,7 @@ export class OrdersController {
         deliveryDate: trip?.date ?? r.requestedDate,
         balanceDueCents: balance,
         salespersonName: r.salespersonName ?? null,
+        lineSummary: lineSummaryByOrder.get(r.id) ?? null,
         totalCents: r.totalCents,
         createdAt: r.createdAt,
       };
@@ -627,6 +675,193 @@ export class OrdersController {
       data: enriched,
       nextCursor: hasMore && last ? encodeCursor(last.createdAt, last.id) : null,
     };
+  }
+
+  /**
+   * G13 Auto Stock Release (STORIS "Automatic Stock Release"): dead
+   * orders sitting past their promised date stop tying up real
+   * mattresses. Releases reservations on open orders promised more than
+   * `days` ago with nothing on a truck; every release is registered.
+   * P9's scheduler will run this nightly; until then it's a button.
+   */
+  @Post('orders/auto-stock-release')
+  @RequirePermission('inventory.adjust')
+  async autoStockRelease(
+    @CurrentTenant() tenant: RequestTenantContext,
+    @CurrentUser() actor: CurrentUserPayload,
+    @Body() body: { days?: number; dryRun?: boolean },
+  ): Promise<{ released: { id: string; number: string }[]; dryRun: boolean }> {
+    const days = Number.isInteger(body.days) && (body.days ?? 0) > 0 ? (body.days as number) : 30;
+    const cutoff = new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
+    const stale = await this.db
+      .select({
+        id: schema.orders.id,
+        number: schema.orders.number,
+        locationId: schema.orders.locationId,
+      })
+      .from(schema.orders)
+      .where(
+        and(
+          eq(schema.orders.businessId, tenant.businessId!),
+          inArray(schema.orders.status, ['open', 'partially_fulfilled']),
+          sql`${schema.orders.requestedDate} < ${cutoff}`,
+          sql`${schema.orders.lockedAt} IS NULL`,
+        ),
+      )
+      .limit(50);
+
+    const released: { id: string; number: string }[] = [];
+    for (const o of stale) {
+      // Anything on a live truck stays committed.
+      const [trip] = await this.db
+        .select({ id: schema.deliveries.id })
+        .from(schema.deliveries)
+        .where(
+          and(
+            eq(schema.deliveries.orderId, o.id),
+            inArray(schema.deliveries.status, ['scheduled', 'loaded', 'out_for_delivery']),
+          ),
+        )
+        .limit(1);
+      if (trip) continue;
+      const [holding] = await this.db
+        .select({ id: schema.orderLines.id })
+        .from(schema.orderLines)
+        .where(and(eq(schema.orderLines.orderId, o.id), sql`${schema.orderLines.qtyReserved} > 0`))
+        .limit(1);
+      if (!holding) continue;
+
+      if (!body.dryRun) {
+        await this.orders.releaseOrder(this.db, {
+          businessId: tenant.businessId!,
+          orderId: o.id,
+          locationId: o.locationId,
+          actorUserId: actor?.id ?? null,
+          updateLines: true,
+        });
+        await this.audit.log({
+          action: 'order.auto_stock_release',
+          targetType: 'order',
+          targetId: o.id,
+          metadata: { days, cutoff },
+        });
+        await this.exceptions.record({
+          type: 'auto_stock_release',
+          severity: 'info',
+          entityType: 'order',
+          entityId: o.id,
+          summary: `Order ${o.number} released its stock — promised over ${days} days ago with no truck booked`,
+        });
+      }
+      released.push({ id: o.id, number: o.number });
+    }
+    return { released, dryRun: Boolean(body.dryRun) };
+  }
+
+  /**
+   * G13 reservation-drift reconciliation: phantom reservations are
+   * silent and they compound. SUM(order_lines.qty_reserved) per
+   * variant+location must equal inventory_levels.reserved; anything
+   * else is drift worth an alert.
+   */
+  @Get('orders/reservation-drift')
+  @RequirePermission('reports.inventory.view')
+  async reservationDrift(@CurrentTenant() tenant: RequestTenantContext): Promise<
+    {
+      variantId: string;
+      sku: string | null;
+      locationId: string;
+      lineReserved: number;
+      levelReserved: number;
+      driftUnits: number;
+    }[]
+  > {
+    const rows = await this.db.execute(sql`
+      WITH line_side AS (
+        SELECT o.location_id, ol.variant_id, SUM(ol.qty_reserved)::int AS line_reserved
+        FROM order_lines ol
+        JOIN orders o ON o.id = ol.order_id
+        WHERE ol.business_id = ${tenant.businessId}
+          AND ol.variant_id IS NOT NULL
+        GROUP BY o.location_id, ol.variant_id
+      )
+      SELECT
+        COALESCE(ls.variant_id, il.variant_id) AS variant_id,
+        pv.sku,
+        COALESCE(ls.location_id, il.location_id) AS location_id,
+        COALESCE(ls.line_reserved, 0) AS line_reserved,
+        COALESCE(il.reserved, 0) AS level_reserved
+      FROM line_side ls
+      FULL OUTER JOIN inventory_levels il
+        ON il.variant_id = ls.variant_id AND il.location_id = ls.location_id
+        AND il.business_id = ${tenant.businessId}
+      LEFT JOIN product_variants pv ON pv.id = COALESCE(ls.variant_id, il.variant_id)
+      WHERE COALESCE(ls.line_reserved, 0) != COALESCE(il.reserved, 0)
+    `);
+    return (rows as unknown as Record<string, unknown>[]).map((r) => ({
+      variantId: String(r.variant_id),
+      sku: (r.sku as string | null) ?? null,
+      locationId: String(r.location_id),
+      lineReserved: Number(r.line_reserved),
+      levelReserved: Number(r.level_reserved),
+      driftUnits: Number(r.line_reserved) - Number(r.level_reserved),
+    }));
+  }
+
+  /**
+   * G14 duplicate-order detection (STORIS: prompts to consolidate
+   * delivery dates): the customer's open orders with their promised /
+   * scheduled dates, so New Sale can warn "this house already has a
+   * truck coming" before a second one gets booked.
+   */
+  @Get('customers/:customerId/open-orders')
+  @RequirePermission('orders.view')
+  async openOrdersFor(
+    @CurrentTenant() _tenant: RequestTenantContext,
+    @Param('customerId') customerId: string,
+  ): Promise<
+    { id: string; number: string; requestedDate: string | null; deliveryDate: string | null }[]
+  > {
+    const rows = await this.db
+      .select({
+        id: schema.orders.id,
+        number: schema.orders.number,
+        requestedDate: schema.orders.requestedDate,
+      })
+      .from(schema.orders)
+      .where(
+        and(
+          eq(schema.orders.customerId, customerId),
+          inArray(schema.orders.status, ['open', 'partially_fulfilled']),
+        ),
+      )
+      .orderBy(desc(schema.orders.createdAt))
+      .limit(20);
+    if (rows.length === 0) return [];
+    const trips = await this.db
+      .select({
+        orderId: schema.deliveries.orderId,
+        scheduledDate: schema.deliveries.scheduledDate,
+      })
+      .from(schema.deliveries)
+      .where(
+        and(
+          inArray(
+            schema.deliveries.orderId,
+            rows.map((r) => r.id),
+          ),
+          inArray(schema.deliveries.status, ['scheduled', 'loaded', 'out_for_delivery']),
+        ),
+      );
+    const tripByOrder = new Map<string, string>();
+    for (const t of trips) {
+      const cur = tripByOrder.get(t.orderId);
+      if (!cur || t.scheduledDate < cur) tripByOrder.set(t.orderId, t.scheduledDate);
+    }
+    return rows.map((r) => ({
+      ...r,
+      deliveryDate: tripByOrder.get(r.id) ?? null,
+    }));
   }
 
   @Get('orders/:id')

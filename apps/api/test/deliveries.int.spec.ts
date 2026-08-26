@@ -445,7 +445,7 @@ describe('Dispatch: capacity cap + zip routes (PLAN-POS-OPERATIONS P5)', () => {
     const cap = await ownerReq().get(`/v1/deliveries/capacity?from=${capDay}&to=${capDay}`);
     expect(cap.status).toBe(200);
     expect(cap.body.cap).toBe(2);
-    expect(cap.body.days).toEqual([{ date: capDay, booked: 2, remaining: 0 }]);
+    expect(cap.body.days[0]).toMatchObject({ date: capDay, booked: 2, remaining: 0 });
 
     // Third booking: refused plainly, allowed with the override flag.
     const thirdOrder = await makeDeliveryOrder();
@@ -453,7 +453,7 @@ describe('Dispatch: capacity cap + zip routes (PLAN-POS-OPERATIONS P5)', () => {
       .post(`/v1/orders/${thirdOrder}/deliveries`)
       .send({ scheduledDate: capDay });
     expect(refused.status).toBe(409);
-    expect(refused.body.message).toMatch(/at capacity \(2\/2/);
+    expect(refused.body.message).toMatch(/over capacity on stops \(2\/2\)/);
 
     const overridden = await ownerReq()
       .post(`/v1/orders/${thirdOrder}/deliveries`)
@@ -524,8 +524,11 @@ describe('Delivery runs — build, hard lock, close-out reconciliation (PLAN-STO
     // Nothing is paid — the truck carries both balances as COD.
     expect(detail.body.codDueCents).toBe(orderTotal * 2);
 
-    // A5: orders on an open run cannot be edited…
-    const blocked = await ownerReq().patch(`/v1/orders/${orderA}`).send({ notes: 'nope' });
+    // A5: orders on an open run cannot be edited (notes would pass the
+    // G9 allowlist, so poke a guarded field)…
+    const blocked = await ownerReq()
+      .patch(`/v1/orders/${orderA}`)
+      .send({ requestedDate: '2027-04-11' });
     expect(blocked.status).toBe(409);
     expect(blocked.body.message).toMatch(/delivery run/);
 
@@ -538,7 +541,7 @@ describe('Delivery runs — build, hard lock, close-out reconciliation (PLAN-STO
       .post(`/v1/delivery-runs/${runId}/remove-delivery`)
       .send({ deliveryId: deliveryA, reason: 'customer postponed' })
       .expect(201);
-    await ownerReq().patch(`/v1/orders/${orderA}`).send({ notes: 'editable again' }).expect(200);
+    await ownerReq().patch(`/v1/orders/${orderA}`).send({ requestedDate: runDay }).expect(200);
     const removals = await ownerReq().get('/v1/exceptions?type=manifest_removal');
     expect(removals.body.some((e: { entityId: string | null }) => e.entityId === orderA)).toBe(
       true,
@@ -627,5 +630,90 @@ describe('Delivery runs — build, hard lock, close-out reconciliation (PLAN-STO
     expect(failures.body.some((e: { entityId: string | null }) => e.entityId === orderId)).toBe(
       true,
     );
+  });
+});
+
+describe('Multi-dimensional capacity + zip→route map (PLAN-STORIS-GAP G12)', () => {
+  const g12Day = '2027-05-20';
+
+  async function makeDeliveryOrder(): Promise<string> {
+    const res = await ownerReq()
+      .post('/v1/orders')
+      .send({
+        locationId,
+        customerId,
+        fulfillmentType: 'delivery',
+        address: { line1: '12 Cube St', city: 'Glendale', region: 'CA', postalCode: '91205' },
+        lines: [{ variantId: mattressVariantId, quantity: 1 }],
+        confirm: true,
+      });
+    expect(res.status).toBe(201);
+    return res.body.id;
+  }
+
+  it('a king set fills the truck by capacity units, and zips map to named routes', async () => {
+    // The fixture mattress costs 3 capacity units; the day's budget is 4.
+    const sql2 = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    const db = drizzle(sql2);
+    try {
+      await db
+        .update(schema.productVariants)
+        .set({ capacityUnits: 3 })
+        .where(eq(schema.productVariants.id, mattressVariantId));
+    } finally {
+      await sql2.end({ timeout: 5 });
+    }
+    await ownerReq()
+      .patch('/v1/business/settings')
+      .send({
+        ops: { deliveryDailyCapacityUnits: 4, zipRoutes: { '912': 'Glendale AM' } },
+      })
+      .expect(200);
+
+    try {
+      // First stop: 3 of 4 units — fits, and the zip map names the route.
+      const first = await ownerReq()
+        .post(`/v1/orders/${await makeDeliveryOrder()}/deliveries`)
+        .send({ scheduledDate: g12Day });
+      expect(first.status).toBe(201);
+      expect(first.body.route).toBe('Glendale AM');
+
+      // Second stop: 3 more units would blow the 4-unit budget — the
+      // refusal names the dimension, not just "capacity".
+      const orderB = await makeDeliveryOrder();
+      const refused = await ownerReq()
+        .post(`/v1/orders/${orderB}/deliveries`)
+        .send({ scheduledDate: g12Day });
+      expect(refused.status).toBe(409);
+      expect(refused.body.message).toMatch(/capacity units/);
+
+      // Deliberate override still books it.
+      await ownerReq()
+        .post(`/v1/orders/${orderB}/deliveries`)
+        .send({ scheduledDate: g12Day, confirmOverCapacity: true })
+        .expect(201);
+
+      // The capacity endpoint reports the loaded dimensions.
+      const cap = await ownerReq().get(`/v1/deliveries/capacity?from=${g12Day}&to=${g12Day}`);
+      expect(cap.status).toBe(200);
+      expect(cap.body.unitCap).toBe(4);
+      expect(cap.body.days[0].capacityUnits).toBe(6);
+      expect(cap.body.days[0].pieces).toBe(2);
+    } finally {
+      await ownerReq()
+        .patch('/v1/business/settings')
+        .send({ ops: { deliveryDailyCapacityUnits: null, zipRoutes: null } })
+        .expect(200);
+      const sql3 = postgres(TEST_DB_URL, { max: 1, prepare: false });
+      const db3 = drizzle(sql3);
+      try {
+        await db3
+          .update(schema.productVariants)
+          .set({ capacityUnits: 1 })
+          .where(eq(schema.productVariants.id, mattressVariantId));
+      } finally {
+        await sql3.end({ timeout: 5 });
+      }
+    }
   });
 });

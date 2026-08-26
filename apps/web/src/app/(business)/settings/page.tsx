@@ -27,6 +27,8 @@ interface OpsSettings {
   maxBalanceForTicketPrintCents?: number | null;
   invoiceVarianceToleranceCents?: number | null;
   blindReceiving?: boolean | null;
+  deliveryDailyPieceCap?: number | null;
+  deliveryDailyCapacityUnits?: number | null;
   priceVariance?: {
     tier1Pct?: number | null;
     tier1MaxCents?: number | null;
@@ -240,6 +242,10 @@ function OpsCard({ settings, onSaved }: { settings: Settings; onSaved: (s: Setti
         invoiceFooterNote: String(data.get('invoiceFooterNote') ?? '').trim() || null,
         poReplyTo: String(data.get('poReplyTo') ?? '').trim() || null,
       };
+      const pieceCap = String(data.get('deliveryPieceCap') ?? '').trim();
+      body.deliveryDailyPieceCap = pieceCap === '' ? null : Number(pieceCap);
+      const unitCap = String(data.get('deliveryUnitCap') ?? '').trim();
+      body.deliveryDailyCapacityUnits = unitCap === '' ? null : Number(unitCap);
       const invTol = String(data.get('invoiceTolerance') ?? '').trim();
       body.invoiceVarianceToleranceCents = invTol === '' ? null : Math.round(Number(invTol) * 100);
       body.blindReceiving = data.get('blindReceiving') === 'on' ? true : null;
@@ -324,6 +330,24 @@ function OpsCard({ settings, onSaved }: { settings: Settings; onSaved: (s: Setti
               ? (ops.maxBalanceForTicketPrintCents / 100).toFixed(2)
               : ''
           }
+          style={{ width: '100%' }}
+        />
+      </Field>
+      <Field label="Delivery pieces per day (blank = no piece budget)">
+        <Input
+          name="deliveryPieceCap"
+          type="number"
+          min={1}
+          defaultValue={ops.deliveryDailyPieceCap ?? ''}
+          style={{ width: '100%' }}
+        />
+      </Field>
+      <Field label="Delivery capacity units per day (blank = off; king set > twin)">
+        <Input
+          name="deliveryUnitCap"
+          type="number"
+          min={1}
+          defaultValue={ops.deliveryDailyCapacityUnits ?? ''}
           style={{ width: '100%' }}
         />
       </Field>

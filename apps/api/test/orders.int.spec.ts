@@ -13,7 +13,7 @@ import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { hashPassword } from 'better-auth/crypto';
 import { drizzle } from 'drizzle-orm/postgres-js';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import postgres from 'postgres';
 import request from 'supertest';
 import { Test } from '@nestjs/testing';
@@ -1903,5 +1903,172 @@ describe('Print preconditions + reprint counter + unlock expiry (PLAN-STORIS-GAP
       .patch(`/v1/orders/${order.id}`)
       .send({ requestedDate: '2026-10-04' })
       .expect(200);
+  });
+});
+
+describe('Line roll-up, Past Due, auto stock release, drift, duplicate prompt (PLAN-STORIS-GAP G13+G14)', () => {
+  let g13VariantId = '';
+
+  beforeAll(async () => {
+    const sql2 = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    const db = drizzle(sql2);
+    try {
+      const [p] = await db
+        .insert(schema.products)
+        .values({ businessId, sku: 'G13-BED', name: 'Rollup Fixture Bed' })
+        .returning();
+      const [v] = await db
+        .insert(schema.productVariants)
+        .values({ businessId, productId: p!.id, sku: 'G13-BED-V1', priceCents: 40000 })
+        .returning();
+      g13VariantId = v!.id;
+      await db.insert(schema.inventoryLevels).values({
+        businessId,
+        variantId: g13VariantId,
+        locationId,
+        onHand: 50,
+        reserved: 0,
+      });
+    } finally {
+      await sql2.end({ timeout: 5 });
+    }
+  });
+
+  function as(cookie: string) {
+    return {
+      post: (url: string) =>
+        request(app.getHttpServer())
+          .post(url)
+          .set('Cookie', cookie)
+          .set('X-Business-Id', businessId),
+      get: (url: string) =>
+        request(app.getHttpServer())
+          .get(url)
+          .set('Cookie', cookie)
+          .set('X-Business-Id', businessId),
+    };
+  }
+
+  it('the list view rolls up line state and filters Past Due', async () => {
+    const created = await as(ownerCookie)
+      .post('/v1/orders')
+      .send({
+        locationId,
+        customerId,
+        confirm: true,
+        fulfillmentType: 'delivery',
+        requestedDate: '2020-01-15', // long past due
+        lines: [
+          { variantId: g13VariantId, quantity: 2 },
+          { variantId: g13VariantId, quantity: 1, lineType: 'special_order' },
+        ],
+      });
+    expect(created.status).toBe(201);
+
+    const pastDue = await as(ownerCookie).get('/v1/orders/list-view?view=past_due&limit=100');
+    expect(pastDue.status).toBe(200);
+    const row = pastDue.body.data.find((r: { id: string }) => r.id === created.body.id);
+    expect(row).toBeTruthy();
+    // 3 units total, 2 reserved (the SO line reserves nothing), 1 SO.
+    expect(row.lineSummary).toMatchObject({ units: 3, reserved: 2, specialOrder: 1 });
+
+    // The default view also carries the roll-up.
+    const all = await as(ownerCookie).get('/v1/orders/list-view?limit=100');
+    const same = all.body.data.find((r: { id: string }) => r.id === created.body.id);
+    expect(same.lineSummary.units).toBe(3);
+  });
+
+  it('auto stock release frees reservations on stale orders and registers each', async () => {
+    const created = await as(ownerCookie)
+      .post('/v1/orders')
+      .send({
+        locationId,
+        customerId,
+        confirm: true,
+        fulfillmentType: 'delivery',
+        requestedDate: '2020-02-01',
+        lines: [{ variantId: g13VariantId, quantity: 1 }],
+      });
+    expect(created.status).toBe(201);
+    expect(created.body.lines[0].qtyReserved).toBe(1);
+
+    // Dry run reports without touching anything.
+    const dry = await as(ownerCookie)
+      .post('/v1/orders/auto-stock-release')
+      .send({ days: 30, dryRun: true });
+    expect(dry.status).toBe(201);
+    expect(dry.body.dryRun).toBe(true);
+    expect(dry.body.released.some((r: { id: string }) => r.id === created.body.id)).toBe(true);
+    const still = await as(ownerCookie).get(`/v1/orders/${created.body.id}`);
+    expect(still.body.lines[0].qtyReserved).toBe(1);
+
+    // The real run releases and registers.
+    const run = await as(ownerCookie).post('/v1/orders/auto-stock-release').send({ days: 30 });
+    expect(run.status).toBe(201);
+    expect(run.body.released.some((r: { id: string }) => r.id === created.body.id)).toBe(true);
+    const after = await as(ownerCookie).get(`/v1/orders/${created.body.id}`);
+    expect(after.body.lines[0].qtyReserved).toBe(0);
+    const register = await as(ownerCookie).get('/v1/exceptions?type=auto_stock_release');
+    expect(
+      register.body.some((e: { entityId: string | null }) => e.entityId === created.body.id),
+    ).toBe(true);
+  });
+
+  it('reservation drift shows up on the reconciliation report', async () => {
+    const clean = await as(ownerCookie).get('/v1/orders/reservation-drift');
+    expect(clean.status).toBe(200);
+
+    // Introduce drift by hand: bump the level's reserved without an order.
+    const sql2 = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    const db = drizzle(sql2);
+    try {
+      await db
+        .update(schema.inventoryLevels)
+        .set({ reserved: sql`${schema.inventoryLevels.reserved} + 5` })
+        .where(
+          and(
+            eq(schema.inventoryLevels.variantId, g13VariantId),
+            eq(schema.inventoryLevels.locationId, locationId),
+          ),
+        );
+      const drifted = await as(ownerCookie).get('/v1/orders/reservation-drift');
+      expect(drifted.status).toBe(200);
+      const hit = drifted.body.find(
+        (r: { variantId: string; locationId: string }) =>
+          r.variantId === g13VariantId && r.locationId === locationId,
+      );
+      expect(hit).toBeTruthy();
+      expect(hit.driftUnits).toBe(-5);
+    } finally {
+      await db
+        .update(schema.inventoryLevels)
+        .set({ reserved: sql`${schema.inventoryLevels.reserved} - 5` })
+        .where(
+          and(
+            eq(schema.inventoryLevels.variantId, g13VariantId),
+            eq(schema.inventoryLevels.locationId, locationId),
+          ),
+        );
+      await sql2.end({ timeout: 5 });
+    }
+  });
+
+  it('open-orders summary powers the duplicate-order prompt', async () => {
+    const created = await as(ownerCookie)
+      .post('/v1/orders')
+      .send({
+        locationId,
+        customerId,
+        confirm: true,
+        fulfillmentType: 'delivery',
+        requestedDate: '2027-08-01',
+        lines: [{ variantId: g13VariantId, quantity: 1 }],
+      });
+    expect(created.status).toBe(201);
+    const open = await as(ownerCookie).get(`/v1/customers/${customerId}/open-orders`);
+    expect(open.status).toBe(200);
+    const hit = open.body.find((o: { id: string }) => o.id === created.body.id);
+    expect(hit).toBeTruthy();
+    expect(hit.requestedDate).toBe('2027-08-01');
   });
 });

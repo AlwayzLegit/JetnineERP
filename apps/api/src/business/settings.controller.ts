@@ -47,6 +47,12 @@ interface OpsSettings {
   invoiceVarianceToleranceCents?: number | null;
   /** G11: hide expected quantities on the receiving grid. */
   blindReceiving?: boolean | null;
+  /** G12: optional per-day piece budget for the trucks. */
+  deliveryDailyPieceCap?: number | null;
+  /** G12: optional per-day capacity-unit budget (variant capacityUnits). */
+  deliveryDailyCapacityUnits?: number | null;
+  /** G12: zip-prefix → route map ("912" → "Glendale AM"). */
+  zipRoutes?: Record<string, string> | null;
   /** G6 three-tier price-variance thresholds (defaults 5% / $50 / 15%). */
   priceVariance?: {
     tier1Pct?: number | null;
@@ -129,6 +135,29 @@ function validateOps(input: OpsSettings): OpsSettings {
       throw new BadRequestException('ops.blindReceiving must be a boolean');
     }
     out.blindReceiving = input.blindReceiving;
+  }
+  for (const key of ['deliveryDailyPieceCap', 'deliveryDailyCapacityUnits'] as const) {
+    if (input[key] !== undefined) {
+      if (input[key] !== null && (!Number.isInteger(input[key]) || (input[key] as number) < 1)) {
+        throw new BadRequestException(`ops.${key} must be a positive integer`);
+      }
+      out[key] = input[key];
+    }
+  }
+  if (input.zipRoutes !== undefined) {
+    if (input.zipRoutes !== null) {
+      if (typeof input.zipRoutes !== 'object' || Array.isArray(input.zipRoutes)) {
+        throw new BadRequestException('ops.zipRoutes must be an object of prefix → route');
+      }
+      for (const [prefix, route] of Object.entries(input.zipRoutes)) {
+        if (!/^\d{1,5}$/.test(prefix) || typeof route !== 'string' || !route.trim()) {
+          throw new BadRequestException(
+            'ops.zipRoutes keys must be 1–5 digit zip prefixes with non-empty route names',
+          );
+        }
+      }
+    }
+    out.zipRoutes = input.zipRoutes;
   }
   if (input.priceVariance !== undefined) {
     if (input.priceVariance !== null) {

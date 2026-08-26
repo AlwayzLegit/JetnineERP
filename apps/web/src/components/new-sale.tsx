@@ -128,6 +128,9 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
   // --- customer ---
   const [customer, setCustomer] = useState<CustomerHit | null>(null);
   const [storeCredit, setStoreCredit] = useState<number | null>(null);
+  const [openOrders, setOpenOrders] = useState<
+    { id: string; number: string; requestedDate: string | null; deliveryDate: string | null }[]
+  >([]);
   const [exchangeOriginal, setExchangeOriginal] = useState<{
     id: string;
     number: string;
@@ -198,6 +201,26 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
       stale = true;
     };
   }, [fulfillment, requestedDate]);
+
+  // G14: the customer's open orders — two orders, same house, same
+  // week is two trucks and pure margin loss.
+  useEffect(() => {
+    if (!customer) {
+      setOpenOrders([]);
+      return;
+    }
+    let stale = false;
+    api<
+      { id: string; number: string; requestedDate: string | null; deliveryDate: string | null }[]
+    >(`/v1/customers/${customer.id}/open-orders`)
+      .then((r) => {
+        if (!stale) setOpenOrders(r);
+      })
+      .catch(() => setOpenOrders([]));
+    return () => {
+      stale = true;
+    };
+  }, [customer]);
 
   // §10: store credit auto-surfaces at checkout.
   useEffect(() => {
@@ -458,6 +481,19 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
       setError('Layaway needs a minimum $100 deposit to open.');
       return;
     }
+    // G14: promising a date before the goods can arrive is the #1
+    // customer-service failure in furniture — make it a deliberate act.
+    if (mode === 'complete' && requestedDate) {
+      const lateLines = lines.filter((l) => l.atpDate && l.atpDate > requestedDate);
+      if (lateLines.length > 0) {
+        const ok = window.confirm(
+          `Promised ${requestedDate}, but not expected until ${lateLines
+            .map((l) => `${l.description} (${l.atpDate})`)
+            .join(', ')}. Promise it anyway?`,
+        );
+        if (!ok) return;
+      }
+    }
     setBusy(true);
     try {
       await doSubmit(mode);
@@ -670,6 +706,23 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
             Writing an <strong>Exchange Order</strong> against original invoice{' '}
             <strong>{exchangeOriginal.number}</strong> — the document prints with the original
             number, and the customer is fixed to the original order&apos;s.
+          </div>
+        )}
+        {!exchangeOriginal && openOrders.length > 0 && (
+          <div
+            className="card mb-3"
+            data-testid="duplicate-order-banner"
+            style={{ padding: '10px 14px', borderColor: 'var(--warning)', fontSize: 13 }}
+          >
+            This customer already has {openOrders.length === 1 ? 'an open order' : 'open orders'}:{' '}
+            {openOrders.map((o, i) => (
+              <span key={o.id}>
+                {i > 0 && ', '}
+                <strong>{o.number}</strong>
+                {(o.deliveryDate ?? o.requestedDate) && ` (${o.deliveryDate ?? o.requestedDate})`}
+              </span>
+            ))}
+            {' — '}consider one truck: add to the existing order or match its delivery date.
           </div>
         )}
         {drafts.length > 0 && (
