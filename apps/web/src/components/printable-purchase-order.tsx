@@ -12,6 +12,8 @@ export interface PrintablePoLine {
   quantityOrdered: number;
   unitCostCents: number;
   lineTotalCents: number;
+  /** §6: units on this line bought for specific customer orders. */
+  linkedOrders?: { orderId: string; orderNumber: string; quantity: number }[];
 }
 
 export interface PrintablePo {
@@ -114,6 +116,12 @@ export function PrintablePurchaseOrder({ po }: { po: PrintablePo }) {
               <td>
                 {l.productName}
                 {l.variantName ? ` — ${l.variantName}` : ''}
+                {l.linkedOrders && l.linkedOrders.length > 0 && (
+                  <div className="po-oursku">
+                    For sales order{l.linkedOrders.length > 1 ? 's' : ''}:{' '}
+                    {l.linkedOrders.map((o) => `${o.orderNumber} ×${o.quantity}`).join(', ')}
+                  </div>
+                )}
               </td>
               <td className="num">{l.quantityOrdered}</td>
               <td className="num">{formatMoney(l.unitCostCents)}</td>

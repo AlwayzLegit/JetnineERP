@@ -514,3 +514,160 @@ describe('Reorder automation', () => {
     expect(blank.status).toBe(400);
   });
 });
+
+describe('Receiving stages + PO email + invoice matching (PLAN-POS-OPERATIONS P6)', () => {
+  let vendorId = '';
+  let poId = '';
+  let poNumber = '';
+  let lineId = '';
+
+  function owner() {
+    return {
+      post: (url: string) =>
+        request(app.getHttpServer())
+          .post(url)
+          .set('Cookie', ownerCookie)
+          .set('X-Business-Id', businessId),
+      get: (url: string) =>
+        request(app.getHttpServer())
+          .get(url)
+          .set('Cookie', ownerCookie)
+          .set('X-Business-Id', businessId),
+      patch: (url: string) =>
+        request(app.getHttpServer())
+          .patch(url)
+          .set('Cookie', ownerCookie)
+          .set('X-Business-Id', businessId),
+    };
+  }
+
+  it('sets the stage: vendor with email, a placed 5-unit PO', async () => {
+    const vendor = await owner()
+      .post('/v1/vendors')
+      .send({ name: 'Stage Vendor', email: 'orders@stagevendor.test' });
+    expect(vendor.status).toBe(201);
+    vendorId = vendor.body.id;
+
+    const po = await owner()
+      .post('/v1/purchase-orders')
+      .send({
+        vendorId,
+        locationId,
+        lines: [{ variantId: variantAId, quantity: 5, unitCostCents: 1000 }],
+      });
+    expect(po.status).toBe(201);
+    poId = po.body.id;
+    poNumber = po.body.number;
+    lineId = po.body.lines[0].id;
+    expect(po.body.lines[0].quantityInspected).toBe(0);
+    expect(po.body.lines[0].quantityAccepted).toBe(0);
+  });
+
+  it('dock receipt and inspection move no stock; acceptance does', async () => {
+    const before = await levelOf(variantAId);
+
+    const dock = await owner()
+      .post(`/v1/purchase-orders/${poId}/receiving`)
+      .send({ lines: [{ lineId, received: 3 }] });
+    expect(dock.status).toBe(201);
+    expect(dock.body.status).toBe('partially_received');
+    expect(dock.body.lines[0].quantityReceived).toBe(3);
+    expect(await levelOf(variantAId)).toBe(before); // nothing sellable yet
+
+    const inspected = await owner()
+      .post(`/v1/purchase-orders/${poId}/receiving`)
+      .send({ lines: [{ lineId, inspected: 3, accepted: 2 }] });
+    expect(inspected.status).toBe(201);
+    expect(inspected.body.lines[0].quantityInspected).toBe(3);
+    expect(inspected.body.lines[0].quantityAccepted).toBe(2);
+    expect(await levelOf(variantAId)).toBe(before + 2); // accepted units only
+  });
+
+  it('stage invariants hold: no accepting past inspected, no receiving past ordered', async () => {
+    const overAccept = await owner()
+      .post(`/v1/purchase-orders/${poId}/receiving`)
+      .send({ lines: [{ lineId, accepted: 2 }] }); // accepted would be 4 > inspected 3
+    expect(overAccept.status).toBe(400);
+    expect(overAccept.body.message).toMatch(/more units than have been inspected/);
+
+    const overReceive = await owner()
+      .post(`/v1/purchase-orders/${poId}/receiving`)
+      .send({ lines: [{ lineId, received: 3 }] }); // received would be 6 > ordered 5
+    expect(overReceive.status).toBe(400);
+    expect(overReceive.body.message).toMatch(/remaining/);
+  });
+
+  it('PO auto-completes only when every unit is accepted', async () => {
+    const finish = await owner()
+      .post(`/v1/purchase-orders/${poId}/receiving`)
+      .send({ lines: [{ lineId, received: 2, inspected: 2, accepted: 3 }] });
+    expect(finish.status).toBe(201);
+    expect(finish.body.status).toBe('received');
+    expect(finish.body.closedAt).toBeTruthy();
+    expect(finish.body.lines[0].quantityAccepted).toBe(5);
+  });
+
+  it('emails the PO to the vendor with the admin reply-to', async () => {
+    const ops = await owner()
+      .patch('/v1/business/settings')
+      .send({ ops: { poReplyTo: 'purchasing@lamattress.test' } });
+    expect(ops.status).toBe(200);
+
+    const sent = await owner().post(`/v1/purchase-orders/${poId}/email`).send({});
+    expect(sent.status).toBe(201);
+    expect(sent.body.to).toBe('orders@stagevendor.test');
+
+    const captured = await request(app.getHttpServer())
+      .get('/v1/dev/email/last?to=orders@stagevendor.test')
+      .expect(200);
+    expect(captured.body.subject).toContain(poNumber);
+    expect(captured.body.replyTo).toBe('purchasing@lamattress.test');
+    expect(captured.body.html).toContain(poNumber);
+  });
+
+  it('vendor invoice: auto-match by PO #, variance, approve; clerk 403', async () => {
+    await request(app.getHttpServer())
+      .post('/v1/vendor-invoices')
+      .set('Cookie', clerkCookie)
+      .set('X-Business-Id', businessId)
+      .send({ vendorId, number: 'SV-100', totalCents: 5000 })
+      .expect(403);
+
+    const recorded = await owner()
+      .post('/v1/vendor-invoices')
+      .send({ vendorId, number: 'SV-100', totalCents: 5200, poNumber });
+    expect(recorded.status).toBe(201);
+    expect(recorded.body.status).toBe('matched');
+    expect(recorded.body.poNumber).toBe(poNumber);
+    expect(recorded.body.varianceCents).toBe(5200 - 5000);
+
+    const dup = await owner()
+      .post('/v1/vendor-invoices')
+      .send({ vendorId, number: 'SV-100', totalCents: 5200, poNumber });
+    expect(dup.status).toBe(409);
+
+    const listed = await owner().get(`/v1/vendor-invoices?purchaseOrderId=${poId}`);
+    expect(listed.status).toBe(200);
+    expect(listed.body).toHaveLength(1);
+
+    const approved = await owner().post(`/v1/vendor-invoices/${recorded.body.id}/approve`).send({});
+    expect(approved.status).toBe(201);
+    expect(approved.body.status).toBe('approved');
+
+    const again = await owner().post(`/v1/vendor-invoices/${recorded.body.id}/approve`).send({});
+    expect(again.status).toBe(400);
+  });
+
+  it('an invoice with no matching PO stays unmatched and cannot be approved', async () => {
+    const res = await owner()
+      .post('/v1/vendor-invoices')
+      .send({ vendorId, number: 'SV-999', totalCents: 123_45 });
+    expect(res.status).toBe(201);
+    expect(res.body.status).toBe('unmatched');
+    expect(res.body.varianceCents).toBeNull();
+
+    const approve = await owner().post(`/v1/vendor-invoices/${res.body.id}/approve`).send({});
+    expect(approve.status).toBe(400);
+    expect(approve.body.message).toMatch(/Match the invoice/);
+  });
+});

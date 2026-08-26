@@ -253,6 +253,13 @@
       "when": 1787723872690,
       "tag": "0035_delivery_routes",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1787725166978,
+      "tag": "0036_receiving_stages_vendor_invoices",
+      "breakpoints": true
     }
   ]
 }

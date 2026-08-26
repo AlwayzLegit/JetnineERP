@@ -239,11 +239,14 @@ test.describe('Day 9 — QA sweep', () => {
       .then((r) => r.json())) as { data?: { id: string }[] } | { id: string }[];
     const poId = Array.isArray(pos) ? pos[0]!.id : pos.data![0]!.id;
     await page.goto(`/purchase-orders/${poId}`);
-    await page.locator('table input[type="number"]').first().fill('1');
+    // Staged receiving (P6): dock → inspected → accepted in one submit.
+    await page.getByTestId('stage-received').first().fill('1');
+    await page.getByTestId('stage-inspected').first().fill('1');
+    await page.getByTestId('stage-accepted').first().fill('1');
     const receiveDone = page.waitForResponse(
-      (res) => res.url().includes('/receive') && res.request().method() === 'POST',
+      (res) => res.url().includes('/receiving') && res.request().method() === 'POST',
     );
-    await page.getByRole('button', { name: 'Record receipt' }).click();
+    await page.getByTestId('record-receiving').click();
     // The 201 is the synchronization point: handleReceipt (stock,
     // allocations, reservations, arrival email) runs before it returns.
     expect((await receiveDone).status()).toBe(201);

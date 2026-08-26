@@ -32,6 +32,7 @@ export const PERMISSIONS = {
 
   'vendors.view': 'View vendors',
   'vendors.manage': 'Create / update / delete vendors',
+  'vendor_invoices.manage': 'Record vendor invoices, match them to POs, and approve them',
 
   'purchase_orders.view': 'View purchase orders',
   'purchase_orders.create': 'Create purchase orders',

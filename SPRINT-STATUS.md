@@ -660,7 +660,7 @@ supersedes the checkpoint-7 wizard; legacy register + its offline mode retire).
 - [x] **Build P5:** Delivery dispatch table + 15-stop capacity + zip routes.
       `deliveries.route` (migration 0035) auto-suggested from the ship-to zip at
       scheduling ("91205" → "912xx"), free-text editable via PATCH. `GET
-  /v1/deliveries/capacity?from&to` returns per-day booked/remaining against
+/v1/deliveries/capacity?from&to` returns per-day booked/remaining against
       ops.deliveryDailyCap (default 15; counted business-wide — one fleet, flagged as v1
       convention). Booking a full day now 409s unless `confirmOverCapacity: true`; the
       override writes audit `delivery.cap_override` (targeting the order) → owner
@@ -674,8 +674,32 @@ supersedes the checkpoint-7 wizard; legacy register + its offline mode retire).
       need a capacity override" at cap). deliveries.int.spec +2 → 14/14; orders 35/35.
       — _2026-08-26. Conventions flagged: cap counts stops business-wide, not per store;
       route suggestion is zip-prefix ("912xx") pending real route areas._
-- [ ] **Build P6:** Purchasing — PO builder suggestions, PDF/email, receiving
-      Received→Inspected→Accepted, partial receipts, vendor-invoice matching
+- [x] **Build P6:** Purchasing — builder pre-load, PO email, staged receiving, invoice
+      matching. **Receiving** (migration 0036): purchase*order_lines gained
+      quantity_inspected/quantity_accepted; new `POST :id/receiving` takes per-line stage
+      increments with the invariant ordered ≥ received ≥ inspected ≥ accepted — stock and
+      the special-order allocation flip (customer line → Reserved + arrival email) happen
+      at ACCEPT, not dock receipt; PO auto-completes only when every unit is accepted;
+      legacy `POST :id/receive` is now the "receive+inspect+accept in one" fast path over
+      the same core, so nothing downstream changed. PO detail rebuilt as the single
+      receiving screen (Ordered/Rcvd/Insp/Acc columns, three increment inputs per line,
+      "X of Y accepted — N remaining", linked-SO chips, "Receive & accept all remaining").
+      **Builder pre-load (§5/§6)**: /purchase-orders/new shows "Suggested for this vendor"
+      — (a) at/below reorder point (existing endpoint, filtered to vendor) and (b)
+      sold-not-in-stock queue rows (queue now exposes preferredVendorId + cost); queue
+      adds carry `orderLineId`, which PO create now accepts to write the po_line_allocation
+      so the SO # rides the PO (printed doc + emailed doc + detail chips all show it).
+      **Email**: `POST :id/email` sends the PO to the vendor via the existing Resend/memory
+      transport with Reply-To = ops.poReplyTo (SendEmailInput grew replyTo). **Invoices**
+      (vendor_invoices table, RLS'd, unique per vendor+number): `POST /v1/vendor-invoices`
+      auto-matches by PO # (or vendor+amount fallback), surfaces varianceCents vs the PO
+      subtotal, `POST :id/approve` one-click (no queue per §13); new `vendor_invoices.manage`
+      permission (Owner/Manager + Bookkeeper via role sync); PO page gained the invoice
+      card (record & match, variance badge, approve). purchasing.int.spec +7 → 24/24,
+      special-orders +1 → 6/6, orders 35/35; sweep e2e receiving flow updated.
+      — \_2026-08-26. Conventions flagged: no-PO-number auto-match falls back to newest
+      same-vendor PO with an equal subtotal; inspection is bookkeeping only (no damaged/
+      reject disposition until P8's As-Is flow).*
 - [ ] **Build P7:** Transfers with ticket + sign + receive-confirm workflow
 - [ ] **Build P8:** Returns/exchanges/service, As-Is review flow, store credit
 - [ ] **Build P9:** Commissions (equal-split default, exchange clawback), owner +

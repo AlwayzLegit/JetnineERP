@@ -112,6 +112,7 @@ DECLARE
     'import_rows',
     'integrations',
     'po_line_allocations',
+    'vendor_invoices',
     'serial_units',
     'payment_plans',
     'payment_plan_installments',
