@@ -436,7 +436,7 @@ function MorningBriefCard({ brief }: { brief: MorningBrief }) {
         </div>
         <div className="min-w-0">
           <p style={{ margin: '0 0 8px' }}>
-            <strong>Today's deliveries:</strong>{' '}
+            <strong>Today&apos;s deliveries:</strong>{' '}
             <span style={{ color: over ? 'var(--danger)' : undefined }}>
               {brief.deliveriesToday.booked} of {brief.deliveriesToday.cap} booked
             </span>
