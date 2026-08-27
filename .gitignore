@@ -48,3 +48,4 @@ fly.toml.local
 # Redis snapshot dropped by a locally-running redis-server
 dump.rdb
 apps/web/pw.local.config.ts
+__pycache__/
