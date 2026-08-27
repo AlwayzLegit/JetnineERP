@@ -61,6 +61,21 @@ interface SalesSummary {
     averageMerchandiseCents: number;
   };
 }
+interface AdjustmentsReport {
+  truncated: boolean;
+  byReason: { reason: string; movements: number; totalIn: number; totalOut: number }[];
+  rows: {
+    at: string;
+    reason: string;
+    delta: number;
+    productName: string;
+    sku: string | null;
+    locationName: string | null;
+    actorEmail: string | null;
+    notes: string | null;
+    referenceType: string | null;
+  }[];
+}
 interface ReceiptsReport {
   rows: {
     method: string;
@@ -223,6 +238,7 @@ export default function ReportsPage() {
   const [summary, setSummary] = useState<SalesSummary | null>(null);
   const [giftLiability, setGiftLiability] = useState<GiftCardLiability | null>(null);
   const [receipts, setReceipts] = useState<ReceiptsReport | null>(null);
+  const [adjustments, setAdjustments] = useState<AdjustmentsReport | null>(null);
   const [dateChanges, setDateChanges] = useState<DeliveryDateChangeRow[] | null>(null);
   const [summaryBasis, setSummaryBasis] = useState<'written' | 'delivered'>('written');
   const [summaryGroupBy, setSummaryGroupBy] = useState<'day' | 'location' | 'salesperson'>('day');
@@ -306,6 +322,16 @@ export default function ReportsPage() {
     }
   }
 
+  async function loadAdjustments() {
+    try {
+      setAdjustments(
+        await api<AdjustmentsReport>(`/v1/reports/inventory-adjustments?start=${start}&end=${end}`),
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
   async function loadDateChanges() {
     try {
       const res = await api<{ rows: DeliveryDateChangeRow[] }>(
@@ -318,6 +344,7 @@ export default function ReportsPage() {
   }
 
   useEffect(() => {
+    void loadAdjustments();
     void loadReceipts();
     void loadDateChanges();
     void loadSummary();
@@ -920,6 +947,54 @@ export default function ReportsPage() {
               </tbody>
             </table>
           </div>
+        )}
+      </Card>
+
+      <Card title="Inventory adjustments" data-testid="inventory-adjustments">
+        <div className="mb-3 flex flex-wrap items-end gap-2">
+          <Button variant="secondary" onClick={() => void loadAdjustments()}>
+            <RefreshCw size={14} aria-hidden />
+            Run for {start} → {end}
+          </Button>
+          <CsvButton
+            path={`/v1/reports/inventory-adjustments?start=${start}&end=${end}&format=csv`}
+            filename={`inventory-adjustments-${start}-to-${end}.csv`}
+            size="sm"
+          />
+          {adjustments?.truncated && (
+            <span style={{ fontSize: 12, color: 'var(--warning, #b45309)' }}>
+              Showing the most recent 1000 movements — narrow the window for full coverage.
+            </span>
+          )}
+        </div>
+        {!adjustments ? (
+          <LoadingRows />
+        ) : (
+          <>
+            <div style={{ overflowX: 'auto' }}>
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Reason</th>
+                    <th className="num">Movements</th>
+                    <th className="num">Units in</th>
+                    <th className="num">Units out</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {adjustments.byReason.length === 0 && <Empty colSpan={4} />}
+                  {adjustments.byReason.map((r) => (
+                    <tr key={r.reason}>
+                      <td>{r.reason}</td>
+                      <td className="num">{r.movements}</td>
+                      <td className="num">{r.totalIn}</td>
+                      <td className="num">{r.totalOut}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
         )}
       </Card>
 
