@@ -2612,3 +2612,49 @@ Items-for-Replenishment grid (session overrides, Rebuild List T-32),
 PO creation (qty>0 only, auto-hold T-28), delivery dates T-29/T-30,
 EOD mode via jobs runner (T-25/26) + T-31 identical-modes test.
 Gates: typecheck 0 · lint 0 · test 0 · build 0 · prettier 0.
+
+## Sales-rate replenishment — data layer, run modes, UI (2026-08-27)
+
+Task #24 slice 2: the engine now runs against live data in all modes.
+PR #61 (engine) merged; deploy verified `63/63, head=0062` at 22:24.
+
+- `replenishment-data.ts` — the ONE data path (T-31 rests here too):
+  builds every engine input per vendor × warehouse. Jetnine mappings,
+  recorded in the file: warehouse = the run's chosen location, all
+  other locations are "store stock"; written basis = order + POS write
+  dates, delivered = delivered deliveries + POS completions (imports
+  excluded — timestamps are import-time); returns = refund lines;
+  branch-B fill window = criteria ?? vendor daysForReplenishment ??
+  lead days; layaway demand kept out of uncommitted (no
+  double-subtract); dateless transfers excluded; direct-ship POs are
+  never supply; held PO = draft (still supply, per pack); unitVolume =
+  capacityUnits; as-is qty from pending-review as-is items.
+- `replenishment.controller.ts` — ReplenishmentRunService (shared by
+  endpoint + EOD; only the db handle differs) and endpoints:
+  GET/PATCH `/v1/purchasing/replenishment/vendors/:id/settings`
+  (validated, audited; PATCH null or enabled:false clears), POST
+  `…/run` (criteria → grid rows with product meta), POST
+  `…/purchase-order` (T-32 session overrides in the body; only qty>0
+  written; T-28 hold = draft, else placed; §5.1/T-29/T-30 header
+  expected date = furthest lead-day date or today).
+- EOD: `sales_rate_replenishment` job (order 35) — per vendor:
+  Generate Automatic POs + Build POs weekday gate (T-25/26), then the
+  identical run path; info exception lists created PO numbers.
+- Ops block `salesRateReplenishment` (settings registry + validation):
+  written/delivered basis, exclude-weekends divisor, standard rounding,
+  store-stock availability, layaway-in-NetPO.
+- Web `/replenishment` (nav: Catalog → Replenishment): criteria screen,
+  vendor-settings editor (incl. Build POs weekdays), Items-for-
+  Replenishment grid with session-only Order Qty edits, Rebuild List,
+  Create Purchase Order.
+- purchasing.int.spec 39→43: settings round-trip + refusals, §8
+  baseline from live data (80 sold/8wk, 45 on hand/15 committed →
+  20/30/30/0 → order 20), EOD writes the identical qty held+dated
+  (T-31/T-28/T-29), supply feedback zeroes the next run, override
+  creates qty>0 only (T-32).
+
+Deferred within the pack (flagged): GMROI/turns/average-units detail
+panel, vendor ship-from + buying groups + volume-limit cap (no Jetnine
+equivalents yet), print report. Criteria filters shipped: products,
+category; group/collection/model n/a.
+Gates: typecheck 0 · lint 0 · test 0 (full) · build 0 · format 0.
