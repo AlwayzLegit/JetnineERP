@@ -333,6 +333,9 @@ export default function ReportsPage() {
   return (
     <div>
       <PageHeader title="Reports" />
+      <p style={{ marginTop: -6, marginBottom: 14, fontSize: 13 }}>
+        <a href="/reports/merchandising">Merchandising activity (buyer&apos;s report) →</a>
+      </p>
       {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
 
       <Card title="Z-report (daily close-out)" data-testid="z-report">

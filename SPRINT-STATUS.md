@@ -2453,3 +2453,23 @@ with blind-count close + variance and the new receipts report — the
 build task starts by reconciling the pack's loop (system-date drawers,
 tolerance/retries, register vs balancing distinction) against that.
 Queued after the Sales Views program and the other packs.
+
+## Merchandising activity — the buyer's report (2026-08-27)
+
+Catalog 67 built over Jetnine's own model (no regional cost overlays —
+one cost, one price):
+
+- `GET /v1/reports/merchandising?vendorId&categoryId&brandId&
+includeNoActivity` — per variant: on hand / reserved / floor / net
+  available (all locations), as-is holdings (pending_review pieces), on
+  order (open PO remainder), sold MTD/YTD units (completed POS sales +
+  completed orders; FILTER params cast ::timestamptz — untyped Date
+  params 500'd), replacement cost, price, markup %. No-activity rows
+  drop unless asked (the catalog's detail-line rule); top-2000 cap is
+  announced, never silent. reports.financial.view (cost-bearing).
+- New page `/reports/merchandising` (linked from Reports): vendor/
+  category/brand filters, include-all toggle, CSV with provenance.
+- reports.int.spec 31→32 (widget stock 18 after the POS sale, 150%
+  markup, gadget on-order 5 from the jeopardy PO fixture, 403 for
+  non-financial). Gates: typecheck 0 · lint 0 · test 0 (full) · build 0
+  · prettier 0.
