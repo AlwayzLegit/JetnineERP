@@ -2229,3 +2229,13 @@ so frontmatter/scripts can be retrofitted to the real spec before Phase 2.
 Per the handoff: run the five §7 Learn tests before authoring more
 articles; remaining screen articles and the role matrix are deliberately
 NOT started.
+
+## Sales Views & Reports pack — partial upload committed (2026-08-27)
+
+Owner uploaded 5 of the 7 files of the STORIS "Sales Views and Reports"
+handoff (139 articles: reporting platform, 18-picker shared components,
+customer 360 inquiries, operational inquiries). Committed verbatim to
+`docs/erp-sales-views/` (prettier-ignored). **Ops:** per the pack's own
+read-order, `05-report-catalog.md`, `06-cross-cutting-rules.md`, and
+`07-build-plan.md` (phasing, acceptance criteria, what to cut) were not
+uploaded — build does not start until they arrive.
