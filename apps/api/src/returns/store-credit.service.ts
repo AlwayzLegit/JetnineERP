@@ -29,7 +29,7 @@ export class StoreCreditService {
       customerId: string;
       amountCents: number;
       reason: string | null;
-      referenceType: 'refund' | 'order_return' | 'manual';
+      referenceType: 'refund' | 'order_return' | 'manual' | 'exchange';
       referenceId: string | null;
       actorUserId: string | null;
     },
@@ -55,9 +55,10 @@ export class StoreCreditService {
       businessId: string;
       customerId: string;
       amountCents: number;
-      referenceType: 'payment';
+      referenceType: 'payment' | 'exchange';
       referenceId: string | null;
       actorUserId: string | null;
+      reason?: string;
     },
   ): Promise<void> {
     if (!Number.isInteger(args.amountCents) || args.amountCents <= 0) {
@@ -73,7 +74,7 @@ export class StoreCreditService {
       businessId: args.businessId,
       customerId: args.customerId,
       deltaCents: -args.amountCents,
-      reason: 'Redeemed at checkout',
+      reason: args.reason ?? 'Redeemed at checkout',
       referenceType: args.referenceType,
       referenceId: args.referenceId,
       createdByUserId: args.actorUserId,

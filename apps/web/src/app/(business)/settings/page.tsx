@@ -29,6 +29,8 @@ interface OpsSettings {
   blindReceiving?: boolean | null;
   reserveBasis?: 'delivery_date' | 'order_date' | null;
   returnWindowDays?: number | null;
+  restockingFeePercent?: number | null;
+  exchangeHoldAtEntry?: boolean | null;
   autoScheduleDays?: number | null;
   autoReplenishmentEnabled?: boolean | null;
   deliveryDailyPieceCap?: number | null;
@@ -257,6 +259,9 @@ function OpsCard({ settings, onSaved }: { settings: Settings; onSaved: (s: Setti
       body.reserveBasis = basis === 'order_date' ? 'order_date' : 'delivery_date';
       const rtnWindow = String(data.get('returnWindowDays') ?? '').trim();
       body.returnWindowDays = rtnWindow === '' ? null : Number(rtnWindow);
+      const restockPct = String(data.get('restockingFeePercent') ?? '').trim();
+      body.restockingFeePercent = restockPct === '' ? null : Number(restockPct);
+      body.exchangeHoldAtEntry = data.get('exchangeHoldAtEntry') === 'on' ? true : null;
       const autoSched = String(data.get('autoScheduleDays') ?? '').trim();
       body.autoScheduleDays = autoSched === '' ? null : Number(autoSched);
       body.autoReplenishmentEnabled = data.get('autoReplenishmentEnabled') === 'on' ? true : null;
@@ -406,6 +411,28 @@ function OpsCard({ settings, onSaved }: { settings: Settings; onSaved: (s: Setti
           defaultValue={ops.returnWindowDays ?? ''}
           style={{ width: '100%' }}
         />
+      </Field>
+      <Field label="Exchange restocking fee (% of return credit; blank = none)">
+        <Input
+          name="restockingFeePercent"
+          type="number"
+          step="0.5"
+          min={0}
+          max={100}
+          placeholder="e.g. 10 — overridable per exchange"
+          defaultValue={ops.restockingFeePercent ?? ''}
+          style={{ width: '100%' }}
+        />
+      </Field>
+      <Field label="Hold exchanges for approval at entry (E1)">
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
+          <input
+            type="checkbox"
+            name="exchangeHoldAtEntry"
+            defaultChecked={Boolean(ops.exchangeHoldAtEntry)}
+          />
+          Every new exchange waits for a manager release before it can settle
+        </label>
       </Field>
       <Field label="Auto transfer schedule days (blank = auto transfers off; 0 = next day)">
         <Input

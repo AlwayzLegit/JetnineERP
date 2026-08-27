@@ -59,6 +59,12 @@ interface OpsSettings {
   /** I4 (RTN-040): days after completion a return is allowed without a
    * manager override (null = no window, returns always allowed). */
   returnWindowDays?: number | null;
+  /** Exchange pack: % of the return credit charged as a restocking fee
+   * on exchanges (null/0 = none). Overridable per exchange with its own
+   * permission. */
+  restockingFeePercent?: number | null;
+  /** Exchange pack (E1): hold every new exchange for approval. */
+  exchangeHoldAtEntry?: boolean | null;
   /** J4 (XFR-052 / CFG-POS-AUTOSCHED): blank disables auto transfers;
    * 0 is valid and means same-day + 1 per the XFR-053 formula. */
   autoScheduleDays?: number | null;
@@ -188,6 +194,24 @@ function validateOps(input: OpsSettings): OpsSettings {
       throw new BadRequestException('ops.returnWindowDays must be a positive integer or null');
     }
     out.returnWindowDays = input.returnWindowDays;
+  }
+  if (input.restockingFeePercent !== undefined) {
+    if (
+      input.restockingFeePercent !== null &&
+      (typeof input.restockingFeePercent !== 'number' ||
+        !Number.isFinite(input.restockingFeePercent) ||
+        input.restockingFeePercent < 0 ||
+        input.restockingFeePercent > 100)
+    ) {
+      throw new BadRequestException('ops.restockingFeePercent must be between 0 and 100, or null');
+    }
+    out.restockingFeePercent = input.restockingFeePercent;
+  }
+  if (input.exchangeHoldAtEntry !== undefined) {
+    if (input.exchangeHoldAtEntry !== null && typeof input.exchangeHoldAtEntry !== 'boolean') {
+      throw new BadRequestException('ops.exchangeHoldAtEntry must be a boolean or null');
+    }
+    out.exchangeHoldAtEntry = input.exchangeHoldAtEntry;
   }
   if (input.autoScheduleDays !== undefined) {
     if (

@@ -1994,3 +1994,50 @@ Not buildable / owner-gated leftovers:
   registry admin UI, report builder) — build on owner request.
 - Needs-counsel privacy items (TCPA consent wording, erasure/retention
   policy) — owner + lawyer, not code.
+
+## Enter an Exchange — container over two documents (2026-08-27)
+
+Owner uploaded the STORIS "Enter an Exchange" pack (committed verbatim at
+`docs/erp-exchange/`, 8 files). Built per its build plan, as a composition
+over the existing returns + order machinery (the pack's own instruction):
+
+- **Model (migration 0058_exchanges)**: `exchanges` container — number
+  EX-YYYY-NNNNNN, returnId + saleOrderId (both unique), originalOrderId /
+  referencedOrderNumber, status on_hold|open|completed|split|cancelled,
+  evenExchange, restocking fee (+sticky overridden flag), per-leg return
+  salesperson, approval stamps. Split Exchange = container dissolve; the
+  legs are already first-class documents. RLS + tenant registration.
+- **Settlement rides the store-credit ledger**: receiving the exchange's
+  return issues the credit (minus restocking fee) and immediately redeems
+  it against the replacement order's balance — every cent reconciles
+  through existing ledgers; excess stays as visible store credit. The
+  plain-refund path in OrderReturnsService diverts only while a live
+  container exists; split/cancel restores it. Commission clawback and
+  As-Is staging unchanged (shared path).
+- **API**: POST /v1/exchanges (bind; validates same-customer, financed-
+  original ⇒ even-exchange-only per D1, like-for-like check, fee compute/
+  override, E1 hold via ops.exchangeHoldAtEntry) · :id/approve ·
+  :id/split · :id/cancel · list/detail with settlement math. New
+  permissions exchanges.create / exchanges.approve /
+  exchanges.restocking_fee.override (Owner+Manager via catalog).
+- **Ops settings**: restockingFeePercent, exchangeHoldAtEntry (+ Settings
+  page inputs). Orders list gains ?number= exact recall.
+- **Web**: /exchanges list, /exchanges/new writer (find original → pick
+  return pieces → replacement w/ even-exchange copy → settle-now toggle),
+  /exchanges/[id] detail (settlement block, approve/split/cancel/receive),
+  nav entry, order-detail "Write exchange" now routes here.
+- **Deliberate divergences from STORIS** (recorded per pack conventions):
+  exchange refund excess settles as store credit (not cash-back); both
+  legs must bill the same customer; no-original exchanges carry no
+  restocking fee (already loss-prevention flagged + store-credit-only);
+  protection-plan transfer rules N/A (no plan object — plans are ordinary
+  product lines here); revolving financing/C6 holds not built (owner D1:
+  third-party only); vendor imports (2020 Spaces/Flexsteel/Pro Kitchen)
+  skipped — furniture-configurator integrations.
+- Tests: NEW exchanges.int.spec (8) — uneven happy path with ledger-net
+  assertions, restocking fee + sticky override + audit, E1 hold blocks
+  settlement until approve, financed-original even-only + like-for-like,
+  split restores plain refund, cancel voids both, no-original banked
+  credit at bind, same-customer guard. orders 68 · business 24 · sales 21
+  re-run green. Gates by exit code: typecheck 0 · lint 0 · test 0 ·
+  build 0 · prettier 0.
