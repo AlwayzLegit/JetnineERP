@@ -1,9 +1,10 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import { and, asc, eq, inArray } from 'drizzle-orm';
+import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { schema } from '@jetnine/db';
 import { DRIZZLE } from '../database/database.module';
 import { EmailService } from '../email/email.service';
+import { deriveFulfillmentStatus } from '../orders/order-math';
 import { OrdersService } from '../orders/orders.service';
 
 /**
@@ -116,10 +117,120 @@ export class SpecialOrdersService {
     }
   }
 
+  /**
+   * PO-060: receiving a direct-ship PO line means the vendor shipped to
+   * the customer — there is no stock to reserve. The allocation flips to
+   * received and the linked order line is FULFILLED on the spot (no
+   * inventory movement: the goods never touched our stock), then the
+   * order's fulfillment status is recomputed and the customer told their
+   * goods are on the way from the vendor.
+   */
+  async handleDirectShipReceipt(
+    db: PostgresJsDatabase,
+    args: {
+      businessId: string;
+      poLineId: string;
+      quantity: number;
+      actorUserId: string | null;
+    },
+  ): Promise<void> {
+    let remaining = args.quantity;
+    const allocations = await db
+      .select()
+      .from(schema.poLineAllocations)
+      .where(
+        and(
+          eq(schema.poLineAllocations.poLineId, args.poLineId),
+          eq(schema.poLineAllocations.status, 'ordered'),
+        ),
+      )
+      .orderBy(asc(schema.poLineAllocations.createdAt));
+    if (allocations.length === 0) return;
+
+    const touchedOrders = new Set<string>();
+    const notifiedOrders = new Set<string>();
+    for (const alloc of allocations) {
+      if (remaining <= 0) break;
+      const consumed = Math.min(alloc.quantity, remaining);
+      remaining -= consumed;
+
+      if (consumed === alloc.quantity) {
+        await db
+          .update(schema.poLineAllocations)
+          .set({ status: 'received', updatedAt: new Date() })
+          .where(eq(schema.poLineAllocations.id, alloc.id));
+      } else {
+        await db
+          .update(schema.poLineAllocations)
+          .set({ quantity: alloc.quantity - consumed, updatedAt: new Date() })
+          .where(eq(schema.poLineAllocations.id, alloc.id));
+        await db.insert(schema.poLineAllocations).values({
+          businessId: alloc.businessId,
+          poLineId: alloc.poLineId,
+          orderLineId: alloc.orderLineId,
+          quantity: consumed,
+          status: 'received',
+        });
+      }
+
+      const [line] = await db
+        .select({
+          id: schema.orderLines.id,
+          orderId: schema.orderLines.orderId,
+          description: schema.orderLines.description,
+        })
+        .from(schema.orderLines)
+        .where(eq(schema.orderLines.id, alloc.orderLineId))
+        .limit(1);
+      if (!line) continue;
+
+      await db
+        .update(schema.orderLines)
+        .set({ qtyFulfilled: sql`${schema.orderLines.qtyFulfilled} + ${consumed}` })
+        .where(eq(schema.orderLines.id, line.id));
+      touchedOrders.add(line.orderId);
+
+      if (!notifiedOrders.has(line.orderId)) {
+        notifiedOrders.add(line.orderId);
+        await this.sendArrivalEmail(db, line.orderId, line.description, 'direct_ship').catch(
+          (err) => {
+            this.logger.warn({ err, orderId: line.orderId }, 'direct-ship email failed');
+          },
+        );
+      }
+    }
+
+    // The one place an order can become fulfilled without a delivery or
+    // POS fulfillment: derive it from the lines like everywhere else.
+    for (const orderId of touchedOrders) {
+      const [order] = await db
+        .select({ status: schema.orders.status })
+        .from(schema.orders)
+        .where(eq(schema.orders.id, orderId))
+        .limit(1);
+      if (!order || !['open', 'partially_fulfilled'].includes(order.status)) continue;
+      const lines = await db
+        .select({
+          quantity: schema.orderLines.quantity,
+          qtyFulfilled: schema.orderLines.qtyFulfilled,
+        })
+        .from(schema.orderLines)
+        .where(eq(schema.orderLines.orderId, orderId));
+      const next = deriveFulfillmentStatus(lines);
+      if (next !== order.status) {
+        await db
+          .update(schema.orders)
+          .set({ status: next, updatedAt: new Date() })
+          .where(eq(schema.orders.id, orderId));
+      }
+    }
+  }
+
   private async sendArrivalEmail(
     db: PostgresJsDatabase,
     orderId: string,
     itemDescription: string,
+    mode: 'arrival' | 'direct_ship' = 'arrival',
   ): Promise<void> {
     const [order] = await db
       .select({
@@ -148,6 +259,15 @@ export class SpecialOrdersService {
       .limit(1);
     const store = biz?.name ?? 'the store';
     const first = customer.firstName ? ` ${customer.firstName}` : '';
+    if (mode === 'direct_ship') {
+      await this.email.send({
+        to: customer.email,
+        subject: `Your order is on its way — ${order.number}`,
+        text: `Hi${first},\n\nGood news: ${itemDescription} from your order ${order.number} has shipped from our supplier directly to you.\n\n— ${store}`,
+        html: `<p>Hi${first},</p><p>Good news: <strong>${itemDescription}</strong> from your order <strong>${order.number}</strong> has shipped from our supplier directly to you.</p><p>— ${store}</p>`,
+      });
+      return;
+    }
     await this.email.send({
       to: customer.email,
       subject: `Your special order has arrived — ${order.number}`,

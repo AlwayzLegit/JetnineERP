@@ -82,7 +82,7 @@ type PaymentMethod = (typeof PAYMENT_METHODS)[number];
 const FULFILLMENT_TYPES = ['delivery', 'pickup', 'take_with', 'direct_ship'] as const;
 const DELIVERY_STATUSES = ['scheduled', 'estimated', 'asap', 'will_call'] as const;
 const ORDER_KINDS = ['sales_order', 'layaway', 'exchange'] as const;
-const LINE_TYPES = ['stock', 'special_order', 'custom'] as const;
+const LINE_TYPES = ['stock', 'special_order', 'custom', 'direct_ship'] as const;
 
 interface OrderLineInput {
   variantId?: string;
@@ -1431,6 +1431,92 @@ export class OrdersController {
   }
 
   /**
+   * PO-060: the line type must be changeable on an open order line —
+   * stock that will never arrive (store closing, consignment) or an
+   * exchange replacement flips to `direct_ship` and the vendor ships to
+   * the customer. Switching away from stock releases the reservation;
+   * switching to stock tries to reserve. Refused once units are
+   * fulfilled or a PO already carries the line.
+   */
+  @Patch('orders/:id/lines/:lineId')
+  @RequirePermission('orders.update')
+  async updateLineType(
+    @CurrentTenant() tenant: RequestTenantContext,
+    @CurrentUser() actor: CurrentUserPayload,
+    @Param('id') id: string,
+    @Param('lineId') lineId: string,
+    @Body() body: { lineType?: string },
+  ): Promise<OrderDetail> {
+    const order = await this.requireLiveOrder(id);
+    this.assertUnlocked(order);
+    await this.assertNotOnOpenRun(id);
+    const allowed = ['stock', 'special_order', 'direct_ship'];
+    if (!body.lineType || !allowed.includes(body.lineType)) {
+      throw new BadRequestException(`lineType must be one of ${allowed.join(', ')}`);
+    }
+    const [line] = await this.db
+      .select()
+      .from(schema.orderLines)
+      .where(and(eq(schema.orderLines.id, lineId), eq(schema.orderLines.orderId, id)))
+      .limit(1);
+    if (!line) throw new NotFoundException('Order line not found');
+    if (line.lineType === body.lineType) return this.loadDetail(id);
+    if (!line.variantId || line.lineType === 'custom') {
+      throw new BadRequestException('Custom lines have no stock type to change');
+    }
+    if (line.qtyFulfilled > 0) {
+      throw new BadRequestException(
+        'Cannot change the type of a line that has already been fulfilled',
+      );
+    }
+    const allocations = await this.db
+      .select({ id: schema.poLineAllocations.id })
+      .from(schema.poLineAllocations)
+      .where(
+        and(
+          eq(schema.poLineAllocations.orderLineId, lineId),
+          sql`${schema.poLineAllocations.status} != 'cancelled'`,
+        ),
+      )
+      .limit(1);
+    if (allocations.length > 0) {
+      throw new BadRequestException(
+        'A purchase order already carries this line — cancel or un-receive it first',
+      );
+    }
+
+    if (line.qtyReserved > 0 && body.lineType !== 'stock') {
+      await this.orders.applyReleases(this.db, {
+        businessId: tenant.businessId!,
+        orderId: id,
+        locationId: order.locationId,
+        actorUserId: actor?.id ?? null,
+        releases: [{ orderLineId: line.id, variantId: line.variantId, quantity: line.qtyReserved }],
+      });
+    }
+    await this.db
+      .update(schema.orderLines)
+      .set({ lineType: body.lineType })
+      .where(eq(schema.orderLines.id, lineId));
+    if (body.lineType === 'stock' && order.status !== 'quote') {
+      await this.orders.reserveOrder(this.db, {
+        businessId: tenant.businessId!,
+        orderId: id,
+        locationId: order.locationId,
+        actorUserId: actor?.id ?? null,
+      });
+    }
+    await this.audit.log({
+      action: 'order.line.line_type',
+      targetType: 'order',
+      targetId: id,
+      before: { lineId, lineType: line.lineType },
+      after: { lineType: body.lineType },
+    });
+    return this.loadDetail(id);
+  }
+
+  /**
    * Commit stock to the order. Safe to call repeatedly — only the units a
    * line still lacks are ever reserved — which is what makes it usable as
    * a "try again now that the truck arrived" action.
@@ -1689,16 +1775,20 @@ export class OrdersController {
       throw new BadRequestException('This order is closed');
     }
 
-    const lines = await this.db
+    const allLines = await this.db
       .select({
         id: schema.orderLines.id,
         variantId: schema.orderLines.variantId,
         quantity: schema.orderLines.quantity,
         qtyReserved: schema.orderLines.qtyReserved,
         qtyFulfilled: schema.orderLines.qtyFulfilled,
+        lineType: schema.orderLines.lineType,
       })
       .from(schema.orderLines)
       .where(eq(schema.orderLines.orderId, id));
+    // PO-060: direct-ship lines fulfill through their vendor PO receipt,
+    // never over the counter — there is no stock here to hand out.
+    const lines = allLines.filter((l) => l.lineType !== 'direct_ship');
 
     const requests: FulfillmentRequest[] =
       body.lines && body.lines.length > 0

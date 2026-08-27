@@ -23,6 +23,8 @@ interface QueueRow {
   quantity: number;
   allocated: number;
   toOrder: number;
+  /** 'special_order' | 'direct_ship' — direct ship POs go to the customer's door. */
+  lineType: string;
 }
 interface VendorRow {
   id: string;
@@ -166,7 +168,20 @@ export default function SpecialOrdersPage() {
                       <Link href={`/orders/${r.orderId}`}>{r.orderNumber}</Link>
                     </td>
                     <td>{r.customerName ?? '—'}</td>
-                    <td>{r.description}</td>
+                    <td>
+                      {r.description}
+                      {r.lineType === 'direct_ship' && (
+                        <>
+                          {' '}
+                          <span
+                            className="badge badge-info"
+                            title="The vendor ships this straight to the customer — its PO carries the customer's address"
+                          >
+                            direct ship
+                          </span>
+                        </>
+                      )}
+                    </td>
                     <td>
                       <code>{r.sku ?? '—'}</code>
                     </td>

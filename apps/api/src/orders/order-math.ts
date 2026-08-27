@@ -121,7 +121,9 @@ export function planReservations(
   const remaining = new Map<string, number>();
 
   for (const line of lines) {
-    if (line.lineType === 'special_order') continue;
+    // special_order: we don't own the units yet. direct_ship (PO-060):
+    // we never will — the vendor ships to the customer directly.
+    if (line.lineType === 'special_order' || line.lineType === 'direct_ship') continue;
     if (!line.variantId) continue;
 
     const needed = line.quantity - line.qtyReserved;

@@ -148,6 +148,9 @@ interface PoDetail extends PoListRow {
   businessLogoUrl: string | null;
   /** G11: ops.blindReceiving — the receiving grid hides expected qtys. */
   blindReceiving: boolean;
+  /** PO-060: vendor ships straight to the customer (shipToJson block). */
+  directShip: boolean;
+  shipToJson: unknown;
   lines: PoLineRow[];
 }
 
@@ -596,6 +599,14 @@ export class PurchaseOrdersController {
     if (po.status !== 'partially_received' && po.status !== 'received') {
       throw new ForbiddenException(`Nothing received on a ${po.status} purchase order`);
     }
+    if (po.directShip) {
+      // PO-060: the receipt fulfilled the customer's order and posted
+      // cost of sale — there is no stock to put back. Corrections go
+      // through a customer return.
+      throw new BadRequestException(
+        'Cannot un-receive a direct-ship PO — the goods went to the customer; correct via a return',
+      );
+    }
 
     const lines = await this.db
       .select()
@@ -927,7 +938,37 @@ export class PurchaseOrdersController {
     let unitsReceived = 0;
     let unitsAccepted = 0;
     for (const e of entries) {
-      if (e.accepted > 0) {
+      if (po.directShip && (e.rejected ?? 0) > 0) {
+        // The goods are at the customer's door, not on our dock — a bad
+        // direct-ship unit is a return/exchange conversation, not a dock
+        // reject.
+        throw new BadRequestException(
+          'Direct-ship POs cannot reject units at receiving — handle problems as a customer return',
+        );
+      }
+      if (e.accepted > 0 && po.directShip) {
+        // PO-060: the vendor shipped straight to the customer. No stock,
+        // no movement, no lasting valuation — a cost layer consumed on
+        // the spot posts cost of sale at the PO cost.
+        await this.costing.addLayer(this.db, {
+          businessId: tenant.businessId!,
+          variantId: e.line.variantId,
+          locationId: po.locationId,
+          sourceType: 'po_receive',
+          referenceId: po.id,
+          quantity: e.accepted,
+          unitCostCents: e.line.unitCostCents,
+        });
+        await this.costing.consume(this.db, {
+          businessId: tenant.businessId!,
+          variantId: e.line.variantId,
+          locationId: po.locationId,
+          quantity: e.accepted,
+          referenceType: 'direct_ship',
+          referenceId: po.id,
+          preferReferenceId: po.id,
+        });
+      } else if (e.accepted > 0) {
         await this.db.insert(schema.inventoryMovements).values({
           businessId: tenant.businessId!,
           variantId: e.line.variantId,
@@ -1009,7 +1050,14 @@ export class PurchaseOrdersController {
           quantityRejected: e.line.quantityRejected + rejected,
         })
         .where(eq(schema.purchaseOrderLines.id, e.line.id));
-      if (e.accepted > 0) {
+      if (e.accepted > 0 && po.directShip) {
+        await this.specialOrders.handleDirectShipReceipt(this.db, {
+          businessId: tenant.businessId!,
+          poLineId: e.line.id,
+          quantity: e.accepted,
+          actorUserId: actor.id ?? null,
+        });
+      } else if (e.accepted > 0) {
         await this.specialOrders.handleReceipt(this.db, {
           businessId: tenant.businessId!,
           poLineId: e.line.id,
@@ -1060,9 +1108,11 @@ export class PurchaseOrdersController {
     // B14: newly accepted stock backfills "Pending" order lines in
     // reservation-basis order (special-order allocations above already
     // took their linked units first).
-    const acceptedVariantIds = entries
-      .filter((e) => e.accepted > 0 && e.line.variantId)
-      .map((e) => e.line.variantId as string);
+    const acceptedVariantIds = po.directShip
+      ? [] // direct ship: nothing entered stock, nothing to backfill
+      : entries
+          .filter((e) => e.accepted > 0 && e.line.variantId)
+          .map((e) => e.line.variantId as string);
     if (acceptedVariantIds.length > 0) {
       const [biz] = await this.db
         .select({ opsSettingsJson: schema.businesses.opsSettingsJson })
@@ -1231,6 +1281,8 @@ export class PurchaseOrdersController {
         placedAt: schema.purchaseOrders.placedAt,
         closedAt: schema.purchaseOrders.closedAt,
         subtotalCents: schema.purchaseOrders.subtotalCents,
+        directShip: schema.purchaseOrders.directShip,
+        shipToJson: schema.purchaseOrders.shipToJson,
         notes: schema.purchaseOrders.notes,
         createdByUserId: schema.purchaseOrders.createdByUserId,
         createdAt: schema.purchaseOrders.createdAt,
