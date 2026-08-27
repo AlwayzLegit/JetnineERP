@@ -560,3 +560,88 @@ describe('Register sales pass the price-variance gate (QA D2)', () => {
     ).toBe(true);
   });
 });
+
+describe('Invoice lookup — GET /v1/sales?q=', () => {
+  let customerId = '';
+  let lookupNumber = '';
+
+  it('Seeds a customer sale to search for', async () => {
+    const customer = await request(app.getHttpServer())
+      .post('/v1/customers')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ firstName: 'Zelda', lastName: 'Lookupson', phone: '3105550000' });
+    expect(customer.status).toBe(201);
+    customerId = customer.body.id as string;
+
+    const catalog = await request(app.getHttpServer())
+      .post('/v1/products')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({
+        sku: 'LOOKUP-1',
+        name: 'Lookup Widget',
+        variants: [{ sku: 'LOOKUP-1-A', priceCents: 5000 }],
+      });
+    expect(catalog.status).toBe(201);
+    const variantId = catalog.body.variants[0].id as string;
+
+    const sale = await request(app.getHttpServer())
+      .post('/v1/sales')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({
+        locationId,
+        customerId,
+        lines: [{ variantId, quantity: 1 }],
+        payments: [{ method: 'cash', amountCents: 5500 }],
+      });
+    expect(sale.status).toBe(201);
+    lookupNumber = sale.body.number as string;
+  });
+
+  it('Finds the sale by full invoice number (the scanned-barcode path)', async () => {
+    const res = await request(app.getHttpServer())
+      .get(`/v1/sales?q=${encodeURIComponent(lookupNumber)}`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId);
+    expect(res.status).toBe(200);
+    const numbers = (res.body.data as { number: string }[]).map((r) => r.number);
+    expect(numbers).toContain(lookupNumber);
+  });
+
+  it('Finds the sale by number fragment and carries the customer name', async () => {
+    const fragment = lookupNumber.slice(-4);
+    const res = await request(app.getHttpServer())
+      .get(`/v1/sales?q=${encodeURIComponent(fragment)}`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId);
+    expect(res.status).toBe(200);
+    const row = (res.body.data as { number: string; customerName: string | null }[]).find(
+      (r) => r.number === lookupNumber,
+    );
+    expect(row).toBeDefined();
+    expect(row!.customerName).toBe('Zelda Lookupson');
+  });
+
+  it('Finds the sale by customer name', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/v1/sales?q=Lookupson')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId);
+    expect(res.status).toBe(200);
+    const rows = res.body.data as { number: string; customerId: string | null }[];
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.every((r) => r.customerId === customerId || r.number === lookupNumber)).toBe(true);
+    expect(rows.map((r) => r.number)).toContain(lookupNumber);
+  });
+
+  it('A non-matching query returns an empty page, not everything', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/v1/sales?q=NO-SUCH-INVOICE-XYZ')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId);
+    expect(res.status).toBe(200);
+    expect(res.body.data).toHaveLength(0);
+  });
+});

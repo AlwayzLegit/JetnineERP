@@ -10,7 +10,7 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
-import { and, desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, desc, eq, ilike, inArray, or, sql } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { schema } from '@jetnine/db';
 import { AuditService } from '../audit/audit.service';
@@ -126,6 +126,7 @@ interface SaleListRow {
   status: string;
   totalCents: number;
   customerId: string | null;
+  customerName: string | null;
   associateUserId: string | null;
   locationId: string;
   completedAt: Date | null;
@@ -160,7 +161,7 @@ interface RefundRow {
   createdAt: Date;
 }
 
-interface SaleDetail extends SaleListRow {
+interface SaleDetail extends Omit<SaleListRow, 'customerName'> {
   subtotalCents: number;
   discountCents: number;
   taxCents: number;
@@ -375,18 +376,36 @@ export class SalesController {
       .orderBy(schema.locations.name);
   }
 
+  /**
+   * List/search sales. `q` is the invoice-lookup path (the top clerk flow):
+   * it matches the document number as a case-insensitive substring — a
+   * scanned receipt barcode types the full number and hits exactly — or
+   * the customer via the tsvector, and it composes with the cursor so a
+   * broad match still pages newest-first.
+   */
   @Get('sales')
   @RequirePermission('sales.view')
   async list(
     @CurrentTenant() _tenant: RequestTenantContext,
+    @Query('q') q?: string,
     @Query('limit') limitStr?: string,
     @Query('cursor') cursorStr?: string,
   ): Promise<PageResponse<SaleListRow>> {
     const limit = clampPageLimit(limitStr);
     const cursor = decodeCursor(cursorStr);
-    const where = cursor
-      ? timestampCursorWhere(schema.sales.createdAt, schema.sales.id, cursor)
-      : undefined;
+    const filters: (ReturnType<typeof and> | undefined)[] = [
+      cursor ? timestampCursorWhere(schema.sales.createdAt, schema.sales.id, cursor) : undefined,
+    ];
+    const query = q?.trim();
+    if (query) {
+      const tsq = sql`websearch_to_tsquery('simple', ${query})`;
+      filters.push(
+        or(
+          ilike(schema.sales.number, `%${query.replace(/[%_]/g, '\\$&')}%`),
+          sql`${schema.customers.searchTsv} @@ ${tsq}`,
+        )!,
+      );
+    }
     const rows = await this.db
       .select({
         id: schema.sales.id,
@@ -394,13 +413,17 @@ export class SalesController {
         status: schema.sales.status,
         totalCents: schema.sales.totalCents,
         customerId: schema.sales.customerId,
+        customerName: sql<
+          string | null
+        >`nullif(trim(concat(${schema.customers.firstName}, ' ', ${schema.customers.lastName})), '')`,
         associateUserId: schema.sales.associateUserId,
         locationId: schema.sales.locationId,
         completedAt: schema.sales.completedAt,
         createdAt: schema.sales.createdAt,
       })
       .from(schema.sales)
-      .where(where)
+      .leftJoin(schema.customers, eq(schema.customers.id, schema.sales.customerId))
+      .where(and(...filters.filter(Boolean)))
       .orderBy(...timestampCursorOrder(schema.sales.createdAt, schema.sales.id))
       .limit(limit + 1);
     return buildPage(rows, limit, (r) => r.createdAt);

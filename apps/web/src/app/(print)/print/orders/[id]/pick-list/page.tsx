@@ -59,6 +59,7 @@ export default function PickListPrintPage() {
               <th style={{ padding: '4px 6px', width: 50 }}>Qty</th>
               <th style={{ padding: '4px 6px' }}>Item</th>
               <th style={{ padding: '4px 6px', width: 140 }}>Model / SKU</th>
+              <th style={{ padding: '4px 6px', width: 80 }}>Bin</th>
               <th style={{ padding: '4px 6px', width: 70 }}>Pulled ☐</th>
             </tr>
           </thead>
@@ -73,6 +74,7 @@ export default function PickListPrintPage() {
                   )}
                 </td>
                 <td style={{ padding: '10px 6px' }}>{l.model ?? '—'}</td>
+                <td style={{ padding: '10px 6px', fontWeight: 700 }}>{l.bin ?? '—'}</td>
                 <td style={{ padding: '10px 6px' }}>
                   <span
                     style={{

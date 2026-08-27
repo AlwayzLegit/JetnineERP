@@ -35,6 +35,49 @@ export const categories = pgTable(
   }),
 );
 
+/**
+ * Brand + Collection reference entities (STORIS Brand Settings /
+ * Collection Settings parity, owner-scoped build 2026-08-27). Brands
+ * are flat labels; collections optionally belong to a vendor (the
+ * Ashley-style vendor collection). Products reference both nullable —
+ * the P4 invoice Brand column prefers the real brand and falls back
+ * to the variant's preferred vendor for unbranded catalog rows.
+ */
+export const brands = pgTable(
+  'brands',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    businessId: uuid('business_id')
+      .notNull()
+      .references(() => businesses.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    isActive: boolean('is_active').notNull().default(true),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    businessNameUnique: uniqueIndex('brands_business_name_uniq').on(t.businessId, t.name),
+    businessIdx: index('brands_business_id_idx').on(t.businessId),
+  }),
+);
+
+export const collections = pgTable(
+  'collections',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    businessId: uuid('business_id')
+      .notNull()
+      .references(() => businesses.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    vendorId: uuid('vendor_id').references(() => vendors.id, { onDelete: 'set null' }),
+    isActive: boolean('is_active').notNull().default(true),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    businessNameUnique: uniqueIndex('collections_business_name_uniq').on(t.businessId, t.name),
+    businessIdx: index('collections_business_id_idx').on(t.businessId),
+  }),
+);
+
 export const products = pgTable(
   'products',
   {
@@ -52,6 +95,8 @@ export const products = pgTable(
      * uses this class's `rate_bps` regardless of location.
      */
     taxClassId: uuid('tax_class_id').references(() => taxClasses.id, { onDelete: 'set null' }),
+    brandId: uuid('brand_id').references(() => brands.id, { onDelete: 'set null' }),
+    collectionId: uuid('collection_id').references(() => collections.id, { onDelete: 'set null' }),
     serialTracked: boolean('serial_tracked').notNull().default(false),
     isActive: boolean('is_active').notNull().default(true),
     // Generated tsvector (set by the migration via GENERATED ALWAYS AS).

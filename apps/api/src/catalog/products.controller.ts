@@ -42,6 +42,8 @@ interface CreateProductBody {
   description?: string | null;
   categoryId?: string | null;
   taxClassId?: string | null;
+  brandId?: string | null;
+  collectionId?: string | null;
   variants?: VariantInput[];
 }
 
@@ -51,6 +53,8 @@ interface UpdateProductBody {
   description?: string | null;
   categoryId?: string | null;
   taxClassId?: string | null;
+  brandId?: string | null;
+  collectionId?: string | null;
   isActive?: boolean;
   /** G7: variants of a serial-tracked product carry serial_units rows. */
   serialTracked?: boolean;
@@ -78,6 +82,8 @@ interface ProductOut {
   description: string | null;
   categoryId: string | null;
   taxClassId: string | null;
+  brandId: string | null;
+  collectionId: string | null;
   isActive: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -197,6 +203,8 @@ export class CatalogProductsController {
       description: p.description ?? null,
       categoryId: p.categoryId ?? null,
       taxClassId: p.taxClassId ?? null,
+      brandId: p.brandId ?? null,
+      collectionId: p.collectionId ?? null,
       isActive: p.isActive,
       createdAt: p.createdAt,
       updatedAt: p.updatedAt,
@@ -241,6 +249,8 @@ export class CatalogProductsController {
         description: body.description ?? null,
         categoryId: body.categoryId ?? null,
         taxClassId: body.taxClassId ?? null,
+        brandId: body.brandId ?? null,
+        collectionId: body.collectionId ?? null,
       })
       .returning()
       .catch((err) => {
@@ -323,6 +333,16 @@ export class CatalogProductsController {
       update.taxClassId = body.taxClassId;
       before.taxClassId = existing.taxClassId;
       after.taxClassId = body.taxClassId;
+    }
+    if (body.brandId !== undefined && body.brandId !== existing.brandId) {
+      update.brandId = body.brandId;
+      before.brandId = existing.brandId;
+      after.brandId = body.brandId;
+    }
+    if (body.collectionId !== undefined && body.collectionId !== existing.collectionId) {
+      update.collectionId = body.collectionId;
+      before.collectionId = existing.collectionId;
+      after.collectionId = body.collectionId;
     }
     if (body.serialTracked !== undefined && body.serialTracked !== existing.serialTracked) {
       update.serialTracked = body.serialTracked;

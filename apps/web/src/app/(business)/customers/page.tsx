@@ -26,19 +26,43 @@ interface CustomerRow {
 
 export default function CustomersPage() {
   const [rows, setRows] = useState<CustomerRow[] | null>(null);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [q, setQ] = useState('');
   const [error, setError] = useState<string | null>(null);
+
+  function buildUrl(query: string, cursor?: string | null) {
+    const params = new URLSearchParams();
+    if (query) params.set('q', query);
+    if (cursor) params.set('cursor', cursor);
+    const qs = params.toString();
+    return `/v1/customers${qs ? `?${qs}` : ''}`;
+  }
 
   async function load(query: string) {
     setError(null);
     try {
-      const params = query ? `?q=${encodeURIComponent(query)}` : '';
-      const res = await api<{ data: CustomerRow[]; nextCursor: string | null }>(
-        `/v1/customers${params}`,
-      );
+      const res = await api<{ data: CustomerRow[]; nextCursor: string | null }>(buildUrl(query));
       setRows(res.data);
+      setNextCursor(res.nextCursor);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  async function loadMore() {
+    if (!nextCursor) return;
+    setLoadingMore(true);
+    try {
+      const res = await api<{ data: CustomerRow[]; nextCursor: string | null }>(
+        buildUrl(q, nextCursor),
+      );
+      setRows((prev) => [...(prev ?? []), ...res.data]);
+      setNextCursor(res.nextCursor);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoadingMore(false);
     }
   }
 
@@ -129,6 +153,18 @@ export default function CustomersPage() {
             </tbody>
           </table>
         </Card>
+      )}
+      {nextCursor && (
+        <div style={{ marginTop: 12, textAlign: 'center' }}>
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={() => void loadMore()}
+            disabled={loadingMore}
+          >
+            {loadingMore ? 'Loading…' : 'Load more'}
+          </Button>
+        </div>
       )}
     </div>
   );

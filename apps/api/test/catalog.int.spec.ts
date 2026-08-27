@@ -333,3 +333,235 @@ describe('Epic 1.7 — Product catalog', () => {
     }
   });
 });
+
+describe('Bulk price entry (pricing work-list + bulk-price)', () => {
+  let unpricedIds: string[] = [];
+
+  it('Owner creates a product whose variants land at $0 (the STORIS import shape)', async () => {
+    const res = await request(app.getHttpServer())
+      .post('/v1/products')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({
+        sku: 'STORIS-Q1',
+        name: 'Imported Queen Mattress',
+        variants: [
+          { sku: 'STORIS-Q1-A', name: 'Firm', priceCents: 0, costCents: 50000 },
+          { sku: 'STORIS-Q1-B', name: 'Plush', priceCents: 0, costCents: 52000 },
+        ],
+      });
+    expect(res.status).toBe(201);
+    unpricedIds = (res.body.variants as { id: string }[]).map((v) => v.id);
+    expect(unpricedIds).toHaveLength(2);
+  });
+
+  it('Pricing list with unpricedOnly returns only the $0 variants and counts them', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/v1/products/variants/pricing?unpricedOnly=1')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId);
+    expect(res.status).toBe(200);
+    const skus = (res.body.data as { sku: string | null; priceCents: number }[]).map((r) => r.sku);
+    expect(skus).toContain('STORIS-Q1-A');
+    expect(skus).toContain('STORIS-Q1-B');
+    for (const row of res.body.data as { priceCents: number }[]) {
+      expect(row.priceCents).toBe(0);
+    }
+    expect(res.body.unpricedCount).toBe(2);
+    // Owner holds products.cost.view — cost survives the projection.
+    const rowA = (res.body.data as { sku: string | null; costCents: number | null }[]).find(
+      (r) => r.sku === 'STORIS-Q1-A',
+    );
+    expect(rowA?.costCents).toBe(50000);
+  });
+
+  it('Cashier sees the work-list but never a cost', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/v1/products/variants/pricing?unpricedOnly=1')
+      .set('Cookie', cashierCookie)
+      .set('X-Business-Id', businessId);
+    expect(res.status).toBe(200);
+    for (const row of res.body.data as { costCents: number | null }[]) {
+      expect(row.costCents).toBeNull();
+    }
+  });
+
+  it('Cashier (no products.update) cannot bulk-write prices', async () => {
+    const res = await request(app.getHttpServer())
+      .post('/v1/products/variants/bulk-price')
+      .set('Cookie', cashierCookie)
+      .set('X-Business-Id', businessId)
+      .send({ updates: [{ id: unpricedIds[0], priceCents: 99900 }] });
+    expect(res.status).toBe(403);
+  });
+
+  it('Bulk-price rejects malformed updates', async () => {
+    const bad = await request(app.getHttpServer())
+      .post('/v1/products/variants/bulk-price')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ updates: [{ id: unpricedIds[0], priceCents: 12.5 }] });
+    expect(bad.status).toBe(400);
+    const empty = await request(app.getHttpServer())
+      .post('/v1/products/variants/bulk-price')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ updates: [] });
+    expect(empty.status).toBe(400);
+    const unknown = await request(app.getHttpServer())
+      .post('/v1/products/variants/bulk-price')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({
+        updates: [{ id: '00000000-0000-4000-8000-000000000000', priceCents: 1000 }],
+      });
+    expect(unknown.status).toBe(404);
+  });
+
+  it('Owner bulk-writes prices; unchanged rows are skipped and audited rows change', async () => {
+    const res = await request(app.getHttpServer())
+      .post('/v1/products/variants/bulk-price')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({
+        updates: [
+          { id: unpricedIds[0], priceCents: 129900 },
+          { id: unpricedIds[1], priceCents: 0 }, // unchanged — stays $0
+        ],
+      });
+    expect(res.status).toBe(201);
+    expect(res.body.updated).toBe(1);
+    expect(res.body.unchanged).toBe(1);
+
+    const after = await request(app.getHttpServer())
+      .get('/v1/products/variants/pricing?unpricedOnly=1')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId);
+    expect(after.status).toBe(200);
+    expect(after.body.unpricedCount).toBe(1);
+    const skus = (after.body.data as { sku: string | null }[]).map((r) => r.sku);
+    expect(skus).not.toContain('STORIS-Q1-A');
+    expect(skus).toContain('STORIS-Q1-B');
+
+    const sql = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    const db = drizzle(sql);
+    try {
+      const [v] = await db
+        .select()
+        .from(schema.productVariants)
+        .where(eq(schema.productVariants.id, unpricedIds[0]!));
+      expect(v!.priceCents).toBe(129900);
+      const audits = await db
+        .select()
+        .from(schema.auditLogs)
+        .where(eq(schema.auditLogs.targetId, unpricedIds[0]!));
+      const priceAudit = audits.find((a) => a.action === 'product.variant.price.update');
+      expect(priceAudit).toBeDefined();
+    } finally {
+      await sql.end({ timeout: 5 });
+    }
+  });
+});
+
+describe('Brand & Collection reference data', () => {
+  let brandId = '';
+  let collectionId = '';
+  let brandedProductId = '';
+
+  it('Owner creates a brand and a collection; duplicates 409', async () => {
+    const brand = await request(app.getHttpServer())
+      .post('/v1/brands')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ name: 'Tempur-Pedic' });
+    expect(brand.status).toBe(201);
+    brandId = brand.body.id as string;
+
+    const dup = await request(app.getHttpServer())
+      .post('/v1/brands')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ name: 'Tempur-Pedic' });
+    expect(dup.status).toBe(409);
+
+    const collection = await request(app.getHttpServer())
+      .post('/v1/collections')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ name: 'ProAdapt' });
+    expect(collection.status).toBe(201);
+    collectionId = collection.body.id as string;
+
+    const badVendor = await request(app.getHttpServer())
+      .post('/v1/collections')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ name: 'Ghost', vendorId: '00000000-0000-4000-8000-000000000000' });
+    expect(badVendor.status).toBe(400);
+  });
+
+  it('Cashier can list but not create', async () => {
+    const list = await request(app.getHttpServer())
+      .get('/v1/brands')
+      .set('Cookie', cashierCookie)
+      .set('X-Business-Id', businessId);
+    expect(list.status).toBe(200);
+    expect((list.body as { name: string }[]).map((b) => b.name)).toContain('Tempur-Pedic');
+
+    const create = await request(app.getHttpServer())
+      .post('/v1/brands')
+      .set('Cookie', cashierCookie)
+      .set('X-Business-Id', businessId)
+      .send({ name: 'Nope' });
+    expect(create.status).toBe(403);
+  });
+
+  it('Product carries brandId/collectionId through create, PATCH, and detail', async () => {
+    const created = await request(app.getHttpServer())
+      .post('/v1/products')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({
+        sku: 'TP-PROADAPT-Q',
+        name: 'ProAdapt Queen',
+        brandId,
+        variants: [{ sku: 'TP-PROADAPT-Q-M', priceCents: 299900 }],
+      });
+    expect(created.status).toBe(201);
+    expect(created.body.brandId).toBe(brandId);
+    expect(created.body.collectionId).toBeNull();
+    brandedProductId = created.body.id as string;
+
+    const patched = await request(app.getHttpServer())
+      .patch(`/v1/products/${brandedProductId}`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ collectionId });
+    expect(patched.status).toBe(200);
+    expect(patched.body.brandId).toBe(brandId);
+    expect(patched.body.collectionId).toBe(collectionId);
+
+    const cleared = await request(app.getHttpServer())
+      .patch(`/v1/products/${brandedProductId}`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ brandId: null });
+    expect(cleared.status).toBe(200);
+    expect(cleared.body.brandId).toBeNull();
+  });
+
+  it('Deactivated brand disappears from nothing — rename and deactivate audit-logged', async () => {
+    const upd = await request(app.getHttpServer())
+      .patch(`/v1/brands/${brandId}`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ isActive: false });
+    expect(upd.status).toBe(200);
+    const list = await request(app.getHttpServer())
+      .get('/v1/brands')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId);
+    const row = (list.body as { id: string; isActive: boolean }[]).find((b) => b.id === brandId);
+    expect(row?.isActive).toBe(false);
+  });
+});

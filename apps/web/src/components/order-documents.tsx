@@ -71,6 +71,7 @@ export interface OrderDocumentPayload {
     fulfillmentMethod: string | null;
     model: string | null;
     brand: string | null;
+    bin: string | null;
   }[];
 }
 
