@@ -717,3 +717,145 @@ describe('Multi-dimensional capacity + zip→route map (PLAN-STORIS-GAP G12)', (
     }
   });
 });
+
+describe('Delivery ticket flags — print, stale, reprint (erp-delivery-reprints)', () => {
+  const tfDay = '2027-06-01';
+  const tfDay2 = '2027-06-15';
+
+  beforeAll(async () => {
+    // Earlier suites drain the shared variant's stock; top it up so
+    // these orders reserve cleanly (the print gate requires it).
+    const sqlc = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    const db = drizzle(sqlc);
+    try {
+      await db
+        .update(schema.inventoryLevels)
+        .set({ onHand: 100 })
+        .where(eq(schema.inventoryLevels.variantId, mattressVariantId));
+    } finally {
+      await sqlc.end({ timeout: 5 });
+    }
+  });
+
+  async function readFlags(deliveryId: string) {
+    const sqlc = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    const db = drizzle(sqlc);
+    try {
+      const [d] = await db
+        .select({
+          ticketFlag: schema.deliveries.ticketFlag,
+          pickListFlag: schema.deliveries.pickListFlag,
+          scheduledDate: schema.deliveries.scheduledDate,
+        })
+        .from(schema.deliveries)
+        .where(eq(schema.deliveries.id, deliveryId))
+        .limit(1);
+      return d!;
+    } finally {
+      await sqlc.end({ timeout: 5 });
+    }
+  }
+
+  it('print sets P; a date move demotes to R (R8) and logs the rule; cancel clears via R7 invariant paths', async () => {
+    const orderRes = await ownerReq()
+      .post('/v1/orders')
+      .send({
+        locationId,
+        customerId,
+        fulfillmentType: 'delivery',
+        address: { line1: '9 Flag St', city: 'Glendale', region: 'CA', postalCode: '91205' },
+        lines: [{ variantId: mattressVariantId, quantity: 1 }],
+        confirm: true,
+      });
+    expect(orderRes.status).toBe(201);
+    const orderId = orderRes.body.id;
+
+    const del = await ownerReq()
+      .post(`/v1/orders/${orderId}/deliveries`)
+      .send({ scheduledDate: tfDay });
+    expect(del.status).toBe(201);
+    const deliveryId = del.body.id;
+    expect((await readFlags(deliveryId)).ticketFlag).toBeNull();
+
+    // Print the ticket -> P on the delivery slot.
+    const print = await ownerReq().post(`/v1/orders/${orderId}/delivery-ticket-print`).send({});
+    expect(print.status).toBe(201);
+    let flags = await readFlags(deliveryId);
+    expect(flags.ticketFlag).toBe('P');
+    expect(flags.pickListFlag).toBe('P');
+
+    // Move the delivery date -> R8: printed flags demote to R.
+    const moved = await ownerReq()
+      .patch(`/v1/deliveries/${deliveryId}`)
+      .send({ scheduledDate: tfDay2 });
+    expect(moved.status).toBe(200);
+    flags = await readFlags(deliveryId);
+    expect(flags.scheduledDate).toBe(tfDay2);
+    expect(flags.ticketFlag).toBe('R');
+
+    // The transition log answers "why did this reprint?" (Q8).
+    const sqlc = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    const db = drizzle(sqlc);
+    try {
+      const rows = await db
+        .select({ action: schema.auditLogs.action, changesJson: schema.auditLogs.changesJson })
+        .from(schema.auditLogs)
+        .where(
+          and(
+            eq(schema.auditLogs.action, 'delivery.ticket_flags'),
+            eq(schema.auditLogs.targetId, orderId),
+          ),
+        );
+      expect(rows.length).toBeGreaterThanOrEqual(2); // print + R8 demote
+      const meta = rows.map(
+        (r) => (r.changesJson as { metadata?: { transitions?: { rule: string }[] } }).metadata,
+      );
+      const rules = meta.flatMap((m) => (m?.transitions ?? []).map((t) => t.rule));
+      expect(rules).toContain('print');
+      expect(rules).toContain('R8');
+    } finally {
+      await sqlc.end({ timeout: 5 });
+    }
+
+    // Reprint refreshes to P.
+    const reprint = await ownerReq().post(`/v1/orders/${orderId}/delivery-ticket-print`).send({});
+    expect(reprint.status).toBe(201);
+    expect((await readFlags(deliveryId)).ticketFlag).toBe('P');
+  });
+
+  it('R10: a second-date ticket is refused until the first date is ticketed', async () => {
+    const orderRes = await ownerReq()
+      .post('/v1/orders')
+      .send({
+        locationId,
+        customerId,
+        fulfillmentType: 'delivery',
+        address: { line1: '10 Flag St', city: 'Glendale', region: 'CA', postalCode: '91205' },
+        lines: [{ variantId: mattressVariantId, quantity: 2 }],
+        confirm: true,
+      });
+    const orderId = orderRes.body.id;
+    const detail = await ownerReq().get(`/v1/orders/${orderId}`);
+    const lineId = detail.body.lines[0].id;
+    const first = await ownerReq()
+      .post(`/v1/orders/${orderId}/deliveries`)
+      .send({ scheduledDate: '2027-07-01', lines: [{ orderLineId: lineId, quantity: 1 }] });
+    const second = await ownerReq()
+      .post(`/v1/orders/${orderId}/deliveries`)
+      .send({ scheduledDate: '2027-07-10', lines: [{ orderLineId: lineId, quantity: 1 }] });
+    expect(first.status).toBe(201);
+    expect(second.status).toBe(201);
+
+    // Asking to print the SECOND date before the first is ticketed -> 409.
+    const refused = await ownerReq()
+      .post(`/v1/orders/${orderId}/delivery-ticket-print`)
+      .send({ deliveryId: second.body.id });
+    expect(refused.status).toBe(409);
+    expect(refused.body.code).toBe('SECOND_DATE_NOT_PRINTABLE');
+
+    // First date prints fine.
+    const ok = await ownerReq().post(`/v1/orders/${orderId}/delivery-ticket-print`).send({});
+    expect(ok.status).toBe(201);
+    expect((await readFlags(first.body.id)).ticketFlag).toBe('P');
+  });
+});
