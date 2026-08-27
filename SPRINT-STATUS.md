@@ -2540,3 +2540,41 @@ full ATP projection.
 
 Next: task #23 — Delivery Ticket Print & Reprint (port the pack's
 acceptance tests first, per its own instruction).
+
+## Delivery Ticket Print & Reprint — flag state machine (2026-08-27)
+
+Task #23 built per the pack's own protocol: 07's acceptance tests ported
+FIRST (S1–S9, T1–T7, T9, T10, R10 — 21 pure unit tests), then the
+normative 02 state machine as a pure function:
+
+- `apps/api/src/deliveries/ticket-flags.ts` — applyTicketEdit (R1–R8,
+  R11), canPrintSecondDate (R10), recordTicketPrint (print → P +
+  assignment); every transition returns the rule that fired. Pick-list
+  invariant (R7) enforced centrally; line slots outside the header's
+  first two dates are never ticketable.
+- Migration 0061_ticket_flags: ticket_flag/pick_list_flag on deliveries
+  (header slots) + delivery_lines (line slots).
+- TicketFlagsService persists snapshots and writes the transition log to
+  audit (`delivery.ticket_flags`) — "why did this reprint?" is always
+  answerable. Wired: delivery schedule/cancel (R8 next-delivery-date),
+  delivery date move (R8), order payments (R8 deposit), and the
+  delivery-ticket-print endpoint (sets P; optional deliveryId; R10 409
+  `SECOND_DATE_NOT_PRINTABLE` for premature second-date prints).
+- deliveries.int.spec 17→19 (print→P, date-move→R with R8 in the audit
+  log, reprint→P; R10 refusal then first-date print).
+
+**Owner items from the pack's open questions (08), decisions taken —
+say the word to change any:**
+
+- Q2/S3: the published S3 header-second-slot result rests on a
+  parenthetical the pack itself calls a source error; implemented S7's
+  quantity-conditional rule instead (S3 test documents the divergence).
+  Verify against live STORIS when convenient.
+- Q3: two ticketable slots only (dates roll forward) — pack's best guess.
+- Q8: destroyed print history IS retained (audit transition log).
+- Q9: `R` stays advisory (never blocks) — confirm the warehouse wants it
+  advisory rather than gating manifest creation.
+- Q6 (line deletion) and per-line reschedule UI: machine supports them
+  (line_reschedule/line_inventory_change) but no UI path exercises them
+  yet; whole-delivery date moves map to R8.
+  Gates: typecheck 0 · lint 0 · test 0 (full) · build 0 · prettier 0.

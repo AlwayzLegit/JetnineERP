@@ -333,6 +333,15 @@ export const deliveries = pgTable(
     windowStart: time('window_start'),
     windowEnd: time('window_end'),
     /**
+     * Delivery-ticket flag (erp-delivery-reprints 01/02): null = never
+     * printed, 'P' = printed and current, 'R' = printed but stale —
+     * reprint required (advisory, never blocking). Written only through
+     * the ticket-flags state machine.
+     */
+    ticketFlag: text('ticket_flag'),
+    /** Coupled to ticket_flag by invariant R7 (never survives a null ticket). */
+    pickListFlag: text('pick_list_flag'),
+    /**
      * 'scheduled' | 'loaded' | 'out_for_delivery' | 'delivered' | 'failed'
      * | 'cancelled'
      */
@@ -384,6 +393,9 @@ export const deliveryLines = pgTable(
       .notNull()
       .references(() => orderLines.id, { onDelete: 'cascade' }),
     quantity: integer('quantity').notNull(),
+    /** Per-line ticket flag — see deliveries.ticket_flag. */
+    ticketFlag: text('ticket_flag'),
+    pickListFlag: text('pick_list_flag'),
   },
   (t) => ({
     deliveryIdx: index('delivery_lines_delivery_id_idx').on(t.deliveryId),
