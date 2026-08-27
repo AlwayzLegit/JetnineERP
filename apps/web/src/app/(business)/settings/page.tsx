@@ -29,6 +29,8 @@ interface OpsSettings {
   blindReceiving?: boolean | null;
   reserveBasis?: 'delivery_date' | 'order_date' | null;
   returnWindowDays?: number | null;
+  restockingFeePercent?: number | null;
+  exchangeHoldAtEntry?: boolean | null;
   autoScheduleDays?: number | null;
   autoReplenishmentEnabled?: boolean | null;
   deliveryDailyPieceCap?: number | null;
@@ -214,7 +216,91 @@ export default function SettingsPage() {
       <ReasonCodesCard />
 
       <BrandingCard settings={settings} onSaved={setSettings} />
+
+      <RegistryReference />
     </div>
+  );
+}
+
+/**
+ * SET-007 (sysadmin pack): the settings registry rendered as reference —
+ * every setting the system reads, its type, and what BLANK means
+ * (SET-002: no implicit tri-state, ever). Served by the API so the doc
+ * can never drift from the code.
+ */
+function RegistryReference() {
+  const [rows, setRows] = useState<
+    | {
+        key: string;
+        label: string;
+        type: string;
+        nullMeans: string;
+        classTags: string[];
+        readBy: string;
+      }[]
+    | null
+  >(null);
+  const [failed, setFailed] = useState(false);
+
+  async function open() {
+    if (rows || failed) return;
+    try {
+      setRows(await api('/v1/business/settings/registry'));
+    } catch {
+      setFailed(true);
+    }
+  }
+
+  return (
+    <details style={{ marginTop: 24 }} data-testid="settings-registry" onToggle={() => void open()}>
+      <summary style={{ cursor: 'pointer', fontSize: 14, fontWeight: 500 }}>
+        Settings registry — what each setting does and what blank means
+      </summary>
+      {failed && (
+        <p style={{ color: 'var(--danger)', fontSize: 13 }}>Could not load the registry.</p>
+      )}
+      {rows && (
+        <div className="overflow-x-auto" style={{ marginTop: 8 }}>
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Setting</th>
+                <th>Type</th>
+                <th>Blank means</th>
+                <th>Read by</th>
+                <th>Class</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.key}>
+                  <td>
+                    {r.label}
+                    <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
+                      <code>{r.key}</code>
+                    </div>
+                  </td>
+                  <td>
+                    <code>{r.type}</code>
+                  </td>
+                  <td>{r.nullMeans}</td>
+                  <td style={{ fontSize: 12.5 }}>{r.readBy}</td>
+                  <td>
+                    {r.classTags.length > 0
+                      ? r.classTags.map((t) => (
+                          <span key={t} className="badge badge-warning" style={{ marginRight: 4 }}>
+                            {t}
+                          </span>
+                        ))
+                      : '—'}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </details>
   );
 }
 
@@ -257,6 +343,9 @@ function OpsCard({ settings, onSaved }: { settings: Settings; onSaved: (s: Setti
       body.reserveBasis = basis === 'order_date' ? 'order_date' : 'delivery_date';
       const rtnWindow = String(data.get('returnWindowDays') ?? '').trim();
       body.returnWindowDays = rtnWindow === '' ? null : Number(rtnWindow);
+      const restockPct = String(data.get('restockingFeePercent') ?? '').trim();
+      body.restockingFeePercent = restockPct === '' ? null : Number(restockPct);
+      body.exchangeHoldAtEntry = data.get('exchangeHoldAtEntry') === 'on' ? true : null;
       const autoSched = String(data.get('autoScheduleDays') ?? '').trim();
       body.autoScheduleDays = autoSched === '' ? null : Number(autoSched);
       body.autoReplenishmentEnabled = data.get('autoReplenishmentEnabled') === 'on' ? true : null;
@@ -406,6 +495,28 @@ function OpsCard({ settings, onSaved }: { settings: Settings; onSaved: (s: Setti
           defaultValue={ops.returnWindowDays ?? ''}
           style={{ width: '100%' }}
         />
+      </Field>
+      <Field label="Exchange restocking fee (% of return credit; blank = none)">
+        <Input
+          name="restockingFeePercent"
+          type="number"
+          step="0.5"
+          min={0}
+          max={100}
+          placeholder="e.g. 10 — overridable per exchange"
+          defaultValue={ops.restockingFeePercent ?? ''}
+          style={{ width: '100%' }}
+        />
+      </Field>
+      <Field label="Hold exchanges for approval at entry (E1)">
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
+          <input
+            type="checkbox"
+            name="exchangeHoldAtEntry"
+            defaultChecked={Boolean(ops.exchangeHoldAtEntry)}
+          />
+          Every new exchange waits for a manager release before it can settle
+        </label>
       </Field>
       <Field label="Auto transfer schedule days (blank = auto transfers off; 0 = next day)">
         <Input

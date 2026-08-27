@@ -1,0 +1,268 @@
+'use client';
+
+import Link from 'next/link';
+import { useParams } from 'next/navigation';
+import { useEffect, useState } from 'react';
+import { toast } from 'sonner';
+import { api } from '@/lib/api';
+import { Money } from '@/components/money';
+import { Button, Card, LoadingRows, PageHeader, StatusBadge } from '@/components/ui';
+
+interface ExchangeDetail {
+  id: string;
+  number: string;
+  status: string;
+  evenExchange: boolean;
+  restockingFeeCents: number;
+  restockingFeeOverridden: boolean;
+  returnId: string;
+  rmaNumber: string | null;
+  returnStatus: string | null;
+  returnCents: number;
+  saleOrderId: string;
+  saleOrderNumber: string | null;
+  saleOrderStatus: string | null;
+  originalOrderId: string | null;
+  originalOrderNumber: string | null;
+  referencedOrderNumber: string | null;
+  customerName: string | null;
+  notes: string | null;
+  createdAt: string;
+  completedAt: string | null;
+  splitAt: string | null;
+  settlement: {
+    returnCents: number;
+    restockingFeeCents: number;
+    creditCents: number;
+    saleTotalCents: number;
+    salePaidCents: number;
+    saleBalanceDueCents: number;
+  };
+}
+
+export default function ExchangeDetailPage() {
+  const params = useParams<{ id: string }>();
+  const id = params.id;
+  const [exchange, setExchange] = useState<ExchangeDetail | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function load() {
+    try {
+      setExchange(await api<ExchangeDetail>(`/v1/exchanges/${id}`));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
+  useEffect(() => {
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
+
+  async function act(path: string, body: Record<string, unknown> = {}) {
+    setBusy(true);
+    try {
+      await api(path, { method: 'POST', body: JSON.stringify(body) });
+      await load();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (error) return <p style={{ color: 'var(--danger)' }}>{error}</p>;
+  if (!exchange) return <LoadingRows rows={4} />;
+
+  const s = exchange.settlement;
+  const canSettle = exchange.status === 'open' && exchange.returnStatus === 'authorized';
+
+  return (
+    <div>
+      <p style={{ marginBottom: 12 }}>
+        <Link href="/exchanges">← All exchanges</Link>
+      </p>
+      <PageHeader
+        title={<code>{exchange.number}</code>}
+        sub={
+          <>
+            <StatusBadge status={exchange.status} /> · {exchange.customerName ?? '—'} ·{' '}
+            {new Date(exchange.createdAt).toLocaleString()}
+            {exchange.evenExchange && (
+              <>
+                {' '}
+                <span className="badge badge-info">even exchange</span>
+              </>
+            )}
+          </>
+        }
+        actions={
+          <span style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            {exchange.status === 'on_hold' && (
+              <Button
+                variant="primary"
+                size="sm"
+                disabled={busy}
+                onClick={() => void act(`/v1/exchanges/${id}/approve`)}
+                data-testid="approve-exchange"
+              >
+                Approve (release hold)
+              </Button>
+            )}
+            {canSettle && (
+              <Button
+                variant="primary"
+                size="sm"
+                disabled={busy}
+                onClick={() => void act(`/v1/order-returns/${exchange.returnId}/receive`)}
+                data-testid="settle-exchange"
+                title="Goods are back — settle the exchange"
+              >
+                Receive return & settle
+              </Button>
+            )}
+            {['open', 'on_hold'].includes(exchange.status) && (
+              <>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  disabled={busy}
+                  onClick={() => void act(`/v1/exchanges/${id}/split`)}
+                  title="Dissolve into an independent return and order"
+                >
+                  Split exchange
+                </Button>
+                <Button
+                  variant="danger"
+                  size="sm"
+                  disabled={busy}
+                  onClick={() => {
+                    const reason = prompt('Reason for cancelling this exchange:');
+                    if (reason != null) void act(`/v1/exchanges/${id}/cancel`, { reason });
+                  }}
+                >
+                  Cancel
+                </Button>
+              </>
+            )}
+          </span>
+        }
+      />
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Card title="The two legs">
+          <table className="table">
+            <tbody>
+              <tr>
+                <td>Original order</td>
+                <td>
+                  {exchange.originalOrderId ? (
+                    <Link href={`/orders/${exchange.originalOrderId}`}>
+                      <code>{exchange.originalOrderNumber}</code>
+                    </Link>
+                  ) : (
+                    <span title="Pre-cutover sale — number as claimed by the customer">
+                      <code>{exchange.referencedOrderNumber ?? '—'}</code> (no original on file)
+                    </span>
+                  )}
+                </td>
+              </tr>
+              <tr>
+                <td>Return</td>
+                <td>
+                  <code>{exchange.rmaNumber ?? '—'}</code>{' '}
+                  {exchange.returnStatus && <StatusBadge status={exchange.returnStatus} />}
+                </td>
+              </tr>
+              <tr>
+                <td>Replacement order</td>
+                <td>
+                  <Link href={`/orders/${exchange.saleOrderId}`}>
+                    <code>{exchange.saleOrderNumber}</code>
+                  </Link>{' '}
+                  {exchange.saleOrderStatus && <StatusBadge status={exchange.saleOrderStatus} />}
+                </td>
+              </tr>
+              {exchange.notes && (
+                <tr>
+                  <td>Notes</td>
+                  <td>{exchange.notes}</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </Card>
+
+        <Card title="Settlement">
+          <table className="table">
+            <tbody>
+              <tr>
+                <td>Return credit</td>
+                <td className="num">
+                  <Money cents={s.returnCents} />
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  Restocking fee
+                  {exchange.restockingFeeOverridden && (
+                    <span
+                      className="badge badge-warning"
+                      style={{ marginLeft: 6 }}
+                      title="Overridden — no longer auto-calculated"
+                    >
+                      overridden
+                    </span>
+                  )}
+                </td>
+                <td className="num">
+                  {s.restockingFeeCents > 0 ? (
+                    <>
+                      −<Money cents={s.restockingFeeCents} />
+                    </>
+                  ) : (
+                    '—'
+                  )}
+                </td>
+              </tr>
+              <tr>
+                <td>Credit toward replacement</td>
+                <td className="num">
+                  <Money cents={s.creditCents} />
+                </td>
+              </tr>
+              <tr>
+                <td>Replacement total</td>
+                <td className="num">
+                  <Money cents={s.saleTotalCents} />
+                </td>
+              </tr>
+              <tr>
+                <td>Paid so far (credit + tenders)</td>
+                <td className="num">
+                  <Money cents={s.salePaidCents} />
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  <strong>Balance due</strong>
+                </td>
+                <td className="num" data-testid="exchange-balance-due">
+                  <strong>
+                    <Money cents={s.saleBalanceDueCents} />
+                  </strong>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          <p style={{ color: 'var(--text-secondary)', fontSize: 12.5, margin: '8px 0 0' }}>
+            Settlement rides the store-credit ledger: at receipt the credit is issued and applied to
+            the replacement. Credit beyond the replacement&apos;s balance stays on the
+            customer&apos;s store credit. Take the remaining balance on the replacement order page
+            like any other order.
+          </p>
+        </Card>
+      </div>
+    </div>
+  );
+}

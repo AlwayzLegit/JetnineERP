@@ -370,12 +370,16 @@ export class OrdersController {
     @Query('cursor') cursorStr?: string,
     @Query('status') status?: string,
     @Query('customerId') customerId?: string,
+    @Query('number') number?: string,
   ): Promise<PageResponse<OrderListRow>> {
     const limit = clampLimit(limitStr);
     const cursor = decodeCursor(cursorStr);
     const filters = [];
     if (status) filters.push(eq(schema.orders.status, status));
     if (customerId) filters.push(eq(schema.orders.customerId, customerId));
+    // Exact document-number recall (the exchange writer's original-order
+    // field types the number off the paper invoice).
+    if (number) filters.push(eq(schema.orders.number, number.trim()));
     if (cursor) {
       filters.push(
         or(
