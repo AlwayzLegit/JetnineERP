@@ -2498,3 +2498,24 @@ existing modules. Remaining in the Sales Views program: Phase 4 record
 pages (customer 360 panels, product activity, salesperson page) — the
 existing customer/product/orders pages already carry much of this;
 scoped as the next slice(s).
+
+## Phase 4 record-page slice + Report Builder pack (2026-08-27)
+
+Sales Views Phase 4 gap-fill, gates green:
+
+- `GET /v1/customers/:id/summary` — customer-360 totals (lifetime + YTD
+  documents/dollars over POS sales + orders) and open orders with
+  computed Balance = Total − Amount Paid (derived, never stored).
+  Customer page gains "Activity totals" + "Open orders" cards.
+- Orders list gains `salespersonMembershipId` filter; sales list gains
+  `associateUserId` — the parameterized "salesperson's documents" grid.
+- New **Salespeople** page (People nav): written activity per
+  salesperson over a window (via the sales summary), drill-in to the
+  person's orders + POS sales. reports.int.spec 34→36.
+
+Owner re-sent the cash-balancing zip (verified byte-identical to the
+committed pack — no changes) and uploaded the **STORIS Report Builder
+handoff** (13 files: report definitions, dictionaries/joins, run/output/
+viewer, security, scheduling, menu integration, acceptance tests, open
+questions) — committed verbatim to `docs/handoffs/storis-report-builder/`.
+Queued last: it layers on the reporting engine this sprint just built.

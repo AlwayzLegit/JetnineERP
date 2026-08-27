@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useState, type ReactNode } from 'react';
 import {
+  BadgeDollarSign,
   AlertTriangle,
   ArrowLeftRight,
   BadgePercent,
@@ -91,6 +92,7 @@ const NAV: NavGroup[] = [
     label: 'People',
     items: [
       { href: '/customers', label: 'Customers', icon: Users },
+      { href: '/salespeople', label: 'Salespeople', icon: BadgeDollarSign },
       { href: '/marketing', label: 'Marketing', icon: Megaphone },
       { href: '/members', label: 'Members', icon: UserCog },
       { href: '/roles', label: 'Roles', icon: ShieldCheck },

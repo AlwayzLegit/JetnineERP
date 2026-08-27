@@ -10,6 +10,20 @@ import { api } from '@/lib/api';
 import { downloadFile } from '@/lib/download';
 import { Money } from '@/components/money';
 
+interface CustomerSummary {
+  lifetime: { documents: number; totalCents: number };
+  ytd: { documents: number; totalCents: number };
+  openOrders: {
+    id: string;
+    number: string;
+    status: string;
+    totalCents: number;
+    paidCents: number;
+    balanceCents: number;
+    requestedDate: string | null;
+  }[];
+}
+
 interface SaleSummary {
   id: string;
   number: string;
@@ -36,6 +50,7 @@ export default function CustomerDetailPage() {
   const id = (params?.id ?? '') as string;
   const [c, setC] = useState<Customer | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [summary, setSummary] = useState<CustomerSummary | null>(null);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [credit, setCredit] = useState<{
@@ -57,6 +72,14 @@ export default function CustomerDetailPage() {
       setError(err instanceof Error ? err.message : String(err));
     }
   }
+  useEffect(() => {
+    if (!id) return;
+    api<CustomerSummary>(`/v1/customers/${id}/summary`)
+      .then(setSummary)
+      .catch(() => setSummary(null));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
+
   useEffect(() => {
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -184,6 +207,72 @@ export default function CustomerDetailPage() {
         </Card>
       )}
 
+      {summary && (
+        <Card title="Activity totals" style={{ marginTop: 16 }} data-testid="customer-totals">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <div>
+              <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Lifetime documents</div>
+              <div style={{ fontSize: 18, fontWeight: 600 }}>{summary.lifetime.documents}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Lifetime total</div>
+              <div style={{ fontSize: 18, fontWeight: 600 }}>
+                <Money cents={summary.lifetime.totalCents} />
+              </div>
+            </div>
+            <div>
+              <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>YTD documents</div>
+              <div style={{ fontSize: 18, fontWeight: 600 }}>{summary.ytd.documents}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>YTD total</div>
+              <div style={{ fontSize: 18, fontWeight: 600 }}>
+                <Money cents={summary.ytd.totalCents} />
+              </div>
+            </div>
+          </div>
+        </Card>
+      )}
+      {summary && summary.openOrders.length > 0 && (
+        <Card title="Open orders" style={{ marginTop: 16 }} data-testid="customer-open-orders">
+          <div style={{ overflowX: 'auto' }}>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Order</th>
+                  <th>Status</th>
+                  <th>Requested</th>
+                  <th className="num">Total</th>
+                  <th className="num">Paid</th>
+                  <th className="num">Balance</th>
+                </tr>
+              </thead>
+              <tbody>
+                {summary.openOrders.map((o) => (
+                  <tr key={o.id}>
+                    <td>
+                      <Link href={`/orders/${o.id}`}>{o.number}</Link>
+                    </td>
+                    <td>
+                      <StatusBadge status={o.status} />
+                    </td>
+                    <td>{o.requestedDate ?? '—'}</td>
+                    <td className="num">
+                      <Money cents={o.totalCents} />
+                    </td>
+                    <td className="num">
+                      <Money cents={o.paidCents} />
+                    </td>
+                    <td className="num" style={{ fontWeight: 600 }}>
+                      <Money cents={o.balanceCents} />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      )}
       <Card title="Recent purchases">
         <Button
           size="sm"
