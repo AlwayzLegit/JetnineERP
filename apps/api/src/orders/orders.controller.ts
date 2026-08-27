@@ -2471,22 +2471,57 @@ export class OrdersController {
       .orderBy(schema.deliveries.scheduledDate)
       .limit(1);
 
-    // Line grid Model | Brand: model = variant SKU, brand = the
-    // variant's preferred vendor (closest thing the catalog has to a
-    // brand field — flagged as a v1 convention).
+    // Line grid Model | Brand: model = variant SKU, brand = the product's
+    // real brand when one is assigned, falling back to the variant's
+    // preferred vendor for unbranded catalog rows (the original v1
+    // convention, kept so imported products still print something).
     const variantIds = detail.lines.map((l) => l.variantId).filter((v): v is string => Boolean(v));
-    const lineMeta = new Map<string, { model: string | null; brand: string | null }>();
+    const lineMeta = new Map<
+      string,
+      { model: string | null; brand: string | null; bin: string | null }
+    >();
     if (variantIds.length > 0) {
       const rows = await this.db
         .select({
           variantId: schema.productVariants.id,
           model: schema.productVariants.sku,
-          brand: schema.vendors.name,
+          brandName: schema.brands.name,
+          vendorName: schema.vendors.name,
         })
         .from(schema.productVariants)
+        .innerJoin(schema.products, eq(schema.products.id, schema.productVariants.productId))
+        .leftJoin(schema.brands, eq(schema.brands.id, schema.products.brandId))
         .leftJoin(schema.vendors, eq(schema.vendors.id, schema.productVariants.preferredVendorId))
         .where(inArray(schema.productVariants.id, variantIds));
-      for (const r of rows) lineMeta.set(r.variantId, { model: r.model, brand: r.brand });
+      for (const r of rows)
+        lineMeta.set(r.variantId, {
+          model: r.model,
+          brand: r.brandName ?? r.vendorName,
+          bin: null,
+        });
+      // Storage bin per line for the pick list — where the stock sits at
+      // the order's own location (bins are per-location; a line pulled
+      // from elsewhere rides a transfer and gets picked there).
+      const bins = await this.db
+        .select({
+          variantId: schema.inventoryLevels.variantId,
+          code: schema.storageBins.code,
+        })
+        .from(schema.inventoryLevels)
+        .innerJoin(
+          schema.storageBins,
+          eq(schema.storageBins.id, schema.inventoryLevels.storageBinId),
+        )
+        .where(
+          and(
+            inArray(schema.inventoryLevels.variantId, variantIds),
+            eq(schema.inventoryLevels.locationId, detail.locationId),
+          ),
+        );
+      for (const b of bins) {
+        const meta = lineMeta.get(b.variantId);
+        if (meta) meta.bin = b.code;
+      }
     }
 
     // §10 Exchange Order doc: the Original Invoice # prints prominently.
@@ -2531,6 +2566,7 @@ export class OrdersController {
         ...l,
         model: l.variantId ? (lineMeta.get(l.variantId)?.model ?? null) : null,
         brand: l.variantId ? (lineMeta.get(l.variantId)?.brand ?? null) : null,
+        bin: l.variantId ? (lineMeta.get(l.variantId)?.bin ?? null) : null,
       })),
     };
   }

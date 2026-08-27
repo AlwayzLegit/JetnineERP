@@ -743,8 +743,9 @@ supersedes the checkpoint-7 wizard; legacy register + its offline mode retire).
       no Stripe reversal on order returns in v1 (office terminal); selling As-Is at a
       discount = restock then adjust onto the `-AS` SKU; service orders already link to
       sales (existing G6 module).*
-- [ ] **Build P9:** Commissions (equal-split default, exchange clawback), owner +
-      manager dashboards, 22:00 auto-close job
+- [x] **Build P9:** Commissions (equal-split default, exchange clawback), owner +
+      manager dashboards, 22:00 auto-close job — _shipped in checkpoint 9 (PR #33,
+      `5930f90`); box was left unchecked at the time._
 - [ ] **Ops:** Provide the two sample invoices into `docs/` for the document templates
       (P4); confirm PO reply-to address; pick unlock-capable roles in settings once P1 ships
 
@@ -770,6 +771,27 @@ role sync. Sprint branch restarted from main. **The whole POS-operations surface
 is live on `lamattress-erp.vercel.app`.** P9 (commissions, dashboards, auto-close)
 remains. Ops unchanged: repoint Render repo URL (deploys still manual-trigger), rotate
 the shared owner password, Resend domain when ready, sample invoices into `docs/`.
+
+## Checkpoint 11 merged + deployed — invite link fallback (2026-08-26)
+
+PR #35 squash-merged to main as `41577bd`; CI 4/4 green first try. Render deploy
+`dep-da7ja5bm6pss73fudmr0` **live 18:50:37Z** — boot log `Schema migrations: 49/49
+applied, head=0048_sale_line_order_discount_share; this run applied none (already up to
+date).` Vercel production READY on main `41577bd`.
+
+**Ops done this checkpoint:** `WEB_BASE_URL` on Render corrected from the stale
+deploy-branch preview alias to `https://lamattress-erp.vercel.app` (deploy
+`dep-da7ivn5g1s2s7381pql0`, live 18:28:13Z). Sending domain `mail.a-prompt.ai` created in
+Resend (`fbebebe1-3a0a-4e91-a82a-b333cd6769b3`, us-east-1, `not_started`) — the root
+`a-prompt.ai` was refused, 403 "domain has been registered already", i.e. claimed in a
+different Resend account. Owner is adding the three DKIM/SPF records at GoDaddy; verify +
+sending-scoped key + env vars follow. **Do not set `RESEND_API_KEY` before the domain
+verifies** — a key with an unverified domain makes `ResendTransport` throw instead of
+falling back, breaking the copy-link path.
+
+`HANDOFF.md` added at the repo root and wired in as step 0 of the CLAUDE.md read order,
+so a fresh session starts from current state rather than reconstructing it. The stale P9
+checkbox (shipped in checkpoint 9) was corrected.
 
 ## Invite email — root-caused and unblocked (2026-08-26)
 
@@ -1389,3 +1411,148 @@ required`). A raw-TCP probe to `dpg-da4ttsm417fc73di57eg-a.oregon-postgres.rende
   Fastest paths: (a) run `query_render_postgres` from a local Claude session (raw TCP
   works there), (b) paste the recon report JSON from Settings → Import during the QA
   pass, or (c) approve the staging-login curl in this session.
+
+## Cutover session — Resend chain + bulk price entry (2026-08-26)
+
+Two owner decisions taken this session (AskUserQuestion, on record):
+
+1. **Resend sending domain is now the ROOT `a-prompt.ai`** — the owner deleted the
+   `mail.a-prompt.ai` subdomain from HANDOFF §4a and created the root domain instead
+   (id `e3b4a9d3-170d-4cc2-b082-6e7505b08ead`, us-east-1; the earlier "claimed in
+   another account" 403 evidently resolved). Owner confirmed the root-name records
+   (`resend._domainkey` TXT / `send` MX prio 10 / `send` SPF TXT — no `.mail` suffix)
+   were saved at GoDaddy. Verification triggered and the domain reached **verified**
+   (all three records) within ~20 min. Then, in order: sending-scoped API key
+   `jetnine-api-render-sending` created restricted to that domain; `RESEND_API_KEY` +
+   `RESEND_FROM_EMAIL` (`LA Mattress ERP <notifications@a-prompt.ai>`) set on
+   `srv-da4tua3m8hqs73apsflg` (env update auto-triggered deploy
+   `dep-da7kc6fqj5pc73835nvg`). The key was set **only after** the domain verified,
+   per the HANDOFF §4a trap. Proof-of-delivery invite: see the note below once sent.
+
+2. **Catalog prices will be set in-app** (not imported) — D12 register-side pricing
+   stands; the owner chose manual entry over a retail-price file. To make 6,909
+   zero-price variants feasible, this session shipped a **bulk price entry** slice:
+   - API: `GET /v1/products/variants/pricing` (`products.view`; flat variant
+     work-list joined to products, cursor-paginated by SKU, `unpricedOnly=1` filter,
+     tsvector search, `unpricedCount` remaining-work counter, cost gated on
+     `products.cost.view`) and `POST /v1/products/variants/bulk-price`
+     (`products.update`; ≤200 `{id, priceCents}` per request, non-negative-integer
+     validation, unknown-id 404, per-variant `product.variant.price.update` audit
+     rows identical to the single-price PATCH, unchanged rows skipped, all on the
+     request's RLS transaction).
+   - Web: `/products/pricing` — "Unpriced only" on by default, search, inline
+     new-price column with invalid-amount highlighting, batched save, remaining
+     counter, Load more; "Set prices" button added to the Products page header.
+   - Tests: catalog.int.spec.ts 10→16 (work-list shape + count, cashier cost
+     redaction, permission gate, malformed/unknown rejects, bulk write + audit row +
+     count drop). Gates by exit code: typecheck 0 · lint 0 · catalog spec 16/16 ·
+     prettier 0.
+
+## Owner-scoped build from the STORIS sysadmin handoff (2026-08-27)
+
+The owner supplied a STORIS System Administration corpus digest (599-article index).
+Direction confirmed by owner: **still migrating OFF STORIS** (the doc's conversion
+machinery is inverted for us — treated as a feature inventory only); **no STORIS API
+licensing** (§8 dropped). Build mandate picked by owner: **Brand/Collection and
+warehouse bin locations only** (protection plans/warranty, credit hold stay backlog).
+Both shipped as vertical slices:
+
+- **Brands + Collections (migration `0049_brands_collections`):** `brands` and
+  `collections` tables (RLS'd, unique name per business, deactivate-not-delete;
+  collections optionally reference a vendor), `products.brand_id`/`collection_id`
+  (set-null FKs). `/v1/brands` + `/v1/collections` CRUD in the catalog module —
+  convention: list under `products.view`, mutations under `products.update` (no new
+  permission; STORIS files these under Product Settings). Products create/PATCH/detail
+  carry both ids. **P4 invoice Brand column now prints the real brand**, falling back
+  to the variant's preferred vendor (the old v1 convention) for unbranded rows.
+  Product detail page gained a Brand & collection card (selects + create-on-the-fly).
+  catalog.int.spec 16→20.
+- **Storage bins (migration `0050_storage_bins`):** `storage_bins` per location
+  (unique code per location, uppercased, deactivate-not-delete) +
+  `inventory_levels.storage_bin_id`. `/v1/inventory/bins` list/create/patch and
+  `/v1/inventory/levels/assign-bin` (level must exist; bin must be an active bin of
+  the same location) — mutations under `inventory.adjust`, all audited. Levels API +
+  Inventory page carry the bin (per-row select + a bins management section);
+  **the G15 pick list prints a Bin column** (stock location at the order's own store).
+  inventory.int.spec 9→13; RLS suite green with both tables registered.
+
+Gates by exit code: typecheck 0 · lint 0 (one `react/no-unescaped-entities` caught and
+fixed pre-push — the checkpoint-9 lesson holding) · catalog+inventory+orders+RLS suites
+all pass · prettier 0.
+
+**Also received, pending owner direction:** a STORIS-style documentation-system handoff
+(P0 scaffold prompt) — owner dismissed the kickoff question, holding until instructed;
+and a reverse-engineered **Sales Processing behavioral spec** (docs/erp 00–13 +
+SOURCES) whose fulfillment-centric order model diverges from the shipped order/delivery
+model — flagged as a [DECIDE] for the owner before any rework. More handoffs incoming
+per owner.
+
+## Spec packs committed + Phase-0 parity mapping (2026-08-27)
+
+Owner delivered two reverse-engineered STORIS behavioral spec packs (more announced):
+**Sales Processing** (docs/erp/00–13 + SOURCES, from two identical zips) and
+**Inventory Management** (docs/erp-inventory/00 + 05–08; its five big `sections/`
+files and 99-source-index are still outstanding — the parity checklist is keyed to
+their rule IDs and is blocked until they arrive). Both committed verbatim into the
+repo as directed. Per both packs' own Phase-0 rule, `docs/erp/PARITY-NOTES.md` now
+maps every pack entity to the shipped system and lists the conflicts as owner
+decisions (C1 fulfillment-centric money · C2 costing layers · C3 bucket ledger ·
+C4 piece identity · C5 physical inventory · C6 fractional qty · C7 vocabulary),
+notes the pack questions the shipped system already answers, and recommends treating
+the packs as post-cutover hardening backlog rather than a pre-cutover rebuild.
+No code changed for this. The STORIS-docs documentation-system handoff remains on
+hold (owner dismissed the kickoff question).
+
+## Email is LIVE — invite delivered end to end (2026-08-27)
+
+The HANDOFF §4a thread is closed. Chain executed in order: root `a-prompt.ai`
+verified in Resend (owner's GoDaddy records, all three green) → sending-scoped API
+key `jetnine-api-render-sending` (domain-restricted; token lives only in the Render
+env) → `RESEND_API_KEY` + `RESEND_FROM_EMAIL` (`LA Mattress ERP
+<notifications@a-prompt.ai>`) set on `srv-da4tua3m8hqs73apsflg` → deploy
+`dep-da7kc6fqj5pc73835nvg` live 20:03Z, boot log `Schema migrations: 49/49 applied…
+this run applied none`. **Proof:** owner clicked Resend invite for
+`me.lamattress@gmail.com` at 04:51:29Z — Render logged the POST 201 (595ms, real
+API call, no inviteLink fallback in the response), Resend shows the message
+**delivered** via SES on the verified domain. The key was set only after
+verification, so the copy-link path was never broken. Production email works for
+the first time. Ops next: accept that invite to create the manager/second account
+(expires 2026-08-29 17:53Z), which unblocks browser-QA step 2.
+
+## Accounting corpus received + invite-in-spam note (2026-08-27)
+
+The full STORIS Accounting bundle landed and verified complete against its own
+manifest — 307 verbatim articles (00-accounting 10 · views-and-reports 100 · GL 10 ·
+payables 63 · receivables 124) + 5 digests + INDEX + manifest — committed at
+`docs/erp-accounting/storis-docs/` and exempted from prettier so the verbatim
+captures stay byte-faithful. Its HANDOFF is direction-agnostic enough to be useful
+both ways; its §2 decision list and §6 risk register mostly concern loading INTO
+STORIS and are moot for us, but the AR/in-house-financing articles (04-receivables)
+are the reference if financing parity is ever scoped. Still missing from the
+inventory pack: the five `sections/` files + `99-source-index.md`.
+
+**Email deliverability:** the delivered invite landed in Gmail's SPAM folder —
+expected for a domain with zero sending history. Owner should mark it "Not spam"
+(trains Gmail for future invites); adding a DMARC record at GoDaddy
+(`_dmarc.a-prompt.ai` TXT `v=DMARC1; p=none;`) would further help reputation — Ops,
+optional.
+
+## Improvement slice 1 — invoice lookup + daily-ops search (2026-08-27)
+
+The owner green-lit ERP improvement work; slice 1 closes the top three findings
+from the daily-ops audit (the "no way to find one sale among 73,899" hole):
+
+- **Invoice lookup:** `GET /v1/sales` gains `q` — case-insensitive substring on
+  the document number (a scanned receipt barcode types the full number and hits
+  exactly, closing the print-only half of the G-era barcode feature) OR customer
+  tsvector match — composing with the existing timestamp cursor. Rows now carry
+  `customerName` (left-joined). Sales page rebuilt: autofocused scanner-friendly
+  search box, Customer column (named / — / Walk-in), Load more.
+- **Inventory search:** `levels` gains `q` over the variant+product tsvectors
+  (name/SKU/barcode); Inventory page gains the search form.
+- **Customers pagination:** the page finally uses the `nextCursor` the API always
+  returned — Load more past the first 50 of 63k customers.
+
+Tests: sales.int.spec +5 (full-number/scan path, fragment + customerName,
+customer-name search, empty non-match), inventory.int.spec +1. Gates by exit
+code: typecheck 0 · lint 0 · sales+inventory suites pass · prettier 0.

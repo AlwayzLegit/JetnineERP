@@ -344,6 +344,20 @@
       "when": 1787761533523,
       "tag": "0048_sale_line_order_discount_share",
       "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "7",
+      "when": 1787799030387,
+      "tag": "0049_brands_collections",
+      "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1787799070308,
+      "tag": "0050_storage_bins",
+      "breakpoints": true
     }
   ]
 }

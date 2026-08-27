@@ -5,6 +5,8 @@ GHL-style platform layer). Turborepo + pnpm monorepo, Node 22.
 
 ## Read order (do this before writing code)
 
+0. **`HANDOFF.md`** — takeover brief: what is built, what is deployed, the two live
+   threads, and the traps. Start here if you are new to this work.
 1. **`SPRINT-STATUS.md`** — where the active sprint stands and what to do next. Keep it updated.
 2. **`PLAN-POS-OPERATIONS.md`** — the active build spec: STORIS-modeled POS/operations
    modules (owner-confirmed decisions + amendments §0, 9-phase build order).
