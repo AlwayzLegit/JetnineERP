@@ -393,12 +393,14 @@ export class SalesController {
     @Query('q') q?: string,
     @Query('limit') limitStr?: string,
     @Query('cursor') cursorStr?: string,
+    @Query('associateUserId') associateUserId?: string,
   ): Promise<PageResponse<SaleListRow>> {
     const limit = clampPageLimit(limitStr);
     const cursor = decodeCursor(cursorStr);
     const filters: (ReturnType<typeof and> | undefined)[] = [
       cursor ? timestampCursorWhere(schema.sales.createdAt, schema.sales.id, cursor) : undefined,
       salesScopeCond(tenant, schema.sales.locationId),
+      associateUserId ? eq(schema.sales.associateUserId, associateUserId) : undefined,
     ];
     const query = q?.trim();
     if (query) {
