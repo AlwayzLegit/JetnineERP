@@ -1,0 +1,48 @@
+req_id,article_id,title
+SYS-001,15234737969556,Access ECL
+SYS-002,15234738561044,Access Time Clock
+SYS-003,15234735777428,Administer Phantom Processes
+SYS-004,15234718452500,AP and GL History Conversions
+SYS-005,15234718455060,AP Bill Conversion
+SYS-006,15234721250196,Assign Conversion Import Translations
+SYS-007,15234722956820,Assign Daily Reports Print Destination
+SYS-008,15234737083668,Assign Monthly Reports Print Destination
+SYS-009,15234722295188,Assign Screen Action Permission
+SYS-010,15234721248788,Automated Data Import Settings
+SYS-011,15234737965972,Automatic Updates Notification Screen
+SYS-012,15234723874452,Check and Electronically Install STORIS Updates
+SYS-013,15234718087700,Confirmation Request Window
+SYS-014,15234720878356,Conversion Process Actions Button
+SYS-015,15234722085140,Copy Live Data to Learn Account
+SYS-016,15234718088596,Create a Catalog Spreadsheet
+SYS-017,15234722082708,Create Document Text
+SYS-018,15234737967252,Custom Plug-In Process Maintenance
+SYS-019,15234722706068,Cycle Module Multi-Print Assignment Screen
+SYS-020,15234738259988,Default Path for Micro*D Quote Documents and Images
+SYS-021,15234736180116,Dynamic Escape Settings
+SYS-022,15234736179604,Dynamic Tab Settings
+SYS-023,15234722705300,End of Day Reports
+SYS-024,15234722706196,End of Month Reports
+SYS-025,15234722707860,End-Of-Month Active Module Inquiry Screen
+SYS-026,15234722727188,End-Of-Month Module Detail Screen
+SYS-027,15234720866708,Enter Payments Applied to a Contract
+SYS-028,15234723874836,Export Protection Plan Activity
+SYS-029,15234737967380,Export Purchase Orders
+SYS-030,15234722963092,Generate Daily Reports
+SYS-031,15234737083796,Generate Monthly Reports
+SYS-032,15234722728724,Generate Monthly Reports after Daily Reports
+SYS-033,15234718452756,Import / Export Physical Inventory Count
+SYS-034,15234718456980,Import Cross Reference Data
+SYS-035,15234721245332,Import Data
+SYS-036,15234721265684,Import External Data
+SYS-037,15234721243924,Import Physical Inventory Count Review Screen
+SYS-038,15234722469524,Install Software Updates
+SYS-039,15234721541524,Installment Contract Load
+SYS-040,15234721552788,Load Import Tariff
+SYS-041,15234722298132,Log To Additional Account
+SYS-042,15234724163860,Maintain NFS Root Paths
+SYS-043,15234738253460,Mass Collector Reassignment
+SYS-044,15234724188820,Modify ArcLogistics PC Path
+SYS-045,15234738255892,Modify Images PC Path
+SYS-046,15234739734292,Modify Quickbooks PC Path
+SYS-047,15234738251156,Modify Routeview PC Path

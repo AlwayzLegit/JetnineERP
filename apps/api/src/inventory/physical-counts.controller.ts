@@ -14,6 +14,7 @@ import { and, asc, eq, gt, inArray, sql } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { schema } from '@jetnine/db';
 import { AuditService } from '../audit/audit.service';
+import { CostingService } from '../costing/costing.service';
 import { ExceptionsService } from '../controls/exceptions.service';
 import { CurrentTenant, CurrentUser } from '../auth/current-user.decorator';
 import type { CurrentUserPayload } from '../auth/current-user.decorator';
@@ -54,6 +55,7 @@ export class PhysicalCountsController {
     @Inject(DRIZZLE) private readonly db: PostgresJsDatabase,
     @Inject(AuditService) private readonly audit: AuditService,
     @Inject(ExceptionsService) private readonly exceptions: ExceptionsService,
+    @Inject(CostingService) private readonly costing: CostingService,
   ) {}
 
   @Get()
@@ -367,6 +369,33 @@ export class PhysicalCountsController {
         actorUserId: actor.id,
         notes: `counted ${line.countedQty}, expected ${line.frozenQty + line.postFreezeDelta}`,
       });
+      // FIFO: overages layer at the variant's catalog cost; shortages
+      // consume oldest-first (the shrink carries real cost).
+      if (variance > 0) {
+        const [pv] = await this.db
+          .select({ costCents: schema.productVariants.costCents })
+          .from(schema.productVariants)
+          .where(eq(schema.productVariants.id, line.variantId))
+          .limit(1);
+        await this.costing.addLayer(this.db, {
+          businessId: tenant.businessId!,
+          variantId: line.variantId,
+          locationId: count.locationId,
+          sourceType: 'physical_count',
+          referenceId: count.id,
+          quantity: variance,
+          unitCostCents: pv?.costCents ?? null,
+        });
+      } else {
+        await this.costing.consume(this.db, {
+          businessId: tenant.businessId!,
+          variantId: line.variantId,
+          locationId: count.locationId,
+          quantity: -variance,
+          referenceType: 'physical_count',
+          referenceId: count.id,
+        });
+      }
       const [level] = await this.db
         .update(schema.inventoryLevels)
         .set({

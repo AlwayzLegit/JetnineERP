@@ -18,6 +18,7 @@ import { schema } from '@jetnine/db';
 const fromLoc = alias(schema.locations, 'from_loc');
 const toLoc = alias(schema.locations, 'to_loc');
 import { AuditService } from '../audit/audit.service';
+import { CostingService } from '../costing/costing.service';
 import { ExceptionsService } from '../controls/exceptions.service';
 import {
   SecurityOverrideService,
@@ -104,6 +105,7 @@ export class TransfersController {
     @Inject(WebhookDispatcher) private readonly webhooks: WebhookDispatcher,
     @Inject(SecurityOverrideService) private readonly overrides: SecurityOverrideService,
     @Inject(ExceptionsService) private readonly exceptions: ExceptionsService,
+    @Inject(CostingService) private readonly costing: CostingService,
   ) {}
 
   @Get()
@@ -428,6 +430,26 @@ export class TransfersController {
         actorUserId: actor.id,
         notes: body.notes ?? null,
       });
+      // FIFO: the destination layer carries the cost shipped with the
+      // line (pre-costing transfers fall back to the catalog cost).
+      let inCost = v.line.unitCostCents;
+      if (inCost == null) {
+        const [pv] = await this.db
+          .select({ costCents: schema.productVariants.costCents })
+          .from(schema.productVariants)
+          .where(eq(schema.productVariants.id, v.line.variantId))
+          .limit(1);
+        inCost = pv?.costCents ?? null;
+      }
+      await this.costing.addLayer(this.db, {
+        businessId: tenant.businessId!,
+        variantId: v.line.variantId,
+        locationId: transfer.toLocationId,
+        sourceType: 'transfer_in',
+        referenceId: transfer.id,
+        quantity: v.qty,
+        unitCostCents: inCost,
+      });
       // Increment the destination level.
       await this.db
         .insert(schema.inventoryLevels)
@@ -662,6 +684,26 @@ export class TransfersController {
         actorUserId: actorId,
         notes,
       });
+      // FIFO: shipping consumes origin layers; the weighted unit cost of
+      // what actually left rides on the line so receiving can layer the
+      // destination at the same cost.
+      const consumed = await this.costing.consume(this.db, {
+        businessId,
+        variantId: l.variantId,
+        locationId: fromLocationId,
+        quantity: l.quantity,
+        referenceType: 'transfer_out',
+        referenceId: transferId,
+      });
+      await this.db
+        .update(schema.stockTransferLines)
+        .set({ unitCostCents: Math.round(consumed.costCents / l.quantity) })
+        .where(
+          and(
+            eq(schema.stockTransferLines.transferId, transferId),
+            eq(schema.stockTransferLines.variantId, l.variantId),
+          ),
+        );
       await this.db
         .insert(schema.inventoryLevels)
         .values({

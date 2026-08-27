@@ -1,0 +1,20 @@
+req_id,article_id,title
+USR-021,15185859800852,Rate Table Settings
+USR-022,15185860705300,Reason Code Settings
+USR-023,15185875940756,Reason Code Spiff Table
+USR-024,15185876708756,Receivable Payment Source Settings
+USR-025,15185859800340,Regional Processing - Reporting Rules
+USR-026,15185875941012,"Regional Processing - Rules, Notes, and Exceptions"
+USR-027,15185860065428,Remove from Hold & Send via EDI Preferences
+USR-028,15185876228244,Restricted Payment Type Select Window
+USR-029,15185860063764,RF Barcode User Settings
+USR-030,15185860064404,Sales Performance Report
+USR-031,15185876708628,Schedule a Process
+USR-032,15185860064020,Schedule Daily Reports Preferences
+USR-033,15185876226580,Set Domestic Country
+USR-034,15185860067732,Tax Jurisdiction Reduction Percent Screen
+USR-035,15185860065044,Telephone Mask Settings
+USR-036,15185876708884,Track Settings Activity
+USR-037,15185860707092,User Defined Settings
+USR-038,15185860228628,User Group Clone Process
+USR-039,15185875552276,View File Attachments

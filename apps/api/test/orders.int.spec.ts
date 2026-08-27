@@ -2498,3 +2498,185 @@ describe('Return windows + no-original returns (FAQ I4, I1/I8)', () => {
     expect(invalid.status).toBe(400);
   });
 });
+
+describe('FIFO COGS — fulfillment consumes layers, pre-costing stock synthesizes opening layers', () => {
+  let fifoVariantId = '';
+
+  async function withDb2<T>(fn: (db: ReturnType<typeof drizzle>) => Promise<T>): Promise<T> {
+    const sql2 = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    try {
+      return await fn(drizzle(sql2));
+    } finally {
+      await sql2.end({ timeout: 5 });
+    }
+  }
+
+  function asOwner() {
+    return {
+      post: (url: string) =>
+        request(app.getHttpServer())
+          .post(url)
+          .set('Cookie', ownerCookie)
+          .set('X-Business-Id', businessId),
+    };
+  }
+
+  async function fulfillOne(quantity: number): Promise<string> {
+    const created = await asOwner()
+      .post('/v1/orders')
+      .send({
+        locationId,
+        customerId,
+        fulfillmentType: 'pickup',
+        confirm: true,
+        lines: [{ variantId: fifoVariantId, quantity }],
+      });
+    expect(created.status).toBe(201);
+    const pay = await asOwner()
+      .post(`/v1/orders/${created.body.id}/payments`)
+      .send({ method: 'cash', amountCents: created.body.totalCents });
+    expect(pay.status).toBe(201);
+    const ful = await asOwner().post(`/v1/orders/${created.body.id}/fulfill`).send({});
+    expect(ful.status).toBe(201);
+    return created.body.id as string;
+  }
+
+  it('pre-costing stock: fulfilling synthesizes a fully-consumed opening layer at catalog cost', async () => {
+    fifoVariantId = await withDb2(async (db) => {
+      const [p] = await db
+        .insert(schema.products)
+        .values({ businessId, sku: 'COGS-BED', name: 'COGS Fixture Bed' })
+        .returning();
+      const [v] = await db
+        .insert(schema.productVariants)
+        .values({
+          businessId,
+          productId: p!.id,
+          sku: 'COGS-BED-V1',
+          priceCents: 80000,
+          costCents: 30000,
+        })
+        .returning();
+      // Stock exists but predates costing — no layers.
+      await db.insert(schema.inventoryLevels).values({
+        businessId,
+        variantId: v!.id,
+        locationId,
+        onHand: 10,
+        reserved: 0,
+      });
+      return v!.id;
+    });
+
+    const orderId = await fulfillOne(2);
+
+    await withDb2(async (db) => {
+      const layers = await db
+        .select()
+        .from(schema.costLayers)
+        .where(eq(schema.costLayers.variantId, fifoVariantId));
+      expect(layers).toHaveLength(1);
+      expect(layers[0]!.sourceType).toBe('opening');
+      expect(layers[0]!.unitCostCents).toBe(30000);
+      expect(layers[0]!.quantityReceived).toBe(2);
+      expect(layers[0]!.quantityRemaining).toBe(0);
+
+      const consumptions = await db
+        .select()
+        .from(schema.costConsumptions)
+        .where(eq(schema.costConsumptions.layerId, layers[0]!.id));
+      expect(consumptions).toHaveLength(1);
+      expect(consumptions[0]!.quantity).toBe(2);
+      expect(consumptions[0]!.unitCostCents).toBe(30000);
+      expect(consumptions[0]!.referenceType).toBe('order_fulfill');
+      expect(consumptions[0]!.referenceId).toBe(orderId);
+    });
+  });
+
+  it('layered stock is consumed FIFO before any new synthesis', async () => {
+    // A real receipt creates a layer; the next fulfillment eats it.
+    const recv = await asOwner()
+      .post('/v1/inventory/receive')
+      .send({ locationId, lines: [{ variantId: fifoVariantId, quantity: 5 }] });
+    expect(recv.status).toBe(201);
+
+    await fulfillOne(3);
+
+    await withDb2(async (db) => {
+      const layers = await db
+        .select()
+        .from(schema.costLayers)
+        .where(
+          and(
+            eq(schema.costLayers.variantId, fifoVariantId),
+            eq(schema.costLayers.sourceType, 'receive'),
+          ),
+        );
+      expect(layers).toHaveLength(1);
+      expect(layers[0]!.unitCostCents).toBe(30000); // catalog cost fallback
+      expect(layers[0]!.quantityRemaining).toBe(2); // 5 received − 3 fulfilled
+
+      // No second opening layer was needed.
+      const opening = await db
+        .select()
+        .from(schema.costLayers)
+        .where(
+          and(
+            eq(schema.costLayers.variantId, fifoVariantId),
+            eq(schema.costLayers.sourceType, 'opening'),
+          ),
+        );
+      expect(opening).toHaveLength(1);
+    });
+  });
+
+  it('a zero-cost consumption raises the C9 zero_cost_layer exception', async () => {
+    const bareVariantId = await withDb2(async (db) => {
+      const [p] = await db
+        .insert(schema.products)
+        .values({ businessId, sku: 'NOCOST', name: 'No Cost Fixture' })
+        .returning();
+      const [v] = await db
+        .insert(schema.productVariants)
+        .values({ businessId, productId: p!.id, sku: 'NOCOST-V1', priceCents: 10000 })
+        .returning();
+      await db.insert(schema.inventoryLevels).values({
+        businessId,
+        variantId: v!.id,
+        locationId,
+        onHand: 4,
+        reserved: 0,
+      });
+      return v!.id;
+    });
+
+    const created = await asOwner()
+      .post('/v1/orders')
+      .send({
+        locationId,
+        customerId,
+        fulfillmentType: 'pickup',
+        confirm: true,
+        lines: [{ variantId: bareVariantId, quantity: 1 }],
+      });
+    expect(created.status).toBe(201);
+    await asOwner()
+      .post(`/v1/orders/${created.body.id}/payments`)
+      .send({ method: 'cash', amountCents: created.body.totalCents })
+      .expect(201);
+    await asOwner().post(`/v1/orders/${created.body.id}/fulfill`).send({}).expect(201);
+
+    await withDb2(async (db) => {
+      const events = await db
+        .select()
+        .from(schema.exceptionEvents)
+        .where(
+          and(
+            eq(schema.exceptionEvents.type, 'zero_cost_layer'),
+            eq(schema.exceptionEvents.entityId, bareVariantId),
+          ),
+        );
+      expect(events.length).toBeGreaterThan(0);
+    });
+  });
+});

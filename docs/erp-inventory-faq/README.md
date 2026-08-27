@@ -1,5 +1,15 @@
 # LA Mattress ERP — STORIS Inventory & Purchasing Parity Handoff
 
+> **⚠️ CORRECTED (2026-08-27):** the System Administration pack
+> (`docs/erp-sysadmin/01-corrections-to-inventory-pack.md`) corrects this
+> FAQ-derived pack in **thirteen places** from the authoritative reference
+> screens — six touch P0 requirements. Notably: `ITEM-040` price resolution
+> order is contradicted (C2 — unsafe to implement as written), the price
+> matrix has 8 codes with 100-based factors not 6 with decimals (C1), and
+> `10-security-permissions.md` is superseded by
+> `docs/erp-sysadmin/02-permissions-catalog.md` (C13). Read the corrections
+> before building against any pricing, costing, or permissions row here.
+
 **Audience:** Claude Code, working in the LA Mattress ERP repo.
 **Source of truth for this pack:** STORIS Help Center → _Frequently Asked Questions → Inventory_ section
 (10 FAQ articles, captured 2026-08-27). Every requirement below traces to a specific FAQ answer.

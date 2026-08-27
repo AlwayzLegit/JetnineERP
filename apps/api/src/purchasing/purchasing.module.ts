@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { AuditModule } from '../audit/audit.module';
 import { ControlsModule } from '../controls/controls.module';
+import { CostingModule } from '../costing/costing.module';
 import { EmailModule } from '../email/email.module';
 import { OrdersModule } from '../orders/orders.module';
 import { SpecialOrdersModule } from '../special-orders/special-orders.module';
@@ -19,6 +20,7 @@ import { VendorsController } from './vendors.controller';
     SpecialOrdersModule,
     EmailModule,
     ControlsModule,
+    CostingModule,
   ],
   controllers: [VendorsController, PurchaseOrdersController, VendorInvoicesController],
 })

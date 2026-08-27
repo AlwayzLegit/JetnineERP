@@ -4,6 +4,7 @@ import { and, desc, eq, gte, inArray, isNull, lt, or, sql } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { schema } from '@jetnine/db';
 import { CurrentTenant } from '../auth/current-user.decorator';
+import { CostingService } from '../costing/costing.service';
 import { DRIZZLE } from '../database/database.module';
 import { RequirePermission, TenantScoped } from '../tenancy/decorators';
 import type { RequestTenantContext } from '../tenancy/request-context';
@@ -134,7 +135,10 @@ interface InventoryRow {
 @TenantScoped()
 @Controller('v1/reports')
 export class ReportsController {
-  constructor(@Inject(DRIZZLE) private readonly db: PostgresJsDatabase) {}
+  constructor(
+    @Inject(DRIZZLE) private readonly db: PostgresJsDatabase,
+    @Inject(CostingService) private readonly costing: CostingService,
+  ) {}
 
   /**
    * Daily sales totals across the requested window. Returns three slices
@@ -664,11 +668,28 @@ export class ReportsController {
       .where(locationId ? eq(schema.inventoryLevels.locationId, locationId) : undefined)
       .orderBy(schema.products.name, schema.productVariants.sku);
 
-    const out: ValuationRow[] = rows.map((r) => ({
-      ...r,
-      costValueCents: r.costCents != null ? r.costCents * r.onHand : null,
-      retailValueCents: r.priceCents * r.onHand,
-    }));
+    // FIFO valuation (owner decision 2026-08-27): layered stock is valued
+    // at its actual layer costs; any remainder that predates costing
+    // falls back to the catalog cost.
+    const fifo = await this.costing.valuation(this.db, {
+      businessId: tenant.businessId!,
+      locationId,
+    });
+    const out: ValuationRow[] = rows.map((r) => {
+      const layered = fifo.get(`${r.variantId}:${r.locationId}`);
+      const layeredQty = Math.min(layered?.quantity ?? 0, r.onHand);
+      const remainder = r.onHand - layeredQty;
+      const costValueCents = layered
+        ? layered.costCents + remainder * (r.costCents ?? 0)
+        : r.costCents != null
+          ? r.costCents * r.onHand
+          : null;
+      return {
+        ...r,
+        costValueCents,
+        retailValueCents: r.priceCents * r.onHand,
+      };
+    });
     const totalCostValueCents = out.reduce((s, r) => s + (r.costValueCents ?? 0), 0);
     const totalRetailValueCents = out.reduce((s, r) => s + r.retailValueCents, 0);
 

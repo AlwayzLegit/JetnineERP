@@ -2,6 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { schema } from '@jetnine/db';
+import { CostingService } from '../costing/costing.service';
 import { DRIZZLE } from '../database/database.module';
 import { computeTotals } from '../sales/totals';
 import {
@@ -34,7 +35,10 @@ export interface OrderTotalsSnapshot {
  */
 @Injectable()
 export class OrdersService {
-  constructor(@Inject(DRIZZLE) private readonly db: PostgresJsDatabase) {}
+  constructor(
+    @Inject(DRIZZLE) private readonly db: PostgresJsDatabase,
+    @Inject(CostingService) private readonly costing: CostingService,
+  ) {}
 
   /**
    * B14 backfill: reserve stock for confirmed order lines that could not
@@ -607,6 +611,15 @@ export class OrdersService {
         referenceId: args.referenceId ?? args.orderId,
         actorUserId: args.actorUserId,
         notes: `fulfilled ${step.quantity}`,
+      });
+      // FIFO COGS: the fulfilled units consume the oldest layers.
+      await this.costing.consume(db, {
+        businessId: args.businessId,
+        variantId: step.variantId,
+        locationId: args.locationId,
+        quantity: step.quantity,
+        referenceType: 'order_fulfill',
+        referenceId: args.orderId,
       });
     }
   }

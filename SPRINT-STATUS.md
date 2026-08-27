@@ -1737,3 +1737,89 @@ Backlog #4 (FAQ J4/J5 — XFR-051/052/053, both P0-MISSING).
 
 Next backlog item: costing program (PARITY-NOTES C2) — last of the ranked
 five; needs an owner decision on costing method before build.
+
+## Checkpoint 14 — ranked backlog complete through #4 (2026-08-27)
+
+PR #42 (auto transfers) squash-merged on green CI, deploy branch rolled
+(f628c04), Render deploy dep-da7vgsdg1s2s73fi5620 live — boot log verified
+`54/54 applied, head=0053_auto_transfers; this run applied 0053`. Earlier
+today: PR #38 (B14), PR #39 (physical inventory, 0051), PR #40 (PO
+corrections), PR #41 (returns, 0052) all merged + deployed + boot-verified
+the same way. Sprint branch restarted from main after each merge.
+
+The FAQ-audit ranked backlog now stands: 1 physical inventory ✓ · 2 PO
+lifecycle corrections ✓ · 3 return windows + no-original returns ✓ ·
+4 auto transfers ✓ · 5 costing program — **blocked on an owner decision**
+(FIFO cost layers for STORIS parity vs. weighted-average; asked 2026-08-27).
+
+Ops unchanged: accept the manager invite (expires 2026-08-29 17:53Z),
+repoint the Render dashboard repo URL, rotate the shared owner password,
+optional DMARC record, missing inventory-pack sections/ files, docs-system
+handoff still on hold.
+
+## Sysadmin spec pack committed (2026-08-27)
+
+`docs/erp-sysadmin/` — STORIS System Administration handoff, all 599 articles
+(131 settings screens, 355 permission flags, the 48-step EOD batch), 44 files
+verbatim (added to .prettierignore). The three loose uploads were byte-identical
+to the zip. Corrections banner added to docs/erp-inventory-faq/README.md: this
+pack **corrects the FAQ pack in 13 places** (C1–C13), six touching P0 rows.
+
+Reconciliation against what's already built/decided:
+
+- **C2/D6 price resolution order** — moot for us unless the owner wants STORIS
+  pricing parity: owner locked D12+G6 as THE pricing model and ruled B3 (skip
+  district pricing) on 2026-08-27. Our simpler model is a deliberate divergence,
+  not an oversight. Confirming with owner.
+- **C10/D13 reservation** — pack recommends Order Date + Immediate; owner
+  explicitly chose delivery_date basis (B14, shipped). Owner ruling stands.
+- **C13 permissions** — pack's live-evaluation/most-specific-wins model: our
+  catalog + per-user overrides + security-override primitive already work that
+  way (SEC-\* row was DONE ✓ in the FAQ audit); the 355-flag granularity is
+  reference, not a rebuild mandate.
+- **D14 auth** — better-auth already in place (their recommendation satisfied).
+- **D3 multi-company** — the platform is multi-tenant by design; LA Mattress is
+  one business. No COMPANY scope needed.
+- **D5** — service module, delivery routing (G12 zipRoutes), shifts already
+  exist in-app.
+- **D8/D9 privacy/consent** — flagged to owner as needs-counsel (TCPA, erasure
+  vs warranty retention). Ops item, not buildable by us.
+- **Open with owner:** D1 (in-house credit vs third-party only — biggest
+  descope), D10 costing method (already pending), D2 multi-currency,
+  D4 region/district adoption.
+
+Per the pack's own protocol, no code is being written against it until the
+Tier 1/2 decisions are answered.
+
+## FIFO costing program shipped (2026-08-27)
+
+Backlog #5, unblocked by four owner decisions today: **third-party financing
+only** (D1 — the pack's biggest descope), **FIFO costing** (D10), **keep our
+pricing model** (C2/D6 moot — recorded as deliberate divergence), **no
+multi-currency, no region/district scopes** (D2/D4).
+
+- Migration `0054_fifo_costing`: `cost_layers` (variant+location, source,
+  unit cost, received/remaining with check constraints) + `cost_consumptions`
+  (one row per outflow×layer — the COGS audit trail); RLS in both registries;
+  `stock_transfer_lines.unit_cost_cents` carries cost across transfers.
+- `CostingService` (new costing module): `addLayer` (C9 — a $0 layer is never
+  silent, every one records a `zero_cost_layer` exception), `consume` (FIFO
+  oldest-first, `preferReferenceId` so a PO un-receive backs out its own
+  receipt), `valuation`. **Pre-costing stock needs no backfill**: when
+  consumption outruns the layers, the shortfall synthesizes a fully-consumed
+  `opening` layer at the variant's catalog cost — correct going forward.
+- Hooks at every stock boundary: PO accept (layer at PO line cost) ·
+  PO un-receive (same-PO layers first) · order fulfillment (COGS) · POS
+  walk-out sale · manual receive/adjust (catalog cost / FIFO by sign) ·
+  physical-count overage/shrink · transfer ship (consumes origin, stamps
+  weighted cost on the line) / receive (layers destination at that cost) ·
+  as-is restock. Catalog `cost_cents` remains the replacement-cost fallback.
+- Inventory valuation report is now FIFO: layered stock at actual layer
+  costs, pre-costing remainder at catalog cost.
+- Tests: purchasing 34→36 (receipt layer, un-receive backs out own layer +
+  consumption row), orders 65→68 (opening-layer synthesis at catalog cost,
+  FIFO before synthesis, C9 zero-cost exception); transfers 19, inventory 21,
+  sales 21, reports 14 re-run green. Gates by exit code: typecheck 0 ·
+  lint 0 · test 0 · build 0 · prettier 0.
+
+**The five-item ranked backlog from the FAQ audit is now complete.**

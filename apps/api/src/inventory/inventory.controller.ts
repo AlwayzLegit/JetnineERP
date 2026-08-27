@@ -15,6 +15,7 @@ import { and, asc, eq, gte, lt, sql } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { schema } from '@jetnine/db';
 import { AuditService } from '../audit/audit.service';
+import { CostingService } from '../costing/costing.service';
 import { CurrentTenant, CurrentUser } from '../auth/current-user.decorator';
 import type { CurrentUserPayload } from '../auth/current-user.decorator';
 import {
@@ -83,6 +84,7 @@ export class InventoryController {
     @Inject(DRIZZLE) private readonly db: PostgresJsDatabase,
     @Inject(AuditService) private readonly audit: AuditService,
     @Inject(WebhookDispatcher) private readonly webhooks: WebhookDispatcher,
+    @Inject(CostingService) private readonly costing: CostingService,
   ) {}
 
   /**
@@ -516,7 +518,7 @@ export class InventoryController {
     // also catch cross-tenant attempts, but a friendly 404 beats a 0-row
     // result).
     const [variant] = await this.db
-      .select({ id: schema.productVariants.id })
+      .select({ id: schema.productVariants.id, costCents: schema.productVariants.costCents })
       .from(schema.productVariants)
       .where(eq(schema.productVariants.id, args.variantId))
       .limit(1);
@@ -544,6 +546,29 @@ export class InventoryController {
       })
       .returning({ id: schema.inventoryMovements.id });
     if (!movement) throw new BadRequestException('failed to record movement');
+
+    // FIFO: manual receipts and upward adjustments layer at the variant's
+    // catalog cost; downward adjustments consume oldest-first.
+    if (args.delta > 0) {
+      await this.costing.addLayer(this.db, {
+        businessId: tenant.businessId!,
+        variantId: args.variantId,
+        locationId: args.locationId,
+        sourceType: args.reason === 'receive' ? 'receive' : 'adjustment',
+        referenceId: null,
+        quantity: args.delta,
+        unitCostCents: variant.costCents,
+      });
+    } else if (args.delta < 0) {
+      await this.costing.consume(this.db, {
+        businessId: tenant.businessId!,
+        variantId: args.variantId,
+        locationId: args.locationId,
+        quantity: -args.delta,
+        referenceType: 'inventory_adjust',
+        referenceId: movement.id,
+      });
+    }
 
     // Upsert inventory_levels.on_hand. We GREATEST(0, ...) so we never
     // record a negative on_hand even if a careless adjustment overshoots.

@@ -1,0 +1,47 @@
+req_id,article_id,title
+SYS-048,15234738252436,Modify UPS Roadnet PC Path
+SYS-049,15234737331988,"Multi-Lingual Character Sequences (Windows' Control Sequences)"
+SYS-050,15234723191572,Multi-Lingual Processing Set-Up
+SYS-051,15234724184468,Override Time Clock Entry
+SYS-052,15234735774356,Phantom Process Log
+SYS-053,15234721715988,Phantom Process Settings
+SYS-054,15234735558420,Physical Inventory Count Review
+SYS-055,15234736541844,Purchase Orders to Export
+SYS-056,15234723643412,Purge Costing Audit Data
+SYS-057,15234737760788,Purge General Ledger Data
+SYS-058,15234723664916,Purge Messenger Activity
+SYS-059,15234723664532,Purge of Sensitive Data
+SYS-060,15234723644692,Purge Special Order and Obsolete Products
+SYS-061,15234739734676,Recover STORIS Licenses
+SYS-062,15234738567700,Remove Sales Orders Not Processed Correctly
+SYS-063,15234720861588,Report Data Imported Errors and Warnings
+SYS-064,15234723880468,Report on Data Warehouse Activity
+SYS-065,15234737969044,Resync Data Warehouse
+SYS-066,15234737083924,Review Backup Log
+SYS-067,15234724473876,Review Settings Activity
+SYS-068,15234721931156,Right-Click Menus
+SYS-069,15234737083284,Run a System Backup
+SYS-070,15234737970964,Schedule Electronic Updates
+SYS-071,15234720865556,Select and Configure a Vendor for Import
+SYS-072,15234718086932,Select Contract Insurance
+SYS-073,15234718079764,Select State Screen
+SYS-074,15234736539540,Set Maximum Update Screen
+SYS-075,15234738565396,Set Product Purchase Status by Region
+SYS-076,15234722295828,Set Up Menus
+SYS-077,15234724474388,Set Up Terminal Server for a Printer
+SYS-078,47806055334548,Shift4 Cloud Credit Card Processing Overview
+SYS-079,15234725686036,Shift4 Shared Token Load
+SYS-080,15234737966100,Synchronize OS to STORIS Printers
+SYS-081,15234737321236,Translate Bubble Help
+SYS-082,15234723190932,Translate Dynamic Searches
+SYS-083,15234723190676,Translate File Descriptions
+SYS-084,15234737322516,Translate File Dictionaries
+SYS-085,15234737333908,Translate Program Errors
+SYS-086,15234723476628,Translation Tool
+SYS-087,15234735558164,Update Product Configuration Detail
+SYS-088,15234722465300,Update Purchase Date
+SYS-089,15234722463508,Updating Your Operating System for Electronic Updates
+SYS-090,15234722085652,User Defined Menu Description
+SYS-091,15234738255508,Validate STORIS License Usage
+SYS-092,15234736539156,View Downloaded Update List
+SYS-093,15234735775892,View Phantom Processes

@@ -14,6 +14,7 @@ import { and, desc, eq, ilike, inArray, or, sql } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { schema } from '@jetnine/db';
 import { AuditService } from '../audit/audit.service';
+import { CostingService } from '../costing/costing.service';
 import { CurrentTenant, CurrentUser } from '../auth/current-user.decorator';
 import type { CurrentUserPayload } from '../auth/current-user.decorator';
 import {
@@ -183,6 +184,7 @@ export class SalesController {
     @Inject(CommissionsService) private readonly commissions: CommissionsService,
     @Inject(StoreCreditService) private readonly storeCredit: StoreCreditService,
     @Inject(PriceVarianceService) private readonly priceVariance: PriceVarianceService,
+    @Inject(CostingService) private readonly costing: CostingService,
   ) {}
 
   /**
@@ -962,6 +964,15 @@ export class SalesController {
         referenceId: sale.id,
         actorUserId: actor?.id ?? null,
         notes: null,
+      });
+      // FIFO COGS for the walk-out sale.
+      await this.costing.consume(this.db, {
+        businessId: tenant.businessId!,
+        variantId: l.variantId,
+        locationId: body.locationId,
+        quantity: l.quantity,
+        referenceType: 'sale',
+        referenceId: sale.id,
       });
       await this.db
         .insert(schema.inventoryLevels)
