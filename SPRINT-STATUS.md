@@ -2519,3 +2519,24 @@ handoff** (13 files: report definitions, dictionaries/joins, run/output/
 viewer, security, scheduling, menu integration, acceptance tests, open
 questions) — committed verbatim to `docs/handoffs/storis-report-builder/`.
 Queued last: it layers on the reporting engine this sprint just built.
+
+## Checkpoint 24 — SALES VIEWS PROGRAM COMPLETE (2026-08-27)
+
+PR #59 squash-merged on green CI (main 9abbb43); deploy branch rolled
+(3577d68), Render deploy dep-da8as0btqb8s739lkepg triggered (no
+migration — verify on next check). #57 and #58 deploys verified live
+earlier (boot logs 21:05 and 21:21, `61/61 applied … none`).
+
+The 139-article Sales Views & Reports program (task #22) is COMPLETE
+across all five phases on the owner-locked Phase 0: substrate (store
+data scope, migration 0060), shared primitives (already in place from
+the pagination sweep), operational queues (jeopardy + existing
+exceptions), record pages (customer 360 totals/open-orders, salespeople
+page, buyer's report), and the full report catalog (sales summary,
+receipts, tax class+jurisdiction, date changes, gift-card liability,
+merchandising, adjustments, customer purchases). Deferred by triage:
+leads/CRM, protection plans, in-house financing reports, mini-AP queues,
+full ATP projection.
+
+Next: task #23 — Delivery Ticket Print & Reprint (port the pack's
+acceptance tests first, per its own instruction).
