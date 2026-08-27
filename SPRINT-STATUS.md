@@ -2282,3 +2282,68 @@ for EOD/on-demand/scheduled (T-31 identical-numbers is the key test), 32
 acceptance tests, 11 open questions (several self-decidable, e.g. sold −
 returned; the rest flagged when built). Supersedes/extends the existing
 min-based auto-replenishment PO drafts. Queued after delivery reprints.
+
+## Sales Views Phase 1 — store-level data scope (2026-08-27)
+
+Owner-confirmed decision 2 built as substrate before any report work:
+
+- `memberships.data_scope` ('all' | 'store', migration
+  0060_membership_data_scope); a 'store' member's visible locations come
+  from the previously-dormant `membership_location_scopes` table, loaded
+  once per request into the tenant context by the tenancy guard.
+- `salesScopeCond()` (`apps/api/src/common/sales-scope.ts`) — one WHERE
+  fragment ANDed into every sales-dollar surface: orders list, POS sales
+  list, cash-shifts list, reports sales/daily + by-product + by-category,
+  the Z-report (all five sub-queries incl. the tender COALESCE), and the
+  morning dashboard. Empty scope list = FALSE (fail closed, never open);
+  a caller-requested locationId outside scope intersects to zero rows.
+- Members page: per-member "Sales data" control (All locations / Their
+  store only + store checkboxes, warning when none selected); PATCH
+  /v1/business/members/:id accepts dataScope + scopeLocationIds
+  (validated against the business, audited before/after).
+- reports.int.spec +7 tests (owner-vs-scoped diff = exactly the other
+  store's dollars; out-of-scope Z request → zero; empty scope → nothing;
+  scope restore round-trip). 21/21.
+
+Also committed the **STORIS Selling Location pack** (8 files,
+`docs/erp-selling-location/` — 4 independent tracks + a shared lookup
+control per its README; queued). Note: container restart had wiped 17
+per-suite test DBs (jetnine_admin …) — recreated; full `pnpm test` green.
+Gates by exit code: typecheck 0 · lint 0 · test 0 · build 0 · prettier 0.
+
+## Checkpoint 21 — store data scope LIVE (2026-08-27)
+
+PR #52 squash-merged on green CI (main 102b6ed), deploy branch rolled
+(8c90245), Render deploy dep-da88tm0n74is739t3i2g live — boot log
+verified `Schema migrations: 61/61 applied,
+head=0060_membership_data_scope; this run applied
+0060_membership_data_scope.` Vercel production READY on main 102b6ed.
+Store-scoped members now see only their store's sales data end to end.
+Cleanup commit 940532e relocated the selling-location pack + tracker
+note that a cwd slip had put under apps/api/. Next slice: unified
+written/delivered sales report (Phase 1 dimension + catalog section A
+merge).
+
+## Unified sales summary — written vs delivered (2026-08-27)
+
+Catalog section A's four sales-dollar reports merged into one surface
+with written/delivered as a first-class dimension (pack 01/06):
+
+- `GET /v1/reports/sales/summary?basis=written|delivered&groupBy=day|
+location|salesperson&start&end&format=csv` — POS sales + sales orders
+  in one result; imported excluded (D8); store data scope applies; CSV
+  embeds provenance (`# basis=… generated=…`, pack's run-time-options
+  echo). Average merchandise counts documents, never
+  document-salesperson pairs (Report Average Value rule).
+- Written = documents dated by entry time, orders in any non-draft/
+  quote/cancelled status; Delivered = completed documents by completion
+  time. **Deliberate divergence:** written uses the document's CURRENT
+  totals — no at-entry snapshot exists, so later edits fold into the
+  written figure instead of listing as separate adjustment records
+  (STORIS's Written Business/BTA adjustment ledger is not ported).
+- Reports page gains the "Sales summary — written vs delivered" card:
+  basis + group-by selectors, shared date range, stat row, CSV.
+- reports.int.spec 21→25 (written−delivered == exactly the open orders;
+  location labels + per-location totals; scope diff == Annex dollars;
+  avg + CSV provenance). Gates: typecheck 0 · lint 0 · test 0 (full) ·
+  build 0 · prettier 0.

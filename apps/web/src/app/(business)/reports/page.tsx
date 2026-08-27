@@ -3,7 +3,7 @@
 import { Download, RefreshCw } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { Button, Card, Field, Input, LoadingRows, PageHeader } from '@/components/ui';
+import { Button, Card, Field, Input, LoadingRows, PageHeader, Select } from '@/components/ui';
 import { api } from '@/lib/api';
 import { downloadFile } from '@/lib/download';
 import { Money } from '@/components/money';
@@ -37,6 +37,30 @@ function CsvButton({ path, filename, size }: { path: string; filename: string; s
   );
 }
 
+interface SalesSummaryRow {
+  key: string;
+  label: string;
+  documentCount: number;
+  merchandiseCents: number;
+  discountCents: number;
+  taxCents: number;
+  totalCents: number;
+}
+interface SalesSummary {
+  basis: 'written' | 'delivered';
+  groupBy: 'day' | 'location' | 'salesperson';
+  start: string;
+  end: string;
+  rows: SalesSummaryRow[];
+  totals: {
+    documentCount: number;
+    merchandiseCents: number;
+    discountCents: number;
+    taxCents: number;
+    totalCents: number;
+    averageMerchandiseCents: number;
+  };
+}
 interface DailyTotalRow {
   day: string;
   saleCount: number;
@@ -156,6 +180,24 @@ export default function ReportsPage() {
   const [financialDenied, setFinancialDenied] = useState(false);
   const [valuation, setValuation] = useState<Valuation | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [summary, setSummary] = useState<SalesSummary | null>(null);
+  const [summaryBasis, setSummaryBasis] = useState<'written' | 'delivered'>('written');
+  const [summaryGroupBy, setSummaryGroupBy] = useState<'day' | 'location' | 'salesperson'>('day');
+
+  async function loadSummary(
+    basis: 'written' | 'delivered' = summaryBasis,
+    groupBy: 'day' | 'location' | 'salesperson' = summaryGroupBy,
+  ) {
+    try {
+      setSummary(
+        await api<SalesSummary>(
+          `/v1/reports/sales/summary?basis=${basis}&groupBy=${groupBy}&start=${start}&end=${end}`,
+        ),
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
 
   async function loadDaily() {
     try {
@@ -213,6 +255,7 @@ export default function ReportsPage() {
   }
 
   useEffect(() => {
+    void loadSummary();
     void loadDaily();
     void loadProducts();
     void loadInv();
@@ -332,6 +375,103 @@ export default function ReportsPage() {
                         }}
                       >
                         {s.varianceCents != null ? <Money cents={s.varianceCents} /> : '—'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
+        ) : (
+          <LoadingRows />
+        )}
+      </Card>
+
+      <Card title="Sales summary — written vs delivered" data-testid="sales-summary">
+        <div className="mb-3 flex flex-wrap items-end gap-2">
+          <Field label="Basis">
+            <Select
+              value={summaryBasis}
+              onChange={(e) => {
+                const b = e.target.value as 'written' | 'delivered';
+                setSummaryBasis(b);
+                void loadSummary(b, summaryGroupBy);
+              }}
+            >
+              <option value="written">Written (as sold)</option>
+              <option value="delivered">Delivered (as fulfilled)</option>
+            </Select>
+          </Field>
+          <Field label="Group by">
+            <Select
+              value={summaryGroupBy}
+              onChange={(e) => {
+                const g = e.target.value as 'day' | 'location' | 'salesperson';
+                setSummaryGroupBy(g);
+                void loadSummary(summaryBasis, g);
+              }}
+            >
+              <option value="day">Day</option>
+              <option value="location">Location</option>
+              <option value="salesperson">Salesperson</option>
+            </Select>
+          </Field>
+          <Button variant="secondary" onClick={() => void loadSummary()}>
+            <RefreshCw size={14} aria-hidden />
+            Run
+          </Button>
+          <CsvButton
+            path={`/v1/reports/sales/summary?basis=${summaryBasis}&groupBy=${summaryGroupBy}&start=${start}&end=${end}&format=csv`}
+            filename={`sales-summary-${summaryBasis}-${start}-to-${end}.csv`}
+            size="sm"
+          />
+        </div>
+        {summary ? (
+          <>
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              <Stat label="Documents" value={String(summary.totals.documentCount)} />
+              <Stat label="Merchandise" value={<Money cents={summary.totals.merchandiseCents} />} />
+              <Stat
+                label="Avg / document"
+                value={<Money cents={summary.totals.averageMerchandiseCents} />}
+              />
+              <Stat label="Total" value={<Money cents={summary.totals.totalCents} />} strong />
+            </div>
+            <div style={{ overflowX: 'auto', marginTop: 12 }}>
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>
+                      {summaryGroupBy === 'day'
+                        ? 'Day'
+                        : summaryGroupBy === 'location'
+                          ? 'Location'
+                          : 'Salesperson'}
+                    </th>
+                    <th className="num">Documents</th>
+                    <th className="num">Merchandise</th>
+                    <th className="num">Discounts</th>
+                    <th className="num">Tax</th>
+                    <th className="num">Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {summary.rows.length === 0 && <Empty colSpan={6} />}
+                  {summary.rows.map((r) => (
+                    <tr key={r.key || '(none)'}>
+                      <td>{r.label}</td>
+                      <td className="num">{r.documentCount}</td>
+                      <td className="num">
+                        <Money cents={r.merchandiseCents} />
+                      </td>
+                      <td className="num">
+                        <Money cents={r.discountCents} />
+                      </td>
+                      <td className="num">
+                        <Money cents={r.taxCents} />
+                      </td>
+                      <td className="num">
+                        <Money cents={r.totalCents} />
                       </td>
                     </tr>
                   ))}
