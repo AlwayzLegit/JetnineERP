@@ -1006,3 +1006,31 @@ describe('Sales Views — receipts + tax by location', () => {
     expect(annex.totalCents).toBe(5000); // the Annex sale
   });
 });
+
+describe('Sales Views — merchandising activity (buyer report)', () => {
+  it('rows carry stock, inbound, velocity, and markup; no-activity rows drop by default', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/v1/reports/merchandising')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .expect(200);
+    const widget = res.body.rows.find((r: { sku: string | null }) => r.sku === 'A-1');
+    expect(widget).toBeTruthy();
+    // Seeded 20 at Main; the POS flow sold 2, decrementing stock to 18.
+    expect(widget.onHand).toBe(18);
+    expect(widget.soldYtd).toBeGreaterThanOrEqual(2);
+    // priceCents 1000, costCents 400 -> 150% markup.
+    expect(widget.markupPct).toBe(150);
+    const gadget = res.body.rows.find((r: { sku: string | null }) => r.sku === 'B-1');
+    expect(gadget).toBeTruthy();
+    // Jeopardy fixture put 5 units of B on an ordered PO.
+    expect(gadget.onOrder).toBe(5);
+
+    // Bookkeeper lacks reports.financial.view -> 403 (cost-bearing report).
+    await request(app.getHttpServer())
+      .get('/v1/reports/merchandising')
+      .set('Cookie', cashierCookie)
+      .set('X-Business-Id', businessId)
+      .expect(403);
+  });
+});

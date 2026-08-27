@@ -35,6 +35,33 @@ interface OrderPaymentsDayRow {
   amountCents: number;
   count: number;
 }
+interface MerchRow {
+  variantId: string;
+  productName: string;
+  variantName: string | null;
+  sku: string | null;
+  vendorName: string | null;
+  categoryName: string | null;
+  brandName: string | null;
+  onHand: number;
+  reserved: number;
+  floorSample: number;
+  netAvailable: number;
+  asIsQty: number;
+  onOrder: number;
+  soldMtd: number;
+  soldYtd: number;
+  costCents: number | null;
+  priceCents: number;
+  markupPct: number | null;
+}
+
+interface MerchReport {
+  generatedAt: string;
+  truncated: boolean;
+  rows: MerchRow[];
+}
+
 interface ReceiptsRow {
   method: string;
   locationId: string | null;
@@ -1768,6 +1795,241 @@ export class ReportsController {
           toCsv(
             ['method', 'location', 'count', 'amount_cents'],
             report.rows.map((r) => [r.method, r.locationName, r.count, r.amountCents]),
+          ),
+      );
+      return;
+    }
+    return report;
+  }
+
+  /**
+   * Merchandising activity — the buyer's report (catalog 67): per
+   * variant, stock position, as-is and inbound quantities, sales
+   * velocity (MTD/YTD units over completed documents), replacement cost
+   * and markup. Rows with no stock, no supply, and no sales are dropped
+   * unless includeNoActivity=true (the catalog's detail-line rule).
+   * Cost-derived, so reports.financial.view.
+   */
+  @Get('merchandising')
+  @RequirePermission('reports.financial.view')
+  async merchandising(
+    @CurrentTenant() tenant: RequestTenantContext,
+    @Query('vendorId') vendorId?: string,
+    @Query('categoryId') categoryId?: string,
+    @Query('brandId') brandId?: string,
+    @Query('includeNoActivity') includeNoActivityStr?: string,
+    @Query('format') format?: string,
+    @Res({ passthrough: true }) res?: Response,
+  ): Promise<MerchReport | void> {
+    const includeNoActivity = includeNoActivityStr === 'true';
+    const CAP = 2000;
+
+    const variants = await this.db
+      .select({
+        variantId: schema.productVariants.id,
+        productName: schema.products.name,
+        variantName: schema.productVariants.name,
+        sku: schema.productVariants.sku,
+        costCents: schema.productVariants.costCents,
+        priceCents: schema.productVariants.priceCents,
+        vendorName: schema.vendors.name,
+        categoryName: schema.categories.name,
+        brandName: schema.brands.name,
+      })
+      .from(schema.productVariants)
+      .innerJoin(schema.products, eq(schema.products.id, schema.productVariants.productId))
+      .leftJoin(schema.vendors, eq(schema.vendors.id, schema.productVariants.preferredVendorId))
+      .leftJoin(schema.categories, eq(schema.categories.id, schema.products.categoryId))
+      .leftJoin(schema.brands, eq(schema.brands.id, schema.products.brandId))
+      .where(
+        and(
+          vendorId ? eq(schema.productVariants.preferredVendorId, vendorId) : undefined,
+          categoryId ? eq(schema.products.categoryId, categoryId) : undefined,
+          brandId ? eq(schema.products.brandId, brandId) : undefined,
+        ),
+      );
+    if (variants.length === 0) {
+      return { generatedAt: new Date().toISOString(), truncated: false, rows: [] };
+    }
+    const ids = variants.map((v) => v.variantId);
+
+    const now = new Date();
+    const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+    const yearStart = new Date(Date.UTC(now.getUTCFullYear(), 0, 1));
+
+    const [levels, asIs, onOrder, saleQty, orderQty] = await Promise.all([
+      this.db
+        .select({
+          variantId: schema.inventoryLevels.variantId,
+          onHand: sql<number>`COALESCE(SUM(${schema.inventoryLevels.onHand}), 0)::int`,
+          reserved: sql<number>`COALESCE(SUM(${schema.inventoryLevels.reserved}), 0)::int`,
+          floorSample: sql<number>`COALESCE(SUM(${schema.inventoryLevels.floorSample}), 0)::int`,
+        })
+        .from(schema.inventoryLevels)
+        .where(inArray(schema.inventoryLevels.variantId, ids))
+        .groupBy(schema.inventoryLevels.variantId),
+      this.db
+        .select({
+          variantId: schema.asIsItems.variantId,
+          qty: sql<number>`COALESCE(SUM(${schema.asIsItems.quantity}), 0)::int`,
+        })
+        .from(schema.asIsItems)
+        .where(
+          and(
+            inArray(schema.asIsItems.variantId, ids),
+            eq(schema.asIsItems.status, 'pending_review'),
+          ),
+        )
+        .groupBy(schema.asIsItems.variantId),
+      this.db
+        .select({
+          variantId: schema.purchaseOrderLines.variantId,
+          qty: sql<number>`COALESCE(SUM(${schema.purchaseOrderLines.quantityOrdered} - ${schema.purchaseOrderLines.quantityAccepted}), 0)::int`,
+        })
+        .from(schema.purchaseOrderLines)
+        .innerJoin(
+          schema.purchaseOrders,
+          eq(schema.purchaseOrders.id, schema.purchaseOrderLines.purchaseOrderId),
+        )
+        .where(
+          and(
+            inArray(schema.purchaseOrderLines.variantId, ids),
+            sql`${schema.purchaseOrders.status} IN ('ordered', 'partially_received')`,
+          ),
+        )
+        .groupBy(schema.purchaseOrderLines.variantId),
+      this.db
+        .select({
+          variantId: schema.saleLines.variantId,
+          mtd: sql<number>`COALESCE(SUM(${schema.saleLines.quantity}) FILTER (WHERE ${schema.sales.completedAt} >= ${monthStart.toISOString()}::timestamptz), 0)::int`,
+          ytd: sql<number>`COALESCE(SUM(${schema.saleLines.quantity}) FILTER (WHERE ${schema.sales.completedAt} >= ${yearStart.toISOString()}::timestamptz), 0)::int`,
+        })
+        .from(schema.saleLines)
+        .innerJoin(schema.sales, eq(schema.sales.id, schema.saleLines.saleId))
+        .where(
+          and(
+            inArray(schema.saleLines.variantId, ids),
+            sql`${schema.sales.status} IN ('completed', 'partially_refunded', 'refunded')`,
+            isNull(schema.sales.importedAt),
+            gte(schema.sales.completedAt, yearStart),
+          ),
+        )
+        .groupBy(schema.saleLines.variantId),
+      this.db
+        .select({
+          variantId: schema.orderLines.variantId,
+          mtd: sql<number>`COALESCE(SUM(${schema.orderLines.quantity}) FILTER (WHERE ${schema.orders.completedAt} >= ${monthStart.toISOString()}::timestamptz), 0)::int`,
+          ytd: sql<number>`COALESCE(SUM(${schema.orderLines.quantity}) FILTER (WHERE ${schema.orders.completedAt} >= ${yearStart.toISOString()}::timestamptz), 0)::int`,
+        })
+        .from(schema.orderLines)
+        .innerJoin(schema.orders, eq(schema.orders.id, schema.orderLines.orderId))
+        .where(
+          and(
+            inArray(schema.orderLines.variantId, ids),
+            eq(schema.orders.status, 'completed'),
+            isNull(schema.orders.importedAt),
+            gte(schema.orders.completedAt, yearStart),
+          ),
+        )
+        .groupBy(schema.orderLines.variantId),
+    ]);
+
+    const levelBy = new Map(levels.map((l) => [l.variantId, l]));
+    const asIsBy = new Map(asIs.map((a) => [a.variantId, a.qty]));
+    const orderBy = new Map(onOrder.map((o) => [o.variantId, o.qty]));
+    const soldBy = new Map<string, { mtd: number; ytd: number }>();
+    for (const r of [...saleQty, ...orderQty]) {
+      if (!r.variantId) continue;
+      const cur = soldBy.get(r.variantId) ?? { mtd: 0, ytd: 0 };
+      cur.mtd += r.mtd;
+      cur.ytd += r.ytd;
+      soldBy.set(r.variantId, cur);
+    }
+
+    let rows: MerchRow[] = variants.map((v) => {
+      const lvl = levelBy.get(v.variantId);
+      const sold = soldBy.get(v.variantId) ?? { mtd: 0, ytd: 0 };
+      const onHand = lvl?.onHand ?? 0;
+      const reserved = lvl?.reserved ?? 0;
+      const floorSample = lvl?.floorSample ?? 0;
+      const cost = v.costCents;
+      return {
+        variantId: v.variantId,
+        productName: v.productName,
+        variantName: v.variantName,
+        sku: v.sku,
+        vendorName: v.vendorName,
+        categoryName: v.categoryName,
+        brandName: v.brandName,
+        onHand,
+        reserved,
+        floorSample,
+        netAvailable: Math.max(0, onHand - reserved - floorSample),
+        asIsQty: asIsBy.get(v.variantId) ?? 0,
+        onOrder: orderBy.get(v.variantId) ?? 0,
+        soldMtd: sold.mtd,
+        soldYtd: sold.ytd,
+        costCents: cost,
+        priceCents: v.priceCents,
+        markupPct: cost && cost > 0 ? Math.round(((v.priceCents - cost) / cost) * 1000) / 10 : null,
+      };
+    });
+    if (!includeNoActivity) {
+      rows = rows.filter(
+        (r) => r.onHand > 0 || r.asIsQty > 0 || r.onOrder > 0 || r.soldYtd > 0 || r.reserved > 0,
+      );
+    }
+    rows.sort((a, b) => b.soldYtd - a.soldYtd || a.productName.localeCompare(b.productName));
+    const truncated = rows.length > CAP;
+    if (truncated) rows = rows.slice(0, CAP);
+
+    const report: MerchReport = { generatedAt: new Date().toISOString(), truncated, rows };
+    if (format === 'csv') {
+      requireExport(tenant);
+      const header = `# vendorId=${vendorId ?? ''} categoryId=${categoryId ?? ''} brandId=${brandId ?? ''} includeNoActivity=${includeNoActivity} truncated=${truncated} generated=${report.generatedAt}\n`;
+      sendCsv(
+        res!,
+        `merchandising-${new Date().toISOString().slice(0, 10)}.csv`,
+        header +
+          toCsv(
+            [
+              'product',
+              'variant',
+              'sku',
+              'vendor',
+              'category',
+              'brand',
+              'on_hand',
+              'reserved',
+              'floor',
+              'net_available',
+              'as_is',
+              'on_order',
+              'sold_mtd',
+              'sold_ytd',
+              'cost_cents',
+              'price_cents',
+              'markup_pct',
+            ],
+            rows.map((r) => [
+              r.productName,
+              r.variantName,
+              r.sku,
+              r.vendorName,
+              r.categoryName,
+              r.brandName,
+              r.onHand,
+              r.reserved,
+              r.floorSample,
+              r.netAvailable,
+              r.asIsQty,
+              r.onOrder,
+              r.soldMtd,
+              r.soldYtd,
+              r.costCents,
+              r.priceCents,
+              r.markupPct,
+            ]),
           ),
       );
       return;
