@@ -2310,3 +2310,16 @@ Also committed the **STORIS Selling Location pack** (8 files,
 control per its README; queued). Note: container restart had wiped 17
 per-suite test DBs (jetnine_admin …) — recreated; full `pnpm test` green.
 Gates by exit code: typecheck 0 · lint 0 · test 0 · build 0 · prettier 0.
+
+## Checkpoint 21 — store data scope LIVE (2026-08-27)
+
+PR #52 squash-merged on green CI (main 102b6ed), deploy branch rolled
+(8c90245), Render deploy dep-da88tm0n74is739t3i2g live — boot log
+verified `Schema migrations: 61/61 applied,
+head=0060_membership_data_scope; this run applied
+0060_membership_data_scope.` Vercel production READY on main 102b6ed.
+Store-scoped members now see only their store's sales data end to end.
+Cleanup commit 940532e relocated the selling-location pack + tracker
+note that a cwd slip had put under apps/api/. Next slice: unified
+written/delivered sales report (Phase 1 dimension + catalog section A
+merge).
