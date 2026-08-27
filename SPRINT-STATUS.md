@@ -1975,3 +1975,22 @@ unchanged — the manager invite expires 2026-08-29 17:53Z.
   fulfilled-line guard); orders 68, purchasing 39, deliveries 17 re-run
   green. Gates by exit code: typecheck 0 · lint 0 · test 0 · build 0 ·
   prettier 0.
+
+## Checkpoint 17 — direct ship live; UPLOADED-PACK BACKLOG COMPLETE (2026-08-27)
+
+PR #46 (as-is transfer intake + H2 RTV unwind) and PR #47 (PO-060/I7
+direct-ship vendor POs, migration 0057) both squash-merged on green CI,
+deploy branch rolled (02d681f), Render deploys dep-da81tapsrm7s73ds6k20 and
+dep-da827j8ae00c73agve80 live — final boot log verified `58/58 applied,
+head=0057_direct_ship; this run applied 0057_direct_ship`.
+
+**Every buildable item from the uploaded packs (55-row inventory FAQ +
+599-article sysadmin pack) is now built, merged, deployed, and verified.**
+Tracked tasks #1–#16 all complete.
+
+Not buildable / owner-gated leftovers:
+
+- Optional substrate extras the sysadmin pack marks nice-to-have (settings
+  registry admin UI, report builder) — build on owner request.
+- Needs-counsel privacy items (TCPA consent wording, erasure/retention
+  policy) — owner + lawyer, not code.
