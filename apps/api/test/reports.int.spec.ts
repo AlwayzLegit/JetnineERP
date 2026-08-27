@@ -1034,3 +1034,39 @@ describe('Sales Views — merchandising activity (buyer report)', () => {
       .expect(403);
   });
 });
+
+describe('Sales Views — inventory adjustments + customer purchases', () => {
+  it('adjustments group movements by reason with in/out unit totals', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/v1/reports/inventory-adjustments')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .expect(200);
+    // The POS flow decremented stock: a 'sale' reason bucket must exist
+    // with at least the 2 Widget + 1 Gadget units out.
+    const sale = res.body.byReason.find((r: { reason: string }) => r.reason === 'sale');
+    expect(sale).toBeTruthy();
+    expect(sale.totalOut).toBeGreaterThanOrEqual(3);
+    expect(res.body.rows.length).toBeGreaterThan(0);
+    expect(res.body.truncated).toBe(false);
+  });
+
+  it('customer purchase export returns completed lines and respects the customer filter', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/v1/reports/customer-purchases')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .expect(200);
+    expect(res.body.rows.length).toBeGreaterThanOrEqual(2);
+    const types = new Set(res.body.rows.map((r: { documentType: string }) => r.documentType));
+    expect(types.has('sale')).toBe(true);
+
+    // Filtering to a customer that bought nothing returns nothing.
+    const none = await request(app.getHttpServer())
+      .get('/v1/reports/customer-purchases?customerId=00000000-0000-4000-8000-00000000dead')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .expect(200);
+    expect(none.body.rows).toEqual([]);
+  });
+});

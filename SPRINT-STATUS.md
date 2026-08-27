@@ -2473,3 +2473,28 @@ includeNoActivity` — per variant: on hand / reserved / floor / net
   markup, gadget on-order 5 from the jeopardy PO fixture, 403 for
   non-financial). Gates: typecheck 0 · lint 0 · test 0 (full) · build 0
   · prettier 0.
+
+## Inventory adjustments view + customer purchase export (2026-08-27)
+
+The last two report-catalog keeps:
+
+- `GET /v1/reports/inventory-adjustments?start&end&reason` (catalog 40)
+  — the movements ledger over a window, grouped by reason (units in /
+  out) with a labeled detail list (product, location, actor, reference,
+  notes); pure read, nothing EOD-coupled or self-deleting; store scope
+  applies; announced 1000-row cap; CSV provenance. Reports page card.
+- `GET /v1/reports/customer-purchases?customerId&start&end` (catalog 42) — completed POS sale lines + completed order lines, one customer
+  or all, announced 5000 cap, CSV; store scope applies. "Export purchase
+  history CSV" button on the customer page.
+- reports.int.spec 32→34. Gates: typecheck 0 · lint 0 · test 0 (full) ·
+  build 0 · prettier 0.
+
+**Report-catalog phase COMPLETE.** Every keep-table row is now built or
+covered: unified sales summary, avg/document, receipts, tax (class +
+jurisdiction), open-orders surfaces + jeopardy queue, date-change log,
+gift-card liability, merchandising activity, inventory adjustments,
+customer purchases; exceptions/physical-count/void-integrity covered by
+existing modules. Remaining in the Sales Views program: Phase 4 record
+pages (customer 360 panels, product activity, salesperson page) — the
+existing customer/product/orders pages already carry much of this;
+scoped as the next slice(s).

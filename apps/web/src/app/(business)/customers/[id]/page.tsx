@@ -7,6 +7,7 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { Button, Card, EmptyState, Field, Input, LoadingRows, StatusBadge } from '@/components/ui';
 import { api } from '@/lib/api';
+import { downloadFile } from '@/lib/download';
 import { Money } from '@/components/money';
 
 interface SaleSummary {
@@ -184,6 +185,23 @@ export default function CustomerDetailPage() {
       )}
 
       <Card title="Recent purchases">
+        <Button
+          size="sm"
+          variant="secondary"
+          style={{ marginBottom: 10 }}
+          onClick={() => {
+            const start = '2000-01-01';
+            const end = new Date().toISOString().slice(0, 10);
+            void downloadFile(
+              `/v1/reports/customer-purchases?customerId=${id}&start=${start}&end=${end}&format=csv`,
+              `purchases-${id}.csv`,
+            ).catch((err: unknown) =>
+              toast.error(err instanceof Error ? err.message : String(err)),
+            );
+          }}
+        >
+          Export purchase history CSV
+        </Button>
         {c.recentSales.length === 0 ? (
           <EmptyState>No purchases yet.</EmptyState>
         ) : (
