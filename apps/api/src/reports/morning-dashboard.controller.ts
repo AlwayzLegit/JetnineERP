@@ -3,6 +3,7 @@ import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { schema } from '@jetnine/db';
 import { CurrentTenant } from '../auth/current-user.decorator';
+import { salesScopeCond } from '../common/sales-scope';
 import { DRIZZLE } from '../database/database.module';
 import { RequirePermission, TenantScoped } from '../tenancy/decorators';
 import type { RequestTenantContext } from '../tenancy/request-context';
@@ -109,6 +110,7 @@ export class MorningDashboardController {
           isNull(schema.sales.importedAt),
           sql`${schema.sales.createdAt}::date = ${date}`,
           locationId ? eq(schema.sales.locationId, locationId) : undefined,
+          salesScopeCond(tenant, schema.sales.locationId),
         ),
       )
       .groupBy(schema.sales.locationId);
@@ -125,6 +127,7 @@ export class MorningDashboardController {
           sql`${schema.orders.status} NOT IN ('draft', 'quote', 'cancelled')`,
           isNull(schema.orders.importedAt),
           sql`${schema.orders.createdAt}::date = ${date}`,
+          salesScopeCond(tenant, schema.orders.locationId),
           locationId ? eq(schema.orders.locationId, locationId) : undefined,
         ),
       )
@@ -191,6 +194,7 @@ export class MorningDashboardController {
           isNull(schema.sales.importedAt),
           sql`${schema.sales.createdAt}::date = ${date}`,
           locationId ? eq(schema.sales.locationId, locationId) : undefined,
+          salesScopeCond(tenant, schema.sales.locationId),
         ),
       )
       .groupBy(schema.sales.associateUserId);
@@ -212,6 +216,7 @@ export class MorningDashboardController {
           sql`${schema.orders.status} NOT IN ('draft', 'quote', 'cancelled')`,
           isNull(schema.orders.importedAt),
           sql`${schema.orders.createdAt}::date = ${date}`,
+          salesScopeCond(tenant, schema.orders.locationId),
           locationId ? eq(schema.orders.locationId, locationId) : undefined,
         ),
       );

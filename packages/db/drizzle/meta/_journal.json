@@ -421,6 +421,13 @@
       "when": 1787847463905,
       "tag": "0059_exchange_partial_unique",
       "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "7",
+      "when": 1787856950388,
+      "tag": "0060_membership_data_scope",
+      "breakpoints": true
     }
   ]
 }

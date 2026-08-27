@@ -18,6 +18,7 @@ import { and, desc, eq, inArray, isNull, lt, or, sql } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { schema } from '@jetnine/db';
 import { AuditService } from '../audit/audit.service';
+import { salesScopeCond } from '../common/sales-scope';
 import { CurrentTenant, CurrentUser } from '../auth/current-user.decorator';
 import type { CurrentUserPayload } from '../auth/current-user.decorator';
 import {
@@ -365,7 +366,7 @@ export class OrdersController {
   @Get('orders')
   @RequirePermission('orders.view')
   async list(
-    @CurrentTenant() _tenant: RequestTenantContext,
+    @CurrentTenant() tenant: RequestTenantContext,
     @Query('limit') limitStr?: string,
     @Query('cursor') cursorStr?: string,
     @Query('status') status?: string,
@@ -375,6 +376,8 @@ export class OrdersController {
     const limit = clampLimit(limitStr);
     const cursor = decodeCursor(cursorStr);
     const filters = [];
+    const scope = salesScopeCond(tenant, schema.orders.locationId);
+    if (scope) filters.push(scope);
     if (status) filters.push(eq(schema.orders.status, status));
     if (customerId) filters.push(eq(schema.orders.customerId, customerId));
     // Exact document-number recall (the exchange writer's original-order
