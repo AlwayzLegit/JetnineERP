@@ -2367,3 +2367,16 @@ inbound supply dates, no full ATP projection):
 - reports.int.spec 25→27 (no-supply vs late-by-8-days vs covered
   fixtures; horizon bound). Gates: typecheck 0 · lint 0 · test 0 (full)
   · build 0 · prettier 0.
+
+## Transfers pack committed (2026-08-27)
+
+Owner uploaded the STORIS Transfers handoff (16 files — all 22 section
+articles: domain model, settings, permissions, entry + variants,
+distributed + multi-leg transfers, manifests, receiving, replenishment,
+scheduling, inquiries, acceptance tests, phased build plan). Committed
+verbatim to `docs/erp-transfers/` (prettier-ignored). Note: Jetnine
+already has a transfers module (entry, ship/receive, serials, as-is +
+floor-sample variants, auto replenishment) — the build task starts with
+a gap reconciliation of the pack against shipped work, then its
+[DECISION] items batched to the owner per the pack's own instruction.
+Queued after the Sales Views program.
