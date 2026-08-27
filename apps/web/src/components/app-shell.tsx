@@ -83,6 +83,7 @@ const NAV: NavGroup[] = [
       { href: '/inventory', label: 'Inventory', icon: Boxes },
       { href: '/purchase-orders', label: 'Purchasing', icon: ClipboardList },
       { href: '/vendors', label: 'Vendors', icon: Factory },
+      { href: '/replenishment', label: 'Replenishment', icon: PackageSearch },
       { href: '/transfers', label: 'Transfers', icon: ArrowLeftRight },
       { href: '/as-is', label: 'As-Is review', icon: Recycle },
       { href: '/gift-cards', label: 'Gift cards', icon: Gift },
