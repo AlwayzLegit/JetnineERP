@@ -2132,3 +2132,15 @@ Tests: exchanges.int.spec 8→10 (credit-cap with audit assertion; cancel →
 re-bind same order), audit.int.spec 7→8 (CSV injection guard). orders 68 ·
 webhooks 13 re-run green. Gates by exit code: typecheck 0 · lint 0 ·
 test 0 · build 0 · prettier 0.
+
+## Checkpoint 19 — hardening live; queue empty (2026-08-27)
+
+PR #49 squash-merged on green CI, deploy branch rolled (06033c6), Render
+deploy dep-da86n8id0e5s739r1ieg live — boot log verified `60/60 applied,
+head=0059_exchange_partial_unique`. Vercel production picked up main.
+All 19 tracked tasks complete: both uploaded packs built, the sysadmin
+substrate live, and the post-merge self-review's 10 findings (incl. the
+exchange credit-cap money bug) fixed and regression-locked in production.
+
+Nothing buildable remains queued. Owner-side only: needs-counsel privacy
+items (TCPA consent wording, erasure/retention policy).
