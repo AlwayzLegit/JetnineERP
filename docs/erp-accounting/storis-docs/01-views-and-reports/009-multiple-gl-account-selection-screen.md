@@ -1,0 +1,32 @@
+---
+title: Multiple GL Account Selection Screen
+article_id: 15294752475924
+section: 01-views-and-reports
+index: 9
+url: https://storis.zendesk.com/hc/en-us/articles/15294752475924-Multiple-GL-Account-Selection-Screen
+source: STORIS Help Center (storis.zendesk.com)
+---
+
+This window appears when you click on the Action button at the Account field in various General Ledger routines, for example the View Multiple Postings Inquiry. Use it to select one or more GL accounts.
+
+Account Account
+
+Specify one or more accounts. You have the following options:
+
+enter items directly into the Account field
+
+click on the arrow to view a list of GL accounts from which you can choose
+
+enter the first in a range of accounts at the Account field and enter the last account in the range at the Through field
+
+click on the Actions button the access the List Entry Window, which you can use to select a GL account list
+
+Whichever method you use, the items you specify appear in the grid at the bottom of the window.
+
+Grid InformationGrid Information
+
+You can remove items from the grid. To remove all of the items in the grid, click on Delete at the bottom of the window. To remove a single item, double-click on it to select the item and activate the buttons to the right of the entry field. Then, click on Remove to remove the selected item from the grid.
+
+You can use the up and down arrows to navigate the list in the grid. If more records exist than can fit in the grid, you can use the scroll bar on the right side of the grid to view additional records. When you locate the desired record , highlight it and press Enter. You can also double-click on the record to select it.
+
+When the grid contains all of the items you want, click OK. The systems returns to the previous screen. The current field displays "..." to indicate multiple items. To exit the Multiple Selection Window without specifying any products, click on Exit. You return to the previous screen.

@@ -8,3 +8,4 @@ pnpm-lock.yaml
 PLAN.md
 PLAN-STORIS-CUTOVER.md
 packages/db/drizzle
+docs/erp-accounting/storis-docs

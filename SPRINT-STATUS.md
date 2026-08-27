@@ -1518,3 +1518,21 @@ API call, no inviteLink fallback in the response), Resend shows the message
 verification, so the copy-link path was never broken. Production email works for
 the first time. Ops next: accept that invite to create the manager/second account
 (expires 2026-08-29 17:53Z), which unblocks browser-QA step 2.
+
+## Accounting corpus received + invite-in-spam note (2026-08-27)
+
+The full STORIS Accounting bundle landed and verified complete against its own
+manifest — 307 verbatim articles (00-accounting 10 · views-and-reports 100 · GL 10 ·
+payables 63 · receivables 124) + 5 digests + INDEX + manifest — committed at
+`docs/erp-accounting/storis-docs/` and exempted from prettier so the verbatim
+captures stay byte-faithful. Its HANDOFF is direction-agnostic enough to be useful
+both ways; its §2 decision list and §6 risk register mostly concern loading INTO
+STORIS and are moot for us, but the AR/in-house-financing articles (04-receivables)
+are the reference if financing parity is ever scoped. Still missing from the
+inventory pack: the five `sections/` files + `99-source-index.md`.
+
+**Email deliverability:** the delivered invite landed in Gmail's SPAM folder —
+expected for a domain with zero sending history. Owner should mark it "Not spam"
+(trains Gmail for future invites); adding a DMARC record at GoDaddy
+(`_dmarc.a-prompt.ai` TXT `v=DMARC1; p=none;`) would further help reputation — Ops,
+optional.
