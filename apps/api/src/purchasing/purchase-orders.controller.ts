@@ -19,6 +19,7 @@ import { CurrentTenant, CurrentUser } from '../auth/current-user.decorator';
 import type { CurrentUserPayload } from '../auth/current-user.decorator';
 import { DRIZZLE } from '../database/database.module';
 import { EmailService } from '../email/email.service';
+import { OrdersService } from '../orders/orders.service';
 import { SpecialOrdersService } from '../special-orders/special-orders.service';
 import { WebhookDispatcher } from '../webhooks/webhook-dispatcher.service';
 import { RequirePermission, TenantScoped } from '../tenancy/decorators';
@@ -131,6 +132,7 @@ export class PurchaseOrdersController {
     @Inject(AuditService) private readonly audit: AuditService,
     @Inject(WebhookDispatcher) private readonly webhooks: WebhookDispatcher,
     @Inject(SpecialOrdersService) private readonly specialOrders: SpecialOrdersService,
+    @Inject(OrdersService) private readonly orders: OrdersService,
     @Inject(EmailService) private readonly email: EmailService,
     @Inject(ExceptionsService) private readonly exceptions: ExceptionsService,
   ) {}
@@ -702,6 +704,35 @@ export class PurchaseOrdersController {
         lineCount: entries.length,
       },
     });
+
+    // B14: newly accepted stock backfills "Pending" order lines in
+    // reservation-basis order (special-order allocations above already
+    // took their linked units first).
+    const acceptedVariantIds = entries
+      .filter((e) => e.accepted > 0 && e.line.variantId)
+      .map((e) => e.line.variantId as string);
+    if (acceptedVariantIds.length > 0) {
+      const [biz] = await this.db
+        .select({ opsSettingsJson: schema.businesses.opsSettingsJson })
+        .from(schema.businesses)
+        .where(eq(schema.businesses.id, tenant.businessId!))
+        .limit(1);
+      const ops = (biz?.opsSettingsJson ?? {}) as { reserveBasis?: string | null };
+      const allocations = await this.orders.allocatePending(this.db, {
+        businessId: tenant.businessId!,
+        actorUserId: actor.id ?? null,
+        basis: ops.reserveBasis === 'order_date' ? 'order_date' : 'delivery_date',
+        variantIds: acceptedVariantIds,
+      });
+      for (const a of allocations) {
+        await this.audit.log({
+          action: 'order.allocate_pending',
+          targetType: 'order',
+          targetId: a.orderId,
+          metadata: { number: a.number, trigger: 'po_receive', poId: po.id, lines: a.lines },
+        });
+      }
+    }
 
     if (fullyAccepted) {
       void this.webhooks.fire({

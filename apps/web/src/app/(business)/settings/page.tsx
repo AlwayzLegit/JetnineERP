@@ -27,6 +27,7 @@ interface OpsSettings {
   maxBalanceForTicketPrintCents?: number | null;
   invoiceVarianceToleranceCents?: number | null;
   blindReceiving?: boolean | null;
+  reserveBasis?: 'delivery_date' | 'order_date' | null;
   deliveryDailyPieceCap?: number | null;
   deliveryDailyCapacityUnits?: number | null;
   priceVariance?: {
@@ -249,6 +250,8 @@ function OpsCard({ settings, onSaved }: { settings: Settings; onSaved: (s: Setti
       const invTol = String(data.get('invoiceTolerance') ?? '').trim();
       body.invoiceVarianceToleranceCents = invTol === '' ? null : Math.round(Number(invTol) * 100);
       body.blindReceiving = data.get('blindReceiving') === 'on' ? true : null;
+      const basis = String(data.get('reserveBasis') ?? '');
+      body.reserveBasis = basis === 'order_date' ? 'order_date' : 'delivery_date';
       const capBal = String(data.get('maxBalanceForTicket') ?? '').trim();
       body.maxBalanceForTicketPrintCents = capBal === '' ? null : Math.round(Number(capBal) * 100);
       const t1 = String(data.get('pvTier1Pct') ?? '').trim();
@@ -374,6 +377,17 @@ function OpsCard({ settings, onSaved }: { settings: Settings; onSaved: (s: Setti
           />
           Receivers count what arrived, not what was expected
         </label>
+      </Field>
+      <Field label="Stock reservation basis (who gets scarce stock first)">
+        <select
+          name="reserveBasis"
+          defaultValue={ops.reserveBasis === 'order_date' ? 'order_date' : 'delivery_date'}
+          className="select"
+          style={{ width: '100%' }}
+        >
+          <option value="delivery_date">Earliest delivery date first</option>
+          <option value="order_date">First order written first</option>
+        </select>
       </Field>
       <Field label="Price variance — no-friction tier (%; blank = 5)">
         <Input
