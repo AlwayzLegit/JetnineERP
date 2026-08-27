@@ -8,6 +8,7 @@ import {
   uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
 import { businesses, users } from './platform';
 import { memberships } from './tenancy';
 import { orders } from './orders';
@@ -76,8 +77,14 @@ export const exchanges = pgTable(
   },
   (t) => ({
     businessNumberUnique: uniqueIndex('exchanges_business_number_uniq').on(t.businessId, t.number),
-    returnUnique: uniqueIndex('exchanges_return_id_uniq').on(t.returnId),
-    saleOrderUnique: uniqueIndex('exchanges_sale_order_id_uniq').on(t.saleOrderId),
+    // Partial: a split or cancelled container releases its legs, so a
+    // corrected exchange can re-bind the same return or order.
+    returnUnique: uniqueIndex('exchanges_return_id_uniq')
+      .on(t.returnId)
+      .where(sql`${t.status} not in ('split', 'cancelled')`),
+    saleOrderUnique: uniqueIndex('exchanges_sale_order_id_uniq')
+      .on(t.saleOrderId)
+      .where(sql`${t.status} not in ('split', 'cancelled')`),
     businessIdx: index('exchanges_business_id_idx').on(t.businessId),
     statusIdx: index('exchanges_status_idx').on(t.businessId, t.status),
     originalIdx: index('exchanges_original_order_id_idx').on(t.originalOrderId),
