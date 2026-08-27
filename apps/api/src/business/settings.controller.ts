@@ -53,6 +53,9 @@ interface OpsSettings {
   deliveryDailyCapacityUnits?: number | null;
   /** G12: zip-prefix → route map ("912" → "Glendale AM"). */
   zipRoutes?: Record<string, string> | null;
+  /** B14: how contested stock is prioritized when backfilling Pending
+   * lines — 'delivery_date' (owner default) or 'order_date'. */
+  reserveBasis?: 'delivery_date' | 'order_date' | null;
   /** G6 three-tier price-variance thresholds (defaults 5% / $50 / 15%). */
   priceVariance?: {
     tier1Pct?: number | null;
@@ -158,6 +161,16 @@ function validateOps(input: OpsSettings): OpsSettings {
       }
     }
     out.zipRoutes = input.zipRoutes;
+  }
+  if (input.reserveBasis !== undefined) {
+    if (
+      input.reserveBasis !== null &&
+      input.reserveBasis !== 'delivery_date' &&
+      input.reserveBasis !== 'order_date'
+    ) {
+      throw new BadRequestException("ops.reserveBasis must be 'delivery_date' or 'order_date'");
+    }
+    out.reserveBasis = input.reserveBasis;
   }
   if (input.priceVariance !== undefined) {
     if (input.priceVariance !== null) {

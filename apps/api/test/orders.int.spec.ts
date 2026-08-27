@@ -2072,3 +2072,173 @@ describe('Line roll-up, Past Due, auto stock release, drift, duplicate prompt (P
     expect(hit.requestedDate).toBe('2027-08-01');
   });
 });
+
+describe('B14 — delivery-date reservation basis + pending allocation', () => {
+  let allocVariantId = '';
+  let orderEarly = { id: '', number: '' }; // later-created, EARLIER delivery
+  let orderLate = { id: '', number: '' }; // earlier-created, LATER delivery
+
+  beforeAll(async () => {
+    const sql2 = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    const db = drizzle(sql2);
+    try {
+      const [prod] = await db
+        .insert(schema.products)
+        .values({ businessId, sku: 'ALLOC-1', name: 'Allocation Fixture Mattress' })
+        .returning();
+      const [variant] = await db
+        .insert(schema.productVariants)
+        .values({ businessId, productId: prod!.id, sku: 'ALLOC-1-V', priceCents: 49900 })
+        .returning();
+      allocVariantId = variant!.id;
+      // Deliberately NO inventory level: both orders confirm under-reserved.
+    } finally {
+      await sql2.end({ timeout: 5 });
+    }
+  });
+
+  async function makePendingOrder(deliveryDate: string, quantity: number) {
+    const res = await request(app.getHttpServer())
+      .post('/v1/orders')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({
+        locationId,
+        customerId,
+        confirm: true,
+        fulfillmentType: 'pickup',
+        requestedDate: deliveryDate,
+        lines: [{ variantId: allocVariantId, quantity, deliveryDate }],
+      });
+    expect(res.status).toBe(201);
+    expect(res.body.lines[0].qtyReserved).toBe(0);
+    return { id: res.body.id as string, number: res.body.number as string };
+  }
+
+  it('Confirmed orders with no stock sit under-reserved (Pending)', async () => {
+    orderLate = await makePendingOrder('2026-09-20', 2);
+    orderEarly = await makePendingOrder('2026-09-05', 2);
+  });
+
+  it('Dry run ranks the earlier DELIVERY date first and moves nothing', async () => {
+    await request(app.getHttpServer())
+      .post('/v1/inventory/adjust')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ variantId: allocVariantId, locationId, delta: 3, reason: 'count_correction' })
+      .expect(201);
+
+    const dry = await request(app.getHttpServer())
+      .post('/v1/orders/allocate-pending')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ dryRun: true });
+    expect(dry.status).toBe(201);
+    expect(dry.body.basis).toBe('delivery_date');
+    expect(dry.body.dryRun).toBe(true);
+    const mine = (dry.body.allocated as { orderId: string; units: number }[]).filter(
+      (a) => a.orderId === orderEarly.id || a.orderId === orderLate.id,
+    );
+    expect(mine[0]!.orderId).toBe(orderEarly.id);
+    expect(mine[0]!.units).toBe(2);
+    expect(mine[1]!.orderId).toBe(orderLate.id);
+    expect(mine[1]!.units).toBe(1);
+
+    const level = await levelOf(allocVariantId);
+    expect(level.reserved).toBe(0);
+  });
+
+  it('Real run reserves earliest delivery fully, later delivery gets the remainder', async () => {
+    const run = await request(app.getHttpServer())
+      .post('/v1/orders/allocate-pending')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({});
+    expect(run.status).toBe(201);
+
+    const early = await request(app.getHttpServer())
+      .get(`/v1/orders/${orderEarly.id}`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId);
+    expect(early.body.lines[0].qtyReserved).toBe(2);
+    const late = await request(app.getHttpServer())
+      .get(`/v1/orders/${orderLate.id}`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId);
+    expect(late.body.lines[0].qtyReserved).toBe(1);
+    expect((await levelOf(allocVariantId)).reserved).toBe(3);
+  });
+
+  it('order_date basis hands scarce stock to the first order written instead', async () => {
+    await request(app.getHttpServer())
+      .patch('/v1/business/settings')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ ops: { reserveBasis: 'order_date' } })
+      .expect(200);
+
+    await request(app.getHttpServer())
+      .post('/v1/inventory/adjust')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ variantId: allocVariantId, locationId, delta: 1, reason: 'count_correction' })
+      .expect(201);
+
+    // orderLate was written FIRST and still needs 1 — under order_date it wins.
+    const run = await request(app.getHttpServer())
+      .post('/v1/orders/allocate-pending')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({});
+    expect(run.status).toBe(201);
+    expect(run.body.basis).toBe('order_date');
+    const late = await request(app.getHttpServer())
+      .get(`/v1/orders/${orderLate.id}`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId);
+    expect(late.body.lines[0].qtyReserved).toBe(2);
+
+    // Restore the owner default for any later suites.
+    await request(app.getHttpServer())
+      .patch('/v1/business/settings')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ ops: { reserveBasis: 'delivery_date' } })
+      .expect(200);
+  });
+
+  it('PO receiving backfills a pending line automatically', async () => {
+    const pending = await makePendingOrder('2026-09-25', 1);
+
+    const vendor = await request(app.getHttpServer())
+      .post('/v1/vendors')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ name: 'Alloc Vendor' });
+    expect(vendor.status).toBe(201);
+    const po = await request(app.getHttpServer())
+      .post('/v1/purchase-orders')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({
+        vendorId: vendor.body.id,
+        locationId,
+        lines: [{ variantId: allocVariantId, quantity: 1, unitCostCents: 20000 }],
+      });
+    expect(po.status).toBe(201);
+    const lineId = po.body.lines[0].id as string;
+
+    const received = await request(app.getHttpServer())
+      .post(`/v1/purchase-orders/${po.body.id}/receive`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ lines: [{ lineId, quantity: 1 }] });
+    expect(received.status).toBe(201);
+
+    const after = await request(app.getHttpServer())
+      .get(`/v1/orders/${pending.id}`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId);
+    expect(after.body.lines[0].qtyReserved).toBe(1);
+  });
+});

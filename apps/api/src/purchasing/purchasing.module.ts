@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { AuditModule } from '../audit/audit.module';
 import { ControlsModule } from '../controls/controls.module';
 import { EmailModule } from '../email/email.module';
+import { OrdersModule } from '../orders/orders.module';
 import { SpecialOrdersModule } from '../special-orders/special-orders.module';
 import { AuthModule } from '../auth/auth.module';
 import { TenancyModule } from '../tenancy/tenancy.module';
@@ -14,6 +15,7 @@ import { VendorsController } from './vendors.controller';
     AuthModule,
     TenancyModule,
     AuditModule,
+    OrdersModule,
     SpecialOrdersModule,
     EmailModule,
     ControlsModule,

@@ -688,6 +688,58 @@ export class OrdersController {
    * `days` ago with nothing on a truck; every release is registered.
    * P9's scheduler will run this nightly; until then it's a button.
    */
+  /**
+   * B14: fill "Pending" (under-reserved) stock lines from free stock, in
+   * reservation-basis order — ops.reserveBasis, owner default
+   * delivery_date. Runs automatically after PO receiving; this endpoint
+   * is the manual/inspection path.
+   */
+  @Post('orders/allocate-pending')
+  @RequirePermission('inventory.adjust')
+  async allocatePending(
+    @CurrentTenant() tenant: RequestTenantContext,
+    @CurrentUser() actor: CurrentUserPayload,
+    @Body() body: { dryRun?: boolean },
+  ): Promise<{
+    allocated: { orderId: string; number: string; units: number }[];
+    basis: 'delivery_date' | 'order_date';
+    dryRun: boolean;
+  }> {
+    const [biz] = await this.db
+      .select({ opsSettingsJson: schema.businesses.opsSettingsJson })
+      .from(schema.businesses)
+      .where(eq(schema.businesses.id, tenant.businessId!))
+      .limit(1);
+    const ops = (biz?.opsSettingsJson ?? {}) as { reserveBasis?: string | null };
+    const basis = ops.reserveBasis === 'order_date' ? 'order_date' : 'delivery_date';
+    const dryRun = body.dryRun === true;
+    const allocations = await this.orders.allocatePending(this.db, {
+      businessId: tenant.businessId!,
+      actorUserId: actor.id,
+      basis,
+      dryRun,
+    });
+    if (!dryRun) {
+      for (const a of allocations) {
+        await this.audit.log({
+          action: 'order.allocate_pending',
+          targetType: 'order',
+          targetId: a.orderId,
+          metadata: { number: a.number, basis, lines: a.lines },
+        });
+      }
+    }
+    return {
+      allocated: allocations.map((a) => ({
+        orderId: a.orderId,
+        number: a.number,
+        units: a.lines.reduce((sum, l) => sum + l.quantity, 0),
+      })),
+      basis,
+      dryRun,
+    };
+  }
+
   @Post('orders/auto-stock-release')
   @RequirePermission('inventory.adjust')
   async autoStockRelease(
