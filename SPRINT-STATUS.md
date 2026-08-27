@@ -2068,3 +2068,25 @@ registry` serves the declared registry (key, label, type, explicit
   registry completeness incl. TRISTATE tags); business 24, tenancy 8
   re-run green. Gates by exit code: typecheck 0 · lint 0 · test 0 ·
   build 0 · prettier 0.
+
+## Checkpoint 18 — Enter an Exchange + sysadmin substrate LIVE (2026-08-27)
+
+PR #48 squash-merged on green CI (one CI-infra fix along the way: the
+workflow never provisioned the new jetnine_exchanges test database — env
+var + createdb added; 576/589 tests had passed around it). Deploy branch
+rolled (65319a5), Render deploy dep-da83425g1s2s73fs1qtg live — boot log
+verified `59/59 applied, head=0058_exchanges; this run applied
+0058_exchanges`.
+
+The owner's exchange pack (docs/erp-exchange, 8 files) is fully built:
+container model, ledger settlement, restocking fee, E1 hold,
+financed-original even-exchange rule, split, cancel, no-original path,
+writer/detail/list UI. The sysadmin pack's buildable substrate is done:
+AUD-004 denial events, AUD-006 CSV export (AUD-003 audited), SET-007
+registry endpoint + reference UI. Tasks #17 and #18 complete — the
+uploaded-pack backlog is again at zero.
+
+Remaining non-build items (unchanged): needs-counsel privacy items (TCPA
+consent wording, erasure/retention policy) — owner + lawyer; a full
+report-builder surface remains deliberately unbuilt (the pack's own
+recommendation is the RPT-\* registry consolidation we already follow).
