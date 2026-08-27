@@ -40,8 +40,8 @@ first salesperson on the order → salesperson passed into the process → sales
 …and note the trap: **an existing application for the selected provider overwrites any entered
 salesperson code**, and changes here do not propagate to the customer or order records.
 
-**Customer-facing kiosk `[DOC]`.** A consumer-facing application mode presents only _Enter
-Application_ and _Exit_, and **Exit requires a staff credential override** — explicitly so customers
+**Customer-facing kiosk `[DOC]`.** A consumer-facing application mode presents only *Enter
+Application* and *Exit*, and **Exit requires a staff credential override** — explicitly so customers
 cannot reach other screens. If we build self-service application entry, copy this containment.
 
 **Management.** A management grid, gated by a location-level finance-application-manager flag, filters
@@ -52,8 +52,8 @@ store, create date, create time, last submission, salesperson, requested amount,
 **Per-customer actions `[DOC]`.** Selecting a customer opens their applications: each line shows
 provider, account number, status, completion date, approval amount. Buttons: Select, Refresh, Submit
 (→ `XMIT`), Close (→ `Deleted`), More Details, Maintain Application, View Application, and **Provider
-Info** — which opens the provider's web service, but _only when the provider returned a URL with its
-responses_, used when the provider needs more customer data. **Total Approved Amount** is the running
+Info** — which opens the provider's web service, but *only when the provider returned a URL with its
+responses*, used when the provider needs more customer data. **Total Approved Amount** is the running
 total of accumulated credit limits across all approved applications.
 
 **Decision `[DOC]`.** The provider returns approve/decline. An account number may or may not
@@ -81,28 +81,24 @@ whose monetary total changes cannot be saved without either a re-auth or an expl
 ## Plan types `[DOC]`
 
 ### Revolving
-
 Plan-code based, long-term, carries **MMP (minimum monthly payment)** obligations. Additional
 payments are accepted only for customers with at least one active plan **with a balance and no MMP
 currently due**. Entry is via a short or full revolving worksheet per config. Settles at end of day
 or manually.
 
 ### Installment
-
 Contract-based (contract number, not plan code). Additional payments accepted only for customers with
 an active contract **and no installment payment currently due**. Save shows a payoff as-of date, then
 the payment summary. An open-contracts window appears in receivables processing whenever open
 contracts exist, explicitly "to help prevent over payments from posting."
 
 ### RTO / lease — the most constrained
-
 - The order is **forced non-taxable**; all sales tax is stripped and the provider handles tax inside
   its payment structure. The sales-tax report flags these with a no-tax-reason code
 - **The full order amount must be financed**
 - **An RTO plan cannot be added if a deposit of any amount has been applied**
 
 ### Installment + RTO shared rules `[DOC]`
-
 - Cannot be used as a deposit: max-percent-as-deposit is locked at `0.00`
 - Contract/agreement printing and first-payment collection happen **outside** the system, via the
   provider connection
@@ -113,7 +109,6 @@ contracts exist, explicitly "to help prevent over payments from posting."
 - Settle **on transaction completion**; partial completion sends partial settlements
 
 ### Promotional / deferred interest `[DECIDE]`
-
 **Not documented anywhere in the source material** — yet for a mattress retailer, "12 months no
 interest" is likely the highest-volume plan on the floor. Its terms live in a financing-payment-plan
 settings area that was not covered. Specify this explicitly: promo length, deferred-interest accrual
@@ -128,7 +123,6 @@ transactions from provider payments; and make **non-monetary** changes to financ
 authorization number, and dispute status.
 
 Rules:
-
 - **Only open batches are available**; closed transactions must be moved to an open batch first
 - Adjustment date cannot be in the future or in a closed month
 - Multiple transactions across multiple batches per session are allowed **only if they share one

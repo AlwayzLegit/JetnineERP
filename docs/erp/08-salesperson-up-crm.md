@@ -15,7 +15,7 @@ ratio is wrong for late-night and early-morning traffic.
 
 **Auto archive** (off by default) governs whether the automatic day-end also moves current activity
 into history. Two qualifications must both hold: there are active transactions still open and/or
-associates who never checked out, _and_ a new opportunity is entered on a later date. Off: the day-end
+associates who never checked out, *and* a new opportunity is entered on a later date. Off: the day-end
 closes activities and marks everyone gone but leaves the data in the current file. On: it also
 archives.
 
