@@ -21,6 +21,15 @@ export const WEBHOOK_EVENT_TYPES = [
   'inventory.adjusted',
   'purchase_order.received',
   'stock_transfer.received',
+  // Exchange container lifecycle (docs/erp-exchange). Payloads carry
+  // { exchangeId, number } plus per-event context; 'exchange.settled'
+  // adds { creditIssuedCents?, appliedToSaleCents, saleOrderId,
+  // saleOrderNumber } for the credit applied to the replacement order.
+  'exchange.created',
+  'exchange.approved',
+  'exchange.settled',
+  'exchange.split',
+  'exchange.cancelled',
   // Payload: { campaignId, name, segmentId, recipientCount }
   'campaign.sent',
 ] as const;

@@ -64,11 +64,14 @@ export class PermissionGuard implements CanActivate {
         .values({
           businessId: tenant.businessId ?? null,
           actorUserId: tenant.userId ?? null,
-          actorType: 'user',
+          // API-key denials must stay traceable to the key — "what did
+          // this integration attempt" is the whole AUD-004 signal.
+          actorType: tenant.apiKeyId ? 'api_key' : 'user',
+          impersonatorUserId: tenant.impersonatorUserId ?? null,
           action: 'permission.denied',
           targetType: 'route',
           targetId: `${req.method} ${req.path}`,
-          changesJson: { missing },
+          changesJson: { missing, apiKeyId: tenant.apiKeyId ?? undefined },
         })
         .catch((err) => this.logger.warn({ err }, 'failed to record permission denial'));
       throw new ForbiddenException(

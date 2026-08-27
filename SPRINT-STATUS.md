@@ -2090,3 +2090,45 @@ Remaining non-build items (unchanged): needs-counsel privacy items (TCPA
 consent wording, erasure/retention policy) — owner + lawyer; a full
 report-builder surface remains deliberately unbuilt (the pack's own
 recommendation is the RPT-\* registry consolidation we already follow).
+
+## Hardening — self code-review of PR #48, 10 findings fixed (2026-08-27)
+
+Ran a high-effort code review over the exchange + audit-substrate merge;
+all 10 findings fixed and regression-locked:
+
+1. **Money (P0): exchange credit capped at collected.** The settlement
+   branch bypassed the plain path's refund-exceeds-collected guard — a
+   delivered-but-half-paid original minted full-face credit. Now
+   `min(returnAmount, paidCents(original))`, with an
+   `exchange.credit_capped` audit row when the cap bites. Exchange legs
+   authorize as store_credit (writer + tests), so a later split falls
+   back to credit, never cash out.
+2. **Re-bind after mistake (migration 0059)**: the unique return/order
+   indexes became partial (`status NOT IN ('split','cancelled')`) and the
+   taken-check is status-aware — a cancelled or split container releases
+   its legs for a corrected exchange.
+3. **E1-hold UX**: the writer skips settle-now on an on_hold exchange and
+   always lands on the exchange page; a receive hiccup no longer strands
+   the cashier on the form.
+4. **No duplicate documents**: the writer remembers the created
+   replacement + RMA and reuses them when a failed bind is retried.
+5. **CSV formula injection**: audit export prefixes leading =+-@/tab/CR
+   with an apostrophe.
+6. **AUD-004 attribution**: API-key denials record actorType 'api_key' +
+   the key id; impersonator carried.
+7. **Number race**: exchange insert retries with a fresh number on
+   23505; random fallback zero-padded.
+8. **Webhooks (CLAUDE.md convention)**: five new catalogued events —
+   exchange.created/approved/settled/split/cancelled — fired from bind,
+   approve, split, cancel, and both settlement paths.
+9. **Status freshness**: lazy-completion runs on the list too, and
+   hydrate no longer double-fetches (notes/salesperson folded into the
+   base select).
+10. **Credit preview accuracy**: the writer previews per-unit credit as
+    (line total + tax)/qty — the server's exact formula — instead of the
+    list price.
+
+Tests: exchanges.int.spec 8→10 (credit-cap with audit assertion; cancel →
+re-bind same order), audit.int.spec 7→8 (CSV injection guard). orders 68 ·
+webhooks 13 re-run green. Gates by exit code: typecheck 0 · lint 0 ·
+test 0 · build 0 · prettier 0.

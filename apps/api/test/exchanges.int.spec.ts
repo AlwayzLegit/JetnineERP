@@ -516,3 +516,83 @@ describe('Enter an Exchange — container over a return and a replacement order'
     expect(bound.body.message).toMatch(/same customer/);
   });
 });
+
+describe('Hardening — review findings', () => {
+  it('credit is capped at what the customer actually paid on the original', async () => {
+    // Delivered but only half-paid: $200 collected on a $500 sale.
+    const created = await owner()
+      .post('/v1/orders')
+      .send({ locationId, customerId, confirm: true, lines: [{ variantId: v1Id, quantity: 1 }] });
+    expect(created.status).toBe(201);
+    await owner()
+      .post(`/v1/orders/${created.body.id}/payments`)
+      .send({ method: 'cash', amountCents: 20_000, kind: 'deposit' })
+      .expect(201);
+    await owner().post(`/v1/orders/${created.body.id}/fulfill`).send({}).expect(201);
+
+    // Exchange legs authorize as store_credit (like the writer does) —
+    // the plain path's cash-refund cap would otherwise block a
+    // half-paid original at authorization time.
+    const replacement = await owner()
+      .post(`/v1/orders/${created.body.id}/exchange`)
+      .send({ locationId, confirm: true, lines: [{ variantId: v2Id, quantity: 1 }] });
+    expect(replacement.status).toBe(201);
+    const saleOrderId = replacement.body.id;
+    await owner()
+      .post(`/v1/orders/${created.body.id}/return`)
+      .send({
+        lines: [{ lineId: created.body.lines[0].id, quantity: 1 }],
+        fulfillment: 'pickup',
+        refundMethod: 'store_credit',
+      })
+      .expect(201);
+    const rets = await owner().get(
+      `/v1/order-returns?orderId=${created.body.id}&status=authorized`,
+    );
+    const returnId = rets.body[0].id as string;
+    await owner().post('/v1/exchanges').send({ saleOrderId, returnId }).expect(201);
+    await owner().post(`/v1/order-returns/${returnId}/receive`).send({}).expect(201);
+
+    await withDb(async (db) => {
+      const salePayments = await db
+        .select()
+        .from(schema.payments)
+        .where(eq(schema.payments.orderId, saleOrderId));
+      expect(salePayments).toHaveLength(1);
+      expect(salePayments[0]!.amountCents).toBe(20_000); // not the $500 face value
+      const [capAudit] = await db
+        .select()
+        .from(schema.auditLogs)
+        .where(eq(schema.auditLogs.action, 'exchange.credit_capped'))
+        .limit(1);
+      expect(capAudit).toBeTruthy();
+    });
+    expect(await ledgerBalance(customerId)).toBe(0);
+  });
+
+  it('a cancelled exchange releases its legs — the same order re-binds cleanly', async () => {
+    const orig = await soldOriginal(v1Id, 50_000);
+    const { saleOrderId, returnId } = await legsFor(orig.orderId, orig.lineId, v2Id);
+    const first = await owner().post('/v1/exchanges').send({ saleOrderId, returnId });
+    expect(first.status).toBe(201);
+    await owner()
+      .post(`/v1/exchanges/${first.body.id}/cancel`)
+      .send({ reason: 'Bound the wrong return' })
+      .expect(201);
+
+    // Re-authorize (the cancel voided the first RMA) and bind the SAME
+    // replacement order again — the dead container must not block it.
+    const reauth = await owner()
+      .post(`/v1/orders/${orig.orderId}/return`)
+      .send({ lines: [{ lineId: orig.lineId, quantity: 1 }], fulfillment: 'pickup' });
+    expect(reauth.status).toBe(201);
+    const returns = await owner().get(
+      `/v1/order-returns?orderId=${orig.orderId}&status=authorized`,
+    );
+    const rebound = await owner()
+      .post('/v1/exchanges')
+      .send({ saleOrderId, returnId: returns.body[0].id });
+    expect(rebound.status).toBe(201);
+    expect(rebound.body.id).not.toBe(first.body.id);
+  });
+});

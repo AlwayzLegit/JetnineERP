@@ -165,7 +165,12 @@ export class AuditLogsController {
 
     const esc = (v: unknown): string => {
       if (v == null) return '';
-      const s = typeof v === 'string' ? v : JSON.stringify(v);
+      let s = typeof v === 'string' ? v : JSON.stringify(v);
+      // Spreadsheet formula-injection guard: a leading =, +, -, @, tab
+      // or CR would execute as a formula when the CSV opens in Excel.
+      // Values here include user-typed text (notes, reasons), so
+      // neutralize with a leading apostrophe.
+      if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`;
       return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
     };
     const header = 'created_at,action,actor_email,actor_type,target_type,target_id,changes,ip';
