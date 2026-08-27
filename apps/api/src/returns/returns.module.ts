@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { AuditModule } from '../audit/audit.module';
+import { CostingModule } from '../costing/costing.module';
 import { AuthModule } from '../auth/auth.module';
 import { ControlsModule } from '../controls/controls.module';
 import { MoneyModule } from '../money/money.module';
@@ -12,7 +13,7 @@ import { StoreCreditService } from './store-credit.service';
 import { WriteOffsController } from './write-offs.controller';
 
 @Module({
-  imports: [AuthModule, TenancyModule, AuditModule, ControlsModule, MoneyModule],
+  imports: [AuthModule, TenancyModule, AuditModule, ControlsModule, MoneyModule, CostingModule],
   controllers: [AsIsController, OrderReturnsController, StoreCreditController, WriteOffsController],
   providers: [StoreCreditService, OrderReturnsService],
   exports: [StoreCreditService, OrderReturnsService],

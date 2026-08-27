@@ -1046,3 +1046,99 @@ describe('PO lifecycle corrections — place / edit / un-receive', () => {
     });
   });
 });
+
+describe('FIFO costing — PO receipts create layers, un-receive backs them out', () => {
+  let vendorId = '';
+  let poId = '';
+  let lineId = '';
+  let costVariantId = '';
+
+  async function withDb<T>(fn: (db: ReturnType<typeof drizzle>) => Promise<T>): Promise<T> {
+    const sql = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    try {
+      return await fn(drizzle(sql));
+    } finally {
+      await sql.end({ timeout: 5 });
+    }
+  }
+
+  it('receiving a PO writes a cost layer at the PO line cost', async () => {
+    costVariantId = await withDb(async (db) => {
+      const [p] = await db
+        .insert(schema.products)
+        .values({ businessId, sku: 'FIFO-P', name: 'FIFO Fixture' })
+        .returning();
+      const [v] = await db
+        .insert(schema.productVariants)
+        .values({ businessId, productId: p!.id, sku: 'FIFO-P-V1', priceCents: 90000 })
+        .returning();
+      return v!.id;
+    });
+    const vendor = await request(app.getHttpServer())
+      .post('/v1/vendors')
+      .set('Cookie', clerkCookie)
+      .set('X-Business-Id', businessId)
+      .send({ name: 'FIFO Vendor Co' });
+    vendorId = vendor.body.id;
+
+    const po = await request(app.getHttpServer())
+      .post('/v1/purchase-orders')
+      .set('Cookie', clerkCookie)
+      .set('X-Business-Id', businessId)
+      .send({
+        vendorId,
+        locationId,
+        lines: [{ variantId: costVariantId, quantity: 3, unitCostCents: 500 }],
+      });
+    expect(po.status).toBe(201);
+    poId = po.body.id;
+    lineId = po.body.lines[0].id;
+
+    const recv = await request(app.getHttpServer())
+      .post(`/v1/purchase-orders/${poId}/receive`)
+      .set('Cookie', clerkCookie)
+      .set('X-Business-Id', businessId)
+      .send({ lines: [{ lineId, quantity: 3 }] });
+    expect(recv.status).toBe(201);
+
+    await withDb(async (db) => {
+      const layers = await db
+        .select()
+        .from(schema.costLayers)
+        .where(eq(schema.costLayers.variantId, costVariantId));
+      expect(layers).toHaveLength(1);
+      expect(layers[0]!.sourceType).toBe('po_receive');
+      expect(layers[0]!.referenceId).toBe(poId);
+      expect(layers[0]!.unitCostCents).toBe(500);
+      expect(layers[0]!.quantityReceived).toBe(3);
+      expect(layers[0]!.quantityRemaining).toBe(3);
+    });
+  });
+
+  it("un-receive consumes this PO's own layer and records the consumption", async () => {
+    const res = await request(app.getHttpServer())
+      .post(`/v1/purchase-orders/${poId}/unreceive`)
+      .set('Cookie', clerkCookie)
+      .set('X-Business-Id', businessId)
+      .send({ lines: [{ lineId, quantity: 1 }] });
+    expect(res.status).toBe(201);
+
+    await withDb(async (db) => {
+      const layers = await db
+        .select()
+        .from(schema.costLayers)
+        .where(eq(schema.costLayers.variantId, costVariantId));
+      expect(layers).toHaveLength(1);
+      expect(layers[0]!.quantityRemaining).toBe(2);
+
+      const consumptions = await db
+        .select()
+        .from(schema.costConsumptions)
+        .where(eq(schema.costConsumptions.layerId, layers[0]!.id));
+      expect(consumptions).toHaveLength(1);
+      expect(consumptions[0]!.quantity).toBe(1);
+      expect(consumptions[0]!.unitCostCents).toBe(500);
+      expect(consumptions[0]!.referenceType).toBe('po_unreceive');
+    });
+  });
+});

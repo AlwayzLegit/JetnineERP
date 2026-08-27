@@ -14,6 +14,7 @@ import { desc, eq, inArray, sql } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { schema } from '@jetnine/db';
 import { AuditService } from '../audit/audit.service';
+import { CostingService } from '../costing/costing.service';
 import { CurrentTenant, CurrentUser } from '../auth/current-user.decorator';
 import type { CurrentUserPayload } from '../auth/current-user.decorator';
 import { ExceptionsService } from '../controls/exceptions.service';
@@ -98,6 +99,7 @@ export class AsIsController {
     @Inject(AuditService) private readonly audit: AuditService,
     @Inject(SecurityOverrideService) private readonly overrides: SecurityOverrideService,
     @Inject(ExceptionsService) private readonly exceptions: ExceptionsService,
+    @Inject(CostingService) private readonly costing: CostingService,
   ) {}
 
   @Get()
@@ -356,6 +358,23 @@ export class AsIsController {
         actorUserId: actor.id,
         notes: body.notes ?? null,
       });
+      // FIFO: restocked as-is pieces layer at the variant's catalog cost.
+      {
+        const [pv] = await this.db
+          .select({ costCents: schema.productVariants.costCents })
+          .from(schema.productVariants)
+          .where(eq(schema.productVariants.id, restockedVariantId))
+          .limit(1);
+        await this.costing.addLayer(this.db, {
+          businessId: tenant.businessId!,
+          variantId: restockedVariantId,
+          locationId: item.locationId,
+          sourceType: 'as_is_restock',
+          referenceId: item.id,
+          quantity: item.quantity,
+          unitCostCents: pv?.costCents ?? null,
+        });
+      }
       await this.db
         .insert(schema.inventoryLevels)
         .values({

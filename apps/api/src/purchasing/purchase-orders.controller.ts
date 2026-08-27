@@ -15,6 +15,7 @@ import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { schema } from '@jetnine/db';
 import { AuditService } from '../audit/audit.service';
+import { CostingService } from '../costing/costing.service';
 import { ExceptionsService } from '../controls/exceptions.service';
 import { CurrentTenant, CurrentUser } from '../auth/current-user.decorator';
 import type { CurrentUserPayload } from '../auth/current-user.decorator';
@@ -160,6 +161,7 @@ export class PurchaseOrdersController {
     @Inject(OrdersService) private readonly orders: OrdersService,
     @Inject(EmailService) private readonly email: EmailService,
     @Inject(ExceptionsService) private readonly exceptions: ExceptionsService,
+    @Inject(CostingService) private readonly costing: CostingService,
   ) {}
 
   @Get()
@@ -762,6 +764,16 @@ export class PurchaseOrdersController {
           quantityAccepted: v.line.quantityAccepted - v.qty,
         })
         .where(eq(schema.purchaseOrderLines.id, v.line.id));
+      // FIFO: back the units out of this PO's own layers first.
+      await this.costing.consume(this.db, {
+        businessId: tenant.businessId!,
+        variantId: v.line.variantId,
+        locationId: po.locationId,
+        quantity: v.qty,
+        referenceType: 'po_unreceive',
+        referenceId: po.id,
+        preferReferenceId: po.id,
+      });
       unitsUnreceived += v.qty;
     }
 
@@ -1010,6 +1022,16 @@ export class PurchaseOrdersController {
               updatedAt: new Date(),
             },
           });
+        // FIFO: the receipt is a cost layer at the PO line's unit cost.
+        await this.costing.addLayer(this.db, {
+          businessId: tenant.businessId!,
+          variantId: e.line.variantId,
+          locationId: po.locationId,
+          sourceType: 'po_receive',
+          referenceId: po.id,
+          quantity: e.accepted,
+          unitCostCents: e.line.unitCostCents,
+        });
       }
       const rejected = e.rejected ?? 0;
       if (rejected > 0) {
