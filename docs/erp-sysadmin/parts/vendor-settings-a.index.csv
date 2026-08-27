@@ -1,0 +1,48 @@
+req_id,article_id,title
+VEND-001,15243029148308,Account Number Entry Screen
+VEND-002,15242997286420,Action - Volume Rebate Exceptions
+VEND-003,15243031913108,Advanced Regional Vendor Settings
+VEND-004,15243029151636,Advanced Vendor Category and Group Exception Settings - Auto-Fill Days
+VEND-005,15242997270036,Advanced Vendor Category and Group Exception Settings - Discount Costing
+VEND-006,15242997268500,Advanced Vendor Category and Group Exception Settings - Excess Stock Days
+VEND-007,15243029154708,Advanced Vendor Category and Group Exception Settings - Factory Default Warranty
+VEND-008,15243029362964,Advanced Vendor Category and Group Exception Settings - Landed Cost Add-Ons
+VEND-009,15243029152788,Advanced Vendor Category and Group Exception Settings - Lead Pad Days
+VEND-010,15242997491988,Advanced Vendor Category and Group Exception Settings - Minimum Stock Days
+VEND-011,15243029150228,Advanced Vendor Category and Group Exception Settings - Purchase Delivery Pad Days
+VEND-012,15243029366932,Advanced Vendor Category and Group Exception Settings - Purchase Lead Days
+VEND-013,15243029154068,Advanced Vendor Category and Group Exception Settings - Volume Rebates
+VEND-014,15243030215572,Advanced Vendor Settings
+VEND-015,15242997505812,Advanced Vendor Settings - Read Only
+VEND-016,15242997491732,Bank Override
+VEND-017,15243030216596,Bill Back Settings
+VEND-018,15243029363220,Birdeye Settings
+VEND-019,15243030215700,Broker Settings
+VEND-020,15243031911444,Buying Group Settings
+VEND-021,15243031910548,Cost Reduced Bill Back Settings
+VEND-022,15243032141204,Deduct From Invoice Settings
+VEND-023,15243032739860,Deliver To Settings
+VEND-024,15243031916948,Delivery Charge Settings
+VEND-025,15243031913748,Delivery Charge Table Settings
+VEND-026,15243030217748,Delivery Company Settings
+VEND-027,15243031912852,Delivery Contact Status Settings
+VEND-028,15243032151316,Delivery Survey Settings
+VEND-029,15242997735956,Delivery To Description Lookup
+VEND-030,15243030408724,Distribution Status Settings
+VEND-031,15243029579668,Drop Off Storage Location Table
+VEND-032,15243030412308,EDI Status Details Settings
+VEND-033,15243032143252,Electronic Merchant Settings
+VEND-034,15243029579796,Enter In Transit Days by Location
+VEND-035,15242997759764,Enter New Ship-From ID Window
+VEND-036,15243029579156,Enter Payables Company by Location
+VEND-037,15243032138772,Float Settings
+VEND-038,15243032140180,FOB Settings
+VEND-039,15243032139028,Franchise Settings
+VEND-040,15243030715924,Freight Forwarder Settings
+VEND-041,15242997758740,Group Exceptions and Category Exceptions - Advanced Vendor Settings
+VEND-042,15243032419476,Logistical Route Settings
+VEND-043,15243030720660,Maintain Invoice Charge Table Settings
+VEND-044,15243029580820,Minimum Stock Days
+VEND-045,15243032412564,Multiple Break Selection
+VEND-046,15243032411156,Per Piece Delivery Charge Settings
+VEND-047,15242997738004,Picking By Zone Assignment Window

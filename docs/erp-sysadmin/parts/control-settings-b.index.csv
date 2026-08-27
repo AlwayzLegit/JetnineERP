@@ -1,0 +1,44 @@
+req_id,article_id,title
+SCS-045,15186451529876,Maintain Credit Application Letter Print UNC Path
+SCS-046,41561618825108,Maintain Event Configuration
+SCS-047,15186451515028,Micro*D PreVue
+SCS-048,15186501108372,Net Purchase Order
+SCS-049,15186501105684,Notification by Warehouse Screen
+SCS-050,15186452992660,Notifications Control Settings
+SCS-051,15186502242452,Order Line Import Control Settings
+SCS-052,15186501543572,Payables Control Settings
+SCS-053,15186452993556,Payment Card and Device Settings
+SCS-054,15186502233620,Point of Sale Control Settings
+SCS-055,15186502239636,POS Bar Code Control Settings
+SCS-056,15186501109012,Product Auto-Numbering Exclusion Ranges
+SCS-057,15186452992916,Product Configurator Control Settings
+SCS-058,15186502233492,Purchasing Control Settings
+SCS-059,15186452991252,Quick Purchase Order Settings
+SCS-060,15186501993236,Quick Sale Control Settings
+SCS-061,15186502232724,Report Archive Retention Days
+SCS-062,16716821448084,Requested Date Calculation
+SCS-063,15186502232340,RetailDeck Control Settings
+SCS-064,15186453252116,Revolving Receivables Control Settings
+SCS-065,15186453252372,Route Capacity Control Settings
+SCS-066,15186502470164,Route Mapping Control Settings
+SCS-067,15186502479380,Sales Analysis Report Control Settings
+SCS-068,15186502476820,Sales Lead System Control Settings
+SCS-069,15186501107604,Sales Order Reservations
+SCS-070,15186453256980,Service Control Settings
+SCS-071,15186453256212,Shopping Cart Control Settings
+SCS-072,15186453249940,Special Order Control Settings
+SCS-073,15186451768852,Stock Reservation Settings
+SCS-074,15186501104788,STORIS Messenger Control Settings
+SCS-075,15186452148500,System Notifications
+SCS-076,15186501361172,System Security Window
+SCS-077,15186452531860,Terminal Settings
+SCS-078,15186501361428,Test Email Server Connection
+SCS-079,15186502670228,Third Party Finance Application Control Settings
+SCS-080,15186453250196,Third-Party Accounting Control Settings
+SCS-081,15186501362836,TPA Transmission Phantom
+SCS-082,15186452147092,Transaction Entry - User Log In Screen
+SCS-083,15186502670612,Twilight Discount Pricing Settings
+SCS-084,15186453471636,Vendor Receivables Control Settings
+SCS-085,36103270474004,Warehouse Management Control Settings
+SCS-086,15186453486484,Web Control Settings
+SCS-087,15186452150932,Zero-Cost Exception Handling

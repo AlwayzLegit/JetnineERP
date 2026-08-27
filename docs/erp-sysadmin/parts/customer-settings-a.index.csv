@@ -1,0 +1,47 @@
+req_id,article_id,title
+CUST-001,15242611077268,Account Status Settings
+CUST-002,15242629406228,Activity Reason Settings
+CUST-003,15242629406612,Address Exception List Settings
+CUST-004,15242629407380,Advanced Customer Settings
+CUST-005,15242629418772,Alert Code Settings
+CUST-006,15242594518164,Alternate Taxable Merchandise Calculation
+CUST-007,15242611081620,Bank Settings
+CUST-008,15242406194580,Card Length Format Action
+CUST-009,15242629411604,Cash Drawer Settings
+CUST-010,15242662922644,Cash Payment Settings
+CUST-011,15242629407508,Check Payment Settings
+CUST-012,15242611077652,Closing Probability Settings
+CUST-013,15242611080468,Collection Letter Settings
+CUST-014,15242629660820,Collector Settings
+CUST-015,15242611359252,Commission Settings
+CUST-016,15242594517268,Commission Settings Lookup
+CUST-017,15242629664020,Compliance Condition Settings
+CUST-018,15242611356692,Contract Balance Adjustment Settings
+CUST-019,15242611357204,Contract Classification Settings
+CUST-020,15242629662100,Create Check Run File
+CUST-021,15242611361684,Create/Maintain a Daily Discount Schedule
+CUST-022,15242629662868,Create/Maintain a Membership Discount Schedule
+CUST-023,15242611356948,Credit Application Settings
+CUST-024,15242611600916,Credit Bureau Code Settings
+CUST-025,15242629909908,Credit Bureau Settings
+CUST-026,15242662922388,Credit Card Payment Settings
+CUST-027,15242594516884,Credit Cards Already on File
+CUST-028,15242629911700,Credit Employment Status Settings
+CUST-029,15242611595540,Credit Review Status Code Settings
+CUST-030,15242629910548,Credit Score Percentile Settings
+CUST-031,15242611595284,Credit Source Settings
+CUST-032,15242629910036,Customer Alert Code Settings
+CUST-033,15242609770004,Customer Legal Settings
+CUST-034,15242406190740,Customer Legal Settings - Read Only
+CUST-035,16917471620116,Customer Membership Settings
+CUST-036,15297959787156,Customer Prefix Settings
+CUST-037,15242611603220,Customer Price Settings
+CUST-038,15242630128788,Customer Settings
+CUST-039,15242630128916,Customer Type Settings
+CUST-040,15242406189204,CVV Prompt
+CUST-041,34519031274644,CVV2 Prompt
+CUST-042,15242390516884,Debit Card Overview
+CUST-043,15242630128404,Debit Card Payment Settings
+CUST-044,15242610006676,Desjardins Configuration
+CUST-045,15242390515860,Enable VISA Credit Card Rules
+CUST-046,15242594734612,Enter Customer's Date of Birth
