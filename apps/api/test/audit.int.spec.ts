@@ -289,6 +289,34 @@ describe('Sysadmin pack — RPT-AUDIT substrate (AUD-003/004/006, SET-007)', () 
     expect(trace.body.data.length).toBeGreaterThanOrEqual(1);
   });
 
+  it('CSV export neutralizes spreadsheet formula injection', async () => {
+    const sql = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    try {
+      await drizzle(sql)
+        .insert(schema.auditLogs)
+        .values({
+          businessId,
+          actorUserId: owner.id,
+          actorType: 'user',
+          action: 'formula.test',
+          targetType: 'order',
+          targetId: '=HYPERLINK("http://evil","x")',
+          changesJson: { note: '=cmd' },
+        });
+    } finally {
+      await sql.end({ timeout: 5 });
+    }
+    const res = await request(app.getHttpServer())
+      .get('/v1/audit-logs/export.csv?action=formula.test')
+      .set('Cookie', owner.cookie)
+      .set('X-Business-Id', businessId);
+    expect(res.status).toBe(200);
+    const dataLine = (res.text as string).split('\n')[1]!;
+    // The leading = is prefixed with an apostrophe so Excel treats it as text.
+    expect(dataLine).toContain(`"'=HYPERLINK`);
+    expect(dataLine).not.toMatch(/,=HYPERLINK/);
+  });
+
   it('SET-007: the settings registry serves every ops key with an explicit blank-meaning', async () => {
     const res = await request(app.getHttpServer())
       .get('/v1/business/settings/registry')

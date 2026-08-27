@@ -12,6 +12,7 @@ import { AuditService } from '../audit/audit.service';
 import { DRIZZLE } from '../database/database.module';
 import { CommissionsService } from '../money/commissions.service';
 import { paidCents } from '../orders/order-math';
+import { WebhookDispatcher } from '../webhooks/webhook-dispatcher.service';
 import { StoreCreditService } from './store-credit.service';
 
 /**
@@ -28,6 +29,7 @@ export class OrderReturnsService {
     @Inject(AuditService) private readonly audit: AuditService,
     @Inject(StoreCreditService) private readonly storeCredit: StoreCreditService,
     @Inject(CommissionsService) private readonly commissions: CommissionsService,
+    @Inject(WebhookDispatcher) private readonly webhooks: WebhookDispatcher,
   ) {}
 
   async receiveGoods(returnId: string, actorUserId: string | null): Promise<void> {
@@ -141,10 +143,27 @@ export class OrderReturnsService {
     // Money: an exchange settles against the replacement order through
     // the store-credit ledger — issue the credit (minus the restocking
     // fee), then redeem what the replacement's balance can absorb. Any
-    // remainder stays as visible, spendable store credit.
+    // remainder stays as visible, spendable store credit. The credit is
+    // capped at what was actually collected on the original order — the
+    // same invariant the plain-refund path enforces below; a delivered-
+    // but-half-paid original never mints unearned credit.
     if (liveExchange) {
       const fee = liveExchange.restockingFeeCents;
-      const credit = Math.max(0, ret.amountCents - fee);
+      const collected = Math.max(0, paidCents(payments));
+      const credit = Math.max(0, Math.min(ret.amountCents, collected) - fee);
+      if (credit < ret.amountCents - fee) {
+        await this.audit.log({
+          action: 'exchange.credit_capped',
+          targetType: 'exchange',
+          targetId: liveExchange.id,
+          after: {
+            number: liveExchange.number,
+            returnCents: ret.amountCents,
+            collectedCents: collected,
+            creditCents: credit,
+          },
+        });
+      }
       if (credit > 0) {
         await this.storeCredit.issue(this.db, {
           businessId: ret.businessId,
@@ -205,6 +224,19 @@ export class OrderReturnsService {
           appliedToSaleCents: applied,
           saleOrderNumber: saleOrder.number,
           residualCreditCents: credit - applied,
+        },
+      });
+      void this.webhooks.fire({
+        businessId: ret.businessId,
+        eventType: 'exchange.settled',
+        payload: {
+          exchangeId: liveExchange.id,
+          number: liveExchange.number,
+          rmaNumber: ret.rmaNumber,
+          creditIssuedCents: credit,
+          appliedToSaleCents: applied,
+          saleOrderId: saleOrder.id,
+          saleOrderNumber: saleOrder.number,
         },
       });
     } else if (toStoreCredit) {

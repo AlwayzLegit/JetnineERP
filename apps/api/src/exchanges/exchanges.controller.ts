@@ -27,6 +27,7 @@ import { paidCents } from '../orders/order-math';
 import { StoreCreditService } from '../returns/store-credit.service';
 import { RequirePermission, TenantScoped } from '../tenancy/decorators';
 import type { RequestTenantContext } from '../tenancy/request-context';
+import { WebhookDispatcher } from '../webhooks/webhook-dispatcher.service';
 
 interface BindBody {
   saleOrderId?: string;
@@ -94,6 +95,7 @@ export class ExchangesController {
     @Inject(SecurityOverrideService) private readonly overrides: SecurityOverrideService,
     @Inject(ExceptionsService) private readonly exceptions: ExceptionsService,
     @Inject(StoreCreditService) private readonly storeCredit: StoreCreditService,
+    @Inject(WebhookDispatcher) private readonly webhooks: WebhookDispatcher,
   ) {}
 
   @Get()
@@ -106,6 +108,7 @@ export class ExchangesController {
       .where(status ? eq(schema.exchanges.status, status) : undefined)
       .orderBy(desc(schema.exchanges.createdAt))
       .limit(200);
+    await this.lazyComplete(rows);
     return rows;
   }
 
@@ -153,11 +156,14 @@ export class ExchangesController {
       .limit(1);
     if (!ret) throw new NotFoundException('Return not found');
 
+    // Only a LIVE container claims its legs — a split or cancelled
+    // exchange releases them, so a corrected re-bind is possible (the
+    // partial unique indexes enforce the same rule at the DB layer).
     const [taken] = await this.db
       .select({ id: schema.exchanges.id })
       .from(schema.exchanges)
       .where(
-        sql`${schema.exchanges.returnId} = ${body.returnId} or ${schema.exchanges.saleOrderId} = ${body.saleOrderId}`,
+        sql`(${schema.exchanges.returnId} = ${body.returnId} or ${schema.exchanges.saleOrderId} = ${body.saleOrderId}) and ${schema.exchanges.status} not in ('split', 'cancelled')`,
       )
       .limit(1);
     if (taken) throw new ConflictException('That return or order is already part of an exchange');
@@ -266,26 +272,43 @@ export class ExchangesController {
     }
 
     const onHold = Boolean(ops.exchangeHoldAtEntry);
-    const number = await this.generateNumber(tenant.businessId!);
 
-    const [exchange] = await this.db
-      .insert(schema.exchanges)
-      .values({
-        businessId: tenant.businessId!,
-        number,
-        returnId: ret.id,
-        saleOrderId: saleOrder.id,
-        originalOrderId: originalOrder?.id ?? null,
-        referencedOrderNumber: noOriginal ? ret.referencedOrderNumber : null,
-        status: onHold ? 'on_hold' : 'open',
-        evenExchange,
-        restockingFeeCents,
-        restockingFeeOverridden,
-        returnSalespersonMembershipId: body.returnSalespersonMembershipId ?? null,
-        notes: body.notes ?? null,
-        createdByUserId: actor?.id ?? null,
-      })
-      .returning();
+    // Two concurrent binds can race the count-based number: retry the
+    // INSERT itself with a fresh number on a unique-violation, so the
+    // race resolves instead of surfacing a 500.
+    let exchange: typeof schema.exchanges.$inferSelect | undefined;
+    let number = '';
+    for (let attempt = 0; attempt < 3 && !exchange; attempt++) {
+      number = await this.generateNumber(tenant.businessId!);
+      try {
+        [exchange] = await this.db
+          .insert(schema.exchanges)
+          .values({
+            businessId: tenant.businessId!,
+            number,
+            returnId: ret.id,
+            saleOrderId: saleOrder.id,
+            originalOrderId: originalOrder?.id ?? null,
+            referencedOrderNumber: noOriginal ? ret.referencedOrderNumber : null,
+            status: onHold ? 'on_hold' : 'open',
+            evenExchange,
+            restockingFeeCents,
+            restockingFeeOverridden,
+            returnSalespersonMembershipId: body.returnSalespersonMembershipId ?? null,
+            notes: body.notes ?? null,
+            createdByUserId: actor?.id ?? null,
+          })
+          .returning();
+      } catch (err) {
+        const pgCode = (err as { code?: string; constraint_name?: string }).code;
+        const constraint = (err as { constraint_name?: string }).constraint_name ?? '';
+        if (pgCode === '23505' && constraint.includes('number') && attempt < 2) continue;
+        if (pgCode === '23505' && !constraint.includes('number')) {
+          throw new ConflictException('That return or order is already part of an exchange');
+        }
+        throw err;
+      }
+    }
     if (!exchange) throw new BadRequestException('failed to create exchange');
 
     if (restockingFeeOverridden) {
@@ -316,6 +339,20 @@ export class ExchangesController {
         saleOrderNumber: saleOrder.number,
         originalOrderNumber: originalOrder?.number ?? null,
         referencedOrderNumber: noOriginal ? ret.referencedOrderNumber : null,
+        evenExchange,
+        restockingFeeCents,
+        onHold,
+      },
+    });
+
+    void this.webhooks.fire({
+      businessId: tenant.businessId!,
+      eventType: 'exchange.created',
+      payload: {
+        exchangeId: exchange.id,
+        number,
+        rmaNumber: ret.rmaNumber,
+        saleOrderNumber: saleOrder.number,
         evenExchange,
         restockingFeeCents,
         onHold,
@@ -362,6 +399,11 @@ export class ExchangesController {
       targetId: id,
       after: { number: exchange.number },
     });
+    void this.webhooks.fire({
+      businessId: exchange.businessId,
+      eventType: 'exchange.approved',
+      payload: { exchangeId: id, number: exchange.number },
+    });
     // A held no-original exchange still owes its ledger settlement.
     const [ret] = await this.db
       .select({ orderId: schema.orderReturns.orderId })
@@ -404,6 +446,11 @@ export class ExchangesController {
       targetType: 'exchange',
       targetId: id,
       after: { number: exchange.number },
+    });
+    void this.webhooks.fire({
+      businessId: exchange.businessId,
+      eventType: 'exchange.split',
+      payload: { exchangeId: id, number: exchange.number },
     });
     return this.hydrate(id);
   }
@@ -461,6 +508,11 @@ export class ExchangesController {
       targetType: 'exchange',
       targetId: id,
       after: { number: exchange.number, rmaNumber: ret.rmaNumber, reason },
+    });
+    void this.webhooks.fire({
+      businessId: exchange.businessId,
+      eventType: 'exchange.cancelled',
+      payload: { exchangeId: id, number: exchange.number, rmaNumber: ret.rmaNumber, reason },
     });
     return this.hydrate(id);
   }
@@ -572,6 +624,17 @@ export class ExchangesController {
         source: 'no_original_ledger',
       },
     });
+    void this.webhooks.fire({
+      businessId: exchange.businessId,
+      eventType: 'exchange.settled',
+      payload: {
+        exchangeId: exchange.id,
+        number: exchange.number,
+        appliedToSaleCents: applied,
+        saleOrderId: saleOrder.id,
+        saleOrderNumber: saleOrder.number,
+      },
+    });
   }
 
   private baseSelect() {
@@ -601,6 +664,8 @@ export class ExchangesController {
         createdAt: schema.exchanges.createdAt,
         completedAt: schema.exchanges.completedAt,
         splitAt: schema.exchanges.splitAt,
+        notes: schema.exchanges.notes,
+        returnSalespersonMembershipId: schema.exchanges.returnSalespersonMembershipId,
       })
       .from(schema.exchanges)
       .leftJoin(schema.orderReturns, eq(schema.orderReturns.id, schema.exchanges.returnId))
@@ -610,14 +675,40 @@ export class ExchangesController {
       .$dynamic();
   }
 
+  /**
+   * The container completes when both legs are done: return received,
+   * replacement order completed. Persisted lazily on read — both the
+   * list and the detail run this, so filters and reports see the real
+   * status without waiting for someone to open the detail page.
+   */
+  private async lazyComplete(
+    rows: {
+      id: string;
+      status: string;
+      returnStatus: string | null;
+      saleOrderStatus: string | null;
+      completedAt: Date | null;
+    }[],
+  ): Promise<void> {
+    const due = rows.filter(
+      (r) =>
+        r.status === 'open' && r.returnStatus === 'completed' && r.saleOrderStatus === 'completed',
+    );
+    if (due.length === 0) return;
+    const now = new Date();
+    for (const r of due) {
+      await this.db
+        .update(schema.exchanges)
+        .set({ status: 'completed', completedAt: now, updatedAt: now })
+        .where(and(eq(schema.exchanges.id, r.id), eq(schema.exchanges.status, 'open')));
+      r.status = 'completed';
+      r.completedAt = now;
+    }
+  }
+
   private async hydrate(id: string): Promise<ExchangeDetail> {
     const [row] = await this.baseSelect().where(eq(schema.exchanges.id, id)).limit(1);
     if (!row) throw new NotFoundException('Exchange not found');
-    const [exchange] = await this.db
-      .select()
-      .from(schema.exchanges)
-      .where(eq(schema.exchanges.id, id))
-      .limit(1);
 
     const salePayments = await this.db
       .select()
@@ -626,26 +717,10 @@ export class ExchangesController {
     const salePaidCents = paidCents(salePayments);
     const creditCents = Math.max(0, row.returnCents - row.restockingFeeCents);
 
-    // The container completes when both legs have: return received,
-    // replacement order completed. Persisted lazily on read.
-    if (
-      row.status === 'open' &&
-      row.returnStatus === 'completed' &&
-      row.saleOrderStatus === 'completed'
-    ) {
-      const now = new Date();
-      await this.db
-        .update(schema.exchanges)
-        .set({ status: 'completed', completedAt: now, updatedAt: now })
-        .where(eq(schema.exchanges.id, id));
-      row.status = 'completed';
-      row.completedAt = now;
-    }
+    await this.lazyComplete([row]);
 
     return {
       ...row,
-      notes: exchange?.notes ?? null,
-      returnSalespersonMembershipId: exchange?.returnSalespersonMembershipId ?? null,
       settlement: {
         returnCents: row.returnCents,
         restockingFeeCents: row.restockingFeeCents,
@@ -681,6 +756,6 @@ export class ExchangesController {
         .limit(1);
       if (!existing) return candidate;
     }
-    return `EX-${year}-${Math.random().toString().slice(2, 8)}`;
+    return `EX-${year}-${String(Math.floor(Math.random() * 1_000_000)).padStart(6, '0')}`;
   }
 }

@@ -15,6 +15,8 @@ interface OrderLine {
   qtyFulfilled: number;
   qtyReturned: number;
   unitPriceCents: number;
+  totalCents: number;
+  taxCents: number;
 }
 interface OrderDetail {
   id: string;
@@ -100,8 +102,12 @@ function NewExchangeInner() {
         .filter((l) => (returnQty[l.id] ?? 0) > 0)
         .map((l) => ({ line: l, quantity: returnQty[l.id]! }))
     : [];
+  // The credit is what the customer actually paid per unit — line total
+  // (after discounts) plus its tax share — matching the server's
+  // per-unit computation at return authorization exactly.
+  const perUnitCredit = (l: OrderLine) => Math.round((l.totalCents + l.taxCents) / l.quantity);
   const returnCreditCents = pickedReturns.reduce(
-    (s, p) => s + Math.round((p.line.unitPriceCents * p.quantity * 100) / 100),
+    (s, p) => s + perUnitCredit(p.line) * p.quantity,
     0,
   );
 
@@ -126,55 +132,90 @@ function NewExchangeInner() {
     }
   }
 
+  // Steps 1–2 create real documents; if a later step fails, remember
+  // them so a retry binds the SAME documents instead of writing a
+  // duplicate order and RMA.
+  const [createdLegs, setCreatedLegs] = useState<{
+    saleOrderId: string | null;
+    returnId: string | null;
+  }>({ saleOrderId: null, returnId: null });
+
   async function submit() {
     if (!original) return;
     if (pickedReturns.length === 0) return setError('Pick at least one item to return.');
     if (saleLines.length === 0) return setError('Add at least one replacement item.');
     setSaving(true);
     setError(null);
+    let saleOrderId = createdLegs.saleOrderId;
+    let returnId = createdLegs.returnId;
     try {
-      // 1. The replacement order, written against the original.
-      const replacement = await api<{ id: string }>(`/v1/orders/${original.id}/exchange`, {
-        method: 'POST',
-        body: JSON.stringify({
-          locationId: original.locationId,
-          confirm: true,
-          lines: saleLines.map((l) => ({ variantId: l.variantId, quantity: l.quantity })),
-        }),
-      });
+      // 1. The replacement order, written against the original (reused
+      // on retry after a failed bind).
+      if (!saleOrderId) {
+        const replacement = await api<{ id: string }>(`/v1/orders/${original.id}/exchange`, {
+          method: 'POST',
+          body: JSON.stringify({
+            locationId: original.locationId,
+            confirm: true,
+            lines: saleLines.map((l) => ({ variantId: l.variantId, quantity: l.quantity })),
+          }),
+        });
+        saleOrderId = replacement.id;
+        setCreatedLegs((prev) => ({ ...prev, saleOrderId }));
+      }
       // 2. The return authorization (pickup keeps it open until settle).
-      await api(`/v1/orders/${original.id}/return`, {
-        method: 'POST',
-        body: JSON.stringify({
-          fulfillment: 'pickup',
-          lines: pickedReturns.map((p) => ({ lineId: p.line.id, quantity: p.quantity })),
-        }),
-      });
-      const returns = await api<{ id: string }[]>(
-        `/v1/order-returns?orderId=${original.id}&status=authorized`,
-      );
-      if (!returns[0]) throw new Error('Return authorization not found');
+      if (!returnId) {
+        // store_credit: the exchange settlement diverts the money anyway,
+        // this skips the cash-refund cap on partially-paid originals, and
+        // if the exchange is later split the fallback is credit — never
+        // cash out the door.
+        await api(`/v1/orders/${original.id}/return`, {
+          method: 'POST',
+          body: JSON.stringify({
+            fulfillment: 'pickup',
+            refundMethod: 'store_credit',
+            lines: pickedReturns.map((p) => ({ lineId: p.line.id, quantity: p.quantity })),
+          }),
+        });
+        const returns = await api<{ id: string }[]>(
+          `/v1/order-returns?orderId=${original.id}&status=authorized`,
+        );
+        if (!returns[0]) throw new Error('Return authorization not found');
+        returnId = returns[0].id;
+        setCreatedLegs((prev) => ({ ...prev, returnId }));
+      }
       // 3. Bind the container.
       const fee = feeOverride.trim();
-      const exchange = await api<{ id: string }>('/v1/exchanges', {
+      const exchange = await api<{ id: string; status: string }>('/v1/exchanges', {
         method: 'POST',
         body: JSON.stringify({
-          saleOrderId: replacement.id,
-          returnId: returns[0].id,
+          saleOrderId,
+          returnId,
           evenExchange,
           ...(fee !== '' ? { restockingFeeCents: Math.round(Number(fee) * 100) } : {}),
         }),
       });
-      // 4. Goods in hand → settle now.
-      if (goodsInHand) {
-        await api(`/v1/order-returns/${returns[0].id}/receive`, {
-          method: 'POST',
-          body: JSON.stringify({}),
-        });
+      // 4. Goods in hand → settle now. A held (E1) exchange settles
+      // after approval instead, and a receive hiccup must not strand
+      // the cashier — the exchange exists; its page has the buttons.
+      if (goodsInHand && exchange.status !== 'on_hold') {
+        try {
+          await api(`/v1/order-returns/${returnId}/receive`, {
+            method: 'POST',
+            body: JSON.stringify({}),
+          });
+        } catch {
+          // Settle from the exchange page once whatever blocked it clears.
+        }
       }
       router.push(`/exchanges/${exchange.id}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      const msg = err instanceof Error ? err.message : String(err);
+      setError(
+        saleOrderId || returnId
+          ? `${msg} — the replacement order and return are saved; fix the issue and press Write exchange again to bind them (no duplicates will be created).`
+          : msg,
+      );
       setSaving(false);
     }
   }
