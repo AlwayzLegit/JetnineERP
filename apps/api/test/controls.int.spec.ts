@@ -549,9 +549,9 @@ describe('G4 — scrap is a write-off; vendor returns carry an R/A', () => {
       .expect(201);
     const exceptions = await as(managerCookie).get('/v1/exceptions?type=write_off');
     expect(exceptions.status).toBe(200);
-    expect(exceptions.body.some((e: { summary: string }) => e.summary.includes('$300.00'))).toBe(
-      true,
-    );
+    expect(
+      exceptions.body.data.some((e: { summary: string }) => e.summary.includes('$300.00')),
+    ).toBe(true);
   });
 
   it('vendor return requires the R/A number and opens a credit to chase', async () => {
@@ -601,7 +601,7 @@ describe('G5 — exception register + ranked digest', () => {
   it('overrides and unlocks land in the register; a cashier cannot read it', async () => {
     const list = await as(managerCookie).get('/v1/exceptions');
     expect(list.status).toBe(200);
-    const types = new Set(list.body.map((e: { type: string }) => e.type));
+    const types = new Set(list.body.data.map((e: { type: string }) => e.type));
     // From earlier suites: the cashier's override-authorized unlock and
     // the scrap write-offs.
     expect(types.has('security_override')).toBe(true);
@@ -613,17 +613,17 @@ describe('G5 — exception register + ranked digest', () => {
 
   it('acknowledge is one-shot and stamps who acknowledged', async () => {
     const list = await as(managerCookie).get('/v1/exceptions?open=1');
-    expect(list.body.length).toBeGreaterThan(0);
-    const target = list.body[0];
+    expect(list.body.data.length).toBeGreaterThan(0);
+    const target = list.body.data[0];
     await as(managerCookie).post(`/v1/exceptions/${target.id}/ack`).send({}).expect(201);
     await as(managerCookie).post(`/v1/exceptions/${target.id}/ack`).send({}).expect(400);
     const after = await as(managerCookie).get('/v1/exceptions');
-    const row = after.body.find((e: { id: string }) => e.id === target.id);
+    const row = after.body.data.find((e: { id: string }) => e.id === target.id);
     expect(row.acknowledgedAt).toBeTruthy();
     expect(row.acknowledgedByEmail).toBe('manager@ctrl-test.local');
     // The open filter no longer shows it.
     const open = await as(managerCookie).get('/v1/exceptions?open=1');
-    expect(open.body.some((e: { id: string }) => e.id === target.id)).toBe(false);
+    expect(open.body.data.some((e: { id: string }) => e.id === target.id)).toBe(false);
   });
 
   it('the digest ranks associates by exception count', async () => {

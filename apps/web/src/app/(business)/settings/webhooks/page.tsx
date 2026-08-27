@@ -128,7 +128,7 @@ export default function WebhooksPage() {
 
   async function loadDeliveries(id: string) {
     try {
-      setDeliveries(await api<Delivery[]>(`/v1/business/webhooks/${id}/deliveries`));
+      setDeliveries(await api<Delivery[]>(`/v1/business/webhooks/${id}/deliveries?limit=200`));
       setOpenEndpointId(id);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err));

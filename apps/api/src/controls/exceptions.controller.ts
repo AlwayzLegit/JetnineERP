@@ -8,12 +8,21 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
-import { and, desc, eq, gte, isNull, sql } from 'drizzle-orm';
+import { and, eq, gte, isNull, sql } from 'drizzle-orm';
+import type { SQL } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { schema } from '@jetnine/db';
 import { CurrentTenant, CurrentUser } from '../auth/current-user.decorator';
 import type { CurrentUserPayload } from '../auth/current-user.decorator';
+import {
+  buildPage,
+  clampLimit,
+  decodeCursor,
+  timestampCursorOrder,
+  timestampCursorWhere,
+  type PageResponse,
+} from '../common/pagination';
 import { DRIZZLE } from '../database/database.module';
 import { RequirePermission, TenantScoped } from '../tenancy/decorators';
 import type { RequestTenantContext } from '../tenancy/request-context';
@@ -60,10 +69,28 @@ export class ExceptionsController {
     @Query('severity') severity?: string,
     @Query('type') type?: string,
     @Query('actorUserId') actorUserId?: string,
-  ): Promise<ExceptionRow[]> {
+    @Query('limit') limitStr?: string,
+    @Query('cursor') cursorStr?: string,
+  ): Promise<PageResponse<ExceptionRow>> {
+    const limit = clampLimit(limitStr);
+    const cursor = decodeCursor(cursorStr);
     const actor = alias(schema.users, 'actor');
     const ackUser = alias(schema.users, 'ack_user');
-    return this.db
+
+    const conditions: (SQL | undefined)[] = [
+      eq(schema.exceptionEvents.businessId, tenant.businessId!),
+      open === '1' ? isNull(schema.exceptionEvents.acknowledgedAt) : undefined,
+      severity ? eq(schema.exceptionEvents.severity, severity) : undefined,
+      type ? eq(schema.exceptionEvents.type, type) : undefined,
+      actorUserId ? eq(schema.exceptionEvents.actorUserId, actorUserId) : undefined,
+    ];
+    if (cursor) {
+      conditions.push(
+        timestampCursorWhere(schema.exceptionEvents.createdAt, schema.exceptionEvents.id, cursor)!,
+      );
+    }
+
+    const rows = await this.db
       .select({
         id: schema.exceptionEvents.id,
         type: schema.exceptionEvents.type,
@@ -81,17 +108,11 @@ export class ExceptionsController {
       .from(schema.exceptionEvents)
       .leftJoin(actor, eq(actor.id, schema.exceptionEvents.actorUserId))
       .leftJoin(ackUser, eq(ackUser.id, schema.exceptionEvents.acknowledgedByUserId))
-      .where(
-        and(
-          eq(schema.exceptionEvents.businessId, tenant.businessId!),
-          open === '1' ? isNull(schema.exceptionEvents.acknowledgedAt) : undefined,
-          severity ? eq(schema.exceptionEvents.severity, severity) : undefined,
-          type ? eq(schema.exceptionEvents.type, type) : undefined,
-          actorUserId ? eq(schema.exceptionEvents.actorUserId, actorUserId) : undefined,
-        ),
-      )
-      .orderBy(desc(schema.exceptionEvents.createdAt))
-      .limit(200);
+      .where(and(...conditions))
+      .orderBy(...timestampCursorOrder(schema.exceptionEvents.createdAt, schema.exceptionEvents.id))
+      .limit(limit + 1);
+
+    return buildPage(rows, limit, (r) => r.createdAt);
   }
 
   /** Per-associate ranked digest over the trailing window (default 7 days). */

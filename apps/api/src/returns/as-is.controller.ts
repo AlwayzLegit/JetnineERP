@@ -10,10 +10,19 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
-import { desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
+import type { SQL } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { schema } from '@jetnine/db';
 import { AuditService } from '../audit/audit.service';
+import {
+  buildPage,
+  clampLimit,
+  decodeCursor,
+  timestampCursorOrder,
+  timestampCursorWhere,
+  type PageResponse,
+} from '../common/pagination';
 import { CostingService } from '../costing/costing.service';
 import { CurrentTenant, CurrentUser } from '../auth/current-user.decorator';
 import type { CurrentUserPayload } from '../auth/current-user.decorator';
@@ -107,8 +116,25 @@ export class AsIsController {
   async list(
     @CurrentTenant() _tenant: RequestTenantContext,
     @Query('status') status?: string,
-  ): Promise<AsIsRow[]> {
-    const rows = await this.db
+    @Query('limit') limitStr?: string,
+    @Query('cursor') cursorStr?: string,
+  ): Promise<PageResponse<AsIsRow>> {
+    const limit = clampLimit(limitStr);
+    const cursor = decodeCursor(cursorStr);
+    const conditions: SQL[] = [];
+    if (status) conditions.push(eq(schema.asIsItems.status, status));
+    if (cursor) {
+      conditions.push(
+        timestampCursorWhere(schema.asIsItems.createdAt, schema.asIsItems.id, cursor)!,
+      );
+    }
+    const rows = await this.queryRows(conditions, limit + 1);
+    return buildPage(rows, limit, (r) => r.createdAt);
+  }
+
+  /** The shared list query — cursor-ordered newest-first. */
+  private async queryRows(conditions: SQL[], limit: number): Promise<AsIsRow[]> {
+    return this.db
       .select({
         id: schema.asIsItems.id,
         variantId: schema.asIsItems.variantId,
@@ -138,10 +164,9 @@ export class AsIsController {
       .leftJoin(schema.productVariants, eq(schema.productVariants.id, schema.asIsItems.variantId))
       .leftJoin(schema.products, eq(schema.products.id, schema.productVariants.productId))
       .leftJoin(schema.locations, eq(schema.locations.id, schema.asIsItems.locationId))
-      .where(status ? eq(schema.asIsItems.status, status) : undefined)
-      .orderBy(desc(schema.asIsItems.createdAt))
-      .limit(200);
-    return rows;
+      .where(conditions.length ? and(...conditions) : undefined)
+      .orderBy(...timestampCursorOrder(schema.asIsItems.createdAt, schema.asIsItems.id))
+      .limit(limit);
   }
 
   /** Manual intake — warranty/defect units walking in outside a return. */
@@ -296,12 +321,12 @@ export class AsIsController {
   @Get('aging')
   @RequirePermission('inventory.view')
   async aging(
-    @CurrentTenant() tenant: RequestTenantContext,
+    @CurrentTenant() _tenant: RequestTenantContext,
     @Query('days') daysStr?: string,
   ): Promise<AsIsRow[]> {
     const days = Math.min(365, Math.max(1, Number(daysStr) || 60));
     const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
-    const rows = await this.list(tenant, 'pending_review');
+    const rows = await this.queryRows([eq(schema.asIsItems.status, 'pending_review')], 200);
     return rows.filter((r) => new Date(r.createdAt).getTime() < cutoff.getTime());
   }
 

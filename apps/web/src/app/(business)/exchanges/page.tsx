@@ -1,9 +1,10 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { Repeat } from 'lucide-react';
-import { api } from '@/lib/api';
+import { LoadMore } from '@/components/load-more';
+import { useCursorList } from '@/lib/use-cursor-list';
 import { Money } from '@/components/money';
 import {
   Card,
@@ -30,17 +31,12 @@ interface ExchangeRow {
 }
 
 export default function ExchangesPage() {
-  const [rows, setRows] = useState<ExchangeRow[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const list = useCursorList<ExchangeRow>('/v1/exchanges');
+  const { rows, error } = list;
 
   useEffect(() => {
-    void (async () => {
-      try {
-        setRows(await api<ExchangeRow[]>('/v1/exchanges'));
-      } catch (err) {
-        setError(err instanceof Error ? err.message : String(err));
-      }
-    })();
+    void list.load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (
@@ -112,6 +108,7 @@ export default function ExchangesPage() {
               </tbody>
             </table>
           </div>
+          <LoadMore state={list} noun="exchanges" />
         </Card>
       )}
     </div>

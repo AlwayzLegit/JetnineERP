@@ -543,7 +543,7 @@ describe('Delivery runs — build, hard lock, close-out reconciliation (PLAN-STO
       .expect(201);
     await ownerReq().patch(`/v1/orders/${orderA}`).send({ requestedDate: runDay }).expect(200);
     const removals = await ownerReq().get('/v1/exceptions?type=manifest_removal');
-    expect(removals.body.some((e: { entityId: string | null }) => e.entityId === orderA)).toBe(
+    expect(removals.body.data.some((e: { entityId: string | null }) => e.entityId === orderA)).toBe(
       true,
     );
 
@@ -589,7 +589,7 @@ describe('Delivery runs — build, hard lock, close-out reconciliation (PLAN-STO
     expect(['fulfilled', 'completed']).toContain(orderBAfter.body.status);
 
     const variances = await ownerReq().get('/v1/exceptions?type=cod_variance');
-    expect(variances.body.some((e: { entityId: string | null }) => e.entityId === runId)).toBe(
+    expect(variances.body.data.some((e: { entityId: string | null }) => e.entityId === runId)).toBe(
       true,
     );
   });
@@ -627,9 +627,9 @@ describe('Delivery runs — build, hard lock, close-out reconciliation (PLAN-STO
     );
     expect(redo).toBeTruthy();
     const failures = await ownerReq().get('/v1/exceptions?type=delivery_failed');
-    expect(failures.body.some((e: { entityId: string | null }) => e.entityId === orderId)).toBe(
-      true,
-    );
+    expect(
+      failures.body.data.some((e: { entityId: string | null }) => e.entityId === orderId),
+    ).toBe(true);
   });
 });
 

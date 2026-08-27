@@ -492,7 +492,7 @@ describe('Transfer variance + aging + types (PLAN-STORIS-GAP G8)', () => {
 
     const exceptions = await as(managerCookie).get('/v1/exceptions?type=transfer_variance');
     expect(
-      exceptions.body.some((e: { entityId: string | null }) => e.entityId === transferId),
+      exceptions.body.data.some((e: { entityId: string | null }) => e.entityId === transferId),
     ).toBe(true);
 
     // A fully-received transfer refuses a short close.
@@ -695,7 +695,7 @@ describe('Auto transfers (FAQ J4/J5 — XFR-051/052/053)', () => {
 
     const exceptions = await as(managerCookie).get('/v1/exceptions?type=auto_transfer_skipped');
     expect(exceptions.status).toBe(200);
-    expect(exceptions.body.length).toBeGreaterThan(0);
+    expect(exceptions.body.data.length).toBeGreaterThan(0);
 
     // Restore: all days again.
     await as(managerCookie)
@@ -983,7 +983,7 @@ describe('As-Is consolidation intake + H2 RTV unwind', () => {
     // …and the units wait in the as-is review queue, one piece each.
     const queue = await asManager().get('/v1/as-is?status=pending_review');
     const pieces = (
-      queue.body as {
+      queue.body.data as {
         id: string;
         variantId: string;
         referenceType: string | null;

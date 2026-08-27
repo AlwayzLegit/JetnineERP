@@ -126,7 +126,9 @@ function NewExchangeInner() {
   async function searchVariants() {
     if (!search.trim()) return setResults([]);
     try {
-      setResults(await api<VariantHit[]>(`/v1/pos/lookup?q=${encodeURIComponent(search.trim())}`));
+      setResults(
+        await api<VariantHit[]>(`/v1/pos/lookup?q=${encodeURIComponent(search.trim())}&limit=200`),
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -177,11 +179,11 @@ function NewExchangeInner() {
             lines: pickedReturns.map((p) => ({ lineId: p.line.id, quantity: p.quantity })),
           }),
         });
-        const returns = await api<{ id: string }[]>(
+        const returns = await api<{ data: { id: string }[] }>(
           `/v1/order-returns?orderId=${original.id}&status=authorized`,
         );
-        if (!returns[0]) throw new Error('Return authorization not found');
-        returnId = returns[0].id;
+        if (!returns.data[0]) throw new Error('Return authorization not found');
+        returnId = returns.data[0].id;
         setCreatedLegs((prev) => ({ ...prev, returnId }));
       }
       // 3. Bind the container.

@@ -1317,7 +1317,9 @@ describe('Returns, As-Is, store credit, exchanges (PLAN-POS-OPERATIONS P8)', () 
     // Goods: As-Is pending review, sellable stock untouched.
     expect(await stockOf(p8VariantId)).toBe(stockBefore);
     const queue = await owner().get('/v1/as-is?status=pending_review');
-    const item = queue.body.find((r: { referenceId: string | null }) => r.referenceId === order.id);
+    const item = queue.body.data.find(
+      (r: { referenceId: string | null }) => r.referenceId === order.id,
+    );
     expect(item).toBeTruthy();
     expect(item.quantity).toBe(1);
     expect(item.source).toBe('return');
@@ -1403,9 +1405,9 @@ describe('Returns, As-Is, store credit, exchanges (PLAN-POS-OPERATIONS P8)', () 
     expect(row.amountCents).toBe(-500);
     // No goods moved: nothing new in As-Is for this order.
     const queue = await owner().get('/v1/as-is');
-    expect(queue.body.some((r: { referenceId: string | null }) => r.referenceId === order.id)).toBe(
-      false,
-    );
+    expect(
+      queue.body.data.some((r: { referenceId: string | null }) => r.referenceId === order.id),
+    ).toBe(false);
   });
 
   it('exchange order: linked to the original, documents as Exchange Order', async () => {
@@ -1523,8 +1525,8 @@ describe('Return lifecycle — refund gated on goods receipt (PLAN-STORIS-GAP G3
 
     const listed = await owner().get(`/v1/order-returns?orderId=${order.id}`);
     expect(listed.status).toBe(200);
-    expect(listed.body).toHaveLength(1);
-    const ret = listed.body[0];
+    expect(listed.body.data).toHaveLength(1);
+    const ret = listed.body.data[0];
     expect(ret.status).toBe('authorized');
     expect(ret.rmaNumber).toBe(`RMA-${order.number}-1`);
     expect(ret.amountCents).toBe(perUnit);
@@ -1544,7 +1546,9 @@ describe('Return lifecycle — refund gated on goods receipt (PLAN-STORIS-GAP G3
     // No As-Is row yet.
     const queueBefore = await owner().get('/v1/as-is?status=pending_review');
     expect(
-      queueBefore.body.filter((r: { referenceId: string | null }) => r.referenceId === order.id),
+      queueBefore.body.data.filter(
+        (r: { referenceId: string | null }) => r.referenceId === order.id,
+      ),
     ).toHaveLength(0);
 
     // Goods received → refund row + As-Is + qtyReturned, return completed.
@@ -1556,11 +1560,13 @@ describe('Return lifecycle — refund gated on goods receipt (PLAN-STORIS-GAP G3
     expect(refundRow.amountCents).toBe(-perUnit);
     const queueAfter = await owner().get('/v1/as-is?status=pending_review');
     expect(
-      queueAfter.body.filter((r: { referenceId: string | null }) => r.referenceId === order.id),
+      queueAfter.body.data.filter(
+        (r: { referenceId: string | null }) => r.referenceId === order.id,
+      ),
     ).toHaveLength(1);
     const after = await owner().get(`/v1/order-returns?orderId=${order.id}`);
-    expect(after.body[0].status).toBe('completed');
-    expect(after.body[0].goodsReceivedAt).toBeTruthy();
+    expect(after.body.data[0].status).toBe('completed');
+    expect(after.body.data[0].goodsReceivedAt).toBeTruthy();
 
     // Receiving twice is refused.
     await owner().post(`/v1/order-returns/${ret.id}/receive`).send({}).expect(409);
@@ -1572,7 +1578,7 @@ describe('Return lifecycle — refund gated on goods receipt (PLAN-STORIS-GAP G3
       .post(`/v1/orders/${order.id}/return`)
       .send({ lines: [{ lineId: order.lineId, quantity: 1 }], fulfillment: 'pickup' });
     expect(auth.status).toBe(201);
-    const [ret] = (await owner().get(`/v1/order-returns?orderId=${order.id}`)).body;
+    const [ret] = (await owner().get(`/v1/order-returns?orderId=${order.id}`)).body.data;
 
     await owner()
       .post(`/v1/order-returns/${ret.id}/cancel`)
@@ -1591,7 +1597,7 @@ describe('Return lifecycle — refund gated on goods receipt (PLAN-STORIS-GAP G3
     expect(again.body.paidCents).toBe(0);
     // A cancelled and a completed return both carry order-scoped RMAs.
     const all = await owner().get(`/v1/order-returns?orderId=${order.id}`);
-    expect(all.body.map((r: { rmaNumber: string }) => r.rmaNumber).sort()).toEqual([
+    expect(all.body.data.map((r: { rmaNumber: string }) => r.rmaNumber).sort()).toEqual([
       `RMA-${order.number}-1`,
       `RMA-${order.number}-2`,
     ]);
@@ -1603,7 +1609,7 @@ describe('Return lifecycle — refund gated on goods receipt (PLAN-STORIS-GAP G3
       .post(`/v1/orders/${order.id}/return`)
       .send({ lines: [{ lineId: order.lineId, quantity: 1 }], fulfillment: 'pickup' })
       .expect(201);
-    const [ret] = (await owner().get(`/v1/order-returns?orderId=${order.id}`)).body;
+    const [ret] = (await owner().get(`/v1/order-returns?orderId=${order.id}`)).body.data;
     await as(cashierCookie).post(`/v1/order-returns/${ret.id}/receive`).send({}).expect(403);
   });
 });
@@ -1688,7 +1694,7 @@ describe('Price variance 3-tier + §5 gates (PLAN-STORIS-GAP G6)', () => {
 
     const register = await as(ownerCookie).get('/v1/exceptions?type=price_override');
     expect(register.status).toBe(200);
-    expect(register.body.length).toBeGreaterThan(0);
+    expect(register.body.data.length).toBeGreaterThan(0);
   });
 
   it('tier 3: a 30% discount from a cashier needs a manager override; below cost is critical', async () => {
@@ -1716,8 +1722,8 @@ describe('Price variance 3-tier + §5 gates (PLAN-STORIS-GAP G6)', () => {
     const register = await as(ownerCookie).get(
       '/v1/exceptions?type=price_override&severity=critical',
     );
-    expect(register.body.length).toBeGreaterThan(0);
-    expect(register.body[0].summary).toMatch(/BELOW COST/);
+    expect(register.body.data.length).toBeGreaterThan(0);
+    expect(register.body.data[0].summary).toMatch(/BELOW COST/);
   });
 
   it('the owner passes tier 3 directly with a reason (holds orders.price_override)', async () => {
@@ -1745,7 +1751,7 @@ describe('Price variance 3-tier + §5 gates (PLAN-STORIS-GAP G6)', () => {
       .send({ method: 'cash', amountCents: 5_000 })
       .expect(201);
     const register = await as(ownerCookie).get('/v1/exceptions?type=layaway_min_deposit_override');
-    expect(register.body.length).toBeGreaterThan(0);
+    expect(register.body.data.length).toBeGreaterThan(0);
   });
 
   it('a qualifying order without the recycling fee registers the pass-through exception', async () => {
@@ -1759,9 +1765,9 @@ describe('Price variance 3-tier + §5 gates (PLAN-STORIS-GAP G6)', () => {
       });
     expect(res.status).toBe(201);
     const register = await as(ownerCookie).get('/v1/exceptions?type=recycling_fee_removed');
-    expect(register.body.some((e: { entityId: string | null }) => e.entityId === res.body.id)).toBe(
-      true,
-    );
+    expect(
+      register.body.data.some((e: { entityId: string | null }) => e.entityId === res.body.id),
+    ).toBe(true);
   });
 });
 
@@ -1860,9 +1866,9 @@ describe('Print preconditions + reprint counter + unlock expiry (PLAN-STORIS-GAP
       .send({});
     expect(second.body.copyNumber).toBe(2);
     const reprints = await as(ownerCookie).get('/v1/exceptions?type=ticket_reprint');
-    expect(reprints.body.some((e: { entityId: string | null }) => e.entityId === order.id)).toBe(
-      true,
-    );
+    expect(
+      reprints.body.data.some((e: { entityId: string | null }) => e.entityId === order.id),
+    ).toBe(true);
   });
 
   it('an unlock is a 15-minute window — past it the lock re-engages', async () => {
@@ -2010,7 +2016,7 @@ describe('Line roll-up, Past Due, auto stock release, drift, duplicate prompt (P
     expect(after.body.lines[0].qtyReserved).toBe(0);
     const register = await as(ownerCookie).get('/v1/exceptions?type=auto_stock_release');
     expect(
-      register.body.some((e: { entityId: string | null }) => e.entityId === created.body.id),
+      register.body.data.some((e: { entityId: string | null }) => e.entityId === created.body.id),
     ).toBe(true);
   });
 
@@ -2483,9 +2489,9 @@ describe('Return windows + no-original returns (FAQ I4, I1/I8)', () => {
     // The register lists it with its claimed number.
     const list = await as(ownerCookie).get('/v1/order-returns');
     expect(list.status).toBe(200);
-    const row = (list.body as { rmaNumber: string; referencedOrderNumber: string | null }[]).find(
-      (r) => r.rmaNumber === 'RMA-NOORIG-1',
-    );
+    const row = (
+      list.body.data as { rmaNumber: string; referencedOrderNumber: string | null }[]
+    ).find((r) => r.rmaNumber === 'RMA-NOORIG-1');
     expect(row?.referencedOrderNumber).toBe('STORIS-123456');
 
     const invalid = await as(ownerCookie)

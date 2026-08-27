@@ -11,10 +11,19 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
-import { and, desc, eq, gte, isNull, lt, sql } from 'drizzle-orm';
+import { and, eq, gte, isNull, lt, sql } from 'drizzle-orm';
+import type { SQL } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { schema } from '@jetnine/db';
 import { AuditService } from '../audit/audit.service';
+import {
+  buildPage,
+  clampLimit,
+  decodeCursor,
+  timestampCursorOrder,
+  timestampCursorWhere,
+  type PageResponse,
+} from '../common/pagination';
 import { CurrentTenant, CurrentUser } from '../auth/current-user.decorator';
 import type { CurrentUserPayload } from '../auth/current-user.decorator';
 import { DRIZZLE } from '../database/database.module';
@@ -217,8 +226,17 @@ export class CashShiftsController {
     @CurrentTenant() _tenant: RequestTenantContext,
     @Query('locationId') locationId?: string,
     @Query('limit') limitStr?: string,
-  ): Promise<ShiftRow[]> {
-    const limit = clampLimit(limitStr, 50);
+    @Query('cursor') cursorStr?: string,
+  ): Promise<PageResponse<ShiftRow>> {
+    const limit = clampLimit(limitStr);
+    const conditions: SQL[] = [];
+    if (locationId) conditions.push(eq(schema.cashShifts.locationId, locationId));
+    const cursor = decodeCursor(cursorStr);
+    if (cursor) {
+      conditions.push(
+        timestampCursorWhere(schema.cashShifts.openedAt, schema.cashShifts.id, cursor)!,
+      );
+    }
     const rows = await this.db
       .select({
         id: schema.cashShifts.id,
@@ -236,10 +254,11 @@ export class CashShiftsController {
       })
       .from(schema.cashShifts)
       .leftJoin(schema.locations, eq(schema.locations.id, schema.cashShifts.locationId))
-      .where(locationId ? eq(schema.cashShifts.locationId, locationId) : undefined)
-      .orderBy(desc(schema.cashShifts.openedAt))
-      .limit(limit);
-    return rows.map((r) => ({ ...r, openedByEmail: null, closedByEmail: null }));
+      .where(conditions.length ? and(...conditions) : undefined)
+      .orderBy(...timestampCursorOrder(schema.cashShifts.openedAt, schema.cashShifts.id))
+      .limit(limit + 1);
+    const enriched = rows.map((r) => ({ ...r, openedByEmail: null, closedByEmail: null }));
+    return buildPage(enriched, limit, (r) => r.openedAt);
   }
 
   @Get(':id')
@@ -287,10 +306,4 @@ export class CashShiftsController {
     }
     return { ...row, closedByEmail };
   }
-}
-
-function clampLimit(raw: string | undefined, def: number): number {
-  const n = Number(raw ?? String(def));
-  if (!Number.isFinite(n) || n <= 0) return def;
-  return Math.min(Math.max(Math.floor(n), 1), 200);
 }

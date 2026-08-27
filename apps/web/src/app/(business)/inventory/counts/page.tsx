@@ -5,6 +5,8 @@ import { useRouter } from 'next/navigation';
 import { ClipboardList } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '@/lib/api';
+import { LoadMore } from '@/components/load-more';
+import { useCursorList } from '@/lib/use-cursor-list';
 import {
   Button,
   Card,
@@ -42,29 +44,25 @@ const STATUS_LABEL: Record<string, string> = {
 
 export default function PhysicalCountsPage() {
   const router = useRouter();
+  const list = useCursorList<CountRow>('/v1/inventory/counts');
   const [locations, setLocations] = useState<Location[]>([]);
-  const [counts, setCounts] = useState<CountRow[] | null>(null);
   const [newLocationId, setNewLocationId] = useState('');
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  async function load() {
-    try {
-      const [locs, rows] = await Promise.all([
-        api<Location[]>('/v1/business/locations'),
-        api<CountRow[]>('/v1/inventory/counts'),
-      ]);
-      const active = locs.filter((l) => l.isActive);
-      setLocations(active);
-      setCounts(rows);
-      if (active[0] && !newLocationId) setNewLocationId(active[0].id);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    }
-  }
+  const counts = list.rows;
 
   useEffect(() => {
-    void load();
+    void list.load();
+    api<Location[]>('/v1/business/locations')
+      .then((locs) => {
+        const active = locs.filter((l) => l.isActive);
+        setLocations(active);
+        setNewLocationId((prev) => prev || (active[0]?.id ?? ''));
+      })
+      .catch((err) => {
+        setError(err instanceof Error ? err.message : String(err));
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function startCount() {
@@ -123,7 +121,7 @@ export default function PhysicalCountsPage() {
         </div>
       </Card>
 
-      {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
+      {(error ?? list.error) && <p style={{ color: 'var(--danger)' }}>{error ?? list.error}</p>}
       <Card style={{ padding: 0 }}>
         {counts == null ? (
           <div style={{ padding: 16 }}>
@@ -132,36 +130,39 @@ export default function PhysicalCountsPage() {
         ) : counts.length === 0 ? (
           <EmptyState>No physical counts yet. Start one above.</EmptyState>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Date</th>
-                  <th>Location</th>
-                  <th>Status</th>
-                  <th className="num">Progress</th>
-                  <th>Posted</th>
-                </tr>
-              </thead>
-              <tbody>
-                {counts.map((c) => (
-                  <tr
-                    key={c.id}
-                    style={{ cursor: 'pointer' }}
-                    onClick={() => router.push(`/inventory/counts/${c.id}`)}
-                  >
-                    <td>{new Date(`${c.countDate}T00:00:00`).toLocaleDateString()}</td>
-                    <td>{c.locationName}</td>
-                    <td>{STATUS_LABEL[c.status] ?? c.status}</td>
-                    <td className="num">
-                      {c.countedCount}/{c.lineCount} counted
-                    </td>
-                    <td>{c.postedAt ? new Date(c.postedAt).toLocaleString() : '—'}</td>
+          <>
+            <div className="overflow-x-auto">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Location</th>
+                    <th>Status</th>
+                    <th className="num">Progress</th>
+                    <th>Posted</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {counts.map((c) => (
+                    <tr
+                      key={c.id}
+                      style={{ cursor: 'pointer' }}
+                      onClick={() => router.push(`/inventory/counts/${c.id}`)}
+                    >
+                      <td>{new Date(`${c.countDate}T00:00:00`).toLocaleDateString()}</td>
+                      <td>{c.locationName}</td>
+                      <td>{STATUS_LABEL[c.status] ?? c.status}</td>
+                      <td className="num">
+                        {c.countedCount}/{c.lineCount} counted
+                      </td>
+                      <td>{c.postedAt ? new Date(c.postedAt).toLocaleString() : '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <LoadMore state={list} noun="counts" />
+          </>
         )}
       </Card>
     </div>

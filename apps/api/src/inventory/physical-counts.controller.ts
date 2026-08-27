@@ -11,8 +11,17 @@ import {
   Query,
 } from '@nestjs/common';
 import { and, asc, eq, gt, inArray, sql } from 'drizzle-orm';
+import type { SQL } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { schema } from '@jetnine/db';
+import {
+  buildPage,
+  clampLimit,
+  decodeCursor,
+  timestampCursorOrder,
+  timestampCursorWhere,
+  type PageResponse,
+} from '../common/pagination';
 import { AuditService } from '../audit/audit.service';
 import { CostingService } from '../costing/costing.service';
 import { ExceptionsService } from '../controls/exceptions.service';
@@ -63,8 +72,10 @@ export class PhysicalCountsController {
   async list(
     @CurrentTenant() _tenant: RequestTenantContext,
     @Query('locationId') locationId?: string,
+    @Query('limit') limitStr?: string,
+    @Query('cursor') cursorStr?: string,
   ): Promise<
-    {
+    PageResponse<{
       id: string;
       locationId: string;
       locationName: string;
@@ -74,9 +85,16 @@ export class PhysicalCountsController {
       postedAt: Date | null;
       lineCount: number;
       countedCount: number;
-    }[]
+    }>
   > {
-    const filters = locationId ? [eq(schema.physicalCounts.locationId, locationId)] : [];
+    const limit = clampLimit(limitStr);
+    const filters: SQL[] = locationId ? [eq(schema.physicalCounts.locationId, locationId)] : [];
+    const cursor = decodeCursor(cursorStr);
+    if (cursor) {
+      filters.push(
+        timestampCursorWhere(schema.physicalCounts.frozenAt, schema.physicalCounts.id, cursor)!,
+      );
+    }
     const rows = await this.db
       .select({
         id: schema.physicalCounts.id,
@@ -92,9 +110,9 @@ export class PhysicalCountsController {
       .from(schema.physicalCounts)
       .innerJoin(schema.locations, eq(schema.locations.id, schema.physicalCounts.locationId))
       .where(filters.length ? and(...filters) : undefined)
-      .orderBy(sql`${schema.physicalCounts.frozenAt} DESC`)
-      .limit(100);
-    return rows;
+      .orderBy(...timestampCursorOrder(schema.physicalCounts.frozenAt, schema.physicalCounts.id))
+      .limit(limit + 1);
+    return buildPage(rows, limit, (r) => r.frozenAt);
   }
 
   /**

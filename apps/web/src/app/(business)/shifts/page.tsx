@@ -3,6 +3,8 @@
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
+import { LoadMore } from '@/components/load-more';
+import { useCursorList } from '@/lib/use-cursor-list';
 import { Money } from '@/components/money';
 import { Button, EmptyState, Field, Input, LoadingRows, PageHeader, Select } from '@/components/ui';
 
@@ -25,29 +27,26 @@ interface LocationRow {
 }
 
 export default function ShiftsPage() {
-  const [rows, setRows] = useState<ShiftRow[] | null>(null);
+  const list = useCursorList<ShiftRow>('/v1/cash-shifts');
   const [locations, setLocations] = useState<LocationRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [opening, setOpening] = useState(false);
   const [openLocationId, setOpenLocationId] = useState('');
   const [floatStr, setFloatStr] = useState('');
   const [openNotes, setOpenNotes] = useState('');
+  const { rows } = list;
 
-  async function load() {
-    try {
-      const [shifts, locs] = await Promise.all([
-        api<ShiftRow[]>('/v1/cash-shifts'),
-        api<LocationRow[]>('/v1/pos/locations'),
-      ]);
-      setRows(shifts);
-      setLocations(locs);
-      if (!openLocationId && locs.length > 0) setOpenLocationId(locs[0]!.id);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    }
-  }
   useEffect(() => {
-    void load();
+    void list.load();
+    void (async () => {
+      try {
+        const locs = await api<LocationRow[]>('/v1/pos/locations');
+        setLocations(locs);
+        setOpenLocationId((prev) => prev || (locs[0]?.id ?? ''));
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      }
+    })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -68,7 +67,7 @@ export default function ShiftsPage() {
       });
       setFloatStr('');
       setOpenNotes('');
-      void load();
+      void list.load();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -80,6 +79,7 @@ export default function ShiftsPage() {
     <div>
       <PageHeader title="Cash drawer" />
       {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
+      {list.error && <p style={{ color: 'var(--danger)' }}>{list.error}</p>}
 
       <div className="card">
         <h2 className="card-title">Open new shift</h2>
@@ -123,46 +123,49 @@ export default function ShiftsPage() {
         ) : rows.length === 0 ? (
           <EmptyState>No shifts yet. Open one above to start tracking the drawer.</EmptyState>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Opened</th>
-                  <th>Location</th>
-                  <th className="num">Float</th>
-                  <th>Status</th>
-                  <th className="num">Variance</th>
-                  <th>&nbsp;</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((r) => (
-                  <tr key={r.id}>
-                    <td>{new Date(r.openedAt).toLocaleString()}</td>
-                    <td>{r.locationName ?? '—'}</td>
-                    <td className="num">
-                      <Money cents={r.openingFloatCents} />
-                    </td>
-                    <td>
-                      {r.closedAt ? (
-                        <span style={{ color: 'var(--text-secondary)' }}>
-                          Closed {new Date(r.closedAt).toLocaleString()}
-                        </span>
-                      ) : (
-                        <strong style={{ color: 'var(--success)' }}>Open</strong>
-                      )}
-                    </td>
-                    <td className="num">
-                      {r.varianceCents == null ? '—' : <Money cents={r.varianceCents} />}
-                    </td>
-                    <td>
-                      <Link href={`/shifts/${r.id}`}>Open</Link>
-                    </td>
+          <>
+            <div className="overflow-x-auto">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Opened</th>
+                    <th>Location</th>
+                    <th className="num">Float</th>
+                    <th>Status</th>
+                    <th className="num">Variance</th>
+                    <th>&nbsp;</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {rows.map((r) => (
+                    <tr key={r.id}>
+                      <td>{new Date(r.openedAt).toLocaleString()}</td>
+                      <td>{r.locationName ?? '—'}</td>
+                      <td className="num">
+                        <Money cents={r.openingFloatCents} />
+                      </td>
+                      <td>
+                        {r.closedAt ? (
+                          <span style={{ color: 'var(--text-secondary)' }}>
+                            Closed {new Date(r.closedAt).toLocaleString()}
+                          </span>
+                        ) : (
+                          <strong style={{ color: 'var(--success)' }}>Open</strong>
+                        )}
+                      </td>
+                      <td className="num">
+                        {r.varianceCents == null ? '—' : <Money cents={r.varianceCents} />}
+                      </td>
+                      <td>
+                        <Link href={`/shifts/${r.id}`}>Open</Link>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <LoadMore state={list} noun="shifts" />
+          </>
         )}
       </div>
     </div>
