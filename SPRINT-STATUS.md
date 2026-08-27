@@ -2402,3 +2402,24 @@ already shipped (orders, returns, exchanges, POS, deliveries) — like the
 transfers pack, the build task starts with a reconciliation pass, then
 batches the [DECIDE]/open-question asks to the owner. Queued behind the
 Sales Views program and the other queued packs.
+
+## Checkpoint 22 — jeopardy queue merged; liability + date-change views (2026-08-27)
+
+PR #54 squash-merged on green CI (main 32dee00): Delivery Dates in
+Jeopardy live queue + /jeopardy page, plus the transfers pack (16 files)
+and the SOM mega-pack (27 files) committed. Deploy branch rolled
+(4f1eb8e), Render deploy dep-da89k2favr4c73ersb6g triggered (no
+migration — boot log verify pending).
+
+Next slice in the same sweep, gates green before push:
+
+- `GET /v1/reports/gift-cards/liability` (catalog 76) — every card still
+  carrying a balance + total owed; reports.financial.view; CSV with
+  provenance. Reports page card in the financial section.
+- `GET /v1/reports/delivery-date-changes?days=N` (catalog 86) — the
+  delivery-commitment change log read from the audit trail
+  (schedule/update/cancel, before→after dates from the diff), actor
+  attribution; deliveries.view; Reports page card.
+- reports.int.spec 27→29 (liability counts only balance-carrying cards +
+  403 for non-financial; audit-sourced before→after surfaces). Gates:
+  typecheck 0 · lint 0 · test 0 (full) · build 0 · prettier 0.
