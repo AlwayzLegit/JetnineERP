@@ -58,6 +58,13 @@ export const inventoryLevels = pgTable(
       .references(() => locations.id, { onDelete: 'cascade' }),
     onHand: integer('on_hand').notNull().default(0),
     reserved: integer('reserved').notNull().default(0),
+    /**
+     * J2 (XFR-030/STK-020): units held as floor samples — physically on
+     * hand but never sellable or reservable as new. Set by receiving a
+     * floor_sample transfer or the manual hold; available stock is
+     * `on_hand - reserved - floor_sample` everywhere.
+     */
+    floorSample: integer('floor_sample').notNull().default(0),
     // Where the stock physically sits inside the location (nullable — most
     // catalogs start unbinned). Set-null so deleting a bin never blocks.
     storageBinId: uuid('storage_bin_id').references(() => storageBins.id, { onDelete: 'set null' }),
@@ -123,7 +130,8 @@ export const serialUnits = pgTable(
       .notNull()
       .references(() => locations.id, { onDelete: 'restrict' }),
     serial: text('serial').notNull(),
-    /** 'in_stock' | 'committed' | 'sold' | 'in_service' | 'returned' */
+    /** 'in_stock' | 'committed' | 'sold' | 'in_service' | 'returned'
+     *  | 'in_transit' (riding a transfer, J3) | 'floor_sample' (J2). */
     status: text('status').notNull().default('in_stock'),
     orderLineId: uuid('order_line_id'),
     customerId: uuid('customer_id'),

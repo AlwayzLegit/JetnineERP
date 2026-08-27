@@ -644,6 +644,7 @@ export class PurchaseOrdersController {
         .select({
           onHand: schema.inventoryLevels.onHand,
           reserved: schema.inventoryLevels.reserved,
+          floorSample: schema.inventoryLevels.floorSample,
         })
         .from(schema.inventoryLevels)
         .where(
@@ -653,7 +654,7 @@ export class PurchaseOrdersController {
           ),
         )
         .limit(1);
-      const free = (level?.onHand ?? 0) - (level?.reserved ?? 0);
+      const free = (level?.onHand ?? 0) - (level?.reserved ?? 0) - (level?.floorSample ?? 0);
       if (qty > free) {
         throw new BadRequestException(
           `Cannot un-receive ${qty} of line ${line.id}: only ${Math.max(free, 0)} free (unreserved) unit(s) at this location — release reservations first`,

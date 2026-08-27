@@ -34,6 +34,8 @@ import { WebhookDispatcher } from '../webhooks/webhook-dispatcher.service';
 interface TransferLineInput {
   variantId?: string;
   quantity?: number;
+  /** J3 (XFR-040): the specific serial pieces riding this line. */
+  serialIds?: string[];
 }
 
 const TRANSFER_TYPES = ['replenishment', 'floor_sample', 'customer', 'as_is', 'auto'] as const;
@@ -242,6 +244,42 @@ export class TransfersController {
       throw new NotFoundException('One or more variants not found');
     }
 
+    // J3: named pieces must be real, in stock at the origin, unclaimed,
+    // and of the line's variant — validated before anything is written.
+    for (const l of body.lines) {
+      const serialIds = l.serialIds ?? [];
+      if (serialIds.length === 0) continue;
+      if (new Set(serialIds).size !== serialIds.length) {
+        throw new BadRequestException('lines[].serialIds must not repeat');
+      }
+      if (serialIds.length > (l.quantity ?? 0)) {
+        throw new BadRequestException('lines[].serialIds cannot exceed the line quantity');
+      }
+      const found = await this.db
+        .select({
+          id: schema.serialUnits.id,
+          variantId: schema.serialUnits.variantId,
+          locationId: schema.serialUnits.locationId,
+          status: schema.serialUnits.status,
+        })
+        .from(schema.serialUnits)
+        .where(inArray(schema.serialUnits.id, serialIds));
+      if (found.length !== serialIds.length) {
+        throw new NotFoundException('One or more serial pieces not found');
+      }
+      for (const su of found) {
+        if (su.variantId !== l.variantId) {
+          throw new BadRequestException('Serial piece does not belong to the line variant');
+        }
+        if (su.locationId !== body.fromLocationId) {
+          throw new BadRequestException('Serial piece is not at the origin location');
+        }
+        if (su.status !== 'in_stock') {
+          throw new BadRequestException(`Serial piece is ${su.status}, not in stock`);
+        }
+      }
+    }
+
     const number = await this.generateNumber(tenant.businessId!);
     const ship = body.ship === true;
 
@@ -267,6 +305,7 @@ export class TransfersController {
         transferId: transfer.id,
         variantId: l.variantId!,
         quantityShipped: l.quantity!,
+        serialIdsJson: l.serialIds && l.serialIds.length > 0 ? l.serialIds : null,
       })),
     );
 
@@ -279,6 +318,7 @@ export class TransfersController {
         body.lines.map((l) => ({ variantId: l.variantId!, quantity: l.quantity! })),
         body.notes ?? null,
       );
+      await this.markSerialsInTransit(transfer.id);
     }
 
     await this.audit.log({
@@ -358,6 +398,8 @@ export class TransfersController {
       lines.map((l) => ({ variantId: l.variantId, quantity: l.quantityShipped })),
       body.notes ?? transfer.notes,
     );
+
+    await this.markSerialsInTransit(id);
 
     await this.db
       .update(schema.stockTransfers)
@@ -450,7 +492,36 @@ export class TransfersController {
         quantity: v.qty,
         unitCostCents: inCost,
       });
-      // Increment the destination level.
+      // J3: re-home the named pieces — up to the received quantity, in
+      // listed order; a floor-sample transfer flags them as such.
+      const listedSerials = (v.line.serialIdsJson as string[] | null) ?? [];
+      if (listedSerials.length > 0) {
+        const inTransit = await this.db
+          .select({ id: schema.serialUnits.id })
+          .from(schema.serialUnits)
+          .where(
+            and(
+              inArray(schema.serialUnits.id, listedSerials),
+              eq(schema.serialUnits.status, 'in_transit'),
+            ),
+          );
+        const ordered = listedSerials.filter((sid) => inTransit.some((r) => r.id === sid));
+        const toFlip = ordered.slice(0, v.qty);
+        if (toFlip.length > 0) {
+          await this.db
+            .update(schema.serialUnits)
+            .set({
+              status: transfer.transferType === 'floor_sample' ? 'floor_sample' : 'in_stock',
+              locationId: transfer.toLocationId,
+              updatedAt: new Date(),
+            })
+            .where(inArray(schema.serialUnits.id, toFlip));
+        }
+      }
+      // Increment the destination level. J2 (XFR-030): a floor-sample
+      // transfer also nails the units down — physically on hand, never
+      // sellable or reservable as new.
+      const floorInc = transfer.transferType === 'floor_sample' ? v.qty : 0;
       await this.db
         .insert(schema.inventoryLevels)
         .values({
@@ -458,11 +529,13 @@ export class TransfersController {
           variantId: v.line.variantId,
           locationId: transfer.toLocationId,
           onHand: v.qty,
+          floorSample: floorInc,
         })
         .onConflictDoUpdate({
           target: [schema.inventoryLevels.variantId, schema.inventoryLevels.locationId],
           set: {
             onHand: sql`${schema.inventoryLevels.onHand} + ${v.qty}`,
+            floorSample: sql`${schema.inventoryLevels.floorSample} + ${floorInc}`,
             updatedAt: new Date(),
           },
         });
@@ -775,6 +848,20 @@ export class TransfersController {
       ...row,
       lines: lines.map((l) => ({ ...l, productName: l.productName ?? '(deleted)' })),
     };
+  }
+
+  /** J3: flag every named piece on this transfer as riding the truck. */
+  private async markSerialsInTransit(transferId: string): Promise<void> {
+    const lines = await this.db
+      .select({ serialIdsJson: schema.stockTransferLines.serialIdsJson })
+      .from(schema.stockTransferLines)
+      .where(eq(schema.stockTransferLines.transferId, transferId));
+    const ids = lines.flatMap((l) => (l.serialIdsJson as string[] | null) ?? []);
+    if (ids.length === 0) return;
+    await this.db
+      .update(schema.serialUnits)
+      .set({ status: 'in_transit', updatedAt: new Date() })
+      .where(and(inArray(schema.serialUnits.id, ids), eq(schema.serialUnits.status, 'in_stock')));
   }
 
   private async generateNumber(businessId: string): Promise<string> {

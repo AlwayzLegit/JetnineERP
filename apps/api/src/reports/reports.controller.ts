@@ -389,6 +389,7 @@ export class ReportsController {
         variantName: schema.productVariants.name,
         onHand: schema.inventoryLevels.onHand,
         reserved: schema.inventoryLevels.reserved,
+        floorSample: schema.inventoryLevels.floorSample,
       })
       .from(schema.inventoryLevels)
       .innerJoin(
@@ -401,7 +402,7 @@ export class ReportsController {
 
     const all = rows.map((r) => ({
       ...r,
-      available: Math.max(0, r.onHand - r.reserved),
+      available: Math.max(0, r.onHand - r.reserved - r.floorSample),
     }));
     const lowStock = lowStockStr != null ? Number(lowStockStr) : NaN;
     const filtered = Number.isFinite(lowStock) ? all.filter((r) => r.available <= lowStock) : all;

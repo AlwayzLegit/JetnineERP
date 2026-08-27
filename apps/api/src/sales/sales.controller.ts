@@ -243,9 +243,9 @@ export class SalesController {
         vendorId: schema.productVariants.preferredVendorId,
         vendorName: schema.vendors.name,
         availableHere: locationId
-          ? sql<number>`coalesce(sum(${schema.inventoryLevels.onHand} - ${schema.inventoryLevels.reserved}) FILTER (WHERE ${schema.inventoryLevels.locationId} = ${locationId}), 0)::int`
+          ? sql<number>`coalesce(sum(${schema.inventoryLevels.onHand} - ${schema.inventoryLevels.reserved} - ${schema.inventoryLevels.floorSample}) FILTER (WHERE ${schema.inventoryLevels.locationId} = ${locationId}), 0)::int`
           : sql<number>`0`,
-        availableTotal: sql<number>`coalesce(sum(${schema.inventoryLevels.onHand} - ${schema.inventoryLevels.reserved}), 0)::int`,
+        availableTotal: sql<number>`coalesce(sum(${schema.inventoryLevels.onHand} - ${schema.inventoryLevels.reserved} - ${schema.inventoryLevels.floorSample}), 0)::int`,
       })
       .from(schema.productVariants)
       .innerJoin(schema.products, eq(schema.products.id, schema.productVariants.productId))
@@ -258,9 +258,9 @@ export class SalesController {
       .groupBy(schema.productVariants.id, schema.products.id, schema.vendors.name)
       .having(
         inStock === '1'
-          ? sql`coalesce(sum(${schema.inventoryLevels.onHand} - ${schema.inventoryLevels.reserved}), 0) > 0`
+          ? sql`coalesce(sum(${schema.inventoryLevels.onHand} - ${schema.inventoryLevels.reserved} - ${schema.inventoryLevels.floorSample}), 0) > 0`
           : inStock === '0'
-            ? sql`coalesce(sum(${schema.inventoryLevels.onHand} - ${schema.inventoryLevels.reserved}), 0) <= 0`
+            ? sql`coalesce(sum(${schema.inventoryLevels.onHand} - ${schema.inventoryLevels.reserved} - ${schema.inventoryLevels.floorSample}), 0) <= 0`
             : sql`true`,
       )
       .orderBy(schema.products.name)
