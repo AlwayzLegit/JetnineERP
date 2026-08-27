@@ -1,7 +1,45 @@
-import { index, integer, pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
+import {
+  boolean,
+  index,
+  integer,
+  pgTable,
+  text,
+  timestamp,
+  uniqueIndex,
+  uuid,
+} from 'drizzle-orm/pg-core';
 import { businesses, users } from './platform';
 import { locations } from './tenancy';
 import { productVariants } from './catalog';
+
+/**
+ * Warehouse storage bins (STORIS Tracked Storage Location parity, lean —
+ * owner-scoped build 2026-08-27). A bin is a named slot inside one
+ * location ("DOCK", "A-14"); stock levels optionally point at the bin
+ * that holds them so pick lists and receiving know where to walk.
+ * Deactivate-not-delete, unique code per location.
+ */
+export const storageBins = pgTable(
+  'storage_bins',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    businessId: uuid('business_id')
+      .notNull()
+      .references(() => businesses.id, { onDelete: 'cascade' }),
+    locationId: uuid('location_id')
+      .notNull()
+      .references(() => locations.id, { onDelete: 'cascade' }),
+    code: text('code').notNull(),
+    description: text('description'),
+    isActive: boolean('is_active').notNull().default(true),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    locationCodeUnique: uniqueIndex('storage_bins_location_code_uniq').on(t.locationId, t.code),
+    businessIdx: index('storage_bins_business_id_idx').on(t.businessId),
+    locationIdx: index('storage_bins_location_id_idx').on(t.locationId),
+  }),
+);
 
 // Snapshot of stock per (variant, location). Updated transactionally alongside
 // movements; movements are the source of truth.
@@ -20,6 +58,9 @@ export const inventoryLevels = pgTable(
       .references(() => locations.id, { onDelete: 'cascade' }),
     onHand: integer('on_hand').notNull().default(0),
     reserved: integer('reserved').notNull().default(0),
+    // Where the stock physically sits inside the location (nullable — most
+    // catalogs start unbinned). Set-null so deleting a bin never blocks.
+    storageBinId: uuid('storage_bin_id').references(() => storageBins.id, { onDelete: 'set null' }),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => ({

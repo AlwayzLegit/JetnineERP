@@ -1447,3 +1447,42 @@ Two owner decisions taken this session (AskUserQuestion, on record):
      redaction, permission gate, malformed/unknown rejects, bulk write + audit row +
      count drop). Gates by exit code: typecheck 0 · lint 0 · catalog spec 16/16 ·
      prettier 0.
+
+## Owner-scoped build from the STORIS sysadmin handoff (2026-08-27)
+
+The owner supplied a STORIS System Administration corpus digest (599-article index).
+Direction confirmed by owner: **still migrating OFF STORIS** (the doc's conversion
+machinery is inverted for us — treated as a feature inventory only); **no STORIS API
+licensing** (§8 dropped). Build mandate picked by owner: **Brand/Collection and
+warehouse bin locations only** (protection plans/warranty, credit hold stay backlog).
+Both shipped as vertical slices:
+
+- **Brands + Collections (migration `0049_brands_collections`):** `brands` and
+  `collections` tables (RLS'd, unique name per business, deactivate-not-delete;
+  collections optionally reference a vendor), `products.brand_id`/`collection_id`
+  (set-null FKs). `/v1/brands` + `/v1/collections` CRUD in the catalog module —
+  convention: list under `products.view`, mutations under `products.update` (no new
+  permission; STORIS files these under Product Settings). Products create/PATCH/detail
+  carry both ids. **P4 invoice Brand column now prints the real brand**, falling back
+  to the variant's preferred vendor (the old v1 convention) for unbranded rows.
+  Product detail page gained a Brand & collection card (selects + create-on-the-fly).
+  catalog.int.spec 16→20.
+- **Storage bins (migration `0050_storage_bins`):** `storage_bins` per location
+  (unique code per location, uppercased, deactivate-not-delete) +
+  `inventory_levels.storage_bin_id`. `/v1/inventory/bins` list/create/patch and
+  `/v1/inventory/levels/assign-bin` (level must exist; bin must be an active bin of
+  the same location) — mutations under `inventory.adjust`, all audited. Levels API +
+  Inventory page carry the bin (per-row select + a bins management section);
+  **the G15 pick list prints a Bin column** (stock location at the order's own store).
+  inventory.int.spec 9→13; RLS suite green with both tables registered.
+
+Gates by exit code: typecheck 0 · lint 0 (one `react/no-unescaped-entities` caught and
+fixed pre-push — the checkpoint-9 lesson holding) · catalog+inventory+orders+RLS suites
+all pass · prettier 0.
+
+**Also received, pending owner direction:** a STORIS-style documentation-system handoff
+(P0 scaffold prompt) — owner dismissed the kickoff question, holding until instructed;
+and a reverse-engineered **Sales Processing behavioral spec** (docs/erp 00–13 +
+SOURCES) whose fulfillment-centric order model diverges from the shipped order/delivery
+model — flagged as a [DECIDE] for the owner before any rework. More handoffs incoming
+per owner.

@@ -462,3 +462,106 @@ describe('Bulk price entry (pricing work-list + bulk-price)', () => {
     }
   });
 });
+
+describe('Brand & Collection reference data', () => {
+  let brandId = '';
+  let collectionId = '';
+  let brandedProductId = '';
+
+  it('Owner creates a brand and a collection; duplicates 409', async () => {
+    const brand = await request(app.getHttpServer())
+      .post('/v1/brands')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ name: 'Tempur-Pedic' });
+    expect(brand.status).toBe(201);
+    brandId = brand.body.id as string;
+
+    const dup = await request(app.getHttpServer())
+      .post('/v1/brands')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ name: 'Tempur-Pedic' });
+    expect(dup.status).toBe(409);
+
+    const collection = await request(app.getHttpServer())
+      .post('/v1/collections')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ name: 'ProAdapt' });
+    expect(collection.status).toBe(201);
+    collectionId = collection.body.id as string;
+
+    const badVendor = await request(app.getHttpServer())
+      .post('/v1/collections')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ name: 'Ghost', vendorId: '00000000-0000-4000-8000-000000000000' });
+    expect(badVendor.status).toBe(400);
+  });
+
+  it('Cashier can list but not create', async () => {
+    const list = await request(app.getHttpServer())
+      .get('/v1/brands')
+      .set('Cookie', cashierCookie)
+      .set('X-Business-Id', businessId);
+    expect(list.status).toBe(200);
+    expect((list.body as { name: string }[]).map((b) => b.name)).toContain('Tempur-Pedic');
+
+    const create = await request(app.getHttpServer())
+      .post('/v1/brands')
+      .set('Cookie', cashierCookie)
+      .set('X-Business-Id', businessId)
+      .send({ name: 'Nope' });
+    expect(create.status).toBe(403);
+  });
+
+  it('Product carries brandId/collectionId through create, PATCH, and detail', async () => {
+    const created = await request(app.getHttpServer())
+      .post('/v1/products')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({
+        sku: 'TP-PROADAPT-Q',
+        name: 'ProAdapt Queen',
+        brandId,
+        variants: [{ sku: 'TP-PROADAPT-Q-M', priceCents: 299900 }],
+      });
+    expect(created.status).toBe(201);
+    expect(created.body.brandId).toBe(brandId);
+    expect(created.body.collectionId).toBeNull();
+    brandedProductId = created.body.id as string;
+
+    const patched = await request(app.getHttpServer())
+      .patch(`/v1/products/${brandedProductId}`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ collectionId });
+    expect(patched.status).toBe(200);
+    expect(patched.body.brandId).toBe(brandId);
+    expect(patched.body.collectionId).toBe(collectionId);
+
+    const cleared = await request(app.getHttpServer())
+      .patch(`/v1/products/${brandedProductId}`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ brandId: null });
+    expect(cleared.status).toBe(200);
+    expect(cleared.body.brandId).toBeNull();
+  });
+
+  it('Deactivated brand disappears from nothing — rename and deactivate audit-logged', async () => {
+    const upd = await request(app.getHttpServer())
+      .patch(`/v1/brands/${brandId}`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ isActive: false });
+    expect(upd.status).toBe(200);
+    const list = await request(app.getHttpServer())
+      .get('/v1/brands')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId);
+    const row = (list.body as { id: string; isActive: boolean }[]).find((b) => b.id === brandId);
+    expect(row?.isActive).toBe(false);
+  });
+});

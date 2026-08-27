@@ -352,3 +352,97 @@ describe('Epic 1.8 — Inventory', () => {
     expect(first.actorEmail).toBe('clerk@inv-test.local');
   });
 });
+
+describe('Storage bins', () => {
+  let binId = '';
+
+  it('Clerk creates a bin; duplicate code at same location 409s', async () => {
+    const res = await request(app.getHttpServer())
+      .post('/v1/inventory/bins')
+      .set('Cookie', inventoryClerkCookie)
+      .set('X-Business-Id', businessId)
+      .send({ locationId, code: 'a-14', description: 'Aisle A shelf 14' });
+    expect(res.status).toBe(201);
+    expect(res.body.code).toBe('A-14'); // normalized upper-case
+    binId = res.body.id as string;
+
+    const dup = await request(app.getHttpServer())
+      .post('/v1/inventory/bins')
+      .set('Cookie', inventoryClerkCookie)
+      .set('X-Business-Id', businessId)
+      .send({ locationId, code: 'A-14' });
+    expect(dup.status).toBe(409);
+  });
+
+  it('Cashier (no inventory.adjust) cannot create bins', async () => {
+    const res = await request(app.getHttpServer())
+      .post('/v1/inventory/bins')
+      .set('Cookie', cashierCookie)
+      .set('X-Business-Id', businessId)
+      .send({ locationId, code: 'NOPE' });
+    expect(res.status).toBe(403);
+  });
+
+  it('Assign a bin to a stock level; levels list carries the code', async () => {
+    const assign = await request(app.getHttpServer())
+      .post('/v1/inventory/levels/assign-bin')
+      .set('Cookie', inventoryClerkCookie)
+      .set('X-Business-Id', businessId)
+      .send({ variantId, locationId, storageBinId: binId });
+    expect(assign.status).toBe(201);
+
+    const levels = await request(app.getHttpServer())
+      .get(`/v1/inventory/levels?locationId=${locationId}`)
+      .set('Cookie', inventoryClerkCookie)
+      .set('X-Business-Id', businessId);
+    expect(levels.status).toBe(200);
+    const row = (
+      levels.body as {
+        variantId: string;
+        storageBinId: string | null;
+        storageBinCode: string | null;
+      }[]
+    ).find((l) => l.variantId === variantId);
+    expect(row?.storageBinId).toBe(binId);
+    expect(row?.storageBinCode).toBe('A-14');
+  });
+
+  it('Bin must belong to the level location; inactive bins refused; unbin works', async () => {
+    const [other] = await request(app.getHttpServer())
+      .post('/v1/inventory/bins')
+      .set('Cookie', inventoryClerkCookie)
+      .set('X-Business-Id', businessId)
+      .send({ locationId, code: 'DOCK' })
+      .then((r) => [r.body as { id: string }]);
+
+    // Deactivate DOCK, then try to assign it.
+    const off = await request(app.getHttpServer())
+      .patch(`/v1/inventory/bins/${other.id}`)
+      .set('Cookie', inventoryClerkCookie)
+      .set('X-Business-Id', businessId)
+      .send({ isActive: false });
+    expect(off.status).toBe(200);
+    const inactive = await request(app.getHttpServer())
+      .post('/v1/inventory/levels/assign-bin')
+      .set('Cookie', inventoryClerkCookie)
+      .set('X-Business-Id', businessId)
+      .send({ variantId, locationId, storageBinId: other.id });
+    expect(inactive.status).toBe(400);
+
+    // Clear the assignment.
+    const clear = await request(app.getHttpServer())
+      .post('/v1/inventory/levels/assign-bin')
+      .set('Cookie', inventoryClerkCookie)
+      .set('X-Business-Id', businessId)
+      .send({ variantId, locationId, storageBinId: null });
+    expect(clear.status).toBe(201);
+    const levels = await request(app.getHttpServer())
+      .get(`/v1/inventory/levels?locationId=${locationId}`)
+      .set('Cookie', inventoryClerkCookie)
+      .set('X-Business-Id', businessId);
+    const row = (levels.body as { variantId: string; storageBinId: string | null }[]).find(
+      (l) => l.variantId === variantId,
+    );
+    expect(row?.storageBinId).toBeNull();
+  });
+});

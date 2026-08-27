@@ -38,9 +38,16 @@ interface Product {
   name: string;
   description: string | null;
   taxClassId: string | null;
+  brandId: string | null;
+  collectionId: string | null;
   isActive: boolean;
   variants: Variant[];
   images: ProductImage[];
+}
+interface RefEntity {
+  id: string;
+  name: string;
+  isActive: boolean;
 }
 interface TaxClass {
   id: string;
@@ -53,6 +60,10 @@ export default function ProductDetailPage() {
   const id = (params?.id ?? '') as string;
   const [p, setP] = useState<Product | null>(null);
   const [taxClasses, setTaxClasses] = useState<TaxClass[]>([]);
+  const [brands, setBrands] = useState<RefEntity[]>([]);
+  const [collections, setCollections] = useState<RefEntity[]>([]);
+  const [newBrand, setNewBrand] = useState('');
+  const [newCollection, setNewCollection] = useState('');
   const [error, setError] = useState<string | null>(null);
 
   async function load() {
@@ -65,6 +76,13 @@ export default function ProductDetailPage() {
         setTaxClasses(await api<TaxClass[]>('/v1/business/tax-classes'));
       } catch {
         setTaxClasses([]);
+      }
+      try {
+        setBrands(await api<RefEntity[]>('/v1/brands'));
+        setCollections(await api<RefEntity[]>('/v1/collections'));
+      } catch {
+        setBrands([]);
+        setCollections([]);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -81,6 +99,40 @@ export default function ProductDetailPage() {
         method: 'PATCH',
         body: JSON.stringify({ taxClassId }),
       });
+      void load();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  async function patchProduct(patch: Record<string, unknown>) {
+    try {
+      await api(`/v1/products/${id}`, { method: 'PATCH', body: JSON.stringify(patch) });
+      void load();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  async function createAndAssign(kind: 'brand' | 'collection', name: string) {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    try {
+      const created = await api<{ id: string }>(
+        kind === 'brand' ? '/v1/brands' : '/v1/collections',
+        {
+          method: 'POST',
+          body: JSON.stringify({ name: trimmed }),
+        },
+      );
+      await api(`/v1/products/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify(
+          kind === 'brand' ? { brandId: created.id } : { collectionId: created.id },
+        ),
+      });
+      if (kind === 'brand') setNewBrand('');
+      else setNewCollection('');
       void load();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err));
@@ -180,6 +232,79 @@ export default function ProductDetailPage() {
           </Select>
         </Card>
       )}
+
+      <Card title="Brand & collection" style={{ marginBottom: 16 }}>
+        <div className="flex flex-wrap gap-4">
+          <div style={{ minWidth: 220 }}>
+            <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Brand</label>
+            <Select
+              value={p.brandId ?? ''}
+              onChange={(e) => void patchProduct({ brandId: e.target.value || null })}
+            >
+              <option value="">(no brand)</option>
+              {brands
+                .filter((b) => b.isActive || b.id === p.brandId)
+                .map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.name}
+                  </option>
+                ))}
+            </Select>
+            <div className="mt-2 flex gap-2">
+              <Input
+                placeholder="New brand…"
+                value={newBrand}
+                onChange={(e) => setNewBrand(e.target.value)}
+                style={{ width: 150 }}
+              />
+              <Button
+                type="button"
+                variant="secondary"
+                disabled={!newBrand.trim()}
+                onClick={() => void createAndAssign('brand', newBrand)}
+              >
+                Add
+              </Button>
+            </div>
+          </div>
+          <div style={{ minWidth: 220 }}>
+            <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Collection</label>
+            <Select
+              value={p.collectionId ?? ''}
+              onChange={(e) => void patchProduct({ collectionId: e.target.value || null })}
+            >
+              <option value="">(no collection)</option>
+              {collections
+                .filter((c) => c.isActive || c.id === p.collectionId)
+                .map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+            </Select>
+            <div className="mt-2 flex gap-2">
+              <Input
+                placeholder="New collection…"
+                value={newCollection}
+                onChange={(e) => setNewCollection(e.target.value)}
+                style={{ width: 150 }}
+              />
+              <Button
+                type="button"
+                variant="secondary"
+                disabled={!newCollection.trim()}
+                onClick={() => void createAndAssign('collection', newCollection)}
+              >
+                Add
+              </Button>
+            </div>
+          </div>
+        </div>
+        <p style={{ color: 'var(--text-secondary)', fontSize: 12, marginBottom: 0, marginTop: 8 }}>
+          The invoice&apos;s Brand column prints this brand; without one it falls back to the
+          variant&apos;s preferred vendor.
+        </p>
+      </Card>
 
       <Card title="Variants" style={{ marginBottom: 16 }}>
         <div className="overflow-x-auto">

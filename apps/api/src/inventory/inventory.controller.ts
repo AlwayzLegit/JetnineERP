@@ -1,10 +1,13 @@
 import {
   BadRequestException,
   Body,
+  ConflictException,
   Controller,
   Get,
   Inject,
   NotFoundException,
+  Param,
+  Patch,
   Post,
   Query,
 } from '@nestjs/common';
@@ -40,6 +43,8 @@ interface LevelRow {
   onHand: number;
   reserved: number;
   available: number;
+  storageBinId: string | null;
+  storageBinCode: string | null;
   updatedAt: Date;
 }
 
@@ -103,6 +108,8 @@ export class InventoryController {
         variantBarcode: schema.productVariants.barcode,
         onHand: schema.inventoryLevels.onHand,
         reserved: schema.inventoryLevels.reserved,
+        storageBinId: schema.inventoryLevels.storageBinId,
+        storageBinCode: schema.storageBins.code,
         updatedAt: schema.inventoryLevels.updatedAt,
       })
       .from(schema.inventoryLevels)
@@ -111,12 +118,208 @@ export class InventoryController {
         eq(schema.productVariants.id, schema.inventoryLevels.variantId),
       )
       .innerJoin(schema.products, eq(schema.products.id, schema.productVariants.productId))
+      .leftJoin(schema.storageBins, eq(schema.storageBins.id, schema.inventoryLevels.storageBinId))
       .where(where)
       .orderBy(asc(schema.products.name), asc(schema.productVariants.sku));
     return rows.map((r) => ({
       ...r,
       available: Math.max(0, r.onHand - r.reserved),
     }));
+  }
+
+  /**
+   * Storage bins (STORIS Tracked Storage Location parity, lean). Bins are
+   * per-location named slots; stock levels optionally point at one so the
+   * pick list and receiving know where to walk. Convention: managed under
+   * `inventory.adjust` — the people who correct stock own where it sits.
+   */
+  @Get('bins')
+  @RequirePermission('inventory.view')
+  async bins(
+    @CurrentTenant() _tenant: RequestTenantContext,
+    @Query('locationId') locationId?: string,
+  ): Promise<
+    {
+      id: string;
+      locationId: string;
+      code: string;
+      description: string | null;
+      isActive: boolean;
+    }[]
+  > {
+    const where = locationId ? eq(schema.storageBins.locationId, locationId) : undefined;
+    return this.db
+      .select({
+        id: schema.storageBins.id,
+        locationId: schema.storageBins.locationId,
+        code: schema.storageBins.code,
+        description: schema.storageBins.description,
+        isActive: schema.storageBins.isActive,
+      })
+      .from(schema.storageBins)
+      .where(where)
+      .orderBy(asc(schema.storageBins.code));
+  }
+
+  @Post('bins')
+  @RequirePermission('inventory.adjust')
+  async createBin(
+    @CurrentTenant() tenant: RequestTenantContext,
+    @Body() body: { locationId?: string; code?: string; description?: string | null },
+  ): Promise<{ id: string; locationId: string; code: string }> {
+    const code = body.code?.trim().toUpperCase();
+    if (!code) throw new BadRequestException('code is required');
+    if (code.length > 24) throw new BadRequestException('code must be 24 characters or fewer');
+    if (!body.locationId) throw new BadRequestException('locationId is required');
+    const [loc] = await this.db
+      .select({ id: schema.locations.id })
+      .from(schema.locations)
+      .where(eq(schema.locations.id, body.locationId))
+      .limit(1);
+    if (!loc) throw new NotFoundException('Location not found');
+    const [dup] = await this.db
+      .select({ id: schema.storageBins.id })
+      .from(schema.storageBins)
+      .where(
+        and(eq(schema.storageBins.locationId, body.locationId), eq(schema.storageBins.code, code)),
+      )
+      .limit(1);
+    if (dup) throw new ConflictException(`Bin "${code}" already exists at this location`);
+    const [row] = await this.db
+      .insert(schema.storageBins)
+      .values({
+        businessId: tenant.businessId!,
+        locationId: body.locationId,
+        code,
+        description: body.description?.trim() || null,
+      })
+      .returning();
+    if (!row) throw new BadRequestException('failed to create bin');
+    await this.audit.log({
+      action: 'inventory.bin.create',
+      targetType: 'storage_bin',
+      targetId: row.id,
+      after: { locationId: row.locationId, code: row.code },
+    });
+    return { id: row.id, locationId: row.locationId, code: row.code };
+  }
+
+  @Patch('bins/:id')
+  @RequirePermission('inventory.adjust')
+  async updateBin(
+    @Param('id') id: string,
+    @Body() body: { code?: string; description?: string | null; isActive?: boolean },
+  ): Promise<{ updated: true }> {
+    const [existing] = await this.db
+      .select()
+      .from(schema.storageBins)
+      .where(eq(schema.storageBins.id, id))
+      .limit(1);
+    if (!existing) throw new NotFoundException('Bin not found');
+    const update: Partial<typeof schema.storageBins.$inferInsert> = {};
+    const before: Record<string, unknown> = {};
+    const after: Record<string, unknown> = {};
+    if (body.code !== undefined) {
+      const code = body.code.trim().toUpperCase();
+      if (!code) throw new BadRequestException('code cannot be empty');
+      if (code.length > 24) throw new BadRequestException('code must be 24 characters or fewer');
+      if (code !== existing.code) {
+        update.code = code;
+        before.code = existing.code;
+        after.code = code;
+      }
+    }
+    if (body.description !== undefined) {
+      const description = body.description?.trim() || null;
+      if (description !== existing.description) {
+        update.description = description;
+        before.description = existing.description;
+        after.description = description;
+      }
+    }
+    if (body.isActive !== undefined && body.isActive !== existing.isActive) {
+      update.isActive = body.isActive;
+      before.isActive = existing.isActive;
+      after.isActive = body.isActive;
+    }
+    if (Object.keys(after).length === 0) return { updated: true };
+    if (update.code) {
+      const [dup] = await this.db
+        .select({ id: schema.storageBins.id })
+        .from(schema.storageBins)
+        .where(
+          and(
+            eq(schema.storageBins.locationId, existing.locationId),
+            eq(schema.storageBins.code, update.code),
+          ),
+        )
+        .limit(1);
+      if (dup && dup.id !== id) {
+        throw new ConflictException(`Bin "${update.code}" already exists at this location`);
+      }
+    }
+    await this.db.update(schema.storageBins).set(update).where(eq(schema.storageBins.id, id));
+    await this.audit.log({
+      action: 'inventory.bin.update',
+      targetType: 'storage_bin',
+      targetId: id,
+      before,
+      after,
+    });
+    return { updated: true };
+  }
+
+  /**
+   * Point a stock level at the bin holding it (or null to unbin). The
+   * level row must already exist — a bin assignment for stock that has
+   * never had a level is meaningless — and the bin must be an active bin
+   * of the same location.
+   */
+  @Post('levels/assign-bin')
+  @RequirePermission('inventory.adjust')
+  async assignBin(
+    @Body() body: { variantId?: string; locationId?: string; storageBinId?: string | null },
+  ): Promise<{ updated: true }> {
+    if (!body.variantId || !body.locationId) {
+      throw new BadRequestException('variantId and locationId are required');
+    }
+    const [level] = await this.db
+      .select()
+      .from(schema.inventoryLevels)
+      .where(
+        and(
+          eq(schema.inventoryLevels.variantId, body.variantId),
+          eq(schema.inventoryLevels.locationId, body.locationId),
+        ),
+      )
+      .limit(1);
+    if (!level) throw new NotFoundException('No stock level exists for that variant and location');
+    const storageBinId = body.storageBinId ?? null;
+    if (storageBinId) {
+      const [bin] = await this.db
+        .select()
+        .from(schema.storageBins)
+        .where(eq(schema.storageBins.id, storageBinId))
+        .limit(1);
+      if (!bin) throw new NotFoundException('Bin not found');
+      if (bin.locationId !== body.locationId) {
+        throw new BadRequestException('Bin belongs to a different location');
+      }
+      if (!bin.isActive) throw new BadRequestException('Bin is inactive');
+    }
+    if (storageBinId === level.storageBinId) return { updated: true };
+    await this.db
+      .update(schema.inventoryLevels)
+      .set({ storageBinId, updatedAt: new Date() })
+      .where(eq(schema.inventoryLevels.id, level.id));
+    await this.audit.log({
+      action: 'inventory.bin.assign',
+      targetType: 'inventory_level',
+      targetId: level.id,
+      before: { storageBinId: level.storageBinId },
+      after: { storageBinId, variantId: body.variantId, locationId: body.locationId },
+    });
+    return { updated: true };
   }
 
   @Get('movements')
