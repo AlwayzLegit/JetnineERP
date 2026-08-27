@@ -12,6 +12,9 @@ import { AuditService } from '../audit/audit.service';
 import { ExceptionsService } from '../controls/exceptions.service';
 import { ROOT_DRIZZLE } from '../database/database.module';
 import { computeReorderSuggestions } from '../purchasing/replenishment';
+import { vendorRunsToday } from '../purchasing/replenishment-engine';
+import { parseVendorReplenishment } from '../purchasing/replenishment-data';
+import { ReplenishmentRunService } from '../purchasing/replenishment.controller';
 
 /** The declared step list (JOB-002): the operator can always see it. */
 export interface JobDefinition {
@@ -48,6 +51,18 @@ export const JOB_REGISTRY: JobDefinition[] = [
     destructive: false,
   },
   {
+    id: 'sales_rate_replenishment',
+    name: 'Sales-rate replenishment purchase orders',
+    description:
+      'STORIS-model sales-rate replenishment (HANDOFF-po-replenishment-sales-rate §3.1): for ' +
+      'each vendor with Generate Automatic POs on and today in its Build POs days, runs the ' +
+      'ONE calculation engine with default criteria and creates a PO for lines with quantity ' +
+      'to order. Automatically Hold POs leaves it a draft for buyer review.',
+    order: 35,
+    dependsOn: [],
+    destructive: false,
+  },
+  {
     id: 'transfer_aging',
     name: 'Transfer aging',
     description:
@@ -78,6 +93,9 @@ const RUN_LOCAL_HOUR = 2;
 export class JobsService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(JobsService.name);
   private timer: ReturnType<typeof setInterval> | null = null;
+  /** Stateless; instantiated directly so the EOD path shares the exact
+   * run code the interactive endpoint uses (T-31). */
+  private readonly replenishmentRunner = new ReplenishmentRunService();
 
   constructor(
     @Inject(ROOT_DRIZZLE) private readonly rootDb: PostgresJsDatabase,
@@ -245,6 +263,8 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
         return this.poOverdueSweep(businessId, businessDate);
       case 'auto_replenishment':
         return this.autoReplenishment(businessId);
+      case 'sales_rate_replenishment':
+        return this.salesRateReplenishment(businessId, businessDate);
       case 'transfer_aging':
         return this.transferAging(businessId, businessDate);
       default:
@@ -415,6 +435,88 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
       });
     }
     return { recordsAffected: created, detail: { created, skippedUnassigned } };
+  }
+
+  /**
+   * §3.1 EOD mode of sales-rate replenishment. Same engine, same data
+   * path as POST /v1/purchasing/replenishment/run — only the trigger
+   * differs (T-31). Ship-to follows the auto_replenishment convention:
+   * the business's first active location is the warehouse.
+   */
+  private async salesRateReplenishment(
+    businessId: string,
+    businessDate: string,
+  ): Promise<JobOutcome> {
+    const vendors = await this.rootDb
+      .select({
+        id: schema.vendors.id,
+        name: schema.vendors.name,
+        replenishmentJson: schema.vendors.replenishmentJson,
+      })
+      .from(schema.vendors)
+      .where(
+        and(
+          eq(schema.vendors.businessId, businessId),
+          eq(schema.vendors.isActive, true),
+          sql`${schema.vendors.replenishmentJson} IS NOT NULL`,
+        ),
+      );
+    if (vendors.length === 0) return { recordsAffected: 0, detail: { vendors: 0 } };
+
+    const [loc] = await this.rootDb
+      .select({ id: schema.locations.id })
+      .from(schema.locations)
+      .where(and(eq(schema.locations.businessId, businessId), eq(schema.locations.isActive, true)))
+      .orderBy(schema.locations.createdAt)
+      .limit(1);
+    if (!loc) return { recordsAffected: 0, detail: { skipped: 'no active location' } };
+
+    // Noon UTC of the business date keeps getUTCDay() on that calendar day.
+    const today = new Date(`${businessDate}T12:00:00Z`);
+    let created = 0;
+    let skippedGate = 0;
+    let empty = 0;
+    const pos: string[] = [];
+    for (const v of vendors) {
+      const settings = parseVendorReplenishment(v.replenishmentJson);
+      if (!settings || !vendorRunsToday(settings, today)) {
+        skippedGate += 1;
+        continue;
+      }
+      const result = await this.replenishmentRunner.createPurchaseOrder(this.rootDb, {
+        vendorId: v.id,
+        locationId: loc.id,
+        criteria: {
+          variancePercent: null,
+          daysForReplenishment: null,
+          salesWindow: 'this_year_prior',
+          includeOverstocks: false,
+          includeServiceItems: false,
+          productIds: null,
+        },
+        businessId,
+        today,
+        audit: this.audit,
+      });
+      if (!result) {
+        empty += 1;
+        continue;
+      }
+      created += 1;
+      pos.push(result.number);
+    }
+    if (created > 0) {
+      await this.exceptions.record({
+        type: 'auto_replenishment',
+        severity: 'info',
+        entityType: 'business',
+        entityId: businessId,
+        summary: `Sales-rate replenishment created ${created} purchase order(s): ${pos.join(', ')}`,
+        metadata: { created, pos, skippedGate, empty },
+        businessId,
+      });
+    }
+    return { recordsAffected: created, detail: { created, pos, skippedGate, empty } };
   }
 
   private async transferAging(businessId: string, businessDate: string): Promise<JobOutcome> {
