@@ -14,6 +14,7 @@ export const REASON_USAGE_CLASSES = [
   'inventory_adjustment',
   'transfer_variance',
   'write_off',
+  'physical_variance',
 ] as const;
 
 export type ReasonUsageClass = (typeof REASON_USAGE_CLASSES)[number];
@@ -28,4 +29,5 @@ export const REASON_USAGE_CLASS_LABELS: Record<ReasonUsageClass, string> = {
   inventory_adjustment: 'Inventory adjustments',
   transfer_variance: 'Transfer variances',
   write_off: 'Write-offs / scrap',
+  physical_variance: 'Physical count variances',
 };

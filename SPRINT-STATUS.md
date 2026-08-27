@@ -1600,3 +1600,41 @@ order.requested_date)` nulls-last under delivery_date, `created_at` under
   purchasing 27/27 re-run green. Gates by exit code: typecheck 0 · lint 0 ·
   prettier 0. Coverage matrix updated (B3/I2 intentionally-not-implemented, B14
   DONE).
+
+## Checkpoint 13 — B14 merged + deployed; physical inventory shipped (2026-08-27)
+
+PR #38 (B14) squash-merged on green CI (4/4), deploy branch rolled
+(644e546), manual Render deploy triggered (dep-da7tpm9srm7s73dhr3h0) — no new
+migration in B14, boot log verified below. Sprint branch restarted from main.
+
+**Physical inventory (FAQ pack C1/B16, backlog #1) — built as a full slice.**
+Soft-freeze counting: the store keeps selling during the count; posting nets the
+post-freeze ledger delta out of every variance so a mid-count sale is neither
+shrink nor double-deducted.
+
+- Schema `0051_physical_inventory`: `physical_counts` (open→counting→
+  posted/cancelled, one live count per location) + `physical_count_lines`
+  (frozen snapshot, bin, counted qty, reason code, posted variance); RLS in
+  both registries.
+- API `/v1/inventory/counts`: list · create+freeze (snapshots non-empty levels
+  with their bins; 409 on a concurrent count) · detail (variance = counted −
+  (frozen + post-freeze delta), bin-ordered) · batch count entry ≤500 (found
+  stock gets a zero-frozen line) · post (uncounted lines block unless
+  `skipUncounted`; A9 coded-reason enforcement via new `physical_variance`
+  class; writes `physical_count` movements + level upserts; a shortage that
+  undercuts reservations records a **critical `physical_commitment` exception
+  and never touches the reservation**; warning summary exception per posting)
+  · cancel. Audits create/post/cancel.
+- Web: `/inventory/counts` list + start-count, `/inventory/counts/[id]` entry
+  grid with live variance, reason select, skip-uncounted post, cancel; "Count
+  stock" from Inventory; blind bin-ordered count sheet at `/print/counts/[id]`
+  with found-stock lines and signature blocks.
+- Tests: inventory.int.spec 15→21 (permissions, freeze/409/empty-location,
+  mid-count sale netting, A9 reason enforcement, found stock + skip, commitment
+  exception with reservations intact, cancel). Gates by exit code: typecheck 0 ·
+  lint 0 · test 0 · build 0 · prettier 0.
+
+Ops unchanged: repoint the Render repo URL, rotate the shared owner password,
+accept the manager invite (expires 2026-08-29 17:53Z), optional DMARC record.
+Next backlog item: PO lifecycle corrections (no PO edit after order, no
+un-receive) per the coverage-matrix ranking.
