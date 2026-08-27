@@ -1070,3 +1070,51 @@ describe('Sales Views — inventory adjustments + customer purchases', () => {
     expect(none.body.rows).toEqual([]);
   });
 });
+
+describe('Sales Views Phase 4 — customer summary + salesperson filters', () => {
+  it('customer summary totals lifetime/YTD and computes open-order balances', async () => {
+    // The scope-fixture customer holds ORD-MAIN-1 (70.00) and
+    // ORD-ANNEX-1 (30.00), both confirmed and unpaid.
+    const cust = await request(app.getHttpServer())
+      .get('/v1/customers?limit=200')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .expect(200);
+    const rows = Array.isArray(cust.body) ? cust.body : cust.body.data;
+    const fixture = rows.find(
+      (c: { firstName: string | null; lastName: string | null }) =>
+        c.firstName === 'Scope' && c.lastName === 'Fixture',
+    );
+    expect(fixture).toBeTruthy();
+
+    const res = await request(app.getHttpServer())
+      .get(`/v1/customers/${fixture.id}/summary`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .expect(200);
+    expect(res.body.lifetime.documents).toBe(2);
+    expect(res.body.lifetime.totalCents).toBe(10000);
+    expect(res.body.openOrders.length).toBe(2);
+    for (const o of res.body.openOrders) {
+      expect(o.paidCents).toBe(0);
+      expect(o.balanceCents).toBe(o.totalCents);
+    }
+  });
+
+  it('orders list filters by salesperson membership; sales list by associate', async () => {
+    const res = await request(app.getHttpServer())
+      .get(`/v1/orders?limit=200&salespersonMembershipId=${scopedMembershipId}`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .expect(200);
+    // No fixture order carries that salesperson -> empty, not an error.
+    expect(res.body.data).toEqual([]);
+
+    const sales = await request(app.getHttpServer())
+      .get('/v1/sales?limit=200&associateUserId=00000000-0000-4000-8000-00000000beef')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .expect(200);
+    expect(sales.body.data).toEqual([]);
+  });
+});
