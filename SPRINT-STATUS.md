@@ -2658,3 +2658,65 @@ panel, vendor ship-from + buying groups + volume-limit cap (no Jetnine
 equivalents yet), print report. Criteria filters shipped: products,
 category; group/collection/model n/a.
 Gates: typecheck 0 · lint 0 · test 0 (full) · build 0 · format 0.
+
+## Checkpoint 25 — replenishment SHIPPED · transfers pack reconciled (2026-08-27)
+
+PR #62 squash-merged on green CI (main 39a9f07); deploy branch rolled
+(7ad4b21), deploy dep-da8bqpon74is73dfrbmg live, boot log verified
+`63/63 applied, head=0062_vendor_replenishment` (22:44). Task #24
+(sales-rate PO replenishment) is COMPLETE: engine (#61) + data layer,
+endpoints, EOD job, ops block, /replenishment UI (#62), 18 unit + 4
+int acceptance scenarios (T-31 identity proven). Earlier this window:
+#60's deploy verified `62/62, head=0061_ticket_flags` (22:05).
+
+Task #25 kickoff per the pack's own protocol (00-README step 5:
+collect [DECISION]s, never guess): authored
+`docs/erp-transfers/GAP-RECONCILE.md` — discovery-pass answers, the
+full shipped/partial/missing map (five transfer types, lifecycle,
+serials, auto transfers, FIFO carry = shipped; hold quantities,
+store↔store gate, numbering suffixes = partial; security tables,
+cartons, route capacity, distributed, one-time-buy, multi-leg,
+manifests, RF/phantom, reschedule screen, EDI 214 = missing and
+scope-gated), acceptance-map, and **ten batched owner questions**
+(§4) — manifests/RF, location_type, completion gates, distributed
+transfers + rounding, security tables, skip-list confirmations, plus
+the pack's four [DECISION] markers (§10's stock-level model recorded
+as already answered by the shipped replenishment programs).
+
+**Owner: answer GAP-RECONCILE.md §4 (10 numbered questions) to unlock
+the transfers build phases.** Next while that waits: decision-free
+quick wins (hold/scheduled qty D18–19, transfer-comment audit, excess-
+quantity inquiry), then task #26 (SOM pack reconcile).
+
+## Checkpoints 26–28 kickoff — remaining packs reconciled (2026-08-27)
+
+Same protocol as the transfers reconcile, one doc per pack, all
+questions batched:
+
+- **Task #26 (SOM)**: `docs/erp/GAP-RECONCILE.md` — shipped-stack map
+  across all module phases; open-question register #1–#58 triaged
+  (~35 answered by shipped code or locked decisions — Stripe
+  tokenization, one return window, snapshot-at-write, permission
+  precedence, cash-shift opening, all ten documented bypasses never
+  built; financing quartet moot under third-party-only); **twelve
+  owner questions** incl. the headline `decimal(12,4)` quantity
+  decision (recommendation: keep integers), commission plan values +
+  the #54 date-attribution conflict, deposit policy, discount-model
+  parity, provider set, merge tooling, COM/rooms/loyalty scope.
+- **Task #27 (cash balancing)**:
+  `docs/handoffs/cash-balancing/GAP-RECONCILE.md` — the loop exists
+  lean (shifts with float, counted close, variance, receipts report,
+  Z-report); pack Q1–Q10 triaged (7 answered by shipped design);
+  owner: fiscal calendar, cash-only tolerance confirm, retention, and
+  the scope pick for blind-count/tolerance/retries/suspension +
+  balance-by-cashier.
+- **Task #28 (report builder)**:
+  `docs/handoffs/storis-report-builder/GAP-RECONCILE.md` — one gating
+  question: fixed catalog (recommended), full self-service builder, or
+  BI-on-replica; `12`'s twenty semantic edges adopted as written only
+  if the builder is chosen.
+
+**Owner: the four GAP-RECONCILE docs are the complete ask backlog —
+answer §4 of each (transfers 10, SOM 12, cash 4, report-builder 1) and
+the corresponding builds unlock.** Until answers land the sprint holds
+no unchecked decision-free build items.
