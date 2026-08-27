@@ -137,6 +137,7 @@ DECLARE
     'physical_count_lines',
     'cost_layers',
     'cost_consumptions',
+    'job_runs',
     'daily_closeouts',
     'delivery_runs',
     'serial_units',
