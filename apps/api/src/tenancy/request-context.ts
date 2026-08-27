@@ -18,6 +18,18 @@ export interface RequestTenantContext {
   roleId: string | null;
   roleName: string | null;
   permissions: Set<Permission>;
+  /**
+   * Sales-data visibility (Sales Views Phase 1): 'store' limits sales
+   * documents and dollars to `scopeLocationIds`; 'all' is unrestricted.
+   * API keys and super admins are always 'all'.
+   */
+  dataScope: 'all' | 'store';
+  /**
+   * The location ids a 'store'-scoped member may see, from
+   * membership_location_scopes. Null when dataScope is 'all'. An empty
+   * array means the member sees no sales data (fail closed).
+   */
+  scopeLocationIds: string[] | null;
   // Populated from the request when the interceptor opens the tx; useful
   // for audit logging.
   ip: string | null;

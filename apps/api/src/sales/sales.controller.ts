@@ -11,6 +11,7 @@ import {
   Query,
 } from '@nestjs/common';
 import { and, desc, eq, ilike, inArray, or, sql } from 'drizzle-orm';
+import { salesScopeCond } from '../common/sales-scope';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { schema } from '@jetnine/db';
 import { AuditService } from '../audit/audit.service';
@@ -388,7 +389,7 @@ export class SalesController {
   @Get('sales')
   @RequirePermission('sales.view')
   async list(
-    @CurrentTenant() _tenant: RequestTenantContext,
+    @CurrentTenant() tenant: RequestTenantContext,
     @Query('q') q?: string,
     @Query('limit') limitStr?: string,
     @Query('cursor') cursorStr?: string,
@@ -397,6 +398,7 @@ export class SalesController {
     const cursor = decodeCursor(cursorStr);
     const filters: (ReturnType<typeof and> | undefined)[] = [
       cursor ? timestampCursorWhere(schema.sales.createdAt, schema.sales.id, cursor) : undefined,
+      salesScopeCond(tenant, schema.sales.locationId),
     ];
     const query = q?.trim();
     if (query) {

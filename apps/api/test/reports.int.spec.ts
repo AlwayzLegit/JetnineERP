@@ -36,6 +36,9 @@ let variantBId = '';
 let cashierCookie = '';
 let ownerCookie = '';
 let bookkeeperCookie = '';
+let scopedCookie = '';
+let annexLocationId = '';
+let scopedMembershipId = '';
 
 async function resetTestDb() {
   const env = { ...process.env, DATABASE_URL: TEST_DB_URL };
@@ -108,6 +111,40 @@ async function seed() {
       .values({ businessId, name: 'Main', timezone: 'America/New_York' })
       .returning();
     locationId = loc!.id;
+    const [annex] = await db
+      .insert(schema.locations)
+      .values({ businessId, name: 'Annex', timezone: 'America/New_York' })
+      .returning();
+    annexLocationId = annex!.id;
+
+    // Store-scoped manager (Sales Views Phase 1): sees Main only.
+    {
+      const [u] = await db
+        .insert(schema.users)
+        .values({ email: 'scoped@reports-test.local', emailVerified: true, name: 'Scoped' })
+        .returning();
+      await db.insert(schema.accounts).values({
+        accountId: u!.id,
+        providerId: 'credential',
+        userId: u!.id,
+        password: passwordHash,
+      });
+      const [m] = await db
+        .insert(schema.memberships)
+        .values({
+          businessId,
+          userId: u!.id,
+          roleId: roles.get('Manager')!,
+          status: 'active',
+          acceptedAt: new Date(),
+          dataScope: 'store',
+        })
+        .returning();
+      scopedMembershipId = m!.id;
+      await db
+        .insert(schema.membershipLocationScopes)
+        .values({ membershipId: m!.id, locationId, businessId });
+    }
 
     const [pA] = await db
       .insert(schema.products)
@@ -182,6 +219,7 @@ beforeAll(async () => {
   ownerCookie = await captureCookie('owner@reports-test.local');
   cashierCookie = await captureCookie('cashier@reports-test.local');
   bookkeeperCookie = await captureCookie('bookkeeper@reports-test.local');
+  scopedCookie = await captureCookie('scoped@reports-test.local');
 });
 
 afterAll(async () => {
@@ -441,5 +479,185 @@ describe('Epic 1.11 — Reports & cash drawer', () => {
       .set('Cookie', bookkeeperCookie)
       .set('X-Business-Id', businessId);
     expect(res.status).toBe(200);
+  });
+});
+
+describe('Sales Views Phase 1 — store-level data scope', () => {
+  // A completed sale and an order at each location, inserted directly so
+  // the assertions are about scoping, not the POS flow.
+  beforeAll(async () => {
+    const sql = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    const db = drizzle(sql);
+    try {
+      await db.insert(schema.sales).values([
+        {
+          businessId,
+          locationId,
+          number: 'SC-MAIN-1',
+          status: 'completed',
+          completedAt: new Date(),
+          subtotalCents: 10000,
+          totalCents: 10000,
+        },
+        {
+          businessId,
+          locationId: annexLocationId,
+          number: 'SC-ANNEX-1',
+          status: 'completed',
+          completedAt: new Date(),
+          subtotalCents: 5000,
+          totalCents: 5000,
+        },
+      ]);
+      const [cust] = await db
+        .insert(schema.customers)
+        .values({ businessId, firstName: 'Scope', lastName: 'Fixture' })
+        .returning();
+      await db.insert(schema.orders).values([
+        {
+          businessId,
+          locationId,
+          customerId: cust!.id,
+          number: 'ORD-MAIN-1',
+          status: 'confirmed',
+          totalCents: 7000,
+        },
+        {
+          businessId,
+          locationId: annexLocationId,
+          customerId: cust!.id,
+          number: 'ORD-ANNEX-1',
+          status: 'confirmed',
+          totalCents: 3000,
+        },
+      ]);
+    } finally {
+      await sql.end({ timeout: 5 });
+    }
+  });
+
+  it('members list exposes dataScope and scope locations', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/v1/business/members')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .expect(200);
+    const scoped = res.body.find(
+      (m: { membershipId: string }) => m.membershipId === scopedMembershipId,
+    );
+    expect(scoped.dataScope).toBe('store');
+    expect(scoped.scopeLocationIds).toEqual([locationId]);
+  });
+
+  it('owner sees both locations in the sales list; scoped member sees Main only', async () => {
+    const ownerRes = await request(app.getHttpServer())
+      .get('/v1/sales?limit=200')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .expect(200);
+    const ownerNumbers = ownerRes.body.data.map((r: { number: string }) => r.number);
+    expect(ownerNumbers).toContain('SC-MAIN-1');
+    expect(ownerNumbers).toContain('SC-ANNEX-1');
+
+    const scopedRes = await request(app.getHttpServer())
+      .get('/v1/sales?limit=200')
+      .set('Cookie', scopedCookie)
+      .set('X-Business-Id', businessId)
+      .expect(200);
+    const numbers = scopedRes.body.data.map((r: { number: string }) => r.number);
+    expect(numbers).toContain('SC-MAIN-1');
+    expect(numbers).not.toContain('SC-ANNEX-1');
+  });
+
+  it('orders list is scoped the same way', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/v1/orders?limit=200')
+      .set('Cookie', scopedCookie)
+      .set('X-Business-Id', businessId)
+      .expect(200);
+    const numbers = res.body.data.map((r: { number: string }) => r.number);
+    expect(numbers).toContain('ORD-MAIN-1');
+    expect(numbers).not.toContain('ORD-ANNEX-1');
+  });
+
+  it('sales/daily totals exclude the other store for the scoped member', async () => {
+    const owner = await request(app.getHttpServer())
+      .get('/v1/reports/sales/daily')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .expect(200);
+    const ownerTotal = owner.body.byDay.reduce(
+      (a: number, d: { totalCents: number }) => a + d.totalCents,
+      0,
+    );
+
+    const scoped = await request(app.getHttpServer())
+      .get('/v1/reports/sales/daily')
+      .set('Cookie', scopedCookie)
+      .set('X-Business-Id', businessId)
+      .expect(200);
+    const scopedTotal = scoped.body.byDay.reduce(
+      (a: number, d: { totalCents: number }) => a + d.totalCents,
+      0,
+    );
+    // Owner sees exactly 5000 more (the Annex sale).
+    expect(ownerTotal - scopedTotal).toBe(5000);
+  });
+
+  it('a Z-report requested for an out-of-scope location intersects to nothing', async () => {
+    const res = await request(app.getHttpServer())
+      .get(`/v1/reports/z?locationId=${annexLocationId}`)
+      .set('Cookie', scopedCookie)
+      .set('X-Business-Id', businessId)
+      .expect(200);
+    expect(res.body.saleCount).toBe(0);
+    expect(res.body.grossCents).toBe(0);
+  });
+
+  it('emptying the scope list makes the member see no sales data (fail closed)', async () => {
+    await request(app.getHttpServer())
+      .patch(`/v1/business/members/${scopedMembershipId}`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ scopeLocationIds: [] })
+      .expect(200);
+    const res = await request(app.getHttpServer())
+      .get('/v1/sales?limit=200')
+      .set('Cookie', scopedCookie)
+      .set('X-Business-Id', businessId)
+      .expect(200);
+    expect(res.body.data).toEqual([]);
+
+    // Restore for any later suites.
+    await request(app.getHttpServer())
+      .patch(`/v1/business/members/${scopedMembershipId}`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ scopeLocationIds: [locationId] })
+      .expect(200);
+  });
+
+  it('setting dataScope back to all restores full visibility', async () => {
+    await request(app.getHttpServer())
+      .patch(`/v1/business/members/${scopedMembershipId}`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ dataScope: 'all' })
+      .expect(200);
+    const res = await request(app.getHttpServer())
+      .get('/v1/sales?limit=200')
+      .set('Cookie', scopedCookie)
+      .set('X-Business-Id', businessId)
+      .expect(200);
+    const numbers = res.body.data.map((r: { number: string }) => r.number);
+    expect(numbers).toContain('SC-ANNEX-1');
+
+    // Back to store scope so the fixture state is deterministic.
+    await request(app.getHttpServer())
+      .patch(`/v1/business/members/${scopedMembershipId}`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ dataScope: 'store' })
+      .expect(200);
   });
 });

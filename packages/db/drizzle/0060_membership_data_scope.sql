@@ -1,0 +1,1 @@
+ALTER TABLE "memberships" ADD COLUMN "data_scope" text DEFAULT 'all' NOT NULL;

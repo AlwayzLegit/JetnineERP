@@ -10,7 +10,7 @@ import {
   Patch,
   Post,
 } from '@nestjs/common';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { schema } from '@jetnine/db';
 import { AuditService } from '../audit/audit.service';
@@ -31,6 +31,8 @@ interface MemberRow {
   status: string;
   roleId: string;
   roleName: string;
+  dataScope: string;
+  scopeLocationIds: string[];
   invitedAt: Date | null;
   acceptedAt: Date | null;
 }
@@ -45,6 +47,10 @@ interface InviteBody {
 interface UpdateMemberBody {
   roleId?: string;
   status?: 'active' | 'disabled';
+  /** Sales-data visibility: 'store' limits sales surfaces to scopeLocationIds. */
+  dataScope?: 'all' | 'store';
+  /** Replaces the member's location scope set (only meaningful with 'store'). */
+  scopeLocationIds?: string[];
 }
 
 const VALID_STATUS_TARGETS = new Set(['active', 'disabled']);
@@ -73,6 +79,7 @@ export class MembersController {
         roleName: schema.roles.name,
         invitedAt: schema.memberships.invitedAt,
         acceptedAt: schema.memberships.acceptedAt,
+        dataScope: schema.memberships.dataScope,
         // Lets the commissions page show who is currently on a plan.
         commissionPlanId: schema.memberships.commissionPlanId,
       })
@@ -80,7 +87,20 @@ export class MembersController {
       .innerJoin(schema.users, eq(schema.users.id, schema.memberships.userId))
       .innerJoin(schema.roles, eq(schema.roles.id, schema.memberships.roleId))
       .where(eq(schema.memberships.businessId, tenant.businessId!));
-    return rows;
+    const scopes = await this.db
+      .select({
+        membershipId: schema.membershipLocationScopes.membershipId,
+        locationId: schema.membershipLocationScopes.locationId,
+      })
+      .from(schema.membershipLocationScopes)
+      .where(eq(schema.membershipLocationScopes.businessId, tenant.businessId!));
+    const byMembership = new Map<string, string[]>();
+    for (const sRow of scopes) {
+      const list = byMembership.get(sRow.membershipId) ?? [];
+      list.push(sRow.locationId);
+      byMembership.set(sRow.membershipId, list);
+    }
+    return rows.map((r) => ({ ...r, scopeLocationIds: byMembership.get(r.membershipId) ?? [] }));
   }
 
   @Post('invite')
@@ -228,14 +248,70 @@ export class MembersController {
       after.status = body.status;
     }
 
-    if (Object.keys(update).length === 0) {
+    if (body.dataScope && body.dataScope !== existing.dataScope) {
+      if (body.dataScope !== 'all' && body.dataScope !== 'store') {
+        throw new BadRequestException('dataScope must be all or store');
+      }
+      update.dataScope = body.dataScope;
+      before.dataScope = existing.dataScope;
+      after.dataScope = body.dataScope;
+    }
+
+    let scopeChange: string[] | null = null;
+    if (body.scopeLocationIds !== undefined) {
+      if (!Array.isArray(body.scopeLocationIds)) {
+        throw new BadRequestException('scopeLocationIds must be an array');
+      }
+      const ids = [...new Set(body.scopeLocationIds)];
+      if (ids.length > 0) {
+        const found = await this.db
+          .select({ id: schema.locations.id })
+          .from(schema.locations)
+          .where(
+            and(
+              inArray(schema.locations.id, ids),
+              eq(schema.locations.businessId, tenant.businessId!),
+            ),
+          );
+        if (found.length !== ids.length) {
+          throw new BadRequestException('One or more locations not found in this business');
+        }
+      }
+      scopeChange = ids;
+      before.scopeLocationIds = undefined; // filled below from current rows
+      after.scopeLocationIds = ids;
+    }
+
+    if (Object.keys(update).length === 0 && scopeChange === null) {
       throw new BadRequestException('Nothing to update');
     }
 
-    await this.db
-      .update(schema.memberships)
-      .set(update)
-      .where(eq(schema.memberships.id, membershipId));
+    if (scopeChange !== null) {
+      const current = await this.db
+        .select({ locationId: schema.membershipLocationScopes.locationId })
+        .from(schema.membershipLocationScopes)
+        .where(eq(schema.membershipLocationScopes.membershipId, membershipId));
+      before.scopeLocationIds = current.map((c) => c.locationId);
+      await this.db
+        .delete(schema.membershipLocationScopes)
+        .where(eq(schema.membershipLocationScopes.membershipId, membershipId));
+      if (scopeChange.length > 0) {
+        await this.db.insert(schema.membershipLocationScopes).values(
+          scopeChange.map((locationId) => ({
+            membershipId,
+            locationId,
+            businessId: tenant.businessId!,
+          })),
+        );
+      }
+    }
+
+    if (Object.keys(update).length > 0) {
+      await this.db
+        .update(schema.memberships)
+        .set(update)
+        .where(eq(schema.memberships.id, membershipId));
+    }
 
     await this.audit.log({
       action: 'membership.update',
