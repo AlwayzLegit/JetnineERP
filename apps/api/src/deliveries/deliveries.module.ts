@@ -5,9 +5,12 @@ import { AuthModule } from '../auth/auth.module';
 import { OrdersModule } from '../orders/orders.module';
 import { TenancyModule } from '../tenancy/tenancy.module';
 import { DeliveriesController } from './deliveries.controller';
+import { TicketFlagsService } from './ticket-flags.service';
 
 @Module({
   imports: [AuthModule, TenancyModule, AuditModule, OrdersModule, ControlsModule],
   controllers: [DeliveriesController],
+  providers: [TicketFlagsService],
+  exports: [TicketFlagsService],
 })
 export class DeliveriesModule {}
