@@ -29,11 +29,11 @@ export const asIsItems = pgTable(
       .notNull()
       .references(() => locations.id, { onDelete: 'restrict' }),
     quantity: integer('quantity').notNull(),
-    /** 'return' | 'warranty' | 'defect' | 'exchange_pickup' */
+    /** 'return' | 'warranty' | 'defect' | 'exchange_pickup' | 'transfer' (as_is consolidation intake) */
     source: text('source').notNull().default('return'),
     /** 'pending_review' | 'restocked' | 'vendor_return' | 'scrapped' */
     status: text('status').notNull().default('pending_review'),
-    /** What produced it: 'refund' | 'order' | 'manual' + the row's id. */
+    /** What produced it: 'refund' | 'order' | 'manual' | 'stock_transfer' + the row's id. */
     referenceType: text('reference_type'),
     referenceId: uuid('reference_id'),
     /** Where the units went on restock (may be the `-AS` variant). */

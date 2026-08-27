@@ -491,6 +491,76 @@ export class AsIsController {
   }
 
   /**
+   * H2 (RTV-020/021): unwind a vendor return sent in error — wrong
+   * vendor, wrong piece, or the truck never left. The piece goes back
+   * to pending_review and its credit chase is voided. Only possible
+   * while the credit is still open (or was never set up): once money
+   * has been received, reverse it through the vendor invoice instead.
+   */
+  @Post(':id/reopen')
+  @RequirePermission('inventory.adjust')
+  async reopen(
+    @CurrentTenant() _tenant: RequestTenantContext,
+    @CurrentUser() actor: CurrentUserPayload,
+    @Param('id') id: string,
+    @Body() body: { notes?: string | null },
+  ): Promise<AsIsRow> {
+    const [item] = await this.db
+      .select()
+      .from(schema.asIsItems)
+      .where(eq(schema.asIsItems.id, id))
+      .limit(1);
+    if (!item) throw new NotFoundException('As-Is item not found');
+    if (item.status !== 'vendor_return') {
+      throw new BadRequestException(
+        `Only a vendor_return piece can be reopened (this one is ${item.status})`,
+      );
+    }
+    if (item.vendorCreditStatus === 'received') {
+      throw new BadRequestException(
+        'Credit already received — reverse it with the vendor before reopening the piece',
+      );
+    }
+    await this.db
+      .update(schema.asIsItems)
+      .set({
+        status: 'pending_review',
+        vendorRaNumber: null,
+        vendorCreditCents: null,
+        vendorCreditStatus: null,
+        reviewedByUserId: null,
+        reviewedAt: null,
+        notes: body.notes ?? item.notes,
+      })
+      .where(eq(schema.asIsItems.id, id));
+    await this.audit.log({
+      action: 'as_is.reopen',
+      targetType: 'as_is_item',
+      targetId: id,
+      before: {
+        status: item.status,
+        vendorRaNumber: item.vendorRaNumber,
+        vendorCreditCents: item.vendorCreditCents,
+        vendorCreditStatus: item.vendorCreditStatus,
+      },
+      after: { status: 'pending_review' },
+    });
+    await this.exceptions.record({
+      type: 'rtv_reopened',
+      severity: 'info',
+      entityType: 'as_is_item',
+      entityId: id,
+      summary: `Vendor return ${item.vendorRaNumber ?? ''} unwound — piece ${item.pieceNumber ?? id} back in review`,
+      metadata: {
+        vendorRaNumber: item.vendorRaNumber,
+        vendorCreditCents: item.vendorCreditCents,
+      },
+      actorUserId: actor.id,
+    });
+    return this.load(id);
+  }
+
+  /**
    * G4: close out a vendor-return credit — received from the vendor, or
    * given up on (which is itself an exception worth seeing).
    */

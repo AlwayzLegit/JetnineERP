@@ -1921,3 +1921,27 @@ ship-to (P2) · as_is-type transfer receiving into As-Is review · sysadmin
 substrate designs (settings registry, RPT-AUDIT stream, report builder) ·
 needs-counsel privacy items (TCPA consent, erasure policy). Ops items
 unchanged — the manager invite expires 2026-08-29 17:53Z.
+
+## As-Is transfer intake + H2 RTV unwind (2026-08-27)
+
+- **as_is consolidation transfers now stage in review, not stock** (§10
+  invariant: damage never silently becomes sellable). Receiving an
+  `as_is`-type transfer writes no `transfer_in` movement, no level bump,
+  and no cost layer; instead each unit becomes an As-Is review piece
+  (`source: 'transfer'`, `referenceType: 'stock_transfer'`, piece number
+  `AS-XXXXXXXX`) at the destination, waiting in the pending_review queue.
+  Named serial pieces land as `returned`. Stock and valuation re-enter
+  only through a review disposition (restock / vendor return / scrap) —
+  the restock path already carries its own movement + FIFO layer. No
+  migration: `source`/`referenceType` are doc-typed text columns.
+- **H2 (RTV-020/021): wrong-vendor RTV unwind** — `POST
+/v1/as-is/:id/reopen` (inventory.adjust) flips a `vendor_return` piece
+  back to `pending_review`, voids the R/A + credit chase, clears the
+  reviewer stamp, audits (`as_is.reopen`), and records an `rtv_reopened`
+  info exception. Guarded: only a vendor_return piece reopens, and a
+  credit already `received` blocks the unwind (reverse it with the vendor
+  first — money is involved).
+- Tests: transfers.int.spec 24→29 (as_is receive stages pieces + leaves
+  sellable stock and the movement ledger untouched, staged piece restocks
+  through normal review, RTV unwind round-trip + both refusal guards).
+  Gates by exit code: typecheck 0 · lint 0 · test 0 · build 0 · prettier 0.
