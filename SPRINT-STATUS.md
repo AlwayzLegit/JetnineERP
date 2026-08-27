@@ -1900,3 +1900,24 @@ FAQ J2 (P1-PARTIAL) and J3 (P1-MISSING), the last flagged transfer gaps.
   inventory 21, orders 68, sales 21, purchasing 39 re-run green. Gates by
   exit code: typecheck 0 · lint 0 · test 0 · build 0 · prettier 0.
   Follow-up noted: serial picker UI on the transfer form (API-complete).
+
+## Checkpoint 16 — J2/J3 live; ALL TRACKED TASKS COMPLETE (2026-08-27)
+
+PR #45 squash-merged on green CI (one e2e fix along the way: the new Floor
+column shifted the inventory table's column indexes — orders.spec.ts
+updated), deploy branch rolled (cdf3023), Render deploy
+dep-da815b1srm7s73dqassg live — boot log verified `57/57 applied,
+head=0056_floor_samples_serials; this run applied 0056`. The serial-piece
+picker UI shipped in the same PR, so J3 is API- and UI-complete.
+
+Today's full run, every one merged + deployed + boot-verified: B14 (#38) ·
+physical inventory (#39, 0051) · PO corrections (#40) · returns (#41, 0052)
+· auto transfers (#42, 0053) · FIFO costing (#43, 0054) · nightly batch
+runner (#44, 0055) · floor samples + serial transfers (#45, 0056).
+
+Remaining candidate work is genuinely optional and needs owner priorities:
+H2 wrong-vendor RTV guidance (P2) · I7 direct-ship vendor PO with customer
+ship-to (P2) · as_is-type transfer receiving into As-Is review · sysadmin
+substrate designs (settings registry, RPT-AUDIT stream, report builder) ·
+needs-counsel privacy items (TCPA consent, erasure policy). Ops items
+unchanged — the manager invite expires 2026-08-29 17:53Z.
