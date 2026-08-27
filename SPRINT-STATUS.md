@@ -2177,3 +2177,23 @@ confirmed fine), then a 10-agent fix workflow, gated centrally:
   sales 21 · controls 22 · closeout 4 · service-crm 8 · inventory 21 all
   green. Gates by exit code: typecheck 0 · lint 0 · test 0 · build 0 ·
   prettier 0.
+
+## Checkpoint 20 — pagination sweep LIVE; all 20 tasks complete (2026-08-27)
+
+PR #50 squash-merged on green CI (main 84eb3af), deploy branch rolled
+(3361981), Render deploy dep-da87ke2jnfac73d27fng live — boot log
+verified `Schema migrations: 60/60 applied,
+head=0059_exchange_partial_unique; this run applied none` (correct: no
+migration in this PR). Vercel production READY on main 84eb3af
+(dpl_8bD1fdMSqnWHafhydxAwRuTEzyW9), so the web side (Products,
+Inventory, and every converted list page) is serving the Load-more UI.
+
+All 20 tracked tasks complete. Queue holds nothing buildable. Remaining
+items are owner-side only:
+
+- Policy values awaiting owner: restocking fee %, E1 hold-at-entry,
+  return window, delivery auto-schedule days, auto-replenishment.
+- Needs-counsel privacy items: TCPA consent wording, retention/erasure.
+- Deferred pagination mediums (noted in the sweep section above):
+  /v1/inventory/levels full-location fetch, deliveries week view,
+  commissions report caps, admin templates, marketing tag ordering.
