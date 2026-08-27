@@ -704,3 +704,184 @@ describe('Auto transfers (FAQ J4/J5 — XFR-051/052/053)', () => {
       .expect(200);
   });
 });
+
+describe('J2/J3 — floor samples + serial pieces on transfers', () => {
+  let serVariantId = '';
+  let serial1 = '';
+  let serial2 = '';
+
+  function asManager() {
+    return {
+      get: (url: string) =>
+        request(app.getHttpServer())
+          .get(url)
+          .set('Cookie', managerCookie)
+          .set('X-Business-Id', businessId),
+      post: (url: string) =>
+        request(app.getHttpServer())
+          .post(url)
+          .set('Cookie', managerCookie)
+          .set('X-Business-Id', businessId),
+    };
+  }
+
+  async function withDb<T>(fn: (db: ReturnType<typeof drizzle>) => Promise<T>): Promise<T> {
+    const sql2 = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    try {
+      return await fn(drizzle(sql2));
+    } finally {
+      await sql2.end({ timeout: 5 });
+    }
+  }
+
+  it('setup: serial-tracked fixture with two pieces at the warehouse', async () => {
+    await withDb(async (db) => {
+      const [p] = await db
+        .insert(schema.products)
+        .values({ businessId, sku: 'SER-BED', name: 'Serial Fixture Bed' })
+        .returning();
+      const [v] = await db
+        .insert(schema.productVariants)
+        .values({ businessId, productId: p!.id, sku: 'SER-BED-V1', priceCents: 60000 })
+        .returning();
+      serVariantId = v!.id;
+      await db.insert(schema.inventoryLevels).values({
+        businessId,
+        variantId: serVariantId,
+        locationId: warehouseLocationId,
+        onHand: 3,
+        reserved: 0,
+      });
+      const rows = await db
+        .insert(schema.serialUnits)
+        .values([
+          {
+            businessId,
+            variantId: serVariantId,
+            locationId: warehouseLocationId,
+            serial: 'SN-001',
+          },
+          {
+            businessId,
+            variantId: serVariantId,
+            locationId: warehouseLocationId,
+            serial: 'SN-002',
+          },
+        ])
+        .returning({ id: schema.serialUnits.id });
+      serial1 = rows[0]!.id;
+      serial2 = rows[1]!.id;
+    });
+  });
+
+  it('a named piece rides the transfer: ship flags in_transit, receive re-homes it', async () => {
+    const created = await asManager()
+      .post('/v1/stock-transfers')
+      .send({
+        fromLocationId: warehouseLocationId,
+        toLocationId: mainLocationId,
+        ship: true,
+        lines: [{ variantId: serVariantId, quantity: 1, serialIds: [serial1] }],
+      });
+    expect(created.status).toBe(201);
+
+    await withDb(async (db) => {
+      const [su] = await db
+        .select()
+        .from(schema.serialUnits)
+        .where(eq(schema.serialUnits.id, serial1));
+      expect(su!.status).toBe('in_transit');
+    });
+
+    const lineId = created.body.lines[0].id;
+    const received = await asManager()
+      .post(`/v1/stock-transfers/${created.body.id}/receive`)
+      .send({ lines: [{ lineId, quantity: 1 }] });
+    expect(received.status).toBe(201);
+
+    await withDb(async (db) => {
+      const [su] = await db
+        .select()
+        .from(schema.serialUnits)
+        .where(eq(schema.serialUnits.id, serial1));
+      expect(su!.status).toBe('in_stock');
+      expect(su!.locationId).toBe(mainLocationId);
+    });
+  });
+
+  it('serial validation refuses wrong-location and over-quantity picks', async () => {
+    // serial1 now lives at main — naming it on a warehouse-origin line fails.
+    const wrongLoc = await asManager()
+      .post('/v1/stock-transfers')
+      .send({
+        fromLocationId: warehouseLocationId,
+        toLocationId: mainLocationId,
+        lines: [{ variantId: serVariantId, quantity: 1, serialIds: [serial1] }],
+      });
+    expect(wrongLoc.status).toBe(400);
+    expect(wrongLoc.body.message).toMatch(/not at the origin/);
+
+    const tooMany = await asManager()
+      .post('/v1/stock-transfers')
+      .send({
+        fromLocationId: warehouseLocationId,
+        toLocationId: mainLocationId,
+        lines: [{ variantId: serVariantId, quantity: 1, serialIds: [serial2, serial2] }],
+      });
+    expect(tooMany.status).toBe(400);
+  });
+
+  it('a floor_sample transfer nails the piece down and removes it from available', async () => {
+    const created = await asManager()
+      .post('/v1/stock-transfers')
+      .send({
+        fromLocationId: warehouseLocationId,
+        toLocationId: mainLocationId,
+        transferType: 'floor_sample',
+        ship: true,
+        lines: [{ variantId: serVariantId, quantity: 1, serialIds: [serial2] }],
+      });
+    expect(created.status).toBe(201);
+    await asManager()
+      .post(`/v1/stock-transfers/${created.body.id}/receive`)
+      .send({ lines: [{ lineId: created.body.lines[0].id, quantity: 1 }] })
+      .expect(201);
+
+    await withDb(async (db) => {
+      const [su] = await db
+        .select()
+        .from(schema.serialUnits)
+        .where(eq(schema.serialUnits.id, serial2));
+      expect(su!.status).toBe('floor_sample');
+      expect(su!.locationId).toBe(mainLocationId);
+    });
+
+    const levels = await asManager().get(`/v1/inventory/levels?locationId=${mainLocationId}`);
+    const row = (
+      levels.body as {
+        variantId: string;
+        onHand: number;
+        floorSample: number;
+        available: number;
+      }[]
+    ).find((l) => l.variantId === serVariantId);
+    expect(row).toBeTruthy();
+    expect(row!.onHand).toBe(2); // both pieces arrived at main
+    expect(row!.floorSample).toBe(1); // the nailed-down one
+    expect(row!.available).toBe(1); // only the sellable piece
+  });
+
+  it('the manual floor-sample hold clamps to on-hand and is reversible', async () => {
+    const set = await asManager()
+      .post('/v1/inventory/levels/floor-sample')
+      .send({ variantId: serVariantId, locationId: mainLocationId, quantity: 999 });
+    expect(set.status).toBe(201);
+    expect(set.body.floorSample).toBe(2); // clamped to on-hand
+
+    const back = await asManager()
+      .post('/v1/inventory/levels/floor-sample')
+      .send({ variantId: serVariantId, locationId: mainLocationId, quantity: 1 });
+    expect(back.status).toBe(201);
+    expect(back.body.floorSample).toBe(1);
+  });
+});

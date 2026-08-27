@@ -3,6 +3,7 @@ import {
   date,
   index,
   integer,
+  jsonb,
   pgTable,
   text,
   timestamp,
@@ -107,6 +108,12 @@ export const stockTransferLines = pgTable(
      * costing existed — receive falls back to the variant catalog cost.
      */
     unitCostCents: integer('unit_cost_cents'),
+    /**
+     * J3 (XFR-040): the specific serial pieces riding this line (array
+     * of serial_units ids, ≤ quantity_shipped). Ship flags them
+     * in_transit; receive re-homes them at the destination.
+     */
+    serialIdsJson: jsonb('serial_ids_json'),
   },
   (t) => ({
     transferIdx: index('stock_transfer_lines_transfer_id_idx').on(t.transferId),

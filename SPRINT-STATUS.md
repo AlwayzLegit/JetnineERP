@@ -1873,3 +1873,30 @@ deliberately the opposite of STORIS's Generate Daily Reports:
   replenishment PO + flags the overdue PO + writes the run report, per-date
   idempotency with no duplicate drafts, gate-off no-op). Gates by exit code:
   typecheck 0 · lint 0 · test 0 · build 0 · prettier 0.
+
+## Floor samples + serial transfer pieces shipped (2026-08-27)
+
+FAQ J2 (P1-PARTIAL) and J3 (P1-MISSING), the last flagged transfer gaps.
+
+- **J2 (XFR-030/STK-020):** `inventory_levels.floor_sample` (migration 0056)
+  — units physically on hand but never sellable as new. Receiving a
+  `floor_sample`-type transfer nails the received units down automatically;
+  a manual hold (`POST /v1/inventory/levels/floor-sample`, clamped to
+  on-hand, audited) covers the walk-up case. **Available stock is now
+  `on_hand − reserved − floor_sample` in all eight places that compute
+  it**: reservation planning (stockLevels nets it once for planReservations
+  - allocatePending), POS lookup, levels endpoint, stock report, auto
+    transfers, reorder suggestions/auto-replenishment, and PO un-receive's
+    free-stock guard. Inventory page shows a Floor column with click-to-set.
+- **J3 (XFR-040):** `stock_transfer_lines.serial_ids_json` — named pieces
+  ride the transfer. Create validates each piece (real, in stock at the
+  origin, right variant, no repeats, ≤ quantity); ship flags them
+  `in_transit`; receive re-homes them at the destination in listed order up
+  to the received quantity — as `floor_sample` when the transfer is one.
+  Serial status vocabulary gains `in_transit` + `floor_sample`.
+- Tests: transfers.int.spec 19→24 (ride-along lifecycle, wrong-location and
+  duplicate-pick refusals, floor-sample nailing with availability math
+  asserted through the levels endpoint, manual-hold clamp + reversal);
+  inventory 21, orders 68, sales 21, purchasing 39 re-run green. Gates by
+  exit code: typecheck 0 · lint 0 · test 0 · build 0 · prettier 0.
+  Follow-up noted: serial picker UI on the transfer form (API-complete).

@@ -30,6 +30,7 @@ interface Level {
   variantBarcode: string | null;
   onHand: number;
   reserved: number;
+  floorSample: number;
   available: number;
   storageBinId: string | null;
   storageBinCode: string | null;
@@ -113,6 +114,33 @@ export default function InventoryPage() {
   useEffect(() => {
     if (locationId) void loadLevels(locationId);
   }, [locationId]);
+
+  /** J2: hold N units as floor samples — on hand but never sellable. */
+  async function setFloor(level: Level) {
+    const qtyStr = prompt(
+      `Floor-sample hold for ${level.variantSku ?? level.productName} (currently ${level.floorSample} of ${level.onHand} on hand). Set to:`,
+      String(level.floorSample),
+    );
+    if (qtyStr == null) return;
+    const quantity = Number(qtyStr);
+    if (!Number.isInteger(quantity) || quantity < 0) {
+      toast.error('Enter a whole number ≥ 0');
+      return;
+    }
+    try {
+      await api('/v1/inventory/levels/floor-sample', {
+        method: 'POST',
+        body: JSON.stringify({
+          variantId: level.variantId,
+          locationId: level.locationId,
+          quantity,
+        }),
+      });
+      await loadLevels(locationId);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    }
+  }
 
   async function adjust(level: Level) {
     const deltaStr = prompt(
@@ -232,6 +260,9 @@ export default function InventoryPage() {
                   <th>Barcode</th>
                   <th className="num">On hand</th>
                   <th className="num">Reserved</th>
+                  <th className="num" title="Floor samples — on hand but never sellable as new">
+                    Floor
+                  </th>
                   <th className="num">Available</th>
                   <th>Bin</th>
                   <th>&nbsp;</th>
@@ -249,6 +280,17 @@ export default function InventoryPage() {
                     </td>
                     <td className="num">{l.onHand}</td>
                     <td className="num">{l.reserved}</td>
+                    <td className="num">
+                      <button
+                        type="button"
+                        className={l.floorSample > 0 ? 'badge badge-info' : undefined}
+                        style={{ cursor: 'pointer', border: 'none', background: 'transparent' }}
+                        title="Click to set the floor-sample hold"
+                        onClick={() => void setFloor(l)}
+                      >
+                        {l.floorSample > 0 ? l.floorSample : '—'}
+                      </button>
+                    </td>
                     <td className="num">{l.available}</td>
                     <td>
                       <Select

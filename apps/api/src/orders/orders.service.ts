@@ -189,6 +189,7 @@ export class OrdersService {
         variantId: schema.inventoryLevels.variantId,
         onHand: schema.inventoryLevels.onHand,
         reserved: schema.inventoryLevels.reserved,
+        floorSample: schema.inventoryLevels.floorSample,
       })
       .from(schema.inventoryLevels)
       .where(
@@ -206,7 +207,12 @@ export class OrdersService {
     // but it also has nothing to reserve — planReservations reads a missing
     // row as zero available — so the unprotected case commits nothing.
     const rows = await (opts.lock ? query.for('update') : query);
-    return new Map(rows.map((r) => [r.variantId, { onHand: r.onHand, reserved: r.reserved }]));
+    // J2: floor samples are physically on hand but never part of the
+    // sellable pool — netting them out here covers reservation planning
+    // and pending-allocation backfill in one place.
+    return new Map(
+      rows.map((r) => [r.variantId, { onHand: r.onHand - r.floorSample, reserved: r.reserved }]),
+    );
   }
 
   /**
