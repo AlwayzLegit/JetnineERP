@@ -2256,3 +2256,29 @@ locked decisions (no in-house financing, no protection plans, no leads/CRM).
 location/data scoping (self/store/all axis); marketing attribution wanted?;
 lightweight AP (vendor bill/credit) in scope for received-not-billed /
 RTV-not-credited queues?; ATP projection scope.
+
+## Phase 0 locked + Delivery Ticket Reprints pack committed (2026-08-27)
+
+Owner answered all five Phase 0 questions on the Sales Views pack (recorded
+in `docs/erp-sales-views/PHASE0-TRIAGE.md`): keep/drop table confirmed;
+salespeople scoped to **their store's** numbers; marketing attribution
+wanted (capture code on orders); no mini-AP (received-not-billed /
+RTV-not-credited queues dropped); ATP stays partial. Build starts at
+Phase 1 (data-scope substrate) — note `membership_location_scopes` already
+exists in schema, currently read only by locations.controller.
+
+Owner also uploaded the **Delivery Ticket Print & Reprint** pack (9 files,
+zip verified against loose uploads) — committed verbatim to
+`docs/erp-delivery-reprints/` (prettier-ignored). Its 02 state machine is
+normative with STORIS-published acceptance tests in 07 to port first.
+Queued after the Sales Views build.
+
+## Sales-Rate PO Replenishment pack committed (2026-08-27)
+
+Owner uploaded the sales-rate replenishment handoff (STORIS "Replenish
+Stock Inventory Based on Sales Rate") — committed verbatim to
+`docs/HANDOFF-po-replenishment-sales-rate.md`. One pure calculation engine
+for EOD/on-demand/scheduled (T-31 identical-numbers is the key test), 32
+acceptance tests, 11 open questions (several self-decidable, e.g. sold −
+returned; the rest flagged when built). Supersedes/extends the existing
+min-based auto-replenishment PO drafts. Queued after delivery reprints.

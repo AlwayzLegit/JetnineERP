@@ -5,6 +5,19 @@ seven Phase 0 decisions in `07-build-plan.md`, grounded in what Jetnine already
 has. Items marked **OWNER** need confirmation before Phase 5; everything else is
 proposed as decided by existing architecture or prior locked decisions._
 
+> **Owner confirmations (2026-08-27) — all five OWNER items answered; this
+> triage is now locked:**
+>
+> 1. Keep/drop table → **confirmed as proposed.**
+> 2. Data scoping → **yes: salespeople see their store's numbers** (a
+>    store-level `data_scope`; owners/managers keep all-location visibility).
+> 3. Marketing attribution → **yes, wanted** — capture a marketing code on
+>    orders and build the attribution report (never summed across codes).
+> 4. Lightweight AP (vendor bill/credit) → **no.** Received-Not-Invoiced and
+>    Returned-Not-Credited queues are **dropped**.
+> 5. ATP → **confirmed partial**: risk screens use reservation state +
+>    linked-PO expected dates; full ATP projection is a future epic.
+
 ## The seven decisions
 
 1. **One surface or two? → One surface (decided by architecture).** Jetnine list

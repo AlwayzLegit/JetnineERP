@@ -120,6 +120,14 @@ export const memberships = pgTable(
       .references(() => roles.id, { onDelete: 'restrict' }),
     /** G5: which commission plan pays this member; null = no commission. */
     commissionPlanId: uuid('commission_plan_id'),
+    /**
+     * Sales-data visibility (Sales Views Phase 1, owner-confirmed
+     * 2026-08-27): 'all' sees every location; 'store' limits sales
+     * documents and dollars (orders, POS sales, cash shifts, sales
+     * reports) to the locations listed in membership_location_scopes.
+     * A 'store' member with no scope rows sees no sales data.
+     */
+    dataScope: text('data_scope').notNull().default('all'),
     // 'active' | 'invited' | 'disabled'
     status: text('status').notNull(),
     invitedByUserId: uuid('invited_by').references(() => users.id, { onDelete: 'set null' }),

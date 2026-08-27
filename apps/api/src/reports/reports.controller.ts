@@ -4,6 +4,7 @@ import { and, desc, eq, gte, inArray, isNull, lt, or, sql } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { schema } from '@jetnine/db';
 import { CurrentTenant } from '../auth/current-user.decorator';
+import { salesScopeCond } from '../common/sales-scope';
 import { CostingService } from '../costing/costing.service';
 import { DRIZZLE } from '../database/database.module';
 import { RequirePermission, TenantScoped } from '../tenancy/decorators';
@@ -179,7 +180,7 @@ export class ReportsController {
         totalCents: sql<number>`COALESCE(SUM(${schema.sales.totalCents}), 0)::int`,
       })
       .from(schema.sales)
-      .where(and(dateRange, includedStatuses))
+      .where(and(dateRange, includedStatuses, salesScopeCond(tenant, schema.sales.locationId)))
       .groupBy(dayExpr)
       .orderBy(dayExpr);
 
@@ -192,7 +193,7 @@ export class ReportsController {
       })
       .from(schema.sales)
       .leftJoin(schema.users, eq(schema.users.id, schema.sales.associateUserId))
-      .where(and(dateRange, includedStatuses))
+      .where(and(dateRange, includedStatuses, salesScopeCond(tenant, schema.sales.locationId)))
       .groupBy(schema.sales.associateUserId, schema.users.email)
       .orderBy(desc(sql`COALESCE(SUM(${schema.sales.totalCents}), 0)`));
 
@@ -204,7 +205,14 @@ export class ReportsController {
       })
       .from(schema.payments)
       .innerJoin(schema.sales, eq(schema.sales.id, schema.payments.saleId))
-      .where(and(dateRange, includedStatuses, eq(schema.payments.status, 'succeeded')))
+      .where(
+        and(
+          dateRange,
+          includedStatuses,
+          eq(schema.payments.status, 'succeeded'),
+          salesScopeCond(tenant, schema.sales.locationId),
+        ),
+      )
       .groupBy(schema.payments.method);
 
     // Order deposits/balances join the tender mix (D2). Received-at is the
@@ -215,6 +223,7 @@ export class ReportsController {
       lt(schema.payments.createdAt, endTsExclusive),
       eq(schema.payments.status, 'succeeded'),
       isNull(schema.orders.importedAt),
+      salesScopeCond(tenant, schema.orders.locationId),
     );
     const orderPayments = await this.db
       .select({
@@ -318,6 +327,7 @@ export class ReportsController {
           gte(schema.sales.completedAt, startTs),
           lt(schema.sales.completedAt, endTsExclusive),
           sql`${schema.sales.status} IN ('completed', 'partially_refunded', 'refunded')`,
+          salesScopeCond(tenant, schema.sales.locationId),
         ),
       )
       .groupBy(
@@ -438,7 +448,7 @@ export class ReportsController {
   @Get('z')
   @RequirePermission('reports.sales.view')
   async zReport(
-    @CurrentTenant() _tenant: RequestTenantContext,
+    @CurrentTenant() tenant: RequestTenantContext,
     @Query('date') dateStr?: string,
     @Query('locationId') locationId?: string,
   ): Promise<ZReport> {
@@ -453,6 +463,7 @@ export class ReportsController {
       sql`${schema.sales.status} IN ('completed', 'partially_refunded', 'refunded')`,
       isNull(schema.sales.importedAt),
       locationId ? eq(schema.sales.locationId, locationId) : undefined,
+      salesScopeCond(tenant, schema.sales.locationId),
     );
 
     const [salesTotals] = await this.db
@@ -479,6 +490,7 @@ export class ReportsController {
           lt(schema.refunds.createdAt, dayEnd),
           isNull(schema.sales.importedAt),
           locationId ? eq(schema.sales.locationId, locationId) : undefined,
+          salesScopeCond(tenant, schema.sales.locationId),
         ),
       );
 
@@ -512,6 +524,10 @@ export class ReportsController {
           locationId
             ? sql`COALESCE(${schema.sales.locationId}, ${schema.orders.locationId}, ${schema.serviceOrders.locationId}) = ${locationId}`
             : undefined,
+          salesScopeCond(
+            tenant,
+            sql`COALESCE(${schema.sales.locationId}, ${schema.orders.locationId}, ${schema.serviceOrders.locationId})`,
+          ),
         ),
       )
       .groupBy(schema.payments.method)
@@ -530,6 +546,7 @@ export class ReportsController {
           eq(schema.payments.status, 'succeeded'),
           isNull(schema.orders.importedAt),
           locationId ? eq(schema.orders.locationId, locationId) : undefined,
+          salesScopeCond(tenant, schema.orders.locationId),
         ),
       );
 
@@ -552,6 +569,7 @@ export class ReportsController {
           lt(schema.cashShifts.openedAt, dayEnd),
           or(isNull(schema.cashShifts.closedAt), gte(schema.cashShifts.closedAt, dayStart)),
           locationId ? eq(schema.cashShifts.locationId, locationId) : undefined,
+          salesScopeCond(tenant, schema.cashShifts.locationId),
         ),
       )
       .orderBy(schema.cashShifts.openedAt);
@@ -611,6 +629,7 @@ export class ReportsController {
           gte(schema.sales.completedAt, startTs),
           lt(schema.sales.completedAt, endTsExclusive),
           sql`${schema.sales.status} IN ('completed', 'partially_refunded', 'refunded')`,
+          salesScopeCond(tenant, schema.sales.locationId),
         ),
       )
       .groupBy(schema.products.categoryId, schema.categories.name)

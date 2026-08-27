@@ -16,6 +16,7 @@ import type { SQL } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { schema } from '@jetnine/db';
 import { AuditService } from '../audit/audit.service';
+import { salesScopeCond } from '../common/sales-scope';
 import {
   buildPage,
   clampLimit,
@@ -223,7 +224,7 @@ export class CashShiftsController {
   @Get()
   @RequirePermission('pos.cash.open')
   async list(
-    @CurrentTenant() _tenant: RequestTenantContext,
+    @CurrentTenant() tenant: RequestTenantContext,
     @Query('locationId') locationId?: string,
     @Query('limit') limitStr?: string,
     @Query('cursor') cursorStr?: string,
@@ -231,6 +232,8 @@ export class CashShiftsController {
     const limit = clampLimit(limitStr);
     const conditions: SQL[] = [];
     if (locationId) conditions.push(eq(schema.cashShifts.locationId, locationId));
+    const scope = salesScopeCond(tenant, schema.cashShifts.locationId);
+    if (scope) conditions.push(scope);
     const cursor = decodeCursor(cursorStr);
     if (cursor) {
       conditions.push(
