@@ -1536,3 +1536,23 @@ expected for a domain with zero sending history. Owner should mark it "Not spam"
 (trains Gmail for future invites); adding a DMARC record at GoDaddy
 (`_dmarc.a-prompt.ai` TXT `v=DMARC1; p=none;`) would further help reputation — Ops,
 optional.
+
+## Improvement slice 1 — invoice lookup + daily-ops search (2026-08-27)
+
+The owner green-lit ERP improvement work; slice 1 closes the top three findings
+from the daily-ops audit (the "no way to find one sale among 73,899" hole):
+
+- **Invoice lookup:** `GET /v1/sales` gains `q` — case-insensitive substring on
+  the document number (a scanned receipt barcode types the full number and hits
+  exactly, closing the print-only half of the G-era barcode feature) OR customer
+  tsvector match — composing with the existing timestamp cursor. Rows now carry
+  `customerName` (left-joined). Sales page rebuilt: autofocused scanner-friendly
+  search box, Customer column (named / — / Walk-in), Load more.
+- **Inventory search:** `levels` gains `q` over the variant+product tsvectors
+  (name/SKU/barcode); Inventory page gains the search form.
+- **Customers pagination:** the page finally uses the `nextCursor` the API always
+  returned — Load more past the first 50 of 63k customers.
+
+Tests: sales.int.spec +5 (full-number/scan path, fragment + customerName,
+customer-name search, empty non-match), inventory.int.spec +1. Gates by exit
+code: typecheck 0 · lint 0 · sales+inventory suites pass · prettier 0.

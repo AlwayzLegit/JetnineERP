@@ -95,8 +95,21 @@ export class InventoryController {
   async levels(
     @CurrentTenant() _tenant: RequestTenantContext,
     @Query('locationId') locationId?: string,
+    @Query('q') q?: string,
   ): Promise<LevelRow[]> {
-    const where = locationId ? eq(schema.inventoryLevels.locationId, locationId) : undefined;
+    const filters = [];
+    if (locationId) filters.push(eq(schema.inventoryLevels.locationId, locationId));
+    const query = q?.trim();
+    if (query) {
+      // Same tsvector the catalog search uses — covers product name,
+      // variant SKU, and barcode in one predicate.
+      const tsq = sql`websearch_to_tsquery('simple', ${query})`;
+      filters.push(
+        sql`(${schema.productVariants.searchTsv} @@ ${tsq}
+             OR ${schema.products.searchTsv} @@ ${tsq})`,
+      );
+    }
+    const where = filters.length ? and(...filters) : undefined;
     const rows = await this.db
       .select({
         variantId: schema.inventoryLevels.variantId,

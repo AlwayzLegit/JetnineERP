@@ -446,3 +446,30 @@ describe('Storage bins', () => {
     expect(row?.storageBinId).toBeNull();
   });
 });
+
+describe('Inventory search — GET /v1/inventory/levels?q=', () => {
+  it('Filters levels by product text and returns nothing for a non-match', async () => {
+    const all = await request(app.getHttpServer())
+      .get(`/v1/inventory/levels?locationId=${locationId}`)
+      .set('Cookie', inventoryClerkCookie)
+      .set('X-Business-Id', businessId);
+    expect(all.status).toBe(200);
+    expect((all.body as unknown[]).length).toBeGreaterThan(0);
+    const first = (all.body as { variantSku: string | null; productName: string }[])[0]!;
+    const needle = first.variantSku ?? first.productName;
+
+    const hit = await request(app.getHttpServer())
+      .get(`/v1/inventory/levels?locationId=${locationId}&q=${encodeURIComponent(needle)}`)
+      .set('Cookie', inventoryClerkCookie)
+      .set('X-Business-Id', businessId);
+    expect(hit.status).toBe(200);
+    expect((hit.body as unknown[]).length).toBeGreaterThan(0);
+
+    const miss = await request(app.getHttpServer())
+      .get(`/v1/inventory/levels?locationId=${locationId}&q=zzz-no-such-sku`)
+      .set('Cookie', inventoryClerkCookie)
+      .set('X-Business-Id', businessId);
+    expect(miss.status).toBe(200);
+    expect(miss.body).toHaveLength(0);
+  });
+});

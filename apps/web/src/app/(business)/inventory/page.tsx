@@ -49,6 +49,7 @@ export default function InventoryPage() {
   const [locationId, setLocationId] = useState<string>('');
   const [levels, setLevels] = useState<Level[] | null>(null);
   const [bins, setBins] = useState<Bin[]>([]);
+  const [q, setQ] = useState('');
   const [newBin, setNewBin] = useState('');
   const [error, setError] = useState<string | null>(null);
 
@@ -63,10 +64,12 @@ export default function InventoryPage() {
     }
   }
 
-  async function loadLevels(loc: string) {
+  async function loadLevels(loc: string, query = q) {
     if (!loc) return;
     try {
-      setLevels(await api<Level[]>(`/v1/inventory/levels?locationId=${loc}`));
+      const params = new URLSearchParams({ locationId: loc });
+      if (query.trim()) params.set('q', query.trim());
+      setLevels(await api<Level[]>(`/v1/inventory/levels?${params.toString()}`));
       setBins(await api<Bin[]>(`/v1/inventory/bins?locationId=${loc}`));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -154,7 +157,13 @@ export default function InventoryPage() {
         }
       />
 
-      <div className="mb-4 flex flex-wrap items-center gap-2">
+      <form
+        className="mb-4 flex flex-wrap items-center gap-2"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void loadLevels(locationId);
+        }}
+      >
         <label
           htmlFor="inventory-location"
           style={{ fontSize: 13, color: 'var(--text-secondary)' }}
@@ -173,7 +182,27 @@ export default function InventoryPage() {
             </option>
           ))}
         </Select>
-      </div>
+        <Input
+          name="q"
+          placeholder="Search by name, SKU, or barcode"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          className="min-w-[200px] flex-1"
+        />
+        <Button type="submit" variant="secondary">
+          Search
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          onClick={() => {
+            setQ('');
+            void loadLevels(locationId, '');
+          }}
+        >
+          Clear
+        </Button>
+      </form>
 
       {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
       <Card style={{ padding: 0 }}>
@@ -182,7 +211,11 @@ export default function InventoryPage() {
             <LoadingRows />
           </div>
         ) : levels.length === 0 ? (
-          <EmptyState>No stock at this location yet. Use Receive to add some.</EmptyState>
+          <EmptyState>
+            {q.trim()
+              ? `No stock matches "${q.trim()}" at this location.`
+              : 'No stock at this location yet. Use Receive to add some.'}
+          </EmptyState>
         ) : (
           <div className="overflow-x-auto">
             <table className="table">
