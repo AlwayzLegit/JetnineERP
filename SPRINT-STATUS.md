@@ -2423,3 +2423,20 @@ Next slice in the same sweep, gates green before push:
 - reports.int.spec 27→29 (liability counts only balance-carrying cards +
   403 for non-financial; audit-sourced before→after surfaces). Gates:
   typecheck 0 · lint 0 · test 0 (full) · build 0 · prettier 0.
+
+## Checkpoint 23 — #55 live; receipts + tax-by-location built (2026-08-27)
+
+PR #55 (gift-card liability + delivery date-change log) deployed:
+dep-da89ouvavr4c73es75dg live, boot log `61/61 applied,
+head=0060_membership_data_scope; this run applied none`. Next slice
+gated green:
+
+- `GET /v1/reports/receipts` (catalog 92) — every succeeded payment by
+  method × taking location (sale/order/service COALESCE), imported
+  excluded, store scope applies, CSV provenance; Reports page card.
+- Tax summary gains the **by-location jurisdiction block** (catalog 87
+  — LA Mattress jurisdictions map to locations): completed POS sales +
+  completed orders, documents/total/tax per location; the per-class
+  table (and now the whole endpoint) is store-scoped too.
+- reports.int.spec 29→31. Gates: typecheck 0 · lint 0 · test 0 (full) ·
+  build 0 · prettier 0.
