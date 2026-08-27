@@ -1087,18 +1087,31 @@ function ReturnsCard({
       .catch(() => setAdjustCodes([]));
   }, []);
 
+  // I4: a return outside the configured window comes back 403
+  // OVERRIDE_REQUIRED — the dialog retries with manager credentials.
+  const [windowOverrideOpen, setWindowOverrideOpen] = useState(false);
+
   const returnable = order.lines.filter((l) => l.qtyFulfilled - l.qtyReturned > 0);
   if (returnable.length === 0 && !order.originalOrderId && order.paidCents === 0) return null;
 
+  function buildReturnBody() {
+    return {
+      lines: Object.entries(qty)
+        .filter(([, q]) => q > 0)
+        .map(([lineId, quantity]) => ({
+          lineId,
+          quantity,
+          ...(returnCodeId ? { reasonCodeId: returnCodeId } : {}),
+        })),
+      refundMethod: method,
+      fulfillment,
+      reason: reason || null,
+    };
+  }
+
   async function processReturn() {
-    const lines = Object.entries(qty)
-      .filter(([, q]) => q > 0)
-      .map(([lineId, quantity]) => ({
-        lineId,
-        quantity,
-        ...(returnCodeId ? { reasonCodeId: returnCodeId } : {}),
-      }));
-    if (lines.length === 0) {
+    const body = buildReturnBody();
+    if (body.lines.length === 0) {
       toast.error('Enter a quantity on at least one line.');
       return;
     }
@@ -1110,12 +1123,7 @@ function ReturnsCard({
     try {
       await api(`/v1/orders/${order.id}/return`, {
         method: 'POST',
-        body: JSON.stringify({
-          lines,
-          refundMethod: method,
-          fulfillment,
-          reason: reason || null,
-        }),
+        body: JSON.stringify(body),
       });
       toast.success(
         fulfillment === 'drop_off'
@@ -1127,7 +1135,11 @@ function ReturnsCard({
       await onChanged();
       await loadReturns();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err));
+      if (err instanceof ApiError && err.code === 'OVERRIDE_REQUIRED') {
+        setWindowOverrideOpen(true);
+      } else {
+        toast.error(err instanceof Error ? err.message : String(err));
+      }
     } finally {
       setWorking(false);
     }
@@ -1231,6 +1243,25 @@ function ReturnsCard({
         </table>
       )}
 
+      <SecurityOverrideDialog
+        open={windowOverrideOpen}
+        title="Outside the return window — manager approval needed"
+        usageClass="exception"
+        submitLabel="Approve return"
+        perform={(payload) =>
+          api(`/v1/orders/${order.id}/return`, {
+            method: 'POST',
+            body: JSON.stringify({ ...buildReturnBody(), override: payload.override }),
+          }).then(() => undefined)
+        }
+        onClose={() => setWindowOverrideOpen(false)}
+        onSuccess={() => {
+          setQty({});
+          setReason('');
+          void onChanged();
+          void loadReturns();
+        }}
+      />
       <SecurityOverrideDialog
         open={cancellingReturnId != null}
         title="Cancel this return authorization"

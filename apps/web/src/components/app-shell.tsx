@@ -32,6 +32,7 @@ import {
   Wrench,
   Recycle,
   type LucideIcon,
+  Undo2,
 } from 'lucide-react';
 import { ActiveBusinessBadge } from '@/components/active-business-badge';
 import { useBusinessBranding, useBusinessName } from '@/lib/business-settings';
@@ -64,6 +65,7 @@ const NAV: NavGroup[] = [
       { href: '/service', label: 'Service', icon: Wrench },
       { href: '/special-orders', label: 'Special orders', icon: PackageSearch },
       { href: '/sales', label: 'Sales', icon: Receipt },
+      { href: '/returns', label: 'Returns', icon: Undo2 },
       { href: '/shifts', label: 'Shifts', icon: CreditCard },
     ],
   },

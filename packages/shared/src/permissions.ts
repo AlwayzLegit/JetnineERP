@@ -106,6 +106,8 @@ export const PERMISSIONS = {
   'pos.transaction.void': 'Void open transactions',
   'pos.refund.create': 'Process refunds',
   'pos.refund.approve': 'Approve refunds above limit',
+  'returns.override_window': 'Approve a return outside the return window',
+  'returns.no_original': 'Enter a return without the original order (no-original)',
   'pos.cash.open': 'Open cash drawer',
   'pos.cash.reconcile': 'Reconcile cash drawer',
   'sales.view': 'View completed sales and refund history',
