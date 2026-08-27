@@ -146,7 +146,9 @@ CMP-03  gate: any credit hold → not releasable
 CMP-04  gate: no ticket printed and no pick/pack path → not releasable
 CMP-05  Complete is checked-and-inactive for TAKE_WITH
 CMP-06  Complete is hidden and replaced by On-Manifest for a manifested fulfillment
-CMP-07  Complete is inactive at backorder counter 52 and for WMS ship-from locations
+CMP-07a Complete is inactive once the backorder counter reaches 52
+CMP-07b at a WMS ship-from location Complete is inactive without the WMS-inventory
+        permission and active with it  (see 29 §1 — supersedes the earlier "always inactive")
 CMP-08  direct ship with a linked PO on hold cannot complete; on split tickets, none can
 CMP-09  partial direct-ship completion requires ship quantity zeroed on undelivered lines
 CMP-10  completing the direct-ship portion creates an AP bill and closes the PO

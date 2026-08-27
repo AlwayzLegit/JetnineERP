@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useState, type ReactNode } from 'react';
 import {
+  AlertTriangle,
   ArrowLeftRight,
   BadgePercent,
   Boxes,
@@ -64,6 +65,7 @@ const NAV: NavGroup[] = [
       { href: '/pos', label: 'New Sale', icon: Monitor },
       { href: '/orders', label: 'Orders', icon: ShoppingCart },
       { href: '/deliveries', label: 'Deliveries', icon: Truck },
+      { href: '/jeopardy', label: 'At risk', icon: AlertTriangle },
       { href: '/service', label: 'Service', icon: Wrench },
       { href: '/special-orders', label: 'Special orders', icon: PackageSearch },
       { href: '/sales', label: 'Sales', icon: Receipt },

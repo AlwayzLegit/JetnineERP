@@ -11,23 +11,23 @@ the old system, not migrated mid-flight.
 
 ## What must migrate, and in what state
 
-| Data                                    | Migrate as                                                                                                          | Notes                                                                                                                                                                             |
-| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Customers                               | Full, with balances as **derived** buckets recomputed from migrated detail — not as stored totals                   | Dedupe first; STORIS has merge tooling for a reason. Bring the merge history if it exists                                                                                         |
-| Products / price setup                  | Full, including the price/spiff/commission table, district price exceptions, markdowns, and customer price matrices | Without all seven hierarchy levels, prices silently change on day one — see `04`                                                                                                  |
-| Open orders                             | Full, including every fulfillment, line, deposit, tax row, hold, and comment                                        | This is the hard one. See below                                                                                                                                                   |
-| Partially completed orders              | **Finish in the old system if at all possible**                                                                     | A partially completed order carries invoice linkage, a back-order chain position, and per-fulfillment charge overrides. Migrating these correctly is disproportionately expensive |
-| Deposits                                | As open liabilities, reconciled to the GL deposit-liability account to the cent                                     | A deposit that does not tie is a customer walking in with a receipt you cannot honour                                                                                             |
-| Completed orders / invoices             | History, read-only, for lookup, returns, warranty, and commission attribution                                       | Returns need the original written date and original payment records (`03`, `08`)                                                                                                  |
-| Financing applications & authorizations | Approved-and-unused approvals must migrate or customers lose their approval                                         | Confirm with each provider whether approvals survive a system change                                                                                                              |
-| Financed balances                       | Only if we service them; otherwise they stay with the provider                                                      | Depends on the `06` receivables decision                                                                                                                                          |
-| Settlement history                      | Enough to answer "was this funded"                                                                                  | Do not migrate open batches — settle them out first                                                                                                                               |
-| Cash drawers                            | None in flight; reconcile and purge before cutover                                                                  |                                                                                                                                                                                   |
-| Leads / CRM                             | Active leads with their full comment history; historical leads as read-only                                         | Comment history is the value; a lead without it is a name                                                                                                                         |
-| Up System                               | Nothing. Start the rotation fresh on day one                                                                        |                                                                                                                                                                                   |
-| Commission records                      | Current unpaid period plus enough history for return attribution                                                    | Returns date to the **original** invoice's written date                                                                                                                           |
-| Gift certificates                       | All outstanding balances                                                                                            | Directly redeemable money                                                                                                                                                         |
-| Warranties / protection plans           | Full, with line linkage                                                                                             | Multi-year obligations; losing linkage loses claims                                                                                                                               |
+| Data | Migrate as | Notes |
+|---|---|---|
+| Customers | Full, with balances as **derived** buckets recomputed from migrated detail — not as stored totals | Dedupe first; STORIS has merge tooling for a reason. Bring the merge history if it exists |
+| Products / price setup | Full, including the price/spiff/commission table, district price exceptions, markdowns, and customer price matrices | Without all seven hierarchy levels, prices silently change on day one — see `04` |
+| Open orders | Full, including every fulfillment, line, deposit, tax row, hold, and comment | This is the hard one. See below |
+| Partially completed orders | **Finish in the old system if at all possible** | A partially completed order carries invoice linkage, a back-order chain position, and per-fulfillment charge overrides. Migrating these correctly is disproportionately expensive |
+| Deposits | As open liabilities, reconciled to the GL deposit-liability account to the cent | A deposit that does not tie is a customer walking in with a receipt you cannot honour |
+| Completed orders / invoices | History, read-only, for lookup, returns, warranty, and commission attribution | Returns need the original written date and original payment records (`03`, `08`) |
+| Financing applications & authorizations | Approved-and-unused approvals must migrate or customers lose their approval | Confirm with each provider whether approvals survive a system change |
+| Financed balances | Only if we service them; otherwise they stay with the provider | Depends on the `06` receivables decision |
+| Settlement history | Enough to answer "was this funded" | Do not migrate open batches — settle them out first |
+| Cash drawers | None in flight; reconcile and purge before cutover | |
+| Leads / CRM | Active leads with their full comment history; historical leads as read-only | Comment history is the value; a lead without it is a name |
+| Up System | Nothing. Start the rotation fresh on day one | |
+| Commission records | Current unpaid period plus enough history for return attribution | Returns date to the **original** invoice's written date |
+| Gift certificates | All outstanding balances | Directly redeemable money |
+| Warranties / protection plans | Full, with line linkage | Multi-year obligations; losing linkage loses claims |
 
 ## Open orders: the actual work
 
@@ -102,5 +102,5 @@ cutover if the store count makes that possible.
 - **Rooms** are per-order throwaway records; do not build a room master from them.
 - **Exchange halves** are two-sided; an extract that treats an exchange as one order will lose the
   return side and its commission.
-- **Tax exemption expiry dates** compare against the _written_ date. Migrating orders whose customer's
+- **Tax exemption expiry dates** compare against the *written* date. Migrating orders whose customer's
   exemption has since expired must keep the original tax treatment, not recalculate.

@@ -22,8 +22,8 @@ order dates and fulfillment dates (each with date type + start + end), fulfillme
 least one required).
 
 **Two row actions:** **View** (read-only document) and **Maintain** (actionable; the grid row refreshes
-when the order is updated). Documented gotcha: _do not use the filter checkboxes on the View and
-Maintain columns — doing so clears the grid._ Design that out rather than reproducing it.
+when the order is updated). Documented gotcha: *do not use the filter checkboxes on the View and
+Maintain columns — doing so clears the grid.* Design that out rather than reproducing it.
 
 **Columns** (asterisk = totalled at the bottom): sold at, stock location (ellipsis when multiple),
 fulfillment location, route code, salesperson (ellipsis when multiple), billing customer name,
@@ -51,7 +51,7 @@ eighth-yard product shows `0.125`.
 fulfillment method and status required and defaulted to all, and the date-range filters replaced by
 **past days** / **future days** offsets (run on 01/22 with past 5 / future 10 selects 01/17–02/01;
 both zero or null = current date only). Output goes to a report archive or a file share. The archive
-output carries a slightly _larger_ column set than the interactive grid. Concurrency is bounded by a
+output carries a slightly *larger* column set than the interactive grid. Concurrency is bounded by a
 max-concurrent-background-processes setting.
 
 **The ASAP/CWC trap `[DOC]`.** ASAP and CWC fulfillments have no fulfillment date unless the method is
@@ -110,7 +110,6 @@ parameters = selection-tab entries plus run-time date codes.
 in characters, description length in characters.
 
 **Documented data semantics — carry these into any reporting layer:**
-
 - Sales analysis dollar amounts **exclude dollars-only adjustments**
 - On written units/dollars/cost-dollars fields, a **negative number indicates the deletion of a
   written sale** — not a return
@@ -124,13 +123,12 @@ in characters, description length in characters.
 `[PARTIAL]` **The published field-list article is broken on STORIS' side** — the field table failed to
 migrate and no field names, usages, formats, or lengths are retrievable. The numbered field examples
 that survive elsewhere (#2 salesperson, #5 delivered sales dollars, #6 selling store, #9 date) are
-examples only. We therefore have the report builder's _shape_ but not its _dimension and measure
-catalogue_.
+examples only. We therefore have the report builder's *shape* but not its *dimension and measure
+catalogue*.
 
 `[DECIDE]` Two viable paths:
-
 1. **Derive the catalogue from the cutover extract.** Whatever fields the legacy sales-analysis files
-   contain _is_ the catalogue; enumerate them during phase 11 and build the metadata table from real
+   contain *is* the catalogue; enumerate them during phase 11 and build the metadata table from real
    data. Recommended.
 2. **Skip the builder.** Ship the two operational grids plus a small set of fixed reports and connect
    a BI tool to a read replica. Cheaper, but loses the self-service that store managers currently have.
