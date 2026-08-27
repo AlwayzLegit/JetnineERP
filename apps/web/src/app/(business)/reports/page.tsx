@@ -61,6 +61,16 @@ interface SalesSummary {
     averageMerchandiseCents: number;
   };
 }
+interface ReceiptsReport {
+  rows: {
+    method: string;
+    locationId: string | null;
+    locationName: string | null;
+    count: number;
+    amountCents: number;
+  }[];
+  totals: { count: number; amountCents: number };
+}
 interface GiftCardLiabilityRow {
   code: string;
   status: string;
@@ -166,6 +176,13 @@ interface TaxSummary {
     netSalesCents: number;
     taxCents: number;
   }[];
+  byLocation: {
+    locationId: string;
+    locationName: string | null;
+    documents: number;
+    taxCents: number;
+    totalCents: number;
+  }[];
   totalTaxCents: number;
 }
 interface Valuation {
@@ -205,6 +222,7 @@ export default function ReportsPage() {
   const [error, setError] = useState<string | null>(null);
   const [summary, setSummary] = useState<SalesSummary | null>(null);
   const [giftLiability, setGiftLiability] = useState<GiftCardLiability | null>(null);
+  const [receipts, setReceipts] = useState<ReceiptsReport | null>(null);
   const [dateChanges, setDateChanges] = useState<DeliveryDateChangeRow[] | null>(null);
   const [summaryBasis, setSummaryBasis] = useState<'written' | 'delivered'>('written');
   const [summaryGroupBy, setSummaryGroupBy] = useState<'day' | 'location' | 'salesperson'>('day');
@@ -280,6 +298,14 @@ export default function ReportsPage() {
     }
   }
 
+  async function loadReceipts() {
+    try {
+      setReceipts(await api<ReceiptsReport>(`/v1/reports/receipts?start=${start}&end=${end}`));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
   async function loadDateChanges() {
     try {
       const res = await api<{ rows: DeliveryDateChangeRow[] }>(
@@ -292,6 +318,7 @@ export default function ReportsPage() {
   }
 
   useEffect(() => {
+    void loadReceipts();
     void loadDateChanges();
     void loadSummary();
     void loadDaily();
@@ -840,6 +867,59 @@ export default function ReportsPage() {
         </Card>
       )}
 
+      <Card title="Receipts by payment type" data-testid="receipts-report">
+        <div className="mb-3 flex flex-wrap items-end gap-2">
+          <Button variant="secondary" onClick={() => void loadReceipts()}>
+            <RefreshCw size={14} aria-hidden />
+            Run for {start} → {end}
+          </Button>
+          <CsvButton
+            path={`/v1/reports/receipts?start=${start}&end=${end}&format=csv`}
+            filename={`receipts-${start}-to-${end}.csv`}
+            size="sm"
+          />
+        </div>
+        {!receipts ? (
+          <LoadingRows />
+        ) : (
+          <div style={{ overflowX: 'auto' }}>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Method</th>
+                  <th>Location</th>
+                  <th className="num">Count</th>
+                  <th className="num">Amount</th>
+                </tr>
+              </thead>
+              <tbody>
+                {receipts.rows.length === 0 && <Empty colSpan={4} />}
+                {receipts.rows.map((r, i) => (
+                  <tr key={`${r.method}-${r.locationId ?? 'x'}-${i}`}>
+                    <td>{r.method}</td>
+                    <td>{r.locationName ?? '—'}</td>
+                    <td className="num">{r.count}</td>
+                    <td className="num">
+                      <Money cents={r.amountCents} />
+                    </td>
+                  </tr>
+                ))}
+                {receipts.rows.length > 0 && (
+                  <tr style={{ fontWeight: 600 }}>
+                    <td>Total</td>
+                    <td />
+                    <td className="num">{receipts.totals.count}</td>
+                    <td className="num">
+                      <Money cents={receipts.totals.amountCents} />
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+
       <Card title="Delivery date changes (30 days)" data-testid="delivery-date-changes">
         {!dateChanges ? (
           <LoadingRows />
@@ -922,6 +1002,37 @@ export default function ReportsPage() {
                   )}
                 </tbody>
               </table>
+              {taxSummary.byLocation && taxSummary.byLocation.length > 0 && (
+                <>
+                  <h3 style={{ fontSize: 13, margin: '14px 0 6px' }}>
+                    By location (completed documents)
+                  </h3>
+                  <table className="table">
+                    <thead>
+                      <tr>
+                        <th>Location</th>
+                        <th className="num">Documents</th>
+                        <th className="num">Total sold</th>
+                        <th className="num">Tax collected</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {taxSummary.byLocation.map((r) => (
+                        <tr key={r.locationId}>
+                          <td>{r.locationName ?? r.locationId}</td>
+                          <td className="num">{r.documents}</td>
+                          <td className="num">
+                            <Money cents={r.totalCents} />
+                          </td>
+                          <td className="num">
+                            <Money cents={r.taxCents} />
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </>
+              )}
             </div>
           ) : (
             <LoadingRows />

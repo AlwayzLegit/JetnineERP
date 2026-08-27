@@ -35,6 +35,22 @@ interface OrderPaymentsDayRow {
   amountCents: number;
   count: number;
 }
+interface ReceiptsRow {
+  method: string;
+  locationId: string | null;
+  locationName: string | null;
+  count: number;
+  amountCents: number;
+}
+
+interface ReceiptsReport {
+  start: string;
+  end: string;
+  generatedAt: string;
+  rows: ReceiptsRow[];
+  totals: { count: number; amountCents: number };
+}
+
 interface GiftCardLiabilityRow {
   code: string;
   status: string;
@@ -841,7 +857,19 @@ export class ReportsController {
     @Query('end') endStr?: string,
     @Query('format') format?: string,
     @Res({ passthrough: true }) res?: Response,
-  ): Promise<{ rows: TaxSummaryRow[]; totalTaxCents: number; start: string; end: string } | void> {
+  ): Promise<{
+    rows: TaxSummaryRow[];
+    byLocation: {
+      locationId: string;
+      locationName: string | null;
+      documents: number;
+      taxCents: number;
+      totalCents: number;
+    }[];
+    totalTaxCents: number;
+    start: string;
+    end: string;
+  } | void> {
     const { startDate, endDate } = parseRange(startStr, endStr);
     const startTs = new Date(`${startDate}T00:00:00.000Z`);
     const endTsExclusive = new Date(`${endDate}T00:00:00.000Z`);
@@ -866,12 +894,79 @@ export class ReportsController {
           gte(schema.sales.completedAt, startTs),
           lt(schema.sales.completedAt, endTsExclusive),
           sql`${schema.sales.status} IN ('completed', 'partially_refunded', 'refunded')`,
+          salesScopeCond(tenant, schema.sales.locationId),
         ),
       )
       .groupBy(schema.products.taxClassId, schema.taxClasses.name)
       .orderBy(desc(sql`COALESCE(SUM(${schema.saleLines.taxCents}), 0)`));
 
     const totalTaxCents = rows.reduce((s, r) => s + r.taxCents, 0);
+
+    // Jurisdiction view (catalog 87). LA Mattress jurisdictions map to
+    // locations (a location carries its tax rate), so filing totals are
+    // by location, over completed POS sales AND completed orders.
+    const saleTaxByLoc = await this.db
+      .select({
+        locationId: schema.sales.locationId,
+        documents: sql<number>`COUNT(*)::int`,
+        taxCents: sql<number>`COALESCE(SUM(${schema.sales.taxCents}), 0)::int`,
+        totalCents: sql<number>`COALESCE(SUM(${schema.sales.totalCents}), 0)::int`,
+      })
+      .from(schema.sales)
+      .where(
+        and(
+          gte(schema.sales.completedAt, startTs),
+          lt(schema.sales.completedAt, endTsExclusive),
+          sql`${schema.sales.status} IN ('completed', 'partially_refunded', 'refunded')`,
+          isNull(schema.sales.importedAt),
+          salesScopeCond(tenant, schema.sales.locationId),
+        ),
+      )
+      .groupBy(schema.sales.locationId);
+    const orderTaxByLoc = await this.db
+      .select({
+        locationId: schema.orders.locationId,
+        documents: sql<number>`COUNT(*)::int`,
+        taxCents: sql<number>`COALESCE(SUM(${schema.orders.taxCents}), 0)::int`,
+        totalCents: sql<number>`COALESCE(SUM(${schema.orders.totalCents}), 0)::int`,
+      })
+      .from(schema.orders)
+      .where(
+        and(
+          gte(schema.orders.completedAt, startTs),
+          lt(schema.orders.completedAt, endTsExclusive),
+          eq(schema.orders.status, 'completed'),
+          isNull(schema.orders.importedAt),
+          salesScopeCond(tenant, schema.orders.locationId),
+        ),
+      )
+      .groupBy(schema.orders.locationId);
+    const byLocMap = new Map<
+      string,
+      { locationId: string; documents: number; taxCents: number; totalCents: number }
+    >();
+    for (const r of [...saleTaxByLoc, ...orderTaxByLoc]) {
+      const cur = byLocMap.get(r.locationId) ?? {
+        locationId: r.locationId,
+        documents: 0,
+        taxCents: 0,
+        totalCents: 0,
+      };
+      cur.documents += r.documents;
+      cur.taxCents += r.taxCents;
+      cur.totalCents += r.totalCents;
+      byLocMap.set(r.locationId, cur);
+    }
+    const locNames = byLocMap.size
+      ? await this.db
+          .select({ id: schema.locations.id, name: schema.locations.name })
+          .from(schema.locations)
+          .where(inArray(schema.locations.id, [...byLocMap.keys()]))
+      : [];
+    const locNameBy = new Map(locNames.map((l) => [l.id, l.name]));
+    const byLocation = [...byLocMap.values()]
+      .map((r) => ({ ...r, locationName: locNameBy.get(r.locationId) ?? null }))
+      .sort((a, b) => b.taxCents - a.taxCents);
 
     if (format === 'csv') {
       requireExport(tenant);
@@ -885,7 +980,7 @@ export class ReportsController {
       );
       return;
     }
-    return { rows, totalTaxCents, start: startDate, end: endDate };
+    return { rows, byLocation, totalTaxCents, start: startDate, end: endDate };
   }
 
   /**
@@ -1590,6 +1685,94 @@ export class ReportsController {
     // or the delivery was cancelled outright.
     const filtered = rows.filter((r) => r.action === 'delivery.cancel' || r.toDate || r.fromDate);
     return { days, rows: filtered };
+  }
+
+  /**
+   * Summarized sales receipts (catalog 92): every succeeded payment in
+   * the window, whatever document it landed on (POS sale, order
+   * deposit/balance, service charge), grouped by payment method and the
+   * taking location. Imported documents excluded (D8); store scope
+   * applies. Nothing here purges — no DAILY.DETAIL retention trap.
+   */
+  @Get('receipts')
+  @RequirePermission('reports.sales.view')
+  async receipts(
+    @CurrentTenant() tenant: RequestTenantContext,
+    @Query('start') startStr?: string,
+    @Query('end') endStr?: string,
+    @Query('format') format?: string,
+    @Res({ passthrough: true }) res?: Response,
+  ): Promise<ReceiptsReport | void> {
+    const { startDate, endDate } = parseRange(startStr, endStr);
+    const startTs = new Date(`${startDate}T00:00:00.000Z`);
+    const endTsExclusive = new Date(`${endDate}T00:00:00.000Z`);
+    endTsExclusive.setUTCDate(endTsExclusive.getUTCDate() + 1);
+
+    const locExpr = sql<
+      string | null
+    >`COALESCE(${schema.sales.locationId}, ${schema.orders.locationId}, ${schema.serviceOrders.locationId})`;
+    const rows = await this.db
+      .select({
+        method: schema.payments.method,
+        locationId: sql<string | null>`${locExpr}::text`,
+        count: sql<number>`COUNT(*)::int`,
+        amountCents: sql<number>`COALESCE(SUM(${schema.payments.amountCents}), 0)::int`,
+      })
+      .from(schema.payments)
+      .leftJoin(schema.sales, eq(schema.sales.id, schema.payments.saleId))
+      .leftJoin(schema.orders, eq(schema.orders.id, schema.payments.orderId))
+      .leftJoin(schema.serviceOrders, eq(schema.serviceOrders.id, schema.payments.serviceOrderId))
+      .where(
+        and(
+          gte(schema.payments.createdAt, startTs),
+          lt(schema.payments.createdAt, endTsExclusive),
+          eq(schema.payments.status, 'succeeded'),
+          isNull(schema.sales.importedAt),
+          isNull(schema.orders.importedAt),
+          isNull(schema.serviceOrders.importedAt),
+          salesScopeCond(tenant, locExpr),
+        ),
+      )
+      .groupBy(schema.payments.method, locExpr)
+      .orderBy(desc(sql`COALESCE(SUM(${schema.payments.amountCents}), 0)`));
+
+    const locIds = [...new Set(rows.map((r) => r.locationId).filter(Boolean))] as string[];
+    const locs = locIds.length
+      ? await this.db
+          .select({ id: schema.locations.id, name: schema.locations.name })
+          .from(schema.locations)
+          .where(inArray(schema.locations.id, locIds))
+      : [];
+    const locBy = new Map(locs.map((l) => [l.id, l.name]));
+
+    const report: ReceiptsReport = {
+      start: startDate,
+      end: endDate,
+      generatedAt: new Date().toISOString(),
+      rows: rows.map((r) => ({
+        ...r,
+        locationName: r.locationId ? (locBy.get(r.locationId) ?? null) : null,
+      })),
+      totals: {
+        count: rows.reduce((a, r) => a + r.count, 0),
+        amountCents: rows.reduce((a, r) => a + r.amountCents, 0),
+      },
+    };
+    if (format === 'csv') {
+      requireExport(tenant);
+      const header = `# start=${startDate} end=${endDate} generated=${report.generatedAt}\n`;
+      sendCsv(
+        res!,
+        `receipts-${startDate}-to-${endDate}.csv`,
+        header +
+          toCsv(
+            ['method', 'location', 'count', 'amount_cents'],
+            report.rows.map((r) => [r.method, r.locationName, r.count, r.amountCents]),
+          ),
+      );
+      return;
+    }
+    return report;
   }
 }
 
