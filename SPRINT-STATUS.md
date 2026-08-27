@@ -1486,3 +1486,19 @@ and a reverse-engineered **Sales Processing behavioral spec** (docs/erp 00–13 
 SOURCES) whose fulfillment-centric order model diverges from the shipped order/delivery
 model — flagged as a [DECIDE] for the owner before any rework. More handoffs incoming
 per owner.
+
+## Spec packs committed + Phase-0 parity mapping (2026-08-27)
+
+Owner delivered two reverse-engineered STORIS behavioral spec packs (more announced):
+**Sales Processing** (docs/erp/00–13 + SOURCES, from two identical zips) and
+**Inventory Management** (docs/erp-inventory/00 + 05–08; its five big `sections/`
+files and 99-source-index are still outstanding — the parity checklist is keyed to
+their rule IDs and is blocked until they arrive). Both committed verbatim into the
+repo as directed. Per both packs' own Phase-0 rule, `docs/erp/PARITY-NOTES.md` now
+maps every pack entity to the shipped system and lists the conflicts as owner
+decisions (C1 fulfillment-centric money · C2 costing layers · C3 bucket ledger ·
+C4 piece identity · C5 physical inventory · C6 fractional qty · C7 vocabulary),
+notes the pack questions the shipped system already answers, and recommends treating
+the packs as post-cutover hardening backlog rather than a pre-cutover rebuild.
+No code changed for this. The STORIS-docs documentation-system handoff remains on
+hold (owner dismissed the kickoff question).
