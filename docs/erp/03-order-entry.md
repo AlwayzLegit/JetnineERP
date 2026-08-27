@@ -80,22 +80,18 @@ revolving payment estimator, trade/designer info.
 Implement each with a named test (see `12`).
 
 **Dates & periods**
-
 - Written date cannot be in the future or in a closed accounting period
 - Backdating from an overlap month requires the backdate permission
 
 **Identity**
-
 - Combined customer name elements ≤ 50 characters
 - A phone number is required to save an order with a delivery fulfillment, or any exchange, when
   address confirmation is enabled
 
 **Back orders**
-
 - Maximum 52 per order; warn at the 48th, hard stop at the 52nd; beyond that, delete and re-enter
 
 **Reservation**
-
 - Products flagged require-reservation (at product level, else vendor level) must reserve; if
   insufficient quantity exists the product cannot be added at all
 - Failure on update: "Product on this line must fully reserve and there is not enough quantity
@@ -106,9 +102,8 @@ Implement each with a named test (see `12`).
   availability; qty ordered > qty available blocks the add
 
 **Pricing interactions** (full hierarchy in `04`)
-
 - Overriding unit price **inactivates** the discount code field
-- Applying a discount code and _then_ changing unit price warns and **removes the discount code**,
+- Applying a discount code and *then* changing unit price warns and **removes the discount code**,
   keeping the new price
 - Adjusting the net total and applying discounts/coupons are **mutually exclusive**; adjusting the
   net total clears discount codes and coupons and resets a redeemed coupon's flag
@@ -125,7 +120,6 @@ Exceeding it triggers one of: alert, reason required, or comment required. No ch
 original selling price, or when the discounted price equals it.
 
 **Charges**
-
 - Delivery, installation, misc fees and tax are calculated **per fulfillment**
 - Installation charges are delivery-only; on partial completion, installation is charged on
   completed lines only and the remainder stays on the open fulfillment
@@ -139,7 +133,6 @@ original selling price, or when the discounted price equals it.
   override-calculated-delivery-charges permission
 
 **Warranties & protection plans**
-
 - One warranty per warranty category per open order, when configured
 - Protection plans cannot be added to a completed order; only plans based on assigned inventory
   formations qualify; overlap resolves by most-eligible-lines-covered, then max quantity / min-max
@@ -149,7 +142,6 @@ original selling price, or when the discounted price equals it.
   restores the prior plan's discounts if automated line discounting is active
 
 **Tax**
-
 - Exemption requires the customer's ID expiration date to be **after** the written date
 - A line's tax-exempt authorization number cannot be set while taxable is checked; granting it
   unchecks product-taxable and writes product, authorization number, and the security override to
@@ -157,7 +149,6 @@ original selling price, or when the discounted price equals it.
 - Some RTO plans are exempt regardless and override customer settings
 
 **Stock location & transfers**
-
 - Alternate stock location applies only when: the setting is on, the line was initially entered, the
   line does not reserve, and the stock location has at least one alternate. Multiple alternates →
   earliest ATP wins, ties broken by an operator selection window. Excluded inventory formations
@@ -167,23 +158,19 @@ original selling price, or when the discounted price equals it.
   blocked (with an optional companion setting extending this after completion), subject to override
 
 **Purchase orders**
-
 - Non-inventory items need their own PO when POs are created on the fly
 - Special-order lines must either reserve or be placed on a PO: "Must either reserve or place on
   Purchase Order; all merchandise ordered."
 - POs created from order entry can be auto-held by setting
 
 **Freeze after picking `[DOC]`**
-
 - Once items enter RF picking status, delivery/pickup status, route/truck code, and delivery/pickup
   date are frozen until removed from picking
 
 **Ticket printing**
-
 - Blocked when the order is on credit hold, or its open balance exceeds the configured maximum
 
 **Route capacity `[DOC]`**
-
 - On adding a line to a full or closed route: "Route X is full for MM/DD/YYYY. Do you wish to
   override the capacity limit?" Yes requires the override permission; No adds the line unscheduled
 - **No warning appears if the change reduces an already-exceeded capacity, even if still over** —
@@ -209,23 +196,23 @@ sequence:
 7. Exit → "document has been completed" → back to order entry
 ```
 
-**Rescheduling during completion `[DOC]`.** The completion detail screen offers _Reschedule for_
-(pick an existing delivery date on the document, or None) and _Rescheduled Date_ (a single new date;
+**Rescheduling during completion `[DOC]`.** The completion detail screen offers *Reschedule for*
+(pick an existing delivery date on the document, or None) and *Rescheduled Date* (a single new date;
 once specified both controls inactivate). Route-capacity override is reachable from there. Resulting
 statuses are in `02` §3.
 
 **Exception handling `[DOC]`.** All lines default to Complete.
 
-- _Whole-order refusal_: click Not Complete at "Status for ALL Lines" — every line flips, and
+- *Whole-order refusal*: click Not Complete at "Status for ALL Lines" — every line flips, and
   return-to-storage-location defaults for all lines (from the location's return-pickup setting, else
   the location the piece was picked from). A detail screen then shows product id as `...` meaning
   "applies to all pieces".
-- _Per-piece_: click the in-grid Not Complete per line (return-to-storage-location defaults from the
+- *Per-piece*: click the in-grid Not Complete per line (return-to-storage-location defaults from the
   manifest process's not-completed-location), then the in-grid Details for that piece, saving per
   piece.
-- _Exchanges_: marking the line not complete completes the **sale** portion; the return portion is
+- *Exchanges*: marking the line not complete completes the **sale** portion; the return portion is
   marked separately via the exchange pickup/delivery action.
-- _Transfers_: only merchandise received via WMS import can be completed; Not Complete is greyed if
+- *Transfers*: only merchandise received via WMS import can be completed; Not Complete is greyed if
   any transfer merchandise arrived that way, and a back order is created for unreceived merchandise.
 - Manifest exceptions are written to a route-exception log when enabled, and are reportable.
 

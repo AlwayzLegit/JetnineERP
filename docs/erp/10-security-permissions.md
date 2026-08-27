@@ -15,11 +15,10 @@ in phase 0 — retrofitting permissions into a completed order module is painful
 ### Layer 3 — data scope
 
 Two independent, overlapping systems:
-
 - **Regional processing** — restricts districts and locations; also forces district-first sorting in
   reports and limits which customers are visible
 - **CRM access level** — `Salesperson` / `Store Manager` / `District Manager` / `Corporate`, driving
-  lead visibility and the location dropdown _independently of_ regional processing (see `08`)
+  lead visibility and the location dropdown *independently of* regional processing (see `08`)
 
 Model scope as a resolved set of location ids plus a lead-visibility rule, computed once per session
 and applied as a query predicate — never as a UI filter only.
@@ -56,8 +55,7 @@ Use as the seed list for the permission table; names can be normalized but keep 
 staff who are being retrained.
 
 ### Sales
-
-- Enter / edit _{order type}_ (per type)
+- Enter / edit *{order type}* (per type)
 - Delete or add line items on transactions with deposits applied
 - Delete a stock merchandise line linked to a purchase order not on hold
 - Sell kit component products separately from their assigned kit
@@ -84,7 +82,6 @@ staff who are being retrained.
 - View all sales information (gates the salesperson filter in operational views)
 
 ### Logistics
-
 - Override capacities when scheduling routes that are full
 - Adjust inventory for locations when WMS is active
 - Print a delivery ticket within POS entry
@@ -93,11 +90,9 @@ staff who are being retrained.
 - Change fulfillment status to SCH with a balance due
 
 ### System
-
 - Change taxable settings
 
 ### Receivables
-
 - Override daily maximum cash refund per customer
 - Receive a default for the payment amount
 - Issue deposit refund
@@ -109,21 +104,18 @@ staff who are being retrained.
 - Per-payment-type access (yields "You do not have access to this payment type")
 
 ### Financing
-
 - Access credit applications for third-party online financing
 - Access other credit applications and score reporting (gates full SSN display)
-- Review and resubmit failed finance settlement batches _(user-level overrides group-level)_
+- Review and resubmit failed finance settlement batches *(user-level overrides group-level)*
 - Enter finance-receivable payments
 - Allow negative FR payments for different day's activity
-- Finance application manager _(location-level flag, not a user permission)_
+- Finance application manager *(location-level flag, not a user permission)*
 
 ### Card & sensitive data
-
 - View encrypted finance, credit card, check account numbers
-- View masked account numbers _(the second-user override credential for unmasking)_
+- View masked account numbers *(the second-user override credential for unmasking)*
 
 ### Other
-
 - Point-of-sale user verification (re-enter user id and password on order create/update)
 - Prohibit unscheduled lines (requires manager credentials)
 - Fulfillment location restrictions

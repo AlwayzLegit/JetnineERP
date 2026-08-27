@@ -2347,3 +2347,58 @@ location|salesperson&start&end&format=csv` — POS sales + sales orders
   location labels + per-location totals; scope diff == Annex dollars;
   avg + CSV provenance). Gates: typecheck 0 · lint 0 · test 0 (full) ·
   build 0 · prettier 0.
+
+## Delivery Dates in Jeopardy — the call list (2026-08-27)
+
+Catalog 85, the pack's top-value operational screen, built as a live
+queue over what we have (owner-confirmed ATP decision — reservations +
+inbound supply dates, no full ATP projection):
+
+- `GET /v1/reports/delivery-jeopardy?horizonDays=N` — open order lines
+  with unreserved shortfall, promised date resolved line.deliveryDate →
+  earliest live scheduled delivery → order.requestedDate (lines with no
+  date anywhere are excluded, the ASAP/CWC rule). Inbound supply per
+  variant+location = earliest of open POs (expected date) and
+  draft/in-transit transfers (scheduled date). **Explicit risk states —
+  `no_supply` vs `late` (+days) — never the 999 sentinel.** Covered
+  lines drop out. Store scope applies; CSV embeds provenance.
+- New "At risk" page (`/jeopardy`, Sell nav): promised date, order link,
+  customer, shortfall, risk badge, inbound supply reference.
+- reports.int.spec 25→27 (no-supply vs late-by-8-days vs covered
+  fixtures; horizon bound). Gates: typecheck 0 · lint 0 · test 0 (full)
+  · build 0 · prettier 0.
+
+## Transfers pack committed (2026-08-27)
+
+Owner uploaded the STORIS Transfers handoff (16 files — all 22 section
+articles: domain model, settings, permissions, entry + variants,
+distributed + multi-leg transfers, manifests, receiving, replenishment,
+scheduling, inquiries, acceptance tests, phased build plan). Committed
+verbatim to `docs/erp-transfers/` (prettier-ignored). Note: Jetnine
+already has a transfers module (entry, ship/receive, serials, as-is +
+floor-sample variants, auto replenishment) — the build task starts with
+a gap reconciliation of the pack against shipped work, then its
+[DECISION] items batched to the owner per the pack's own instruction.
+Queued after the Sales Views program.
+
+## Sales Order Maintenance (SOM) mega-pack committed (2026-08-27)
+
+Owner uploaded the full Sales Processing specification — 27 files, two
+layers: module-level 00–13 (domain model, state machines, order entry,
+pricing/discounts/tax, payments/cards, financing, settlement/cash,
+salesperson/UP/CRM, views, security, cutover, acceptance tests, open
+questions) and screen-level 20–31 covering **all 172 SOM screens** field
+by field (index, 8 area files, cross-cutting corrections, 131 more
+acceptance tests, open questions #29–#58). Committed verbatim to
+`docs/erp/` (top-level \*.md prettier-ignored), alongside the existing
+`docs/erp/system-administration/` domain — this directory is now the
+unified spec tree, as the pack's own layout intends. Loose uploads
+(20-index, 29-cross-cutting) verified byte-identical to the zip.
+
+Key protocol from its 00-HANDOFF: read 29 before trusting 01–13 (the
+screen layer wins); [DECIDE] items are stop-and-ask; enum gaps are
+ask-not-guess; quantities become decimal(12,4). Much overlaps work
+already shipped (orders, returns, exchanges, POS, deliveries) — like the
+transfers pack, the build task starts with a reconciliation pass, then
+batches the [DECIDE]/open-question asks to the owner. Queued behind the
+Sales Views program and the other queued packs.

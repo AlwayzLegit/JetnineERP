@@ -729,3 +729,154 @@ describe('Sales Views — unified written/delivered sales summary', () => {
     expect(csv.text).toContain('generated=');
   });
 });
+
+describe('Sales Views — delivery dates in jeopardy', () => {
+  beforeAll(async () => {
+    const sql2 = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    const db = drizzle(sql2);
+    try {
+      const [cust] = await db
+        .insert(schema.customers)
+        .values({ businessId, firstName: 'Jeopardy', lastName: 'Fixture' })
+        .returning();
+      const iso = (offsetDays: number) => {
+        const d = new Date();
+        d.setUTCDate(d.getUTCDate() + offsetDays);
+        return d.toISOString().slice(0, 10);
+      };
+
+      // J1: short line, variant A, NO inbound supply -> no_supply.
+      const [j1] = await db
+        .insert(schema.orders)
+        .values({
+          businessId,
+          locationId,
+          customerId: cust!.id,
+          number: 'JEO-1',
+          status: 'confirmed',
+          requestedDate: iso(5),
+          totalCents: 1000,
+        })
+        .returning();
+      await db.insert(schema.orderLines).values({
+        businessId,
+        orderId: j1!.id,
+        variantId: variantAId,
+        description: 'Widget',
+        quantity: 3,
+        unitPriceCents: 1000,
+        totalCents: 3000,
+      });
+
+      // J2: short line, variant B, PO lands 8 days after the promise -> late.
+      const [j2] = await db
+        .insert(schema.orders)
+        .values({
+          businessId,
+          locationId,
+          customerId: cust!.id,
+          number: 'JEO-2',
+          status: 'confirmed',
+          requestedDate: iso(2),
+          totalCents: 500,
+        })
+        .returning();
+      await db.insert(schema.orderLines).values({
+        businessId,
+        orderId: j2!.id,
+        variantId: variantBId,
+        description: 'Gadget',
+        quantity: 2,
+        unitPriceCents: 500,
+        totalCents: 1000,
+      });
+
+      // J3: same variant B but promised AFTER the PO arrives -> covered.
+      const [j3] = await db
+        .insert(schema.orders)
+        .values({
+          businessId,
+          locationId,
+          customerId: cust!.id,
+          number: 'JEO-3',
+          status: 'confirmed',
+          requestedDate: iso(20),
+          totalCents: 500,
+        })
+        .returning();
+      await db.insert(schema.orderLines).values({
+        businessId,
+        orderId: j3!.id,
+        variantId: variantBId,
+        description: 'Gadget',
+        quantity: 1,
+        unitPriceCents: 500,
+        totalCents: 500,
+      });
+
+      const [vendor] = await db
+        .insert(schema.vendors)
+        .values({ businessId, name: 'Jeopardy Vendor' })
+        .returning();
+      const expected = new Date();
+      expected.setUTCDate(expected.getUTCDate() + 10);
+      const [po] = await db
+        .insert(schema.purchaseOrders)
+        .values({
+          businessId,
+          vendorId: vendor!.id,
+          locationId,
+          number: 'PO-JEO-1',
+          status: 'ordered',
+          expectedAt: expected,
+        })
+        .returning();
+      await db.insert(schema.purchaseOrderLines).values({
+        businessId,
+        purchaseOrderId: po!.id,
+        variantId: variantBId,
+        quantityOrdered: 5,
+        unitCostCents: 100,
+        lineTotalCents: 500,
+      });
+    } finally {
+      await sql2.end({ timeout: 5 });
+    }
+  });
+
+  it('classifies no-supply vs late with explicit states, and drops covered lines', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/v1/reports/delivery-jeopardy?horizonDays=60')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .expect(200);
+    const byOrder = new Map(res.body.rows.map((r: { orderNumber: string }) => [r.orderNumber, r]));
+    const j1 = byOrder.get('JEO-1') as { risk: string; daysLate: number | null } | undefined;
+    expect(j1).toBeTruthy();
+    expect(j1!.risk).toBe('no_supply');
+    expect(j1!.daysLate).toBeNull();
+
+    const j2 = byOrder.get('JEO-2') as
+      | { risk: string; daysLate: number; supplySource: string; supplyReference: string }
+      | undefined;
+    expect(j2).toBeTruthy();
+    expect(j2!.risk).toBe('late');
+    expect(j2!.daysLate).toBe(8);
+    expect(j2!.supplySource).toBe('po');
+    expect(j2!.supplyReference).toBe('PO-JEO-1');
+
+    // Covered: PO arrives day +10, promise is day +20 — not in the queue.
+    expect(byOrder.get('JEO-3')).toBeUndefined();
+  });
+
+  it('horizon bounds the list', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/v1/reports/delivery-jeopardy?horizonDays=3')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .expect(200);
+    const numbers = res.body.rows.map((r: { orderNumber: string }) => r.orderNumber);
+    expect(numbers).toContain('JEO-2'); // promised +2
+    expect(numbers).not.toContain('JEO-1'); // promised +5, outside horizon
+  });
+});

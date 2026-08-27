@@ -2,7 +2,7 @@
 
 ## The Payment Summary — one screen, every tender `[DOC]`
 
-STORIS routes _all_ money through a single Payment Summary window, reached from order entry,
+STORIS routes *all* money through a single Payment Summary window, reached from order entry,
 completion, standalone payment/refund entry, and the cash-balancing manager screen. Multiple payment
 types per transaction. Build this as one component with per-type sub-forms; do not scatter tender
 logic across screens.
@@ -15,17 +15,17 @@ logic across screens.
 
 **Per-type sub-forms `[DOC]`**
 
-| Type                    | Sub-form and notable fields                                                                   |
-| ----------------------- | --------------------------------------------------------------------------------------------- |
-| Cash                    | Amount inline; no sub-form. Amount-tendered window on completion for change                   |
-| Check                   | Check entry — driver's licence number mandatory or optional per the check payment-type record |
-| Credit card             | Card entry — see below                                                                        |
-| Debit card              | Debit entry; payment type defaults to `DEBIT`                                                 |
-| Gift certificate        | Certificate number + amount, with a lookup                                                    |
-| Financing (third party) | Account number, insurance (None/Single/Joint), amount, authorization number                   |
-| Revolving               | Revolving worksheet, short or full form per config                                            |
-| Installment             | Installment worksheet; payoff as-of date on save                                              |
-| Petty cash              | Only inside cash balancing                                                                    |
+| Type | Sub-form and notable fields |
+|---|---|
+| Cash | Amount inline; no sub-form. Amount-tendered window on completion for change |
+| Check | Check entry — driver's licence number mandatory or optional per the check payment-type record |
+| Credit card | Card entry — see below |
+| Debit card | Debit entry; payment type defaults to `DEBIT` |
+| Gift certificate | Certificate number + amount, with a lookup |
+| Financing (third party) | Account number, insurance (None/Single/Joint), amount, authorization number |
+| Revolving | Revolving worksheet, short or full form per config |
+| Installment | Installment worksheet; payoff as-of date on save |
+| Petty cash | Only inside cash balancing |
 
 ## Tender rules `[DOC]`
 
@@ -35,8 +35,8 @@ logic across screens.
    permission **blocks the save entirely** (not just the line).
 4. Payment-type-level access is enforced per user: "You do not have access to this payment type."
 5. **Once a payment requiring authorization is authorized, the order must be saved** to preserve
-   settlement integrity. To delete the order you must save it and re-access it. _This is the
-   anti-orphaned-authorization rule and it is the most important invariant in this file._
+   settlement integrity. To delete the order you must save it and re-access it. *This is the
+   anti-orphaned-authorization rule and it is the most important invariant in this file.*
 6. Auto-pay / global auto-pay validates the payment against the **sum of standard minimum monthly
    payments** — it must equal or exceed that sum, or the operator is returned to the payment summary.
 7. Only one refund payment type per session; editing one tab of the standalone payment/refund
@@ -119,19 +119,19 @@ overridable by product or category. Ask before implementing.
 
 ### Card entry `[DOC]`
 
-| Field                | Rule                                                                                                                                                                                           |
-| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Card number          | No spaces. **All but the last four digits encrypted.** Any entry with a leading `X` is rejected (it would be a masked value pasted back in)                                                    |
-| Type                 | Read-only, derived, with a description beneath                                                                                                                                                 |
-| Verify card number   | Active only on manual entry _and_ when validate-manual-entry is on; must match or entry cannot proceed                                                                                         |
-| Card present         | Manual entry only; **not stored on the order record** and unavailable after exiting                                                                                                            |
-| Month / Year         | Rendered only if flagged mandatory in card payment settings                                                                                                                                    |
-| CVV                  | Active only when prompt-for-CID is on for that card type. Accepts a number or `BPD` / `ILL` / `NAV`. **Not stored on the order record**                                                        |
-| Amount               | Defaults to the full outstanding amount depending on a per-user setting                                                                                                                        |
-| Swipe                | A successful swipe populates type. **A swiped entry cannot be edited** — return to the payment summary and restart. Button inactive if the device is not connected or signature capture is off |
-| Authorization number | From the card company; rendered only if flagged mandatory                                                                                                                                      |
+| Field | Rule |
+|---|---|
+| Card number | No spaces. **All but the last four digits encrypted.** Any entry with a leading `X` is rejected (it would be a masked value pasted back in) |
+| Type | Read-only, derived, with a description beneath |
+| Verify card number | Active only on manual entry *and* when validate-manual-entry is on; must match or entry cannot proceed |
+| Card present | Manual entry only; **not stored on the order record** and unavailable after exiting |
+| Month / Year | Rendered only if flagged mandatory in card payment settings |
+| CVV | Active only when prompt-for-CID is on for that card type. Accepts a number or `BPD` / `ILL` / `NAV`. **Not stored on the order record** |
+| Amount | Defaults to the full outstanding amount depending on a per-user setting |
+| Swipe | A successful swipe populates type. **A swiped entry cannot be edited** — return to the payment summary and restart. Button inactive if the device is not connected or signature capture is off |
+| Authorization number | From the card company; rendered only if flagged mandatory |
 
-**Unmasking** requires a user permission _plus_ a re-authentication prompt where a second authorized
+**Unmasking** requires a user permission *plus* a re-authentication prompt where a second authorized
 user enters credentials, and the override is **temporary**.
 
 ### Decline handling `[DOC]`

@@ -39,14 +39,14 @@ layaway-filling enabled, triggers a reservation attempt that can fail the conver
 
 **Type-specific restrictions `[DOC]`**
 
-| Rule                         | QUOTE      | LAYAWAY                                                                                                                    |
-| ---------------------------- | ---------- | -------------------------------------------------------------------------------------------------------------------------- |
-| As-is products               | prohibited | prohibited                                                                                                                 |
-| Kits                         | prohibited | prohibited                                                                                                                 |
-| Obsolete special-order items | prohibited | —                                                                                                                          |
-| Reserve merchandise          | cannot     | must reserve in full to carry special orders, and requires **both** the layaway-filling and special-order-layaway settings |
-| Accept payments              | cannot     | can                                                                                                                        |
-| Fulfillment status `SCH`     | cannot use | —                                                                                                                          |
+| Rule | QUOTE | LAYAWAY |
+|---|---|---|
+| As-is products | prohibited | prohibited |
+| Kits | prohibited | prohibited |
+| Obsolete special-order items | prohibited | — |
+| Reserve merchandise | cannot | must reserve in full to carry special orders, and requires **both** the layaway-filling and special-order-layaway settings |
+| Accept payments | cannot | can |
+| Fulfillment status `SCH` | cannot use | — |
 
 ---
 
@@ -277,7 +277,7 @@ defines when the logical day rolls (offset 4: 11pm on the 13th and 3am on the 14
 the 13th).
 
 **Auto cleanup `[DOC]`** fires when, on a new day, a salesperson first moves AVAILABLE→ASSIGNED or
-the first salesperson checks in _and_ open activities exist from a prior day. It closes all assigned
+the first salesperson checks in *and* open activities exist from a prior day. It closes all assigned
 activities with a configured action code, the prior day's date, and a close time of 11:59pm + offset;
 and sets everyone in Available to LEFT_FOR_DAY. It does **not** fire on ASSIGNED→AVAILABLE or
 AVAILABLE→LEFT_FOR_DAY. Auto-cleanup dates and times are not editable, and all manual edits must
@@ -305,21 +305,21 @@ plan" payment type; resolve whether that is a distinct value or the umbrella lab
 
 ## 13. Small domains `[DOC]`
 
-| Domain                               | Values                                                                                                                                                                   |
-| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Product purchase status              | `A` Active, `D` Dropped, `T` Discontinued (plus a Defective availability status that cannot be ordered)                                                                  |
-| Tax type                             | National, State, Local (applied in that sort order)                                                                                                                      |
-| Exchange display                     | Sale, Return, Net                                                                                                                                                        |
-| Insurance on a financed deposit      | None, Single, Joint                                                                                                                                                      |
-| Finance type                         | Revolving, Installment, RTO                                                                                                                                              |
-| Date codes                           | `CUS` custom, `TDAY`, `YDAY`, `CPTD`, `LPTD`, `CYTD`, `LYTD`                                                                                                             |
-| ATP source                           | Reserved Stock, Assigned Pieces, Unlinked Shipped PO, Linked Shipped PO                                                                                                  |
-| ATP days early/late sentinel         | negative = early, positive = late; the order-level value is the max signed value across lines; `999` = no ATP / unscheduled, `0` = reserved stock or assigned pieces     |
-| Transfer type                        | Stock, As-Is, Floor Sample, Move to As-Is, Auto                                                                                                                          |
-| Commission type flags                | `A` adjustment, `R` return, `S` split, `J` commission adjustment — **combinable**                                                                                        |
-| Commission error flags               | `C` no cost found, `D` salesperson not on original, `E` setup error, `O` original transaction not found, `M` margin calc error, `P` no price found, `X` subroutine error |
-| Filter selection (financed balances) | `0` none, `1` customer code, `2` name, `3` reference, `4` account number                                                                                                 |
-| Exchange return-portion suffix       | `e` appended to the exchange order number                                                                                                                                |
+| Domain | Values |
+|---|---|
+| Product purchase status | `A` Active, `D` Dropped, `T` Discontinued (plus a Defective availability status that cannot be ordered) |
+| Tax type | National, State, Local (applied in that sort order) |
+| Exchange display | Sale, Return, Net |
+| Insurance on a financed deposit | None, Single, Joint |
+| Finance type | Revolving, Installment, RTO |
+| Date codes | `CUS` custom, `TDAY`, `YDAY`, `CPTD`, `LPTD`, `CYTD`, `LYTD` |
+| ATP source | Reserved Stock, Assigned Pieces, Unlinked Shipped PO, Linked Shipped PO |
+| ATP days early/late sentinel | negative = early, positive = late; the order-level value is the max signed value across lines; `999` = no ATP / unscheduled, `0` = reserved stock or assigned pieces |
+| Transfer type | Stock, As-Is, Floor Sample, Move to As-Is, Auto |
+| Commission type flags | `A` adjustment, `R` return, `S` split, `J` commission adjustment — **combinable** |
+| Commission error flags | `C` no cost found, `D` salesperson not on original, `E` setup error, `O` original transaction not found, `M` margin calc error, `P` no price found, `X` subroutine error |
+| Filter selection (financed balances) | `0` none, `1` customer code, `2` name, `3` reference, `4` account number |
+| Exchange return-portion suffix | `e` appended to the exchange order number |
 
 **Not enumerated anywhere in the source docs** — all `[DECIDE]`: contact status, handling method, substitution code,
 product type, commission category, reason-code usage types beyond layaway/quote conversion, and the
