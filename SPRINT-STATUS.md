@@ -2440,3 +2440,16 @@ gated green:
   table (and now the whole endpoint) is store-scoped too.
 - reports.int.spec 29→31. Gates: typecheck 0 · lint 0 · test 0 (full) ·
   build 0 · prettier 0.
+
+## Cash Balancing pack committed (2026-08-27)
+
+Owner uploaded the Cash Balancing & Cash-Position Reporting handoff
+(10 files: domain model, control settings, the three reports — drawer
+balancing totals, daily receipts register, cash requirements — shared
+report primitives, adjacent screens, acceptance criteria, open
+questions). Committed verbatim to `docs/handoffs/cash-balancing/` (the
+zip's own layout; prettier-ignored). Jetnine already has cash shifts
+with blind-count close + variance and the new receipts report — the
+build task starts by reconciling the pack's loop (system-date drawers,
+tolerance/retries, register vs balancing distinction) against that.
+Queued after the Sales Views program and the other packs.
