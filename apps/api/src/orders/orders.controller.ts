@@ -40,6 +40,7 @@ import {
   type OverrideCredentials,
 } from '../controls/security-override.service';
 import { PriceVarianceService } from '../controls/price-variance.service';
+import { AutoTransfersService } from '../transfers/auto-transfers.service';
 import { ExceptionsService } from '../controls/exceptions.service';
 import { WebhookDispatcher } from '../webhooks/webhook-dispatcher.service';
 import {
@@ -358,6 +359,7 @@ export class OrdersController {
     @Inject(OrderReturnsService) private readonly orderReturns: OrderReturnsService,
     @Inject(ExceptionsService) private readonly exceptions: ExceptionsService,
     @Inject(PriceVarianceService) private readonly priceVariance: PriceVarianceService,
+    @Inject(AutoTransfersService) private readonly autoTransfers: AutoTransfersService,
   ) {}
 
   @Get('orders')
@@ -1086,7 +1088,7 @@ export class OrdersController {
     // Confirming commits stock immediately. A quote deliberately holds
     // nothing — otherwise every browsing customer would tie up inventory.
     if (body.confirm) {
-      await this.orders.reserveOrder(this.db, {
+      const plan = await this.orders.reserveOrder(this.db, {
         businessId: tenant.businessId!,
         orderId: order.id,
         locationId: body.locationId,
@@ -1096,6 +1098,16 @@ export class OrdersController {
         .update(schema.orders)
         .set({ status: 'open', updatedAt: new Date() })
         .where(eq(schema.orders.id, order.id));
+      // XFR-051: shortfall at this store + free stock at a sister store
+      // → draft auto transfer (no-op while ops.autoScheduleDays is blank).
+      await this.autoTransfers.generateForShortfalls(this.db, {
+        businessId: tenant.businessId!,
+        orderId: order.id,
+        orderNumber: order.number,
+        locationId: body.locationId,
+        shortfalls: plan.shortfalls,
+        actorUserId: actor?.id ?? null,
+      });
     }
 
     await this.audit.log({
@@ -1457,6 +1469,18 @@ export class OrdersController {
         reserved: plan.reservations.reduce((s, r) => s + r.quantity, 0),
         short: plan.shortfalls.reduce((s, r) => s + r.quantity, 0),
       },
+    });
+
+    // XFR-051: cover what this store can't from a sister store's free
+    // stock (no-op while ops.autoScheduleDays is blank; dedupes against
+    // open auto transfers already written for this order).
+    await this.autoTransfers.generateForShortfalls(this.db, {
+      businessId: tenant.businessId!,
+      orderId: id,
+      orderNumber: order.number,
+      locationId: order.locationId,
+      shortfalls: plan.shortfalls,
+      actorUserId: actor?.id ?? null,
     });
 
     return {

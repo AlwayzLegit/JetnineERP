@@ -35,7 +35,7 @@ interface TransferLineInput {
   quantity?: number;
 }
 
-const TRANSFER_TYPES = ['replenishment', 'floor_sample', 'customer', 'as_is'] as const;
+const TRANSFER_TYPES = ['replenishment', 'floor_sample', 'customer', 'as_is', 'auto'] as const;
 
 interface CreateBody {
   fromLocationId?: string;
@@ -61,6 +61,10 @@ interface ListRow {
   number: string;
   status: string;
   transferType: string;
+  /** XFR-053 schedule date — set on auto transfers only. */
+  scheduledFor: string | null;
+  /** The sales order whose shortfall generated an auto transfer. */
+  orderId: string | null;
   fromLocationId: string;
   fromLocationName: string | null;
   toLocationId: string;
@@ -117,6 +121,8 @@ export class TransfersController {
         number: schema.stockTransfers.number,
         status: schema.stockTransfers.status,
         transferType: schema.stockTransfers.transferType,
+        scheduledFor: schema.stockTransfers.scheduledFor,
+        orderId: schema.stockTransfers.orderId,
         fromLocationId: schema.stockTransfers.fromLocationId,
         fromLocationName: fromLoc.name,
         toLocationId: schema.stockTransfers.toLocationId,
@@ -153,6 +159,8 @@ export class TransfersController {
         number: schema.stockTransfers.number,
         status: schema.stockTransfers.status,
         transferType: schema.stockTransfers.transferType,
+        scheduledFor: schema.stockTransfers.scheduledFor,
+        orderId: schema.stockTransfers.orderId,
         fromLocationId: schema.stockTransfers.fromLocationId,
         fromLocationName: fromLoc.name,
         toLocationId: schema.stockTransfers.toLocationId,
@@ -679,6 +687,8 @@ export class TransfersController {
         number: schema.stockTransfers.number,
         status: schema.stockTransfers.status,
         transferType: schema.stockTransfers.transferType,
+        scheduledFor: schema.stockTransfers.scheduledFor,
+        orderId: schema.stockTransfers.orderId,
         fromLocationId: schema.stockTransfers.fromLocationId,
         fromLocationName: fromLoc.name,
         fromLocationAddressJson: fromLoc.addressJson,

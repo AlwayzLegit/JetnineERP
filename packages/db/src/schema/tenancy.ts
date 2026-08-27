@@ -31,6 +31,12 @@ export const locations = pgTable(
      * legacy per-business SO-YYYY sequence.
      */
     orderPrefix: text('order_prefix'),
+    /**
+     * J5 (CFG-LOC-REPLDAYS): weekdays (0=Sun … 6=Sat) on which this
+     * location accepts auto replenishment transfers. Null = every day;
+     * an explicit empty array disables auto transfers INTO this location.
+     */
+    replenishmentDaysJson: jsonb('replenishment_days_json'),
     isActive: boolean('is_active').notNull().default(true),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
