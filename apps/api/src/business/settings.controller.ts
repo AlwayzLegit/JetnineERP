@@ -56,6 +56,9 @@ interface OpsSettings {
   /** B14: how contested stock is prioritized when backfilling Pending
    * lines — 'delivery_date' (owner default) or 'order_date'. */
   reserveBasis?: 'delivery_date' | 'order_date' | null;
+  /** I4 (RTN-040): days after completion a return is allowed without a
+   * manager override (null = no window, returns always allowed). */
+  returnWindowDays?: number | null;
   /** G6 three-tier price-variance thresholds (defaults 5% / $50 / 15%). */
   priceVariance?: {
     tier1Pct?: number | null;
@@ -171,6 +174,15 @@ function validateOps(input: OpsSettings): OpsSettings {
       throw new BadRequestException("ops.reserveBasis must be 'delivery_date' or 'order_date'");
     }
     out.reserveBasis = input.reserveBasis;
+  }
+  if (input.returnWindowDays !== undefined) {
+    if (
+      input.returnWindowDays !== null &&
+      (!Number.isInteger(input.returnWindowDays) || input.returnWindowDays < 1)
+    ) {
+      throw new BadRequestException('ops.returnWindowDays must be a positive integer or null');
+    }
+    out.returnWindowDays = input.returnWindowDays;
   }
   if (input.priceVariance !== undefined) {
     if (input.priceVariance !== null) {

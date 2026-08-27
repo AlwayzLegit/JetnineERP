@@ -28,6 +28,7 @@ interface OpsSettings {
   invoiceVarianceToleranceCents?: number | null;
   blindReceiving?: boolean | null;
   reserveBasis?: 'delivery_date' | 'order_date' | null;
+  returnWindowDays?: number | null;
   deliveryDailyPieceCap?: number | null;
   deliveryDailyCapacityUnits?: number | null;
   priceVariance?: {
@@ -252,6 +253,8 @@ function OpsCard({ settings, onSaved }: { settings: Settings; onSaved: (s: Setti
       body.blindReceiving = data.get('blindReceiving') === 'on' ? true : null;
       const basis = String(data.get('reserveBasis') ?? '');
       body.reserveBasis = basis === 'order_date' ? 'order_date' : 'delivery_date';
+      const rtnWindow = String(data.get('returnWindowDays') ?? '').trim();
+      body.returnWindowDays = rtnWindow === '' ? null : Number(rtnWindow);
       const capBal = String(data.get('maxBalanceForTicket') ?? '').trim();
       body.maxBalanceForTicketPrintCents = capBal === '' ? null : Math.round(Number(capBal) * 100);
       const t1 = String(data.get('pvTier1Pct') ?? '').trim();
@@ -388,6 +391,16 @@ function OpsCard({ settings, onSaved }: { settings: Settings; onSaved: (s: Setti
           <option value="delivery_date">Earliest delivery date first</option>
           <option value="order_date">First order written first</option>
         </select>
+      </Field>
+      <Field label="Return window (days; blank = no limit)">
+        <Input
+          name="returnWindowDays"
+          type="number"
+          min={1}
+          placeholder="e.g. 120 — older returns need a manager"
+          defaultValue={ops.returnWindowDays ?? ''}
+          style={{ width: '100%' }}
+        />
       </Field>
       <Field label="Price variance — no-friction tier (%; blank = 5)">
         <Input

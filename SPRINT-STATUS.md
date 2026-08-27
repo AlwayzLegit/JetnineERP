@@ -1669,3 +1669,38 @@ creation, and a mis-keyed receipt was permanent.
   lint 0 · test 0 · build 0 · prettier 0. No migration.
 
 Next backlog item: return windows + no-original-invoice controls.
+
+## Return windows + no-original returns shipped (2026-08-27)
+
+Backlog #3 (FAQ I4 P0-MISSING, I1/I8 P0-PARTIAL).
+
+- **Return window (I4, RTN-040):** `ops.returnWindowDays` (blank = no limit),
+  Settings → Store operations. A return whose order is older (completedAt,
+  else createdAt) hits the G11 security-override primitive on the new
+  `returns.override_window` permission: Owner/Manager pass untouched, anyone
+  else retries the same request under a manager's credentials and the
+  override lands in the register. Web refund card catches OVERRIDE_REQUIRED
+  and opens the standard override dialog.
+- **No-original return (I1/I8, RTN-010/011, SEC-RTN-NOORIG):**
+  `POST /v1/order-returns/no-original`, gated at point of action on the new
+  `returns.no_original` permission (Owner/Manager; boot-time role sync
+  backfills existing tenants). Controls, since it bypasses the original
+  document: store-credit refund ONLY, goods staged in As-Is review (G10 —
+  never silently sellable), the customer's claimed order number recorded
+  verbatim, warning exception `no_original_return` per event + full audit.
+  Numbered RMA-NOORIG-n, written completed in one step.
+- Migration `0052_no_original_returns`: order_returns.order_id nullable +
+  customer_id + referenced_order_number; order_return_lines.order_line_id
+  nullable + variant_id + description. Null-guards added to the RMA receive
+  path (no-original docs never sit authorized).
+- Web: new **Returns** page (nav → Sell) — return-document register + the
+  no-original entry form (customer pick-or-create, POS lookup line entry,
+  live credit total, override dialog). Points staff at Sales invoice lookup
+  first: all 71,246 imported STORIS invoices are refundable normally.
+- Tests: orders.int.spec 61→65 (settings validation, in-window cashier pass,
+  out-of-window OVERRIDE_REQUIRED → manager-credential retry → register row,
+  owner silent pass, no-original gate + credit/as-is/exception/stock-
+  untouched + register listing + validation); business 24/24 re-run. Gates
+  by exit code: typecheck 0 · lint 0 · test 0 · build 0 · prettier 0.
+
+Next backlog item: automatic replenishment transfers (FAQ J4/J5).
