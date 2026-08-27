@@ -1975,3 +1975,96 @@ unchanged — the manager invite expires 2026-08-29 17:53Z.
   fulfilled-line guard); orders 68, purchasing 39, deliveries 17 re-run
   green. Gates by exit code: typecheck 0 · lint 0 · test 0 · build 0 ·
   prettier 0.
+
+## Checkpoint 17 — direct ship live; UPLOADED-PACK BACKLOG COMPLETE (2026-08-27)
+
+PR #46 (as-is transfer intake + H2 RTV unwind) and PR #47 (PO-060/I7
+direct-ship vendor POs, migration 0057) both squash-merged on green CI,
+deploy branch rolled (02d681f), Render deploys dep-da81tapsrm7s73ds6k20 and
+dep-da827j8ae00c73agve80 live — final boot log verified `58/58 applied,
+head=0057_direct_ship; this run applied 0057_direct_ship`.
+
+**Every buildable item from the uploaded packs (55-row inventory FAQ +
+599-article sysadmin pack) is now built, merged, deployed, and verified.**
+Tracked tasks #1–#16 all complete.
+
+Not buildable / owner-gated leftovers:
+
+- Optional substrate extras the sysadmin pack marks nice-to-have (settings
+  registry admin UI, report builder) — build on owner request.
+- Needs-counsel privacy items (TCPA consent wording, erasure/retention
+  policy) — owner + lawyer, not code.
+
+## Enter an Exchange — container over two documents (2026-08-27)
+
+Owner uploaded the STORIS "Enter an Exchange" pack (committed verbatim at
+`docs/erp-exchange/`, 8 files). Built per its build plan, as a composition
+over the existing returns + order machinery (the pack's own instruction):
+
+- **Model (migration 0058_exchanges)**: `exchanges` container — number
+  EX-YYYY-NNNNNN, returnId + saleOrderId (both unique), originalOrderId /
+  referencedOrderNumber, status on_hold|open|completed|split|cancelled,
+  evenExchange, restocking fee (+sticky overridden flag), per-leg return
+  salesperson, approval stamps. Split Exchange = container dissolve; the
+  legs are already first-class documents. RLS + tenant registration.
+- **Settlement rides the store-credit ledger**: receiving the exchange's
+  return issues the credit (minus restocking fee) and immediately redeems
+  it against the replacement order's balance — every cent reconciles
+  through existing ledgers; excess stays as visible store credit. The
+  plain-refund path in OrderReturnsService diverts only while a live
+  container exists; split/cancel restores it. Commission clawback and
+  As-Is staging unchanged (shared path).
+- **API**: POST /v1/exchanges (bind; validates same-customer, financed-
+  original ⇒ even-exchange-only per D1, like-for-like check, fee compute/
+  override, E1 hold via ops.exchangeHoldAtEntry) · :id/approve ·
+  :id/split · :id/cancel · list/detail with settlement math. New
+  permissions exchanges.create / exchanges.approve /
+  exchanges.restocking_fee.override (Owner+Manager via catalog).
+- **Ops settings**: restockingFeePercent, exchangeHoldAtEntry (+ Settings
+  page inputs). Orders list gains ?number= exact recall.
+- **Web**: /exchanges list, /exchanges/new writer (find original → pick
+  return pieces → replacement w/ even-exchange copy → settle-now toggle),
+  /exchanges/[id] detail (settlement block, approve/split/cancel/receive),
+  nav entry, order-detail "Write exchange" now routes here.
+- **Deliberate divergences from STORIS** (recorded per pack conventions):
+  exchange refund excess settles as store credit (not cash-back); both
+  legs must bill the same customer; no-original exchanges carry no
+  restocking fee (already loss-prevention flagged + store-credit-only);
+  protection-plan transfer rules N/A (no plan object — plans are ordinary
+  product lines here); revolving financing/C6 holds not built (owner D1:
+  third-party only); vendor imports (2020 Spaces/Flexsteel/Pro Kitchen)
+  skipped — furniture-configurator integrations.
+- Tests: NEW exchanges.int.spec (8) — uneven happy path with ledger-net
+  assertions, restocking fee + sticky override + audit, E1 hold blocks
+  settlement until approve, financed-original even-only + like-for-like,
+  split restores plain refund, cancel voids both, no-original banked
+  credit at bind, same-customer guard. orders 68 · business 24 · sales 21
+  re-run green. Gates by exit code: typecheck 0 · lint 0 · test 0 ·
+  build 0 · prettier 0.
+
+## Sysadmin substrate — RPT-AUDIT + settings registry (2026-08-27)
+
+The "after" half of the owner's instruction (exchange pack, then sysadmin
+pack). Built the buildable substrate items from docs/erp-sysadmin:
+
+- **AUD-004 — denials are events**: PermissionGuard now writes every 403
+  to the audit stream (`permission.denied`, route + missing permissions,
+  explicit businessId through the root handle since guards run before the
+  RLS request context). Denial patterns are the pack's loss-prevention
+  signal.
+- **AUD-006 + AUD-003 — queryable, exportable, and reads leave traces**:
+  `GET /v1/audit-logs/export.csv` (same filters as the list, 10k cap,
+  newest-first) and the export itself is audited (`audit.export`). Export
+  button on the Audit page.
+- **SET-007 + SET-002 — registry as data**: `GET /v1/business/settings/
+registry` serves the declared registry (key, label, type, explicit
+  `nullMeans` for every setting — no implicit tri-state — class tags,
+  read-by). The Settings page renders a reference table from it.
+- Deliberate scale-down (recorded): no multi-scope resolver (SET-001) —
+  our settings model is deliberately flat per the owner-approved triage;
+  SET-004 already holds (no kill-switch exists); settings writes were
+  already audited (SET-006).
+- Tests: audit.int.spec 4→7 (denial event, CSV export + its audit trace,
+  registry completeness incl. TRISTATE tags); business 24, tenancy 8
+  re-run green. Gates by exit code: typecheck 0 · lint 0 · test 0 ·
+  build 0 · prettier 0.

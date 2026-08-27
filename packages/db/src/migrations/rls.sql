@@ -138,6 +138,7 @@ DECLARE
     'cost_layers',
     'cost_consumptions',
     'job_runs',
+    'exchanges',
     'daily_closeouts',
     'delivery_runs',
     'serial_units',

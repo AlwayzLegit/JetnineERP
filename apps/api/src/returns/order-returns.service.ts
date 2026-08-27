@@ -57,6 +57,23 @@ export class OrderReturnsService {
       .from(schema.orderReturnLines)
       .where(eq(schema.orderReturnLines.returnId, returnId));
 
+    // Exchange settlement (docs/erp-exchange): a return bound into a
+    // live exchange container settles against the replacement order
+    // instead of refunding — the plain refund path below never runs.
+    // A split or cancelled container restores plain-return behavior.
+    const [exchange] = await this.db
+      .select()
+      .from(schema.exchanges)
+      .where(eq(schema.exchanges.returnId, returnId))
+      .limit(1);
+    const liveExchange =
+      exchange && (exchange.status === 'open' || exchange.status === 'on_hold') ? exchange : null;
+    if (liveExchange?.status === 'on_hold') {
+      throw new ConflictException(
+        `Exchange ${liveExchange.number} is held for approval — release it before receiving the return`,
+      );
+    }
+
     // Money first — validate before any goods movement so a blocked
     // refund leaves the return untouched (still authorized).
     const toStoreCredit = ret.refundMethod === 'store_credit';
@@ -65,7 +82,7 @@ export class OrderReturnsService {
       .from(schema.payments)
       .where(eq(schema.payments.orderId, ret.orderId))
       .orderBy(desc(schema.payments.createdAt));
-    if (!toStoreCredit && ret.amountCents > paidCents(payments)) {
+    if (!liveExchange && !toStoreCredit && ret.amountCents > paidCents(payments)) {
       throw new BadRequestException(
         `Refund (${ret.amountCents}) exceeds the money now collected on ${order.number} — cancel and re-authorize as store credit`,
       );
@@ -121,9 +138,76 @@ export class OrderReturnsService {
       }
     }
 
-    // Money: reverse the original tenders newest-first, or credit the
-    // ledger — the same allocation the sales refund uses.
-    if (toStoreCredit) {
+    // Money: an exchange settles against the replacement order through
+    // the store-credit ledger — issue the credit (minus the restocking
+    // fee), then redeem what the replacement's balance can absorb. Any
+    // remainder stays as visible, spendable store credit.
+    if (liveExchange) {
+      const fee = liveExchange.restockingFeeCents;
+      const credit = Math.max(0, ret.amountCents - fee);
+      if (credit > 0) {
+        await this.storeCredit.issue(this.db, {
+          businessId: ret.businessId,
+          customerId: order.customerId,
+          amountCents: credit,
+          reason: `Exchange ${liveExchange.number} — return ${ret.rmaNumber}${fee > 0 ? ` (restocking fee ${fee} cents withheld)` : ''}`,
+          referenceType: 'exchange',
+          referenceId: liveExchange.id,
+          actorUserId,
+        });
+      }
+      const [saleOrder] = await this.db
+        .select()
+        .from(schema.orders)
+        .where(eq(schema.orders.id, liveExchange.saleOrderId))
+        .limit(1);
+      if (!saleOrder) throw new NotFoundException('Exchange replacement order not found');
+      const salePayments = await this.db
+        .select()
+        .from(schema.payments)
+        .where(eq(schema.payments.orderId, saleOrder.id));
+      const balanceDue = Math.max(0, saleOrder.totalCents - paidCents(salePayments));
+      const applied = Math.min(credit, balanceDue);
+      if (applied > 0) {
+        await this.db.insert(schema.payments).values({
+          businessId: ret.businessId,
+          saleId: null,
+          orderId: saleOrder.id,
+          kind: 'balance',
+          method: 'store_credit',
+          amountCents: applied,
+          status: 'succeeded',
+        });
+        await this.storeCredit.redeem(this.db, {
+          businessId: ret.businessId,
+          customerId: order.customerId,
+          amountCents: applied,
+          referenceType: 'exchange',
+          referenceId: liveExchange.id,
+          actorUserId,
+          reason: `Applied to exchange ${liveExchange.number} (${saleOrder.number})`,
+        });
+      }
+      await this.db
+        .update(schema.exchanges)
+        .set({ updatedAt: new Date() })
+        .where(eq(schema.exchanges.id, liveExchange.id));
+      await this.audit.log({
+        action: 'exchange.settle',
+        targetType: 'exchange',
+        targetId: liveExchange.id,
+        after: {
+          number: liveExchange.number,
+          rmaNumber: ret.rmaNumber,
+          returnCents: ret.amountCents,
+          restockingFeeCents: fee,
+          creditIssuedCents: credit,
+          appliedToSaleCents: applied,
+          saleOrderNumber: saleOrder.number,
+          residualCreditCents: credit - applied,
+        },
+      });
+    } else if (toStoreCredit) {
       await this.storeCredit.issue(this.db, {
         businessId: ret.businessId,
         customerId: order.customerId,

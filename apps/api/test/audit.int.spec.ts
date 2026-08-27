@@ -246,3 +246,63 @@ describe('Epic 1.4 — Audit log', () => {
     expect(res.body.data).toHaveLength(1);
   });
 });
+
+describe('Sysadmin pack — RPT-AUDIT substrate (AUD-003/004/006, SET-007)', () => {
+  it('AUD-004: a denied permission attempt is itself an audit event', async () => {
+    // The cashier 403 above (no audit.view) must have left a trace.
+    const res = await request(app.getHttpServer())
+      .get('/v1/audit-logs?action=permission.denied')
+      .set('Cookie', owner.cookie)
+      .set('X-Business-Id', businessId);
+    expect(res.status).toBe(200);
+    const denial = (
+      res.body.data as Array<{
+        action: string;
+        actorUserId: string | null;
+        targetType: string | null;
+        changesJson: { missing?: string[] } | null;
+      }>
+    ).find((r) => r.actorUserId === cashier.id);
+    expect(denial).toBeDefined();
+    expect(denial!.targetType).toBe('route');
+    expect(denial!.changesJson?.missing).toContain('audit.view');
+  });
+
+  it('AUD-006: the stream exports as CSV, and the export is audited (AUD-003)', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/v1/audit-logs/export.csv?action=product.variant.price.update')
+      .set('Cookie', owner.cookie)
+      .set('X-Business-Id', businessId);
+    expect(res.status).toBe(200);
+    expect(res.headers['content-type']).toMatch(/text\/csv/);
+    const lines = (res.text as string).split('\n');
+    expect(lines[0]).toBe(
+      'created_at,action,actor_email,actor_type,target_type,target_id,changes,ip',
+    );
+    expect(lines.length).toBe(2); // header + the one price update
+
+    const trace = await request(app.getHttpServer())
+      .get('/v1/audit-logs?action=audit.export')
+      .set('Cookie', owner.cookie)
+      .set('X-Business-Id', businessId);
+    expect(trace.status).toBe(200);
+    expect(trace.body.data.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('SET-007: the settings registry serves every ops key with an explicit blank-meaning', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/v1/business/settings/registry')
+      .set('Cookie', owner.cookie)
+      .set('X-Business-Id', businessId);
+    expect(res.status).toBe(200);
+    const rows = res.body as Array<{ key: string; nullMeans: string; classTags: string[] }>;
+    expect(rows.length).toBeGreaterThanOrEqual(15);
+    for (const row of rows) {
+      expect(typeof row.nullMeans).toBe('string');
+      expect(row.nullMeans.length).toBeGreaterThan(0); // SET-002: no implicit tri-state
+    }
+    const autoSched = rows.find((r) => r.key === 'autoScheduleDays');
+    expect(autoSched?.classTags).toContain('TRISTATE');
+    expect(rows.some((r) => r.key === 'restockingFeePercent')).toBe(true);
+  });
+});

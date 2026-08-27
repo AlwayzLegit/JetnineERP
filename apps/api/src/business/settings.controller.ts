@@ -59,6 +59,12 @@ interface OpsSettings {
   /** I4 (RTN-040): days after completion a return is allowed without a
    * manager override (null = no window, returns always allowed). */
   returnWindowDays?: number | null;
+  /** Exchange pack: % of the return credit charged as a restocking fee
+   * on exchanges (null/0 = none). Overridable per exchange with its own
+   * permission. */
+  restockingFeePercent?: number | null;
+  /** Exchange pack (E1): hold every new exchange for approval. */
+  exchangeHoldAtEntry?: boolean | null;
   /** J4 (XFR-052 / CFG-POS-AUTOSCHED): blank disables auto transfers;
    * 0 is valid and means same-day + 1 per the XFR-053 formula. */
   autoScheduleDays?: number | null;
@@ -71,6 +77,167 @@ interface OpsSettings {
     tier2Pct?: number | null;
   } | null;
 }
+
+/**
+ * SET-007: the declared registry behind `GET /v1/business/settings/
+ * registry`. `nullMeans` is mandatory prose for every nullable setting
+ * (SET-002 — blank is never implicit); `classTags` mark the risk class
+ * per the sysadmin pack (SET-003).
+ */
+const OPS_SETTINGS_REGISTRY = [
+  {
+    key: 'recyclingFeeCents',
+    label: 'Recycling fee per unit',
+    type: 'money',
+    nullMeans: 'State default ($10.50 per unit)',
+    classTags: [],
+    readBy: 'POS + order writer recycling line',
+  },
+  {
+    key: 'deliveryDailyCap',
+    label: 'Delivery stops per day',
+    type: 'integer',
+    nullMeans: 'Soft cap of 15 stops',
+    classTags: ['TRISTATE'],
+    readBy: 'Delivery scheduling (soft cap, override logged)',
+  },
+  {
+    key: 'deliveryDailyPieceCap',
+    label: 'Delivery pieces per day',
+    type: 'integer',
+    nullMeans: 'No piece budget',
+    classTags: ['TRISTATE'],
+    readBy: 'Delivery scheduling',
+  },
+  {
+    key: 'deliveryDailyCapacityUnits',
+    label: 'Delivery capacity units per day',
+    type: 'integer',
+    nullMeans: 'No capacity budget',
+    classTags: ['TRISTATE'],
+    readBy: 'Delivery scheduling',
+  },
+  {
+    key: 'zipRoutes',
+    label: 'Zip-prefix route map',
+    type: 'map',
+    nullMeans: 'No route suggestions',
+    classTags: [],
+    readBy: 'Delivery scheduling route suggestion',
+  },
+  {
+    key: 'invoiceHeaderNote',
+    label: 'Invoice header note',
+    type: 'text',
+    nullMeans: 'No note printed',
+    classTags: [],
+    readBy: 'Printed invoice / delivery ticket',
+  },
+  {
+    key: 'invoiceFooterNote',
+    label: 'Invoice footer note',
+    type: 'text',
+    nullMeans: 'No note printed',
+    classTags: [],
+    readBy: 'Printed invoice / delivery ticket',
+  },
+  {
+    key: 'poReplyTo',
+    label: 'PO reply-to email',
+    type: 'email',
+    nullMeans: 'Sends from the platform address',
+    classTags: [],
+    readBy: 'Emailed purchase orders',
+  },
+  {
+    key: 'maxBalanceForTicketPrintCents',
+    label: 'Max balance for ticket print',
+    type: 'money',
+    nullMeans: 'No cap — tickets print with any balance due',
+    classTags: ['TRISTATE'],
+    readBy: 'Delivery-ticket print gate (G9)',
+  },
+  {
+    key: 'invoiceVarianceToleranceCents',
+    label: 'Vendor-invoice auto-clear tolerance',
+    type: 'money',
+    nullMeans: 'Every matched invoice needs manual approval',
+    classTags: ['TRISTATE'],
+    readBy: 'Vendor invoice matching (G11)',
+  },
+  {
+    key: 'blindReceiving',
+    label: 'Blind receiving',
+    type: 'boolean',
+    nullMeans: 'Off — expected quantities shown at the dock',
+    classTags: [],
+    readBy: 'PO receiving grid (G11)',
+  },
+  {
+    key: 'reserveBasis',
+    label: 'Stock reservation basis',
+    type: 'enum:delivery_date|order_date',
+    nullMeans: 'Earliest delivery date first (owner default, B14)',
+    classTags: ['GUARDED'],
+    readBy: 'Pending-allocation backfill',
+  },
+  {
+    key: 'returnWindowDays',
+    label: 'Return window (days)',
+    type: 'integer',
+    nullMeans: 'No window — returns always allowed without override',
+    classTags: ['TRISTATE'],
+    readBy: 'Return authorization (I4)',
+  },
+  {
+    key: 'restockingFeePercent',
+    label: 'Exchange restocking fee (%)',
+    type: 'percent',
+    nullMeans: 'No restocking fee on exchanges',
+    classTags: ['TRISTATE'],
+    readBy: 'Exchange bind (docs/erp-exchange)',
+  },
+  {
+    key: 'exchangeHoldAtEntry',
+    label: 'Hold exchanges for approval (E1)',
+    type: 'boolean',
+    nullMeans: 'Off — exchanges settle without approval',
+    classTags: [],
+    readBy: 'Exchange bind + settlement gate',
+  },
+  {
+    key: 'autoScheduleDays',
+    label: 'Auto transfer schedule days',
+    type: 'integer',
+    nullMeans: 'Auto transfers DISABLED (0 = next-day; XFR-052)',
+    classTags: ['TRISTATE'],
+    readBy: 'Auto replenishment transfers',
+  },
+  {
+    key: 'autoReplenishmentEnabled',
+    label: 'Nightly auto-replenishment POs',
+    type: 'boolean',
+    nullMeans: 'Off — no PO drafts overnight',
+    classTags: [],
+    readBy: 'Nightly batch runner (JOB-002)',
+  },
+  {
+    key: 'unlockRoleIds',
+    label: 'Roles allowed to unlock printed orders',
+    type: 'role-list',
+    nullMeans: 'Managers and owners (default unlock set)',
+    classTags: [],
+    readBy: 'Order unlock (A1)',
+  },
+  {
+    key: 'priceVariance',
+    label: 'Price-variance tiers',
+    type: 'object',
+    nullMeans: 'Defaults: 5% / $50 no-friction, 15% manager tier',
+    classTags: [],
+    readBy: 'Order-writer discount gate (G6)',
+  },
+] as const;
 
 interface UpdateBody {
   name?: string;
@@ -189,6 +356,24 @@ function validateOps(input: OpsSettings): OpsSettings {
     }
     out.returnWindowDays = input.returnWindowDays;
   }
+  if (input.restockingFeePercent !== undefined) {
+    if (
+      input.restockingFeePercent !== null &&
+      (typeof input.restockingFeePercent !== 'number' ||
+        !Number.isFinite(input.restockingFeePercent) ||
+        input.restockingFeePercent < 0 ||
+        input.restockingFeePercent > 100)
+    ) {
+      throw new BadRequestException('ops.restockingFeePercent must be between 0 and 100, or null');
+    }
+    out.restockingFeePercent = input.restockingFeePercent;
+  }
+  if (input.exchangeHoldAtEntry !== undefined) {
+    if (input.exchangeHoldAtEntry !== null && typeof input.exchangeHoldAtEntry !== 'boolean') {
+      throw new BadRequestException('ops.exchangeHoldAtEntry must be a boolean or null');
+    }
+    out.exchangeHoldAtEntry = input.exchangeHoldAtEntry;
+  }
   if (input.autoScheduleDays !== undefined) {
     if (
       input.autoScheduleDays !== null &&
@@ -272,6 +457,19 @@ export class SettingsController {
     @Inject(DRIZZLE) private readonly db: PostgresJsDatabase,
     @Inject(AuditService) private readonly audit: AuditService,
   ) {}
+
+  /**
+   * SET-007 (sysadmin pack, scaled to our deliberately flat model): the
+   * settings registry as data — every ops setting the system reads,
+   * with its type, what blank means (SET-002: no implicit tri-state),
+   * and its risk class. A setting that is not in this registry does not
+   * exist; the Settings page renders its reference section from it.
+   */
+  @Get('registry')
+  @RequirePermission('business.settings.view')
+  registry(): typeof OPS_SETTINGS_REGISTRY {
+    return OPS_SETTINGS_REGISTRY;
+  }
 
   @Get()
   @RequirePermission('business.settings.view')

@@ -1464,17 +1464,18 @@ function ReturnsCard({
         </Button>
         {!order.originalOrderId && (
           <LinkButton
-            href={`/orders/new?exchangeOf=${order.id}`}
+            href={`/exchanges/new?originalOrderId=${order.id}`}
             variant="secondary"
             data-testid="write-exchange"
           >
-            Write exchange order
+            Write exchange
           </LinkButton>
         )}
       </div>
       <p className="muted" style={{ fontSize: 11.5, margin: '8px 0 0' }}>
-        No restocking fee. Returned goods go to the As-Is queue for manager/warehouse review — never
-        straight back to sellable stock.
+        Returned goods go to the As-Is queue for manager/warehouse review — never straight back to
+        sellable stock. Exchanges net the return credit against the replacement in one settlement
+        (restocking fee per Settings).
       </p>
     </Card>
   );
