@@ -1737,3 +1737,22 @@ Backlog #4 (FAQ J4/J5 — XFR-051/052/053, both P0-MISSING).
 
 Next backlog item: costing program (PARITY-NOTES C2) — last of the ranked
 five; needs an owner decision on costing method before build.
+
+## Checkpoint 14 — ranked backlog complete through #4 (2026-08-27)
+
+PR #42 (auto transfers) squash-merged on green CI, deploy branch rolled
+(f628c04), Render deploy dep-da7vgsdg1s2s73fi5620 live — boot log verified
+`54/54 applied, head=0053_auto_transfers; this run applied 0053`. Earlier
+today: PR #38 (B14), PR #39 (physical inventory, 0051), PR #40 (PO
+corrections), PR #41 (returns, 0052) all merged + deployed + boot-verified
+the same way. Sprint branch restarted from main after each merge.
+
+The FAQ-audit ranked backlog now stands: 1 physical inventory ✓ · 2 PO
+lifecycle corrections ✓ · 3 return windows + no-original returns ✓ ·
+4 auto transfers ✓ · 5 costing program — **blocked on an owner decision**
+(FIFO cost layers for STORIS parity vs. weighted-average; asked 2026-08-27).
+
+Ops unchanged: accept the manager invite (expires 2026-08-29 17:53Z),
+repoint the Render dashboard repo URL, rotate the shared owner password,
+optional DMARC record, missing inventory-pack sections/ files, docs-system
+handoff still on hold.
