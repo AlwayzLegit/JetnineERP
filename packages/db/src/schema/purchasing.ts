@@ -38,6 +38,16 @@ export const vendors = pgTable(
      */
     remitTo: text('remit_to'),
     notes: text('notes'),
+    /**
+     * Sales-rate PO replenishment settings (HANDOFF-po-replenishment-
+     * sales-rate §6, Advanced Vendor Settings → Auto PO Replen), one
+     * document per vendor: generateAutomaticPos, automaticallyHoldPos,
+     * weeklySalesRateWeeks, includeAllBackOrders, daysForReplenishment,
+     * minimumStockDays, leadDays, variancePercent (+start/end),
+     * minimumSalesRate, buildDays[0-6], categoryExceptions[]. Null =
+     * vendor not enabled for sales-rate replenishment.
+     */
+    replenishmentJson: jsonb('replenishment_json'),
     isActive: boolean('is_active').notNull().default(true),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),

@@ -2578,3 +2578,37 @@ say the word to change any:**
   (line_reschedule/line_inventory_change) but no UI path exercises them
   yet; whole-delivery date moves map to R8.
   Gates: typecheck 0 · lint 0 · test 0 (full) · build 0 · prettier 0.
+
+## Sales-rate PO replenishment — engine slice (2026-08-27)
+
+Task #24 slice 1 (docs/HANDOFF-po-replenishment-sales-rate): the ONE
+pure calculation engine, tests first per the pack.
+
+- `apps/api/src/purchasing/replenishment-engine.ts` — QuantityToOrder =
+  Required + Additional − Available − NetPO. Required always ÷7;
+  Additional ÷5/÷7 per Exclude Weekends; per-COLUMN rounding (on =
+  half-up, off = truncate); NetPO never clamped (branch A subtracts
+  uncommitted + layaway-per-control; branch B subtracts due-soon
+  demand, adds inbound transfers); strict `<` Minimum Sales Rate drops
+  the row; category-exception hierarchy for stock/lead days;
+  validateCriteria (products×model, IncludeAllBackOrders×DaysForRepl),
+  salesWindow (this-year-prior / last-year-subsequent, injected clock),
+  vendorRunsToday (GenerateAutomaticPOs + Build POs weekday gate).
+- `replenishment-engine.spec.ts` — 18 tests: T-01…T-09, T-10/11,
+  T-12/13, T-15, T-16, T-17, T-20, T-25/26 + category exception +
+  returns-subtract. All passing.
+- Migration `0062_vendor_replenishment`: `vendors.replenishment_json`
+  (jsonb) — per-vendor settings (§4 field list) live here.
+
+**§9 self-decisions (flag to owner):** §9.1 sales rate = sold −
+returned (source "=" read as typo) · §9.2 rounding off = truncate
+toward zero · §9.10 minimum-sales-rate filter is strict `<` · Jetnine
+divergences: no product groups (category exceptions only), no PO types
+(every open PO is supply), no PO-from-order-entry flag (§3.4 n/a).
+
+Remaining slices: data layer (build engine inputs from sales/inventory/
+POs/transfers), vendor-settings endpoint + UI, criteria screen +
+Items-for-Replenishment grid (session overrides, Rebuild List T-32),
+PO creation (qty>0 only, auto-hold T-28), delivery dates T-29/T-30,
+EOD mode via jobs runner (T-25/26) + T-31 identical-modes test.
+Gates: typecheck 0 · lint 0 · test 0 · build 0 · prettier 0.
