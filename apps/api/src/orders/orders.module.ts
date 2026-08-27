@@ -3,6 +3,7 @@ import { AuditModule } from '../audit/audit.module';
 import { MoneyModule } from '../money/money.module';
 import { ReturnsModule } from '../returns/returns.module';
 import { ControlsModule } from '../controls/controls.module';
+import { CostingModule } from '../costing/costing.module';
 import { AuthModule } from '../auth/auth.module';
 import { TenancyModule } from '../tenancy/tenancy.module';
 import { TransfersModule } from '../transfers/transfers.module';
@@ -19,6 +20,7 @@ import { OrdersService } from './orders.service';
     ReturnsModule,
     ControlsModule,
     TransfersModule,
+    CostingModule,
   ],
   controllers: [OrdersController, PublicOrderController],
   providers: [OrdersService],

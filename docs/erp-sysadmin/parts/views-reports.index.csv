@@ -1,0 +1,46 @@
+req_id,article_id,title
+SAR-001,15294766344980,Mail Multi User/Group Selection Window
+SAR-002,15294766350740,Multiple Activity Type Selection Window
+SAR-003,15294752100628,Multiple Category Selection Window
+SAR-004,15294752252820,Multiple Company Selection Window
+SAR-005,15294752249876,Multiple District Selection Window
+SAR-006,15202502995604,Multiple Entry Window
+SAR-007,15294752250772,Multiple Exception Selection Window
+SAR-008,15294752478356,Multiple Franchise Selection Window
+SAR-009,15294752476692,Multiple Function Selection Window
+SAR-010,15294766862100,Multiple Location Selection Window
+SAR-011,15294752807572,Multiple Prefixes Selection Window
+SAR-012,15294767010836,Multiple Printer Selection Window
+SAR-013,15294752810516,Multiple Probability Selection Window
+SAR-014,15294767144340,Multiple Reason Code Selection Window
+SAR-015,15294752950676,Multiple Region Selection Window
+SAR-016,15294767616788,Multiple Selection Entry Window
+SAR-017,15294752953492,Multiple Staff Selection Window
+SAR-018,15294753602068,Read-Only Lookup Window
+SAR-019,15202553752980,Report Customer Merge Status
+SAR-020,15202742729620,Report Error Messages
+SAR-021,15202930411668,Report Files Created via Entry Processes
+SAR-022,15203012857236,Report on Menu Access
+SAR-023,15203028700948,Report on User Security
+SAR-024,15203214259476,Report Secured Decryption Activity
+SAR-025,15203214462356,Report Time Clock Activity
+SAR-026,15295211660436,Staff Location Restriction Review
+SAR-027,15294766048020,Text Entry Screen
+SAR-028,15294767776916,Time Entry
+SAR-029,15294767779604,Time Interval Entry - Specify Interval
+SAR-030,15203235627028,Updates History Report
+SAR-031,15294767989268,Vendor Name Search
+SAR-032,15295211963924,View Advanced Customer Settings
+SAR-033,15295211514516,View Advanced Product Settings
+SAR-034,15295210638740,View Bank Settings
+SAR-035,15295156258068,View Bar Code Scanner Download Activity
+SAR-036,15295210665492,View Bill Back Settings
+SAR-037,15295212294036,View Create a User
+SAR-038,15295156484244,View Create a User Group
+SAR-039,15295210967700,View Deduct From Invoice Settings
+SAR-040,15295211362708,View Payment Settings
+SAR-041,15295211517332,View Rebate Plan Settings
+SAR-042,15295211523476,View Rebate Plan Status Settings
+SAR-043,15295213075860,View Terms Settings
+SAR-044,15295155563924,View Vendor Settings
+SAR-045,15295157262740,View Warehouse/Store Settings

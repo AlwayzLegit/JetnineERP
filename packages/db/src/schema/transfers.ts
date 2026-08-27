@@ -100,6 +100,13 @@ export const stockTransferLines = pgTable(
       .references(() => productVariants.id, { onDelete: 'restrict' }),
     quantityShipped: integer('quantity_shipped').notNull(),
     quantityReceived: integer('quantity_received').notNull().default(0),
+    /**
+     * FIFO cost carried across the transfer: the weighted unit cost of
+     * the origin layers consumed at ship time. Receiving creates the
+     * destination layer at this cost. Null on transfers shipped before
+     * costing existed — receive falls back to the variant catalog cost.
+     */
+    unitCostCents: integer('unit_cost_cents'),
   },
   (t) => ({
     transferIdx: index('stock_transfer_lines_transfer_id_idx').on(t.transferId),

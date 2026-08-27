@@ -1,0 +1,45 @@
+req_id,article_id,title
+SCS-001,15186452330644,Account Statement Cycling Control Settings
+SCS-002,15186452327572,Accounts Receivable Control Settings
+SCS-003,15186416510612,Add Product Attribute
+SCS-004,15186451010836,Add Text
+SCS-005,15186451011092,Add-on Calculation Process
+SCS-006,15186501542164,Alternate Tax Interface Control Settings
+SCS-007,15186452328468,API Control Settings
+SCS-008,20139429218196,Ashley Custom Cost Formula
+SCS-009,15186451010708,Automatic Transfers
+SCS-010,15186416511636,Bar Code Add-On Settings
+SCS-011,15186501558292,Bar Code Control Settings
+SCS-012,15186452327700,Cash Balancing Control Settings
+SCS-013,15186416511124,Check-Levels for Exceptions
+SCS-014,15186501540756,Collections Processing Control Settings
+SCS-015,15186416511252,Commission Calculation Code Options
+SCS-016,15186501540884,Costing Control Settings
+SCS-017,15186501753876,Credit Application Control Settings
+SCS-018,15186452549524,Customer Rewards Control Settings
+SCS-019,15186501538708,"Customer's Own Materials (COM) Control Settings"
+SCS-020,15186452533012,D-Tools System Control Settings
+SCS-021,15186501753492,Data Warehouse Control Settings
+SCS-022,15186451247636,Default Check Print Bank
+SCS-023,15186416725012,Default Due Day Table
+SCS-024,15186451246228,Default Store/District Assignments - Collections
+SCS-025,15186416721684,Deferment Fee Table
+SCS-026,15186416719508,Demographic Information Screen
+SCS-027,15186452537748,Demographics Control Settings
+SCS-028,15186451511828,Due Date List Entry
+SCS-029,15186416970132,eBridge Commerce Credit Revew Queue Retention Days
+SCS-030,15186501753236,EDI Control Settings
+SCS-031,15186501753620,Electronic Check Processing Control Settings
+SCS-032,15186452535572,Enter Quick Purchase Orders
+SCS-033,15186452536468,eSTORIS Control Settings
+SCS-034,16918023610516,Event Notification Control
+SCS-035,15186452794644,External Communications Settings
+SCS-036,15186501985172,Financing Control Settings
+SCS-037,15186501980436,General Ledger Control Settings
+SCS-038,15186501982740,General System Control Settings
+SCS-039,15186416971540,Hi/Lo Gross Profit Option
+SCS-040,15186452790804,Import BIN/IIN Table
+SCS-041,15186416978452,Import Document Print
+SCS-042,15186452792724,Installment Receivables Control Settings
+SCS-043,15186452794132,Inventory Control Settings
+SCS-044,15186501982868,Legal Code Settings

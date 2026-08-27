@@ -135,6 +135,8 @@ DECLARE
     'write_offs',
     'physical_counts',
     'physical_count_lines',
+    'cost_layers',
+    'cost_consumptions',
     'daily_closeouts',
     'delivery_runs',
     'serial_units',

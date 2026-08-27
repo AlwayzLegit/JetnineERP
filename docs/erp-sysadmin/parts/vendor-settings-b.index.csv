@@ -1,0 +1,48 @@
+req_id,article_id,title
+VEND-048,15243029805972,Picking Zone Assignment Window
+VEND-049,15243029808532,Podium Location ID
+VEND-050,15242997977364,Prioritize Special Delivery Picking
+VEND-051,15243029806868,Purchase Delivery Pad Days
+VEND-052,15243029817876,Purchase Lead Days
+VEND-053,15243030718484,Purchase Order Item Selection
+VEND-054,15243030726676,Purchase Order Shipping Type Settings
+VEND-055,15243030718740,Purchase Order Type Settings
+VEND-056,15243032413844,Receiving Capacity Settings
+VEND-057,15243032411284,Receiving Group Settings
+VEND-058,15243032741396,Region Settings
+VEND-059,15243032743572,Regional Vendor Settings
+VEND-060,15243032741012,Return to Vendor Tax Settings
+VEND-061,15243030956052,Route Capacity Settings
+VEND-062,15242997980180,Select Printable Language
+VEND-063,15243029807124,Select Storage Locations Screen
+VEND-064,15243030957972,Shared Route Capacity Settings
+VEND-065,15242997978516,Shared Route Code Settings
+VEND-066,15242997978772,Shift4 Authorization
+VEND-067,15243029809172,Shift4 eComm Authorization
+VEND-068,15243029986452,Shift4 Extended Receivables Authorization
+VEND-069,15242998151188,Shift4 Extended Receivables MOTO Authorization
+VEND-070,15243032742804,Shipping Port Settings
+VEND-071,15243029362452,Stock Location Schema
+VEND-072,15243032742932,Storage Category Settings
+VEND-073,15243029986324,Storage Location Field
+VEND-074,15243029999892,Storage Location Sort Sequence
+VEND-075,15243030955412,Third Party Logistics EDI Settings
+VEND-076,15243030956564,Third Party Warehouse Management System Group Settings
+VEND-077,15243032962964,Tracked Storage Location Settings
+VEND-078,15243032962708,Tracked Warehouse Location Mask Settings
+VEND-079,16914630501140,Tracked Warehouse Location Verification Settings
+VEND-080,15243032963348,Unit of Measure Settings
+VEND-081,15243032962836,Update Zip Code Settings
+VEND-082,15243031200276,Velocity Settings
+VEND-083,15243031197972,Vendor Class Settings
+VEND-084,15243032140436,Vendor EDI Settings
+VEND-085,15243031202452,Vendor Rebate Settings
+VEND-086,15243031207444,Vendor RemitTo Settings
+VEND-087,15243032963092,Vendor Settings
+VEND-088,15243029986196,Vendor Ship from Location Lead Days
+VEND-089,15242998160660,Vendor Ship From Replacement Cost Settings
+VEND-090,15243031196820,Vendor Ship From Settings
+VEND-091,15243033214228,Warehouse Inventory Settings
+VEND-092,15243029987348,Warehouse Mapping Paths Screen
+VEND-093,15243033212820,Warehouse/Store Location Settings
+VEND-094,15243031440276,Warehouse/Store Receiving Settings
