@@ -35,6 +35,34 @@ interface OrderPaymentsDayRow {
   amountCents: number;
   count: number;
 }
+interface SalesSummaryRow {
+  key: string;
+  label: string;
+  documentCount: number;
+  merchandiseCents: number;
+  discountCents: number;
+  taxCents: number;
+  totalCents: number;
+}
+
+interface SalesSummary {
+  basis: 'written' | 'delivered';
+  groupBy: 'day' | 'location' | 'salesperson';
+  start: string;
+  end: string;
+  rows: SalesSummaryRow[];
+  totals: {
+    documentCount: number;
+    merchandiseCents: number;
+    discountCents: number;
+    taxCents: number;
+    totalCents: number;
+    /** Average merchandise per document — counts documents, never
+     *  document-salesperson pairs (catalog rule, Report Average Value). */
+    averageMerchandiseCents: number;
+  };
+}
+
 interface DailyReport {
   start: string;
   end: string;
@@ -908,6 +936,201 @@ export class ReportsController {
       }))
       .sort((a, b) => b.balanceCents - a.balanceCents);
     return { rows, totalCents: rows.reduce((s, r) => s + r.balanceCents, 0) };
+  }
+
+  /**
+   * Unified sales report — the catalog's Written Sales Dollars /
+   * Written Sales Summary / Completed (Monthly) Sales Dollars merged
+   * into one surface with written-vs-delivered as a first-class
+   * dimension (pack 01/06). Covers POS sales AND sales orders; imported
+   * legacy documents excluded (D8); store data scope applies.
+   *
+   * Deliberate divergence (recorded in SPRINT-STATUS): "written" uses
+   * the document's CURRENT totals dated by entry time — we do not keep
+   * an at-entry snapshot, so later edits fold into the written figure
+   * instead of listing as separate adjustment records.
+   */
+  @Get('sales/summary')
+  @RequirePermission('reports.sales.view')
+  async salesSummary(
+    @CurrentTenant() tenant: RequestTenantContext,
+    @Query('basis') basisStr?: string,
+    @Query('groupBy') groupByStr?: string,
+    @Query('start') startStr?: string,
+    @Query('end') endStr?: string,
+    @Query('format') format?: string,
+    @Res({ passthrough: true }) res?: Response,
+  ): Promise<SalesSummary | void> {
+    const basis: 'written' | 'delivered' = basisStr === 'delivered' ? 'delivered' : 'written';
+    const groupBy: 'day' | 'location' | 'salesperson' =
+      groupByStr === 'location' || groupByStr === 'salesperson' ? groupByStr : 'day';
+    const { startDate, endDate } = parseRange(startStr, endStr);
+    const startTs = new Date(`${startDate}T00:00:00.000Z`);
+    const endTsExclusive = new Date(`${endDate}T00:00:00.000Z`);
+    endTsExclusive.setUTCDate(endTsExclusive.getUTCDate() + 1);
+
+    const saleDate = basis === 'written' ? schema.sales.createdAt : schema.sales.completedAt;
+    const orderDate = basis === 'written' ? schema.orders.createdAt : schema.orders.completedAt;
+
+    const saleWhere = and(
+      gte(saleDate, startTs),
+      lt(saleDate, endTsExclusive),
+      sql`${schema.sales.status} IN ('completed', 'partially_refunded', 'refunded')`,
+      isNull(schema.sales.importedAt),
+      salesScopeCond(tenant, schema.sales.locationId),
+    );
+    const orderWhere = and(
+      gte(orderDate, startTs),
+      lt(orderDate, endTsExclusive),
+      basis === 'written'
+        ? sql`${schema.orders.status} NOT IN ('draft', 'quote', 'cancelled')`
+        : eq(schema.orders.status, 'completed'),
+      isNull(schema.orders.importedAt),
+      salesScopeCond(tenant, schema.orders.locationId),
+    );
+
+    const saleKey =
+      groupBy === 'day'
+        ? sql<string>`to_char(${saleDate} AT TIME ZONE 'UTC', 'YYYY-MM-DD')`
+        : groupBy === 'location'
+          ? sql<string>`${schema.sales.locationId}::text`
+          : sql<string>`COALESCE(${schema.sales.associateUserId}::text, '')`;
+    const orderKey =
+      groupBy === 'day'
+        ? sql<string>`to_char(${orderDate} AT TIME ZONE 'UTC', 'YYYY-MM-DD')`
+        : groupBy === 'location'
+          ? sql<string>`${schema.orders.locationId}::text`
+          : sql<string>`COALESCE(${schema.memberships.userId}::text, '')`;
+
+    const saleRows = await this.db
+      .select({
+        key: saleKey,
+        documentCount: sql<number>`COUNT(*)::int`,
+        merchandiseCents: sql<number>`COALESCE(SUM(${schema.sales.subtotalCents}), 0)::int`,
+        discountCents: sql<number>`COALESCE(SUM(${schema.sales.discountCents}), 0)::int`,
+        taxCents: sql<number>`COALESCE(SUM(${schema.sales.taxCents}), 0)::int`,
+        totalCents: sql<number>`COALESCE(SUM(${schema.sales.totalCents}), 0)::int`,
+      })
+      .from(schema.sales)
+      .where(saleWhere)
+      .groupBy(saleKey);
+
+    let orderQuery = this.db
+      .select({
+        key: orderKey,
+        documentCount: sql<number>`COUNT(*)::int`,
+        merchandiseCents: sql<number>`COALESCE(SUM(${schema.orders.subtotalCents}), 0)::int`,
+        discountCents: sql<number>`COALESCE(SUM(${schema.orders.discountCents}), 0)::int`,
+        taxCents: sql<number>`COALESCE(SUM(${schema.orders.taxCents}), 0)::int`,
+        totalCents: sql<number>`COALESCE(SUM(${schema.orders.totalCents}), 0)::int`,
+      })
+      .from(schema.orders)
+      .$dynamic();
+    if (groupBy === 'salesperson') {
+      orderQuery = orderQuery.leftJoin(
+        schema.memberships,
+        eq(schema.memberships.id, schema.orders.salespersonMembershipId),
+      );
+    }
+    const orderRows = await orderQuery.where(orderWhere).groupBy(orderKey);
+
+    const merged = new Map<string, SalesSummaryRow>();
+    for (const r of [...saleRows, ...orderRows]) {
+      const cur = merged.get(r.key) ?? {
+        key: r.key,
+        label: r.key,
+        documentCount: 0,
+        merchandiseCents: 0,
+        discountCents: 0,
+        taxCents: 0,
+        totalCents: 0,
+      };
+      cur.documentCount += r.documentCount;
+      cur.merchandiseCents += r.merchandiseCents;
+      cur.discountCents += r.discountCents;
+      cur.taxCents += r.taxCents;
+      cur.totalCents += r.totalCents;
+      merged.set(r.key, cur);
+    }
+
+    // Human labels for non-day groupings.
+    if (groupBy === 'location') {
+      const ids = [...merged.keys()].filter(Boolean);
+      const locs = ids.length
+        ? await this.db
+            .select({ id: schema.locations.id, name: schema.locations.name })
+            .from(schema.locations)
+            .where(inArray(schema.locations.id, ids))
+        : [];
+      const nameBy = new Map(locs.map((l) => [l.id, l.name]));
+      for (const row of merged.values()) row.label = nameBy.get(row.key) ?? row.key;
+    } else if (groupBy === 'salesperson') {
+      const ids = [...merged.keys()].filter(Boolean);
+      const users = ids.length
+        ? await this.db
+            .select({ id: schema.users.id, email: schema.users.email })
+            .from(schema.users)
+            .where(inArray(schema.users.id, ids))
+        : [];
+      const emailBy = new Map(users.map((u) => [u.id, u.email]));
+      for (const row of merged.values())
+        row.label = row.key === '' ? '(no salesperson)' : (emailBy.get(row.key) ?? row.key);
+    }
+
+    const rows = [...merged.values()].sort((a, b) =>
+      groupBy === 'day' ? a.key.localeCompare(b.key) : b.totalCents - a.totalCents,
+    );
+    const totals = rows.reduce(
+      (acc, r) => ({
+        documentCount: acc.documentCount + r.documentCount,
+        merchandiseCents: acc.merchandiseCents + r.merchandiseCents,
+        discountCents: acc.discountCents + r.discountCents,
+        taxCents: acc.taxCents + r.taxCents,
+        totalCents: acc.totalCents + r.totalCents,
+        averageMerchandiseCents: 0,
+      }),
+      {
+        documentCount: 0,
+        merchandiseCents: 0,
+        discountCents: 0,
+        taxCents: 0,
+        totalCents: 0,
+        averageMerchandiseCents: 0,
+      },
+    );
+    totals.averageMerchandiseCents = totals.documentCount
+      ? Math.round(totals.merchandiseCents / totals.documentCount)
+      : 0;
+
+    const report: SalesSummary = { basis, groupBy, start: startDate, end: endDate, rows, totals };
+    if (format === 'csv') {
+      requireExport(tenant);
+      // Provenance rides the export (pack 01 § run-time options echo).
+      const header = `# basis=${basis} groupBy=${groupBy} start=${startDate} end=${endDate} generated=${new Date().toISOString()}\n`;
+      const csv = toCsv(
+        [
+          'key',
+          'label',
+          'documents',
+          'merchandise_cents',
+          'discount_cents',
+          'tax_cents',
+          'total_cents',
+        ],
+        rows.map((r) => [
+          r.key,
+          r.label,
+          r.documentCount,
+          r.merchandiseCents,
+          r.discountCents,
+          r.taxCents,
+          r.totalCents,
+        ]),
+      );
+      sendCsv(res!, `sales-summary-${basis}-${startDate}-to-${endDate}.csv`, header + csv);
+      return;
+    }
+    return report;
   }
 }
 

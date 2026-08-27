@@ -661,3 +661,71 @@ describe('Sales Views Phase 1 — store-level data scope', () => {
       .expect(200);
   });
 });
+
+describe('Sales Views — unified written/delivered sales summary', () => {
+  // Fixture state from the scope suite: POS sales SC-MAIN-1 (100.00, Main)
+  // and SC-ANNEX-1 (50.00, Annex), both completed; orders ORD-MAIN-1
+  // (70.00) and ORD-ANNEX-1 (30.00), both 'confirmed' with no completedAt.
+  it('written includes open orders; delivered does not', async () => {
+    const written = await request(app.getHttpServer())
+      .get('/v1/reports/sales/summary?basis=written')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .expect(200);
+    const delivered = await request(app.getHttpServer())
+      .get('/v1/reports/sales/summary?basis=delivered')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .expect(200);
+    // The two confirmed-but-unfulfilled orders (70.00 + 30.00) are the
+    // exact difference between the two bases.
+    expect(written.body.totals.totalCents - delivered.body.totals.totalCents).toBe(10000);
+    expect(written.body.totals.documentCount - delivered.body.totals.documentCount).toBe(2);
+  });
+
+  it('groups by location with human labels', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/v1/reports/sales/summary?basis=written&groupBy=location')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .expect(200);
+    const labels = res.body.rows.map((r: { label: string }) => r.label);
+    expect(labels).toContain('Main');
+    expect(labels).toContain('Annex');
+    const annex = res.body.rows.find((r: { label: string }) => r.label === 'Annex');
+    // Annex carries exactly the annex sale (50.00) + annex order (30.00).
+    expect(annex.totalCents).toBe(8000);
+  });
+
+  it('store scope applies: scoped member is short exactly the Annex dollars', async () => {
+    const owner = await request(app.getHttpServer())
+      .get('/v1/reports/sales/summary?basis=written')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .expect(200);
+    const scoped = await request(app.getHttpServer())
+      .get('/v1/reports/sales/summary?basis=written')
+      .set('Cookie', scopedCookie)
+      .set('X-Business-Id', businessId)
+      .expect(200);
+    expect(owner.body.totals.totalCents - scoped.body.totals.totalCents).toBe(8000);
+  });
+
+  it('average merchandise counts documents, and CSV export carries provenance', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/v1/reports/sales/summary?basis=written')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .expect(200);
+    const t = res.body.totals;
+    expect(t.averageMerchandiseCents).toBe(Math.round(t.merchandiseCents / t.documentCount));
+
+    const csv = await request(app.getHttpServer())
+      .get('/v1/reports/sales/summary?basis=written&format=csv')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .expect(200);
+    expect(csv.text.startsWith('# basis=written')).toBe(true);
+    expect(csv.text).toContain('generated=');
+  });
+});
