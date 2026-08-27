@@ -12,7 +12,7 @@ STORIS ships a full WYSIWYG banded-report designer (a rebranded DevExpress XtraR
 `XRLabel`, `PictureBox`, band structure, and the Report Explorer/Properties panes give it
 away). Seven of the twenty-eight articles in this section document that designer's UI.
 
-**Do not rebuild the designer.** Rebuild the _model underneath it_:
+**Do not rebuild the designer.** Rebuild the *model underneath it*:
 
 - a template bound to a **named, versioned data contract** per document type
 - **resolution** by (document type, location, language)
@@ -50,7 +50,7 @@ custom forms.
 A document does **not** use a designed form just because one exists. The relevant Control
 Settings record must select **Forms Designer** as the print method for that document.
 Example from the source: to print sales-order documents such as exchange receipts, set the
-_Sales Order_ field on the _Printed Documents_ tab of Point of Sale Control Settings to
+*Sales Order* field on the *Printed Documents* tab of Point of Sale Control Settings to
 Forms Designer.
 
 Control files carrying a Forms Designer flag:
@@ -64,9 +64,9 @@ Control files carrying a Forms Designer flag:
 
 Two POS settings extend what forms can carry:
 
-- _ATP Calculation_ settings (Logistics tab) allow **ATP and ATC dates** to print on Sales
+- *ATP Calculation* settings (Logistics tab) allow **ATP and ATC dates** to print on Sales
   Order and Shopping Cart enhanced laser forms.
-- _Product Image Option for Forms Designer_ (Printed Documents tab) allows **images** in
+- *Product Image Option for Forms Designer* (Printed Documents tab) allows **images** in
   enhanced laser forms.
 
 `[SETTING] simplify` — a per-document-type "which engine renders this" switch is pure legacy
@@ -76,18 +76,18 @@ product images) as template-level concerns rather than global settings.
 
 ### Form Management grid — the columns are the data model
 
-| Column              | Behavior                                                                                                                  |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| **Form Type**       | Expandable (`+`) to reveal the forms under it                                                                             |
-| **Description**     | Editable in-grid **for non-standard forms only**                                                                          |
-| **User Modified**   | User code of last editor                                                                                                  |
-| **Modified Date**   | Date of last edit                                                                                                         |
-| **Default**         | Checkbox. The form used when printing this form type — unless a location match wins. A new default can be set at any time |
-| **STORIS Standard** | Checkbox, read-only indicator. **Standard forms cannot be edited**, only copied                                           |
-| **Locations**       | Location codes bound to this form. On print, if the printing location appears here, this form wins over the default       |
-| **Copies**          | Number of copies printed each time this document prints                                                                   |
-| **Copy Labels**     | One label per line, e.g. "Customer Copy", "Store Copy"                                                                    |
-| **Form Notes**      | Change notes. A bold "A" icon indicates notes exist                                                                       |
+| Column | Behavior |
+|---|---|
+| **Form Type** | Expandable (`+`) to reveal the forms under it |
+| **Description** | Editable in-grid **for non-standard forms only** |
+| **User Modified** | User code of last editor |
+| **Modified Date** | Date of last edit |
+| **Default** | Checkbox. The form used when printing this form type — unless a location match wins. A new default can be set at any time |
+| **STORIS Standard** | Checkbox, read-only indicator. **Standard forms cannot be edited**, only copied |
+| **Locations** | Location codes bound to this form. On print, if the printing location appears here, this form wins over the default |
+| **Copies** | Number of copies printed each time this document prints |
+| **Copy Labels** | One label per line, e.g. "Customer Copy", "Store Copy" |
+| **Form Notes** | Change notes. A bold "A" icon indicates notes exist |
 
 ### Copies and Copy Labels — the coupling to get right
 
@@ -101,7 +101,7 @@ Three facts, all from the source, that must hold together:
 So a user can enter five labels with `Copies = 2` and silently get two. The source's own
 guidance is "you must coordinate that field with this one" — i.e. the system won't.
 
-**Fix this in our implementation.** Make copy labels an ordered list whose length _defines_
+**Fix this in our implementation.** Make copy labels an ordered list whose length *defines*
 the copy count (`copies = labels.length`, minimum 1), or validate that they match and refuse
 to save otherwise. Silent truncation of a document's copy set is exactly the kind of thing
 that surfaces as "the customer never got their copy."
@@ -109,7 +109,7 @@ that surfaces as "the customer never got their copy."
 ### Form Notes — mandatory change history
 
 On save, a **Save Form?** dialog requires a description of the changes before the form can be
-saved and exited. _Yes_ saves with the note; _No_ exits without saving.
+saved and exited. *Yes* saves with the note; *No* exits without saving.
 
 Notes are readable per-form via the Form Notes icon, and viewable inline for all forms via
 **Configure View → Preview Notes**, which renders each form's notes as a row immediately
@@ -121,12 +121,12 @@ Model as an append-only revision log (see `01`). Never a single overwritten fiel
 
 Form groups, which determine what appears in the right pane:
 
-| Group                     | Contents                                      |
-| ------------------------- | --------------------------------------------- |
-| **Design Standard Forms** | Print forms for most main features            |
-| **Design Label Forms**    | A label designer, comparable to Label Matrix  |
-| **Design Addendum Forms** | Import purchase order addenda                 |
-| **Insurance Letters**     | Insurance acceptance and cancellation letters |
+| Group | Contents |
+|---|---|
+| **Design Standard Forms** | Print forms for most main features |
+| **Design Label Forms** | A label designer, comparable to Label Matrix |
+| **Design Addendum Forms** | Import purchase order addenda |
+| **Insurance Letters** | Insurance acceptance and cancellation letters |
 
 Actions: Design Form, Copy Form, Delete Form, and — for the Label group only — New Label
 Wizard.
@@ -235,7 +235,7 @@ any template engine we choose, not an optional nicety.
 
 ## New Label Wizard
 
-**Entry:** Form Management > _Design Label Forms_ (left pane) > **New Label Wizard**.
+**Entry:** Form Management > *Design Label Forms* (left pane) > **New Label Wizard**.
 
 Available **only** for the Label Forms group.
 
@@ -249,7 +249,7 @@ Labels created here are usable in these label print programs:
 
 1. **Choose the Label Style**
    - `Multi Column / Letter Size`
-   - `Single Column / Scrolling Paper` — _use for Zebra printers_
+   - `Single Column / Scrolling Paper` — *use for Zebra printers*
 2. **Select a label form type** (e.g. Hangtag) and enter a description distinguishing it from
    others of the same type.
 3. **Label Information screen** — pick a pre-defined stock:
@@ -308,17 +308,17 @@ Enhanced Laser Forms > Enhanced Laser Processing Form Designation.
 
 Purpose: bind ELP forms to specific **languages** at specific **locations** for specific
 **document types**. Use only for locations that need a document type printed in a language
-_in addition to_ that location's default language.
+*in addition to* that location's default language.
 
 ### Fields
 
-| Field             | Behavior                                                              |
-| ----------------- | --------------------------------------------------------------------- |
-| **Location**      | Arrow-select. Double-click a grid row to edit an existing designation |
-| **Language**      | Arrow-select from **active** languages                                |
-| **Document Type** | Arrow-select from available document types                            |
-| **ELP Form**      | Arrow-select from available enhanced laser forms                      |
-| **Add**           | Writes the designation to the grid                                    |
+| Field | Behavior |
+|---|---|
+| **Location** | Arrow-select. Double-click a grid row to edit an existing designation |
+| **Language** | Arrow-select from **active** languages |
+| **Document Type** | Arrow-select from available document types |
+| **ELP Form** | Arrow-select from available enhanced laser forms |
+| **Add** | Writes the designation to the grid |
 
 The grid displays Location, Language, Document Type, and ELP Form. Double-click a row to
 edit or remove.
@@ -331,7 +331,7 @@ The grid is a lookup table consulted at print time:
 - **Miss** → use the form flagged Default via Design Enhanced Laser Forms.
 
 Note the source describes the lookup key as document type + location while the entry form
-also captures language — language selects _among_ designations for a location, and derives
+also captures language — language selects *among* designations for a location, and derives
 otherwise from the location's **Document Language**. Implement the full three-part key
 `(document_type, location, language)` with language defaulting from the location; that is
 consistent with both statements and is the only version that actually works for a location

@@ -6,15 +6,15 @@ Covers: **View System Printers**, **Assign Print Forms**, **Change Printer Form 
 STORIS has **two parallel print paths**, and confusing them is the single easiest way to
 misread this subsystem.
 
-|                 | Legacy path                                      | Enhanced Laser path                     |
-| --------------- | ------------------------------------------------ | --------------------------------------- |
-| Unit of routing | **Form number** → printer queue                  | **Form type** → Windows printer         |
-| Configured by   | Assign Print Forms, Change Printer Form Settings | Assign Printer for Enhanced Laser Forms |
-| Scope           | Terminal / session                               | **Log-on user**                         |
-| Rendering       | Host-side spooled output                         | Forms Designer template                 |
+| | Legacy path | Enhanced Laser path |
+|---|---|---|
+| Unit of routing | **Form number** → printer queue | **Form type** → Windows printer |
+| Configured by | Assign Print Forms, Change Printer Form Settings | Assign Printer for Enhanced Laser Forms |
+| Scope | Terminal / session | **Log-on user** |
+| Rendering | Host-side spooled output | Forms Designer template |
 
 The legacy path is a MultiValue host spooler addressed by numbered forms — a printer is
-loaded with a particular _form_ (check stock, label stock, plain paper) and jobs are routed
+loaded with a particular *form* (check stock, label stock, plain paper) and jobs are routed
 by form number. The Enhanced Laser path is client-side rendering to a Windows printer.
 
 **We are building one path, not two.** The Enhanced Laser model — resolve a template, render,
@@ -44,12 +44,12 @@ config, exactly as STORIS has it.
 **Entry:** ~40 menu paths, all landing on the same screen, most under a `Print Settings`
 submenu.
 
-Purpose, verbatim in intent: _enable a specific print form queue._
+Purpose, verbatim in intent: *enable a specific print form queue.*
 
-| Field                                | Behavior                                                                                 |
-| ------------------------------------ | ---------------------------------------------------------------------------------------- |
-| **Change Output to Form**            | Select the STORIS form number to enable. The description from the Form file is displayed |
-| **That form is assigned to printer** | Read-only. After selecting the form number, shows the printer that form is assigned to   |
+| Field | Behavior |
+|---|---|
+| **Change Output to Form** | Select the STORIS form number to enable. The description from the Form file is displayed |
+| **That form is assigned to printer** | Read-only. After selecting the form number, shows the printer that form is assigned to |
 
 That is the entire screen. It is a form-number → printer-queue selector.
 
@@ -63,15 +63,15 @@ Purpose: set **this terminal** to a specific form and print mode, **for one job 
 source's own example: jobs from your terminal normally print on the warehouse printer; use
 this to send one job elsewhere.
 
-| Field                          | Behavior                                                                                  |
-| ------------------------------ | ----------------------------------------------------------------------------------------- |
-| **Change Output to Form**      | Select the STORIS form number for this print job. Description from the Form file displays |
-| **Current Printer Assignment** | Read-only. Displays current **Unit, Mode, Form, Copies, and Line** settings               |
+| Field | Behavior |
+|---|---|
+| **Change Output to Form** | Select the STORIS form number for this print job. Description from the Form file displays |
+| **Current Printer Assignment** | Read-only. Displays current **Unit, Mode, Form, Copies, and Line** settings |
 
 `Unit / Mode / Form / Copies / Line` is the MultiValue spooler's addressing tuple. It has no
 analogue in a modern system and should not be modeled.
 
-**What survives migration:** the _user intent_ — "send this one job somewhere other than my
+**What survives migration:** the *user intent* — "send this one job somewhere other than my
 default." Support that as a per-run destination override on the print dialog. Do not model
 form numbers, units, modes, or line settings.
 
@@ -91,23 +91,23 @@ may prevent a user from changing their own printer assignment.
 Editing a row (double-click, or select + Edit) opens the **Print Settings** dialog with three
 mutually exclusive options:
 
-| Option                       | Behavior                                                                                                                               |
-| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| **Print to Default Printer** | Always use the workstation's OS default printer                                                                                        |
-| **Ask Every Time**           | Show the OS print dialog on every print of this form type                                                                              |
-| **Specify a Printer**        | Bind a named printer to this form type. The picker lists all printers available on the workstation, **including STORIS Print Preview** |
+| Option | Behavior |
+|---|---|
+| **Print to Default Printer** | Always use the workstation's OS default printer |
+| **Ask Every Time** | Show the OS print dialog on every print of this form type |
+| **Specify a Printer** | Bind a named printer to this form type. The picker lists all printers available on the workstation, **including STORIS Print Preview** |
 
 ### The first-print bootstrap — port this behavior
 
 The Print Settings dialog **also appears automatically the first time a user prints a given
 form type**. The source's example: a user prints a sales order from Enter a Sales Order,
-the system asks _"Would you like a printed copy of this order?"_, and because that form type
+the system asks *"Would you like a printed copy of this order?"*, and because that form type
 has never been printed by this user, the destination dialog appears and a destination must
 be chosen before printing proceeds.
 
 This is a good pattern and worth keeping. It means destination config is never a
 prerequisite chore — it happens lazily, once, at the moment of first need, and the
-Assign Printer screen exists only for _reviewing and changing_ what was set that way.
+Assign Printer screen exists only for *reviewing and changing* what was set that way.
 
 **Recommendation:** model this as `UserFormDestination (user, form_type) → {mode, printer}`
 where `mode ∈ {default, ask, specific}`, with absence of a row triggering the bootstrap
@@ -134,14 +134,14 @@ printing.**
   description contains it.)
 - **Action to Perform** — one of:
 
-| Action                       | Behavior                                                               |
-| ---------------------------- | ---------------------------------------------------------------------- |
-| **Review Selected Jobs**     | Displays selected jobs on screen, **one at a time**, in the PDF reader |
-| **Print Selected Jobs**      | Sends selected jobs to the printer                                     |
-| **Delete Selected Jobs**     | Removes selected jobs from the queue                                   |
-| **Move Selected to Desktop** | Exports the jobs to the user's desktop; activates the Format field     |
+| Action | Behavior |
+|---|---|
+| **Review Selected Jobs** | Displays selected jobs on screen, **one at a time**, in the PDF reader |
+| **Print Selected Jobs** | Sends selected jobs to the printer |
+| **Delete Selected Jobs** | Removes selected jobs from the queue |
+| **Move Selected to Desktop** | Exports the jobs to the user's desktop; activates the Format field |
 
-- **Format** — `.PDF` or `.TXT`. Active only when _Move Selected to Desktop_ is chosen.
+- **Format** — `.PDF` or `.TXT`. Active only when *Move Selected to Desktop* is chosen.
   **All selected reports are written into a single file.**
 
 - **Run** — executes the chosen action against the selected jobs.
@@ -155,7 +155,7 @@ Columns: `Job ID`, `Owner`, `Pages`, `Date`, `Time`, `Level`, `Code`, `Descripti
 ### Build notes
 
 - Ownership is first-class: jobs carry an owner and the UI is built around "mine vs. all."
-  Pair that with a permission check on acting against _other people's_ jobs — the source does
+  Pair that with a permission check on acting against *other people's* jobs — the source does
   not state one, and its absence is a gap, not a feature.
 - Deleting a queued job is destructive and irreversible. Confirm it, and log it with actor
   and job identity.

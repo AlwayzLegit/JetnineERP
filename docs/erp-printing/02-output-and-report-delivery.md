@@ -3,7 +3,7 @@
 Covers: **Output Settings**, **Output Report**, **Download Report**, **Review Archived
 Reports**, **Personal Report Viewer (PRV)**.
 
-This layer answers one question — _where does report output go?_ — and it is shared by every
+This layer answers one question — *where does report output go?* — and it is shared by every
 report and document routine in the system. Build it first.
 
 ---
@@ -17,16 +17,16 @@ report and document routine in the system. Build it first.
 
 Not every destination is offered for every report; availability is a property of the report.
 
-| Destination                | Behavior                                                                                                                                                                              |
-| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Printer**                | Sends to the print spooler                                                                                                                                                            |
-| **Basic PDF**              | Generates a PDF (possibly several) that opens immediately in the local PDF reader                                                                                                     |
-| **Enhanced PDF**           | Same as Basic PDF, but rendered using the **PRV layout template stored on the user's workstation**, and non-interactive. A footer is stamped on the report noting PRV format was used |
-| **Personal Report Viewer** | Opens the interactive grid viewer (see below)                                                                                                                                         |
-| **Excel Export**           | Editable `.xlsx` with **live formulas embedded**                                                                                                                                      |
-| **ASCII Export**           | Flat text file                                                                                                                                                                        |
-| **Report Archive**         | Not displayed or printed; stored as a new archived report, retrievable via Review Archived Reports                                                                                    |
-| **NFS Shared Drive**       | Writes to a network share. Path comes from the _Account Statement Cycling Control Settings_ network path-name plus the filename field                                                 |
+| Destination | Behavior |
+|---|---|
+| **Printer** | Sends to the print spooler |
+| **Basic PDF** | Generates a PDF (possibly several) that opens immediately in the local PDF reader |
+| **Enhanced PDF** | Same as Basic PDF, but rendered using the **PRV layout template stored on the user's workstation**, and non-interactive. A footer is stamped on the report noting PRV format was used |
+| **Personal Report Viewer** | Opens the interactive grid viewer (see below) |
+| **Excel Export** | Editable `.xlsx` with **live formulas embedded** |
+| **ASCII Export** | Flat text file |
+| **Report Archive** | Not displayed or printed; stored as a new archived report, retrievable via Review Archived Reports |
+| **NFS Shared Drive** | Writes to a network share. Path comes from the *Account Statement Cycling Control Settings* network path-name plus the filename field |
 
 ### Fields
 
@@ -64,28 +64,28 @@ non-zero and must match the on-screen render.
 **Entry:** System Administration > Print System Settings > Review Archived Reports.
 
 A two-grid transfer UI: **Archived Reports** (all reports visible to you) on top, **Selected
-Archived Reports** below. Double-clicking a row, or selecting it and clicking _Select
-Archived Report_, **moves** it down. _Deselect_ moves it back. Selection is a move, not a
+Archived Reports** below. Double-clicking a row, or selecting it and clicking *Select
+Archived Report*, **moves** it down. *Deselect* moves it back. Selection is a move, not a
 copy — a report appears in exactly one grid at a time.
 
 Both grids show the same columns (see `ArchivedReport` in `01`).
 
 ### Actions on the selection
 
-| Button                        | Result                                                                                                                    |
-| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| **Output Archived Reports**   | Opens the Output Report screen (below)                                                                                    |
-| **Download Archived Reports** | Opens the Download Report screen (below)                                                                                  |
-| **Delete Archived Reports**   | Prompts _"Delete all reports that have been moved to the 'Selected Archived Reports' section?"_ — Yes deletes, No cancels |
+| Button | Result |
+|---|---|
+| **Output Archived Reports** | Opens the Output Report screen (below) |
+| **Download Archived Reports** | Opens the Download Report screen (below) |
+| **Delete Archived Reports** | Prompts *"Delete all reports that have been moved to the 'Selected Archived Reports' section?"* — Yes deletes, No cancels |
 
 **Recommendation:** the two-grid move UI is a 1990s thick-client idiom. A checkbox list with
-a bulk-action bar is equivalent and better. Keep the _semantics_ — multi-select then act,
+a bulk-action bar is equivalent and better. Keep the *semantics* — multi-select then act,
 with a confirm on delete — and drop the transfer-box interaction.
 
 ### Governing rules
 
-- `[GATE]` Visibility is scoped by the user's _Access Archived Reports_ permission.
-- `[SETTING] keep` Retention driven by _Report Retention Days_ (global). Implement as a
+- `[GATE]` Visibility is scoped by the user's *Access Archived Reports* permission.
+- `[SETTING] keep` Retention driven by *Report Retention Days* (global). Implement as a
   scheduled purge with an audit trail of what was purged.
 
 ---
@@ -106,8 +106,8 @@ Fields: **Send Output to**, **Reset Default View** (as above), **Export Path** (
 shown for Enhanced PDF / PRV), **File Name** (defaults if blank), **Save** to produce output.
 
 **Multi-report flow:** when more than one report is selected, after each report is produced
-a prompt offers three choices — _produce the next_, _ignore the next_, _cancel the
-remaining_. Preserve this three-way choice; "skip one but keep going" is genuinely useful in
+a prompt offers three choices — *produce the next*, *ignore the next*, *cancel the
+remaining*. Preserve this three-way choice; "skip one but keep going" is genuinely useful in
 a long batch and is not expressible with a simple cancel.
 
 ---
@@ -125,8 +125,8 @@ a long batch and is not expressible with a simple cancel.
   - a bare folder name → treated as **relative** to the default path
   - a full path (e.g. `c:\Users\abn\Documents\Some Other Folder Entirely`) → treated as
     **absolute** and used as-is
-  - folder does not exist → prompt to create it; _Yes_ creates it under the default path,
-    _No_ cancels the download
+  - folder does not exist → prompt to create it; *Yes* creates it under the default path,
+    *No* cancels the download
   - contains characters illegal in a folder name → warning, rejected
 - **File Format** — one of: `PDF (*.pdf)`, `Text (Tab Delimited Values) (*.txt)`,
   `Excel Workbook (*.xlsx)`.
@@ -156,34 +156,34 @@ underlying data** — the source is explicit about this.
    to PRV yields a blank report.** Same root cause as the Excel trap above.
 2. **Schema changes override saved views.** If a column is added to a report, it appears for
    every user regardless of their saved view. If a column is removed, it disappears
-   regardless. Saved views are _presentation preferences layered over a live schema_, not
+   regardless. Saved views are *presentation preferences layered over a live schema*, not
    snapshots. Store them as such: a view is a list of directives (order, hidden set,
    widths, groupings, filters, calculated columns, conditions) applied to whatever columns
    currently exist, with unknown references ignored rather than erroring.
 
 ### Manipulation capabilities
 
-| Capability                | Detail                                                                                                                                                                                                                     |
-| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Column width / row height | Drag borders. Row height applies to **all** rows                                                                                                                                                                           |
-| Hide / restore columns    | Via the Column Chooser panel; drag out to hide, drag back to restore                                                                                                                                                       |
-| Group                     | Drag a column header into the group panel; groups render collapsible, sorted by the grouped value                                                                                                                          |
-| Sort                      | Click header to toggle descending/ascending. **Sort preserves position:** with a row selected, the view scrolls to keep that row's item visible after sorting; with nothing selected, the previously-top item stays on top |
-| Filter                    | Per-column: `Custom` (expression builder), `Blanks`, `Non blanks`, or pick a distinct value. Multiple filters compose. Also a Filter Row and a Filter Editor                                                               |
-| Find panel                | Toggleable search box below the ribbon                                                                                                                                                                                     |
-| Best Fit                  | Per column or all columns                                                                                                                                                                                                  |
-| Calculated columns        | Add / Edit / Delete a column defined by an expression, with declared header, data type, and output format, built via a formula builder                                                                                     |
-| Aggregates                | Right-click the Total Footer for a whole column, or the Group Footer for a group: `Sum`, `Min`, `Max`, `Count`, `Average`                                                                                                  |
-| Conditional styling       | Condition Editor — style a cell based on its computed value (e.g. value = "Good" → green background)                                                                                                                       |
+| Capability | Detail |
+|---|---|
+| Column width / row height | Drag borders. Row height applies to **all** rows |
+| Hide / restore columns | Via the Column Chooser panel; drag out to hide, drag back to restore |
+| Group | Drag a column header into the group panel; groups render collapsible, sorted by the grouped value |
+| Sort | Click header to toggle descending/ascending. **Sort preserves position:** with a row selected, the view scrolls to keep that row's item visible after sorting; with nothing selected, the previously-top item stays on top |
+| Filter | Per-column: `Custom` (expression builder), `Blanks`, `Non blanks`, or pick a distinct value. Multiple filters compose. Also a Filter Row and a Filter Editor |
+| Find panel | Toggleable search box below the ribbon |
+| Best Fit | Per column or all columns |
+| Calculated columns | Add / Edit / Delete a column defined by an expression, with declared header, data type, and output format, built via a formula builder |
+| Aggregates | Right-click the Total Footer for a whole column, or the Group Footer for a group: `Sum`, `Min`, `Max`, `Count`, `Average` |
+| Conditional styling | Condition Editor — style a cell based on its computed value (e.g. value = "Good" → green background) |
 
 ### View persistence and precedence
 
-| Action                    | Effect                                                                                                                                                          |
-| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Save Personal View**    | Saves for this user. Does not exit the report                                                                                                                   |
-| **Save Corporate View**   | `[GATE]` requires the _Edit Personal Report Viewer Corporate Views_ permission. Uploaded and distributed; **on next run it replaces each user's personal view** |
-| **Delete Corporate View** | Same permission gate                                                                                                                                            |
-| **Save Default View**     | Vendor-only                                                                                                                                                     |
+| Action | Effect |
+|---|---|
+| **Save Personal View** | Saves for this user. Does not exit the report |
+| **Save Corporate View** | `[GATE]` requires the *Edit Personal Report Viewer Corporate Views* permission. Uploaded and distributed; **on next run it replaces each user's personal view** |
+| **Delete Corporate View** | Same permission gate |
+| **Save Default View** | Vendor-only |
 
 **Resolution rule, exactly as stated:** the personal view is used, **unless a corporate view
 exists that is newer than the personal view**. If neither personal nor corporate exists, the
@@ -197,9 +197,9 @@ small deviation from STORIS and a clear improvement.
 
 ### Other PRV features
 
-- **Open Report / Save Report** — writes view settings _and data_ to a file for later
+- **Open Report / Save Report** — writes view settings *and data* to a file for later
   offline viewing. STORIS default location `C:\Users\<user>\Documents\My STORIS
-Documents\Reports`, overridable at save time. `[LEGACY]` path; the _capability_ (freeze a
+  Documents\Reports`, overridable at save time. `[LEGACY]` path; the *capability* (freeze a
   report with its data for later) is worth keeping as a server-side saved snapshot.
 - **Print and Export** — Print to Printer (OS dialog), Print Preview, Save to PDF, Save to
   HTML.
@@ -214,6 +214,6 @@ PRV is a licensed Windows grid control (DevExpress-family) bolted onto a termina
 Nearly all of it — grouping, filtering, aggregates, calculated columns, conditional
 formatting, saved views — is table stakes in any modern data-grid component. Do not build
 this. Pick the grid component the repo already uses (or one, if none), and spend the
-effort on the two things a component will _not_ give us: the three-tier view precedence, and
+effort on the two things a component will *not* give us: the three-tier view precedence, and
 the guarantee that totals are always present in the data rather than computed only in the
 client.
