@@ -1823,3 +1823,24 @@ multi-currency, no region/district scopes** (D2/D4).
   lint 0 · test 0 · build 0 · prettier 0.
 
 **The five-item ranked backlog from the FAQ audit is now complete.**
+
+## Checkpoint 15 — FIFO costing live; ranked backlog COMPLETE (2026-08-27)
+
+PR #43 squash-merged on green CI, deploy branch rolled (c4d2f8f), Render
+deploy dep-da806bhsrm7s73dnroug live — boot log verified `55/55 applied,
+head=0054_fifo_costing; this run applied 0054`. Sprint branch restarted
+from main.
+
+All five FAQ-audit backlog items are now shipped, deployed, and
+boot-verified in one day: physical inventory (0051) · PO lifecycle
+corrections · return windows + no-original returns (0052) · auto
+replenishment transfers (0053) · FIFO costing (0054). Owner decisions
+D1/D2/D4/D10 + pricing-parity divergence recorded above.
+
+Open threads: sysadmin-pack follow-ups beyond the descopes (settings
+registry, audit-stream and batch-runner substrate designs in
+docs/erp-sysadmin/03–05 — unscheduled, awaiting owner priorities); the two
+needs-counsel items (TCPA consent, erasure vs warranty retention); standing
+ops items (manager invite expires 2026-08-29 17:53Z, Render repo URL,
+owner password rotation, DMARC). To make costing accurate on day one:
+keep variant catalog costs current — they price the opening layers.
