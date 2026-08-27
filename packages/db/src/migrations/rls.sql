@@ -133,6 +133,8 @@ DECLARE
     'order_return_lines',
     'exception_events',
     'write_offs',
+    'physical_counts',
+    'physical_count_lines',
     'daily_closeouts',
     'delivery_runs',
     'serial_units',
