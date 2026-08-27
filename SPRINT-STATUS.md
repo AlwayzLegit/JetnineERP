@@ -1574,3 +1574,29 @@ on /sales, inventory search, brands/collections, warehouse bins on Inventory +
 pick lists. Ops unchanged: repoint the Render repo URL (deploys still manual),
 rotate the shared owner password, accept the manager invite (expires
 2026-08-29 17:53Z), optional DMARC record.
+
+## B14 shipped + FAQ-audit decisions recorded (2026-08-27)
+
+Owner ruled on the three audit decisions: **B3 district pricing — skip entirely**
+(D12 + G6 are the pricing model, final); **I2 restocking fee — none, P8 stands**;
+**B14 — build the delivery-date reservation basis.** B14 shipped as a slice, and it
+fixes the real hole behind the FAQ row: stock only ever reserved at order confirm,
+so a "Pending" line stayed pending forever even when stock arrived.
+
+- `ops_settings_json.reserveBasis` (`delivery_date` owner-default | `order_date`),
+  validated in settings PATCH, editable in Settings → Store operations.
+- `OrdersService.allocatePending`: fills under-reserved stock lines of open,
+  unlocked orders from FREE stock only (never steals an existing reservation —
+  flagged convention), priority = earliest `coalesce(line.delivery_date,
+order.requested_date)` nulls-last under delivery_date, `created_at` under
+  order_date; level rows locked FOR UPDATE; 500-line cap per run.
+- `POST /v1/orders/allocate-pending` (`inventory.adjust`, dryRun supported,
+  audited per order as `order.allocate_pending`).
+- **Auto-run after PO receiving** (both fast and staged paths) for the variants
+  just accepted — special-order allocations still take their linked units first.
+  Transfer-receive/as-is-restock triggers + a nightly ride are follow-ups.
+- Tests: orders.int.spec 56→61 (pending confirm, dry-run ranking, delivery-date
+  fill, order_date flip via settings, PO-receive auto-backfill); business 24/24 +
+  purchasing 27/27 re-run green. Gates by exit code: typecheck 0 · lint 0 ·
+  prettier 0. Coverage matrix updated (B3/I2 intentionally-not-implemented, B14
+  DONE).

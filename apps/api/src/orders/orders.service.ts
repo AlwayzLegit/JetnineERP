@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { schema } from '@jetnine/db';
 import { DRIZZLE } from '../database/database.module';
@@ -35,6 +35,138 @@ export interface OrderTotalsSnapshot {
 @Injectable()
 export class OrdersService {
   constructor(@Inject(DRIZZLE) private readonly db: PostgresJsDatabase) {}
+
+  /**
+   * B14 backfill: reserve stock for confirmed order lines that could not
+   * reserve when they were written ("Pending" in the list view). Priority
+   * is the business's reservation basis — `delivery_date` (owner-chosen
+   * default: earliest line delivery date, falling back to the order's
+   * requested date, nulls last) or `order_date` (first written, first
+   * served). Runs after stock arrives and on demand; it only consumes
+   * free stock — it never takes an existing reservation away from a
+   * later order (flagged convention; stealing is a human decision).
+   */
+  async allocatePending(
+    db: PostgresJsDatabase,
+    args: {
+      businessId: string;
+      actorUserId: string | null;
+      basis: 'delivery_date' | 'order_date';
+      /** Restrict to these variants (e.g. what a PO receipt just added). */
+      variantIds?: readonly string[];
+      dryRun?: boolean;
+    },
+  ): Promise<
+    {
+      orderId: string;
+      number: string;
+      lines: { orderLineId: string; variantId: string; quantity: number }[];
+    }[]
+  > {
+    const need = sql`${schema.orderLines.quantity} - ${schema.orderLines.qtyReserved} - ${schema.orderLines.qtyFulfilled}`;
+    const basisDate =
+      args.basis === 'delivery_date'
+        ? sql`coalesce(${schema.orderLines.deliveryDate}, ${schema.orders.requestedDate})`
+        : sql`NULL`;
+    const filters = [
+      eq(schema.orders.businessId, args.businessId),
+      inArray(schema.orders.status, ['open', 'partially_fulfilled']),
+      sql`${schema.orders.lockedAt} IS NULL`,
+      eq(schema.orderLines.lineType, 'stock'),
+      sql`${need} > 0`,
+    ];
+    if (args.variantIds && args.variantIds.length > 0) {
+      filters.push(inArray(schema.orderLines.variantId, [...new Set(args.variantIds)]));
+    }
+    const rows = await db
+      .select({
+        orderId: schema.orders.id,
+        number: schema.orders.number,
+        locationId: schema.orders.locationId,
+        orderLineId: schema.orderLines.id,
+        variantId: schema.orderLines.variantId,
+        need: sql<number>`${need}`,
+        basisDate: sql<string | null>`${basisDate}`,
+      })
+      .from(schema.orderLines)
+      .innerJoin(schema.orders, eq(schema.orders.id, schema.orderLines.orderId))
+      .where(and(...filters))
+      .orderBy(
+        args.basis === 'delivery_date'
+          ? sql`coalesce(${schema.orderLines.deliveryDate}, ${schema.orders.requestedDate}) ASC NULLS LAST`
+          : asc(schema.orders.createdAt),
+        asc(schema.orders.createdAt),
+        asc(schema.orderLines.id),
+      )
+      .limit(500);
+    if (rows.length === 0) return [];
+
+    // Free stock per (location, variant), locked for the transaction so a
+    // concurrent register sale can't double-commit the same unit.
+    const byLocation = new Map<string, Set<string>>();
+    for (const r of rows) {
+      if (!r.variantId) continue;
+      if (!byLocation.has(r.locationId)) byLocation.set(r.locationId, new Set());
+      byLocation.get(r.locationId)!.add(r.variantId);
+    }
+    const free = new Map<string, number>();
+    for (const [locationId, variants] of byLocation) {
+      const levels = await this.stockLevels(db, locationId, [...variants], {
+        lock: !args.dryRun,
+      });
+      for (const [variantId, level] of levels) {
+        free.set(`${locationId}:${variantId}`, Math.max(0, level.onHand - level.reserved));
+      }
+    }
+
+    const byOrder = new Map<
+      string,
+      {
+        orderId: string;
+        number: string;
+        locationId: string;
+        lines: { orderLineId: string; variantId: string; quantity: number }[];
+      }
+    >();
+    for (const r of rows) {
+      if (!r.variantId) continue;
+      const key = `${r.locationId}:${r.variantId}`;
+      const available = free.get(key) ?? 0;
+      if (available <= 0) continue;
+      const take = Math.min(available, r.need);
+      if (take <= 0) continue;
+      free.set(key, available - take);
+      if (!byOrder.has(r.orderId)) {
+        byOrder.set(r.orderId, {
+          orderId: r.orderId,
+          number: r.number,
+          locationId: r.locationId,
+          lines: [],
+        });
+      }
+      byOrder
+        .get(r.orderId)!
+        .lines.push({ orderLineId: r.orderLineId, variantId: r.variantId, quantity: take });
+    }
+
+    const allocations = [...byOrder.values()];
+    if (!args.dryRun) {
+      for (const a of allocations) {
+        await this.applyReservations(db, {
+          businessId: args.businessId,
+          orderId: a.orderId,
+          locationId: a.locationId,
+          actorUserId: args.actorUserId,
+          reservations: a.lines.map((l) => ({
+            orderLineId: l.orderLineId,
+            variantId: l.variantId,
+            quantity: l.quantity,
+          })),
+        });
+      }
+    }
+    return allocations.map(({ orderId, number, lines }) => ({ orderId, number, lines }));
+  }
 
   /**
    * Read current stock for a set of variants at one location, keyed by
