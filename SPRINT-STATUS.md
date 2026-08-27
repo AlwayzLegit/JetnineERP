@@ -1556,3 +1556,21 @@ from the daily-ops audit (the "no way to find one sale among 73,899" hole):
 Tests: sales.int.spec +5 (full-number/scan path, fragment + customerName,
 customer-name search, empty non-match), inventory.int.spec +1. Gates by exit
 code: typecheck 0 · lint 0 · sales+inventory suites pass · prettier 0.
+
+## Checkpoint 12 merged + deployed (2026-08-27)
+
+PR #37 (bulk price entry · brands/collections · storage bins · invoice lookup +
+inventory search + customers pagination · full spec-pack corpus + PARITY-NOTES)
+squash-merged to main as `5422d99`, **CI 4/4 green first try**. Deploy branch
+rolled (`66d3a95`), Render deploy `dep-da7t5llg1s2s73fassf0` **live 06:03Z** —
+boot log: `Schema migrations: 51/51 applied, head=0050_storage_bins; this run
+applied 0049_brands_collections, 0050_storage_bins.` + clean Nest start. Vercel
+**production READY** on main `5422d99` (canonical host). Sprint branch restarted
+from main.
+
+**Live for staff now on `lamattress-erp.vercel.app`:** /products/pricing bulk
+price entry (the 6,909-SKU pricing job can start), scan-to-find invoice lookup
+on /sales, inventory search, brands/collections, warehouse bins on Inventory +
+pick lists. Ops unchanged: repoint the Render repo URL (deploys still manual),
+rotate the shared owner password, accept the manager invite (expires
+2026-08-29 17:53Z), optional DMARC record.
