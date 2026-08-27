@@ -5,11 +5,13 @@ import { useEffect, useState } from 'react';
 import { Undo2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { api, ApiError } from '@/lib/api';
+import { useCursorList } from '@/lib/use-cursor-list';
 import {
   CustomerPicker,
   customerDisplayName,
   type CustomerRow,
 } from '@/components/customer-picker';
+import { LoadMore } from '@/components/load-more';
 import { Money } from '@/components/money';
 import { SecurityOverrideDialog } from '@/components/security-override-dialog';
 import {
@@ -63,24 +65,18 @@ interface DraftLine {
  * As-Is review; a non-manager finishes through the override dialog.
  */
 export default function ReturnsPage() {
-  const [rows, setRows] = useState<ReturnRow[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const list = useCursorList<ReturnRow>('/v1/order-returns');
+  const { rows, error } = list;
 
-  async function load() {
-    try {
-      setRows(await api<ReturnRow[]>('/v1/order-returns'));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    }
-  }
   useEffect(() => {
-    void load();
+    void list.load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (
     <div>
       <PageHeader title="Returns" />
-      <NoOriginalCard onChanged={load} />
+      <NoOriginalCard onChanged={() => list.load()} />
       {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
       <Card style={{ padding: 0 }}>
         {rows == null ? (
@@ -90,49 +86,52 @@ export default function ReturnsPage() {
         ) : rows.length === 0 ? (
           <EmptyState>No return documents yet.</EmptyState>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>RMA</th>
-                  <th>Order</th>
-                  <th>Status</th>
-                  <th>Refund</th>
-                  <th className="num">Amount</th>
-                  <th>Authorized</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((r) => (
-                  <tr key={r.id}>
-                    <td>
-                      <code>{r.rmaNumber}</code>
-                    </td>
-                    <td>
-                      {r.orderId ? (
-                        <Link href={`/orders/${r.orderId}`}>View order</Link>
-                      ) : (
-                        <span style={{ color: 'var(--text-secondary)' }}>
-                          No original
-                          {r.referencedOrderNumber ? ` (claimed ${r.referencedOrderNumber})` : ''}
-                        </span>
-                      )}
-                    </td>
-                    <td>
-                      <StatusBadge status={r.status} />
-                    </td>
-                    <td>
-                      {r.refundMethod === 'store_credit' ? 'Store credit' : 'Original tender'}
-                    </td>
-                    <td className="num">
-                      <Money cents={r.amountCents} />
-                    </td>
-                    <td>{new Date(r.authorizedAt).toLocaleString()}</td>
+          <>
+            <div className="overflow-x-auto">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>RMA</th>
+                    <th>Order</th>
+                    <th>Status</th>
+                    <th>Refund</th>
+                    <th className="num">Amount</th>
+                    <th>Authorized</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {rows.map((r) => (
+                    <tr key={r.id}>
+                      <td>
+                        <code>{r.rmaNumber}</code>
+                      </td>
+                      <td>
+                        {r.orderId ? (
+                          <Link href={`/orders/${r.orderId}`}>View order</Link>
+                        ) : (
+                          <span style={{ color: 'var(--text-secondary)' }}>
+                            No original
+                            {r.referencedOrderNumber ? ` (claimed ${r.referencedOrderNumber})` : ''}
+                          </span>
+                        )}
+                      </td>
+                      <td>
+                        <StatusBadge status={r.status} />
+                      </td>
+                      <td>
+                        {r.refundMethod === 'store_credit' ? 'Store credit' : 'Original tender'}
+                      </td>
+                      <td className="num">
+                        <Money cents={r.amountCents} />
+                      </td>
+                      <td>{new Date(r.authorizedAt).toLocaleString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <LoadMore state={list} noun="returns" />
+          </>
         )}
       </Card>
     </div>
@@ -180,7 +179,7 @@ function NoOriginalCard({ onChanged }: { onChanged: () => Promise<void> | void }
             variantName: string | null;
             sku: string | null;
           }[]
-        >(`/v1/pos/lookup?q=${encodeURIComponent(search.trim())}`),
+        >(`/v1/pos/lookup?q=${encodeURIComponent(search.trim())}&limit=200`),
       );
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err));
@@ -365,6 +364,11 @@ function NoOriginalCard({ onChanged }: { onChanged: () => Promise<void> | void }
           Search
         </Button>
       </div>
+      {results.length === 200 && (
+        <p style={{ color: 'var(--text-secondary)', fontSize: 12, margin: '8px 0 0' }}>
+          Many items match — refine your search to find the right one.
+        </p>
+      )}
       {results.length > 0 && (
         <div className="mt-2 flex flex-wrap gap-2">
           {results.slice(0, 8).map((r) => (

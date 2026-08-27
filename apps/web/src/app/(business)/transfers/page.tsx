@@ -3,6 +3,8 @@
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
+import { LoadMore } from '@/components/load-more';
+import { useCursorList } from '@/lib/use-cursor-list';
 import {
   Card,
   EmptyState,
@@ -27,9 +29,9 @@ interface TransferRow {
 }
 
 export default function TransfersPage() {
-  const [rows, setRows] = useState<TransferRow[] | null>(null);
+  const list = useCursorList<TransferRow>('/v1/stock-transfers');
   const [aging, setAging] = useState<{ id: string; number: string; daysInTransit: number }[]>([]);
-  const [error, setError] = useState<string | null>(null);
+  const { rows, error } = list;
 
   useEffect(() => {
     api<{ id: string; number: string; daysInTransit: number }[]>('/v1/stock-transfers/aging?days=3')
@@ -38,13 +40,8 @@ export default function TransfersPage() {
   }, []);
 
   useEffect(() => {
-    void (async () => {
-      try {
-        setRows(await api<TransferRow[]>('/v1/stock-transfers'));
-      } catch (err) {
-        setError(err instanceof Error ? err.message : String(err));
-      }
-    })();
+    void list.load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (
@@ -94,60 +91,63 @@ export default function TransfersPage() {
             No transfers yet. Create a transfer to move stock between locations.
           </EmptyState>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Transfer</th>
-                  <th>Type</th>
-                  <th>From</th>
-                  <th>To</th>
-                  <th>Status</th>
-                  <th title="Auto transfers: the XFR-053 schedule date">Scheduled</th>
-                  <th>Created</th>
-                  <th>&nbsp;</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((t) => (
-                  <tr key={t.id}>
-                    <td>
-                      <code>{t.number}</code>
-                      {t.orderId && (
-                        <>
-                          {' '}
-                          <Link href={`/orders/${t.orderId}`} style={{ fontSize: 11.5 }}>
-                            order
-                          </Link>
-                        </>
-                      )}
-                    </td>
-                    <td>
-                      {t.transferType === 'auto' ? (
-                        <span className="badge badge-info">auto</span>
-                      ) : (
-                        t.transferType.replace('_', ' ')
-                      )}
-                    </td>
-                    <td>{t.fromLocationName ?? '—'}</td>
-                    <td>{t.toLocationName ?? '—'}</td>
-                    <td>
-                      <StatusBadge status={t.status} />
-                    </td>
-                    <td>
-                      {t.scheduledFor
-                        ? new Date(`${t.scheduledFor}T00:00:00`).toLocaleDateString()
-                        : '—'}
-                    </td>
-                    <td>{new Date(t.createdAt).toLocaleDateString()}</td>
-                    <td style={{ textAlign: 'right' }}>
-                      <Link href={`/transfers/${t.id}`}>Open</Link>
-                    </td>
+          <>
+            <div className="overflow-x-auto">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Transfer</th>
+                    <th>Type</th>
+                    <th>From</th>
+                    <th>To</th>
+                    <th>Status</th>
+                    <th title="Auto transfers: the XFR-053 schedule date">Scheduled</th>
+                    <th>Created</th>
+                    <th>&nbsp;</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {rows.map((t) => (
+                    <tr key={t.id}>
+                      <td>
+                        <code>{t.number}</code>
+                        {t.orderId && (
+                          <>
+                            {' '}
+                            <Link href={`/orders/${t.orderId}`} style={{ fontSize: 11.5 }}>
+                              order
+                            </Link>
+                          </>
+                        )}
+                      </td>
+                      <td>
+                        {t.transferType === 'auto' ? (
+                          <span className="badge badge-info">auto</span>
+                        ) : (
+                          t.transferType.replace('_', ' ')
+                        )}
+                      </td>
+                      <td>{t.fromLocationName ?? '—'}</td>
+                      <td>{t.toLocationName ?? '—'}</td>
+                      <td>
+                        <StatusBadge status={t.status} />
+                      </td>
+                      <td>
+                        {t.scheduledFor
+                          ? new Date(`${t.scheduledFor}T00:00:00`).toLocaleDateString()
+                          : '—'}
+                      </td>
+                      <td>{new Date(t.createdAt).toLocaleDateString()}</td>
+                      <td style={{ textAlign: 'right' }}>
+                        <Link href={`/transfers/${t.id}`}>Open</Link>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <LoadMore state={list} noun="transfers" />
+          </>
         )}
       </Card>
     </div>

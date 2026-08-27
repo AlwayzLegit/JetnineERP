@@ -317,7 +317,7 @@ describe('P9 — daily close-out', () => {
     for (const type of ['close_out_cash', 'close_out_deliveries', 'close_out_balance']) {
       const rows = await owner().get(`/v1/exceptions?type=${type}`);
       expect(rows.status).toBe(200);
-      expect(rows.body.length).toBeGreaterThanOrEqual(1);
+      expect(rows.body.data.length).toBeGreaterThanOrEqual(1);
     }
 
     // History row exists; a second run for the same day is a no-op.

@@ -3,8 +3,9 @@
 import Link from 'next/link';
 import { useEffect, useState, type FormEvent } from 'react';
 import { Plus } from 'lucide-react';
-import { api } from '@/lib/api';
 import { CsvImport } from '@/components/csv-import';
+import { LoadMore } from '@/components/load-more';
+import { useCursorList } from '@/lib/use-cursor-list';
 import {
   Button,
   Card,
@@ -23,30 +24,18 @@ interface ProductRow {
 }
 
 export default function ProductsPage() {
-  const [rows, setRows] = useState<ProductRow[] | null>(null);
+  const list = useCursorList<ProductRow>('/v1/products');
   const [q, setQ] = useState('');
-  const [error, setError] = useState<string | null>(null);
-
-  async function load(query: string) {
-    setError(null);
-    try {
-      const params = query ? `?q=${encodeURIComponent(query)}` : '';
-      const res = await api<{ data: ProductRow[]; nextCursor: string | null }>(
-        `/v1/products${params}`,
-      );
-      setRows(res.data);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    }
-  }
+  const { rows, error } = list;
 
   useEffect(() => {
-    void load('');
+    void list.load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   function search(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    void load(q);
+    void list.load(q ? { q } : {});
   }
 
   return (
@@ -85,7 +74,7 @@ export default function ProductsPage() {
           variant="secondary"
           onClick={() => {
             setQ('');
-            void load('');
+            void list.load();
           }}
         >
           Clear
@@ -103,38 +92,41 @@ export default function ProductsPage() {
             No products match{q ? ` "${q}"` : ' yet'}. Create a product or import a CSV below.
           </EmptyState>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Name</th>
-                  <th>SKU</th>
-                  <th>Active</th>
-                  <th>&nbsp;</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((p) => (
-                  <tr key={p.id}>
-                    <td>
-                      <strong>{p.name}</strong>
-                    </td>
-                    <td>
-                      <code>{p.sku ?? '—'}</code>
-                    </td>
-                    <td>
-                      <span className={`badge ${p.isActive ? 'badge-success' : 'badge-neutral'}`}>
-                        {p.isActive ? 'yes' : 'no'}
-                      </span>
-                    </td>
-                    <td style={{ textAlign: 'right' }}>
-                      <Link href={`/products/${p.id}`}>Open</Link>
-                    </td>
+          <>
+            <div className="overflow-x-auto">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>SKU</th>
+                    <th>Active</th>
+                    <th>&nbsp;</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {rows.map((p) => (
+                    <tr key={p.id}>
+                      <td>
+                        <strong>{p.name}</strong>
+                      </td>
+                      <td>
+                        <code>{p.sku ?? '—'}</code>
+                      </td>
+                      <td>
+                        <span className={`badge ${p.isActive ? 'badge-success' : 'badge-neutral'}`}>
+                          {p.isActive ? 'yes' : 'no'}
+                        </span>
+                      </td>
+                      <td style={{ textAlign: 'right' }}>
+                        <Link href={`/products/${p.id}`}>Open</Link>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <LoadMore state={list} noun="products" />
+          </>
         )}
       </Card>
 
@@ -143,7 +135,7 @@ export default function ProductsPage() {
           Import products from a CSV file
         </summary>
         <div style={{ marginTop: 8 }}>
-          <CsvImport entity="product" onCommitted={() => load(q)} />
+          <CsvImport entity="product" onCommitted={() => list.load(q ? { q } : {})} />
         </div>
       </details>
     </div>

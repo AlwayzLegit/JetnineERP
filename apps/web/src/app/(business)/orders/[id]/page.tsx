@@ -1097,7 +1097,18 @@ function ReturnsCard({
   const [cancellingReturnId, setCancellingReturnId] = useState<string | null>(null);
   async function loadReturns() {
     try {
-      setReturns(await api(`/v1/order-returns?orderId=${order.id}`));
+      const page = await api<{
+        data: {
+          id: string;
+          rmaNumber: string;
+          status: string;
+          fulfillment: string;
+          refundMethod: string;
+          amountCents: number;
+          authorizedAt: string;
+        }[];
+      }>(`/v1/order-returns?orderId=${order.id}`);
+      setReturns(page.data);
     } catch {
       setReturns([]);
     }

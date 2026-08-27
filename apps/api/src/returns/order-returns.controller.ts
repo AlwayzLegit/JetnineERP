@@ -10,12 +10,21 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
-import { and, desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
+import type { SQL } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { schema } from '@jetnine/db';
 import { AuditService } from '../audit/audit.service';
 import { CurrentTenant, CurrentUser } from '../auth/current-user.decorator';
 import type { CurrentUserPayload } from '../auth/current-user.decorator';
+import {
+  buildPage,
+  clampLimit,
+  decodeCursor,
+  timestampCursorOrder,
+  timestampCursorWhere,
+  type PageResponse,
+} from '../common/pagination';
 import { ExceptionsService } from '../controls/exceptions.service';
 import { SecurityOverrideService } from '../controls/security-override.service';
 import { DRIZZLE } from '../database/database.module';
@@ -76,20 +85,28 @@ export class OrderReturnsController {
     @CurrentTenant() tenant: RequestTenantContext,
     @Query('orderId') orderId?: string,
     @Query('status') status?: string,
-  ): Promise<OrderReturnRow[]> {
-    const rows = await this.db
+    @Query('limit') limitStr?: string,
+    @Query('cursor') cursorStr?: string,
+  ): Promise<PageResponse<OrderReturnRow>> {
+    const limit = clampLimit(limitStr);
+    const conditions: SQL[] = [eq(schema.orderReturns.businessId, tenant.businessId!)];
+    if (orderId) conditions.push(eq(schema.orderReturns.orderId, orderId));
+    if (status) conditions.push(eq(schema.orderReturns.status, status));
+    const cursor = decodeCursor(cursorStr);
+    if (cursor) {
+      conditions.push(
+        timestampCursorWhere(schema.orderReturns.authorizedAt, schema.orderReturns.id, cursor)!,
+      );
+    }
+    const fetched = await this.db
       .select()
       .from(schema.orderReturns)
-      .where(
-        and(
-          eq(schema.orderReturns.businessId, tenant.businessId!),
-          orderId ? eq(schema.orderReturns.orderId, orderId) : undefined,
-          status ? eq(schema.orderReturns.status, status) : undefined,
-        ),
-      )
-      .orderBy(desc(schema.orderReturns.authorizedAt))
-      .limit(200);
-    if (rows.length === 0) return [];
+      .where(and(...conditions))
+      .orderBy(...timestampCursorOrder(schema.orderReturns.authorizedAt, schema.orderReturns.id))
+      .limit(limit + 1);
+    const page = buildPage(fetched, limit, (r) => r.authorizedAt);
+    const rows = page.data;
+    if (rows.length === 0) return { data: [], nextCursor: null };
 
     const lines = await this.db
       .select({
@@ -127,7 +144,7 @@ export class OrderReturnsController {
       });
       byReturn.set(l.returnId, list);
     }
-    return rows.map((r) => ({
+    const data = rows.map((r) => ({
       id: r.id,
       orderId: r.orderId,
       customerId: r.customerId,
@@ -145,6 +162,7 @@ export class OrderReturnsController {
       cancelReason: r.cancelReason,
       lines: byReturn.get(r.id) ?? [],
     }));
+    return { data, nextCursor: page.nextCursor };
   }
 
   /**

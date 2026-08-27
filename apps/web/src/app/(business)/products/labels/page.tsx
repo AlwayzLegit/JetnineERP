@@ -44,7 +44,7 @@ export default function LabelsPage() {
     const q = query.trim();
     if (!q) return;
     try {
-      setHits(await api<LookupRow[]>(`/v1/pos/lookup?q=${encodeURIComponent(q)}`));
+      setHits(await api<LookupRow[]>(`/v1/pos/lookup?q=${encodeURIComponent(q)}&limit=200`));
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -159,6 +159,11 @@ export default function LabelsPage() {
                   ))}
                 </tbody>
               </table>
+              {hits.length >= 200 && (
+                <p style={{ color: 'var(--text-secondary)', fontSize: 12, marginTop: 8 }}>
+                  Showing first 200 matches — refine your search.
+                </p>
+              )}
             </div>
           )}
         </Card>

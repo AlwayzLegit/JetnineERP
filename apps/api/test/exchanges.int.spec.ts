@@ -216,8 +216,8 @@ async function legsFor(
   const returns = await owner().get(
     `/v1/order-returns?orderId=${originalOrderId}&status=authorized`,
   );
-  expect(returns.body).toHaveLength(1);
-  return { saleOrderId: replacement.body.id, returnId: returns.body[0].id };
+  expect(returns.body.data).toHaveLength(1);
+  return { saleOrderId: replacement.body.id, returnId: returns.body.data[0].id };
 }
 
 async function ledgerBalance(custId: string): Promise<number> {
@@ -461,7 +461,7 @@ describe('Enter an Exchange — container over a return and a replacement order'
     expect(cancelled.body.status).toBe('cancelled');
 
     const returns = await owner().get(`/v1/order-returns?orderId=${orig.orderId}`);
-    expect(returns.body[0].status).toBe('cancelled');
+    expect(returns.body.data[0].status).toBe('cancelled');
   });
 
   it('no-original (pre-cutover) exchange applies the banked credit at bind', async () => {
@@ -511,7 +511,7 @@ describe('Enter an Exchange — container over a return and a replacement order'
     expect(strangerOrder.status).toBe(201);
     const bound = await owner()
       .post('/v1/exchanges')
-      .send({ saleOrderId: strangerOrder.body.id, returnId: returns.body[0].id });
+      .send({ saleOrderId: strangerOrder.body.id, returnId: returns.body.data[0].id });
     expect(bound.status).toBe(400);
     expect(bound.body.message).toMatch(/same customer/);
   });
@@ -549,7 +549,7 @@ describe('Hardening — review findings', () => {
     const rets = await owner().get(
       `/v1/order-returns?orderId=${created.body.id}&status=authorized`,
     );
-    const returnId = rets.body[0].id as string;
+    const returnId = rets.body.data[0].id as string;
     await owner().post('/v1/exchanges').send({ saleOrderId, returnId }).expect(201);
     await owner().post(`/v1/order-returns/${returnId}/receive`).send({}).expect(201);
 
@@ -591,7 +591,7 @@ describe('Hardening — review findings', () => {
     );
     const rebound = await owner()
       .post('/v1/exchanges')
-      .send({ saleOrderId, returnId: returns.body[0].id });
+      .send({ saleOrderId, returnId: returns.body.data[0].id });
     expect(rebound.status).toBe(201);
     expect(rebound.body.id).not.toBe(first.body.id);
   });

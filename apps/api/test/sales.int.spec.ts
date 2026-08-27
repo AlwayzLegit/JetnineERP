@@ -366,7 +366,7 @@ describe('Epic 1.10 — POS register & sales', () => {
       .set('X-Business-Id', businessId);
     expect(queue.status).toBe(200);
     expect(
-      queue.body.some(
+      queue.body.data.some(
         (r: { variantId: string; quantity: number }) =>
           r.variantId === variantAId && r.quantity === 1,
       ),
@@ -554,7 +554,7 @@ describe('Register sales pass the price-variance gate (QA D2)', () => {
       .set('X-Business-Id', businessId);
     expect(exceptions.status).toBe(200);
     expect(
-      exceptions.body.some((e: { summary: string }) =>
+      exceptions.body.data.some((e: { summary: string }) =>
         e.summary.includes('Register sale discount'),
       ),
     ).toBe(true);

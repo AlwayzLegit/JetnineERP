@@ -11,9 +11,18 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
-import { and, desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
+import type { SQL } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { schema } from '@jetnine/db';
+import {
+  buildPage,
+  clampLimit,
+  decodeCursor,
+  timestampCursorOrder,
+  timestampCursorWhere,
+  type PageResponse,
+} from '../common/pagination';
 import { AuditService } from '../audit/audit.service';
 import { computeReorderSuggestions } from './replenishment';
 import { CostingService } from '../costing/costing.service';
@@ -173,10 +182,20 @@ export class PurchaseOrdersController {
   async list(
     @CurrentTenant() _tenant: RequestTenantContext,
     @Query('status') status?: string,
+    @Query('vendorId') vendorId?: string,
     @Query('limit') limitStr?: string,
-  ): Promise<PoListRow[]> {
-    const limit = clampLimit(limitStr, 50);
-    const where = status ? eq(schema.purchaseOrders.status, status) : undefined;
+    @Query('cursor') cursorStr?: string,
+  ): Promise<PageResponse<PoListRow>> {
+    const limit = clampLimit(limitStr);
+    const conditions: SQL[] = [];
+    if (status) conditions.push(eq(schema.purchaseOrders.status, status));
+    if (vendorId) conditions.push(eq(schema.purchaseOrders.vendorId, vendorId));
+    const cursor = decodeCursor(cursorStr);
+    if (cursor) {
+      conditions.push(
+        timestampCursorWhere(schema.purchaseOrders.createdAt, schema.purchaseOrders.id, cursor)!,
+      );
+    }
     const rows = await this.db
       .select({
         id: schema.purchaseOrders.id,
@@ -193,10 +212,10 @@ export class PurchaseOrdersController {
       })
       .from(schema.purchaseOrders)
       .leftJoin(schema.vendors, eq(schema.vendors.id, schema.purchaseOrders.vendorId))
-      .where(where)
-      .orderBy(desc(schema.purchaseOrders.createdAt))
-      .limit(limit);
-    return rows;
+      .where(conditions.length ? and(...conditions) : undefined)
+      .orderBy(...timestampCursorOrder(schema.purchaseOrders.createdAt, schema.purchaseOrders.id))
+      .limit(limit + 1);
+    return buildPage(rows, limit, (r) => r.createdAt);
   }
 
   /**
@@ -1418,12 +1437,6 @@ function escapeHtml(raw: string): string {
     .replaceAll('<', '&lt;')
     .replaceAll('>', '&gt;')
     .replaceAll('"', '&quot;');
-}
-
-function clampLimit(raw: string | undefined, def: number): number {
-  const n = Number(raw ?? String(def));
-  if (!Number.isFinite(n) || n <= 0) return def;
-  return Math.min(Math.max(Math.floor(n), 1), 200);
 }
 
 function parseDate(raw: string | undefined): Date | null {

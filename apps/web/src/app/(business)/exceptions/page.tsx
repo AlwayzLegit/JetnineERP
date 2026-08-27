@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { api } from '@/lib/api';
+import { LoadMore } from '@/components/load-more';
+import { useCursorList } from '@/lib/use-cursor-list';
 import {
   Button,
   Card,
@@ -49,21 +51,17 @@ const TYPE_LABELS: Record<string, string> = {
 export default function ExceptionsPage() {
   const [openOnly, setOpenOnly] = useState(true);
   const [severity, setSeverity] = useState('');
-  const [rows, setRows] = useState<ExceptionRow[] | null>(null);
+  const list = useCursorList<ExceptionRow>('/v1/exceptions');
   const [digest, setDigest] = useState<DigestRow[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const { rows, error } = list;
 
   const load = useCallback(async () => {
-    try {
-      const qs = new URLSearchParams();
-      if (openOnly) qs.set('open', '1');
-      if (severity) qs.set('severity', severity);
-      setRows(await api<ExceptionRow[]>(`/v1/exceptions?${qs.toString()}`));
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    }
+    await list.load({
+      ...(openOnly ? { open: '1' } : {}),
+      ...(severity ? { severity } : {}),
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openOnly, severity]);
 
   useEffect(() => {
@@ -123,51 +121,54 @@ export default function ExceptionsPage() {
           {!rows && !error && <LoadingRows rows={4} />}
           {rows && rows.length === 0 && <EmptyState>Nothing waiting. Good.</EmptyState>}
           {rows && rows.length > 0 && (
-            <div className="card" style={{ padding: 0, overflowX: 'auto' }}>
-              <table className="table" data-testid="exceptions-table">
-                <thead>
-                  <tr>
-                    <th>When</th>
-                    <th>Type</th>
-                    <th>Who</th>
-                    <th>What</th>
-                    <th>Severity</th>
-                    <th />
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((r) => (
-                    <tr key={r.id} data-testid="exception-row">
-                      <td style={{ whiteSpace: 'nowrap' }}>
-                        {new Date(r.createdAt).toLocaleString()}
-                      </td>
-                      <td>{TYPE_LABELS[r.type] ?? r.type.replace(/_/g, ' ')}</td>
-                      <td>{r.actorEmail ?? 'system'}</td>
-                      <td>{r.summary}</td>
-                      <td>
-                        <StatusBadge status={r.severity} />
-                      </td>
-                      <td style={{ whiteSpace: 'nowrap' }}>
-                        {r.acknowledgedAt ? (
-                          <span style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>
-                            ack&apos;d by {r.acknowledgedByEmail ?? '—'}
-                          </span>
-                        ) : (
-                          <Button
-                            size="sm"
-                            variant="secondary"
-                            disabled={busy}
-                            data-testid="ack-exception"
-                            onClick={() => void ack(r.id)}
-                          >
-                            Acknowledge
-                          </Button>
-                        )}
-                      </td>
+            <div className="card" style={{ padding: 0 }}>
+              <div style={{ overflowX: 'auto' }}>
+                <table className="table" data-testid="exceptions-table">
+                  <thead>
+                    <tr>
+                      <th>When</th>
+                      <th>Type</th>
+                      <th>Who</th>
+                      <th>What</th>
+                      <th>Severity</th>
+                      <th />
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {rows.map((r) => (
+                      <tr key={r.id} data-testid="exception-row">
+                        <td style={{ whiteSpace: 'nowrap' }}>
+                          {new Date(r.createdAt).toLocaleString()}
+                        </td>
+                        <td>{TYPE_LABELS[r.type] ?? r.type.replace(/_/g, ' ')}</td>
+                        <td>{r.actorEmail ?? 'system'}</td>
+                        <td>{r.summary}</td>
+                        <td>
+                          <StatusBadge status={r.severity} />
+                        </td>
+                        <td style={{ whiteSpace: 'nowrap' }}>
+                          {r.acknowledgedAt ? (
+                            <span style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>
+                              ack&apos;d by {r.acknowledgedByEmail ?? '—'}
+                            </span>
+                          ) : (
+                            <Button
+                              size="sm"
+                              variant="secondary"
+                              disabled={busy}
+                              data-testid="ack-exception"
+                              onClick={() => void ack(r.id)}
+                            >
+                              Acknowledge
+                            </Button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <LoadMore state={list} noun="exceptions" />
             </div>
           )}
         </div>
