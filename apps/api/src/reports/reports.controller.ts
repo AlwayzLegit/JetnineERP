@@ -35,6 +35,39 @@ interface OrderPaymentsDayRow {
   amountCents: number;
   count: number;
 }
+interface AdjustmentRow {
+  at: string;
+  reason: string;
+  delta: number;
+  productName: string;
+  sku: string | null;
+  locationName: string | null;
+  actorEmail: string | null;
+  notes: string | null;
+  referenceType: string | null;
+}
+
+interface AdjustmentsReport {
+  start: string;
+  end: string;
+  generatedAt: string;
+  truncated: boolean;
+  byReason: { reason: string; movements: number; totalIn: number; totalOut: number }[];
+  rows: AdjustmentRow[];
+}
+
+interface CustomerPurchaseRow {
+  documentType: 'sale' | 'order';
+  documentNumber: string;
+  documentDate: string;
+  customerName: string | null;
+  productName: string;
+  sku: string | null;
+  description: string;
+  quantity: number;
+  totalCents: number;
+}
+
 interface MerchRow {
   variantId: string;
   productName: string;
@@ -2035,6 +2068,243 @@ export class ReportsController {
       return;
     }
     return report;
+  }
+
+  /**
+   * Inventory adjustments (catalog 40): the movement ledger over a
+   * window, grouped by reason with a detail list — a pure read (nothing
+   * here is EOD-coupled or self-deleting). Store scope applies via the
+   * movement's location.
+   */
+  @Get('inventory-adjustments')
+  @RequirePermission('reports.inventory.view')
+  async inventoryAdjustments(
+    @CurrentTenant() tenant: RequestTenantContext,
+    @Query('start') startStr?: string,
+    @Query('end') endStr?: string,
+    @Query('reason') reason?: string,
+    @Query('format') format?: string,
+    @Res({ passthrough: true }) res?: Response,
+  ): Promise<AdjustmentsReport | void> {
+    const { startDate, endDate } = parseRange(startStr, endStr);
+    const startTs = new Date(`${startDate}T00:00:00.000Z`);
+    const endTsExclusive = new Date(`${endDate}T00:00:00.000Z`);
+    endTsExclusive.setUTCDate(endTsExclusive.getUTCDate() + 1);
+    const CAP = 1000;
+
+    const raw = await this.db
+      .select({
+        at: schema.inventoryMovements.createdAt,
+        reason: schema.inventoryMovements.reason,
+        delta: schema.inventoryMovements.delta,
+        productName: schema.products.name,
+        sku: schema.productVariants.sku,
+        locationName: schema.locations.name,
+        actorEmail: schema.users.email,
+        notes: schema.inventoryMovements.notes,
+        referenceType: schema.inventoryMovements.referenceType,
+      })
+      .from(schema.inventoryMovements)
+      .innerJoin(
+        schema.productVariants,
+        eq(schema.productVariants.id, schema.inventoryMovements.variantId),
+      )
+      .innerJoin(schema.products, eq(schema.products.id, schema.productVariants.productId))
+      .leftJoin(schema.locations, eq(schema.locations.id, schema.inventoryMovements.locationId))
+      .leftJoin(schema.users, eq(schema.users.id, schema.inventoryMovements.actorUserId))
+      .where(
+        and(
+          gte(schema.inventoryMovements.createdAt, startTs),
+          lt(schema.inventoryMovements.createdAt, endTsExclusive),
+          reason ? eq(schema.inventoryMovements.reason, reason) : undefined,
+          salesScopeCond(tenant, schema.inventoryMovements.locationId),
+        ),
+      )
+      .orderBy(desc(schema.inventoryMovements.createdAt))
+      .limit(CAP + 1);
+    const truncated = raw.length > CAP;
+    const sliced = truncated ? raw.slice(0, CAP) : raw;
+
+    const byReasonMap = new Map<
+      string,
+      { reason: string; movements: number; totalIn: number; totalOut: number }
+    >();
+    for (const r of sliced) {
+      const cur = byReasonMap.get(r.reason) ?? {
+        reason: r.reason,
+        movements: 0,
+        totalIn: 0,
+        totalOut: 0,
+      };
+      cur.movements += 1;
+      if (r.delta >= 0) cur.totalIn += r.delta;
+      else cur.totalOut += -r.delta;
+      byReasonMap.set(r.reason, cur);
+    }
+
+    const report: AdjustmentsReport = {
+      start: startDate,
+      end: endDate,
+      generatedAt: new Date().toISOString(),
+      truncated,
+      byReason: [...byReasonMap.values()].sort((a, b) => b.movements - a.movements),
+      rows: sliced.map((r) => ({ ...r, at: r.at.toISOString() })),
+    };
+    if (format === 'csv') {
+      requireExport(tenant);
+      const header = `# start=${startDate} end=${endDate} reason=${reason ?? ''} truncated=${truncated} generated=${report.generatedAt}\n`;
+      sendCsv(
+        res!,
+        `inventory-adjustments-${startDate}-to-${endDate}.csv`,
+        header +
+          toCsv(
+            ['at', 'reason', 'delta', 'product', 'sku', 'location', 'actor', 'reference', 'notes'],
+            report.rows.map((r) => [
+              r.at,
+              r.reason,
+              r.delta,
+              r.productName,
+              r.sku,
+              r.locationName,
+              r.actorEmail,
+              r.referenceType,
+              r.notes,
+            ]),
+          ),
+      );
+      return;
+    }
+    return report;
+  }
+
+  /**
+   * Customer purchase history (catalog 42): completed POS sale lines +
+   * completed order lines, one customer or all, as a view/CSV export.
+   * Store scope applies.
+   */
+  @Get('customer-purchases')
+  @RequirePermission('reports.sales.view')
+  async customerPurchases(
+    @CurrentTenant() tenant: RequestTenantContext,
+    @Query('customerId') customerId?: string,
+    @Query('start') startStr?: string,
+    @Query('end') endStr?: string,
+    @Query('format') format?: string,
+    @Res({ passthrough: true }) res?: Response,
+  ): Promise<{ rows: CustomerPurchaseRow[]; truncated: boolean } | void> {
+    const { startDate, endDate } = parseRange(startStr, endStr);
+    const startTs = new Date(`${startDate}T00:00:00.000Z`);
+    const endTsExclusive = new Date(`${endDate}T00:00:00.000Z`);
+    endTsExclusive.setUTCDate(endTsExclusive.getUTCDate() + 1);
+    const CAP = 5000;
+
+    const nameExpr = sql<
+      string | null
+    >`nullif(trim(concat(${schema.customers.firstName}, ' ', ${schema.customers.lastName})), '')`;
+    const saleRows = await this.db
+      .select({
+        documentNumber: schema.sales.number,
+        documentDate: schema.sales.completedAt,
+        customerName: nameExpr,
+        productName: sql<string>`COALESCE(${schema.products.name}, ${schema.saleLines.description})`,
+        sku: schema.productVariants.sku,
+        description: schema.saleLines.description,
+        quantity: schema.saleLines.quantity,
+        totalCents: schema.saleLines.totalCents,
+      })
+      .from(schema.saleLines)
+      .innerJoin(schema.sales, eq(schema.sales.id, schema.saleLines.saleId))
+      .leftJoin(schema.customers, eq(schema.customers.id, schema.sales.customerId))
+      .leftJoin(schema.productVariants, eq(schema.productVariants.id, schema.saleLines.variantId))
+      .leftJoin(schema.products, eq(schema.products.id, schema.productVariants.productId))
+      .where(
+        and(
+          gte(schema.sales.completedAt, startTs),
+          lt(schema.sales.completedAt, endTsExclusive),
+          sql`${schema.sales.status} IN ('completed', 'partially_refunded', 'refunded')`,
+          customerId ? eq(schema.sales.customerId, customerId) : undefined,
+          salesScopeCond(tenant, schema.sales.locationId),
+        ),
+      )
+      .limit(CAP + 1);
+    const orderRows = await this.db
+      .select({
+        documentNumber: schema.orders.number,
+        documentDate: schema.orders.completedAt,
+        customerName: nameExpr,
+        productName: sql<string>`COALESCE(${schema.products.name}, ${schema.orderLines.description})`,
+        sku: schema.productVariants.sku,
+        description: schema.orderLines.description,
+        quantity: schema.orderLines.quantity,
+        totalCents: schema.orderLines.totalCents,
+      })
+      .from(schema.orderLines)
+      .innerJoin(schema.orders, eq(schema.orders.id, schema.orderLines.orderId))
+      .leftJoin(schema.customers, eq(schema.customers.id, schema.orders.customerId))
+      .leftJoin(schema.productVariants, eq(schema.productVariants.id, schema.orderLines.variantId))
+      .leftJoin(schema.products, eq(schema.products.id, schema.productVariants.productId))
+      .where(
+        and(
+          gte(schema.orders.completedAt, startTs),
+          lt(schema.orders.completedAt, endTsExclusive),
+          eq(schema.orders.status, 'completed'),
+          customerId ? eq(schema.orders.customerId, customerId) : undefined,
+          salesScopeCond(tenant, schema.orders.locationId),
+        ),
+      )
+      .limit(CAP + 1);
+
+    let rows: CustomerPurchaseRow[] = [
+      ...saleRows.map((r) => ({
+        documentType: 'sale' as const,
+        documentNumber: r.documentNumber,
+        documentDate: r.documentDate ? r.documentDate.toISOString().slice(0, 10) : '',
+        customerName: r.customerName,
+        productName: r.productName,
+        sku: r.sku,
+        description: r.description,
+        quantity: r.quantity,
+        totalCents: r.totalCents,
+      })),
+      ...orderRows.map((r) => ({
+        documentType: 'order' as const,
+        documentNumber: r.documentNumber,
+        documentDate: r.documentDate ? r.documentDate.toISOString().slice(0, 10) : '',
+        customerName: r.customerName,
+        productName: r.productName,
+        sku: r.sku,
+        description: r.description,
+        quantity: r.quantity,
+        totalCents: r.totalCents,
+      })),
+    ].sort((a, b) => b.documentDate.localeCompare(a.documentDate));
+    const truncated = rows.length > CAP;
+    if (truncated) rows = rows.slice(0, CAP);
+
+    if (format === 'csv') {
+      requireExport(tenant);
+      const header = `# customerId=${customerId ?? ''} start=${startDate} end=${endDate} truncated=${truncated} generated=${new Date().toISOString()}\n`;
+      sendCsv(
+        res!,
+        `customer-purchases-${startDate}-to-${endDate}.csv`,
+        header +
+          toCsv(
+            ['type', 'document', 'date', 'customer', 'product', 'sku', 'quantity', 'total_cents'],
+            rows.map((r) => [
+              r.documentType,
+              r.documentNumber,
+              r.documentDate,
+              r.customerName,
+              r.productName,
+              r.sku,
+              r.quantity,
+              r.totalCents,
+            ]),
+          ),
+      );
+      return;
+    }
+    return { rows, truncated };
   }
 }
 
