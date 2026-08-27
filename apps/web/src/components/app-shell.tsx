@@ -31,6 +31,7 @@ import {
   Users,
   Wrench,
   Recycle,
+  MoonStar,
   type LucideIcon,
   Undo2,
 } from 'lucide-react';
@@ -97,6 +98,7 @@ const NAV: NavGroup[] = [
       { href: '/reports', label: 'Reports', icon: BadgePercent },
       { href: '/commissions', label: 'Commissions', icon: CreditCard },
       { href: '/exceptions', label: 'Exceptions', icon: TriangleAlert },
+      { href: '/jobs', label: 'Nightly jobs', icon: MoonStar },
       { href: '/audit', label: 'Audit log', icon: ScrollText },
     ],
   },

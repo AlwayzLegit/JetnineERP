@@ -62,6 +62,8 @@ interface OpsSettings {
   /** J4 (XFR-052 / CFG-POS-AUTOSCHED): blank disables auto transfers;
    * 0 is valid and means same-day + 1 per the XFR-053 formula. */
   autoScheduleDays?: number | null;
+  /** REPL-040: nightly auto-replenishment PO drafts (off by default). */
+  autoReplenishmentEnabled?: boolean | null;
   /** G6 three-tier price-variance thresholds (defaults 5% / $50 / 15%). */
   priceVariance?: {
     tier1Pct?: number | null;
@@ -195,6 +197,15 @@ function validateOps(input: OpsSettings): OpsSettings {
       throw new BadRequestException('ops.autoScheduleDays must be a non-negative integer or null');
     }
     out.autoScheduleDays = input.autoScheduleDays;
+  }
+  if (input.autoReplenishmentEnabled !== undefined) {
+    if (
+      input.autoReplenishmentEnabled !== null &&
+      typeof input.autoReplenishmentEnabled !== 'boolean'
+    ) {
+      throw new BadRequestException('ops.autoReplenishmentEnabled must be a boolean or null');
+    }
+    out.autoReplenishmentEnabled = input.autoReplenishmentEnabled;
   }
   if (input.priceVariance !== undefined) {
     if (input.priceVariance !== null) {

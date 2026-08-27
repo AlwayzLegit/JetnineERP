@@ -1844,3 +1844,32 @@ needs-counsel items (TCPA consent, erasure vs warranty retention); standing
 ops items (manager invite expires 2026-08-29 17:53Z, Render repo URL,
 owner password rotation, DMARC). To make costing accurate on day one:
 keep variant catalog costs current — they price the opening layers.
+
+## EOD batch runner shipped (2026-08-27)
+
+EOD-001 (P0 cross-cutting rollup) built to the sysadmin pack's JOB-002 spec —
+deliberately the opposite of STORIS's Generate Daily Reports:
+
+- **Declared step registry** the operator can see (`GET /v1/jobs`), each step
+  with explicit order, dependencies, and a destructive flag (none are).
+- **`job_runs` log (migration 0055):** one row per (business, job, business
+  date) — status, duration, records affected, detail, error. The unique key
+  IS the idempotency: re-running a date never repeats a succeeded step.
+- **Explicit business dates:** the hourly scheduler fires after 2am
+  business-local (JOB-003: never at the date boundary), and catch-up runs
+  ONE PASS PER MISSED DATE (7-day window) — days are never collapsed.
+- **First registered jobs:** `po_overdue_sweep` (open POs past expected date
+  → warning exceptions, deduped) · `auto_replenishment` (REPL-040: drafts one
+  PO per preferred vendor for variants at/below reorder point, netting out
+  quantities already on open POs; gated on new `ops.autoReplenishmentEnabled`,
+  off by default; drafts only — a buyer reviews and places, same convention
+  as auto transfers) · `transfer_aging` (in-transit > 3 days → exceptions).
+- Shared `computeReorderSuggestions` extracted from the PO controller so the
+  interactive endpoint and the nightly job can't drift.
+- Web: **Nightly jobs** page (nav → Insights) — the registry, the morning run
+  report, and a safe "Run now" for any business date. Settings gains the
+  auto-replenishment checkbox.
+- Tests: purchasing.int.spec 36→39 (registry shape, run drafts the netted
+  replenishment PO + flags the overdue PO + writes the run report, per-date
+  idempotency with no duplicate drafts, gate-off no-op). Gates by exit code:
+  typecheck 0 · lint 0 · test 0 · build 0 · prettier 0.

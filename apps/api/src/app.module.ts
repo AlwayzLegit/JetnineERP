@@ -42,6 +42,7 @@ import { TenancyModule } from './tenancy/tenancy.module';
 import { ReturnsModule } from './returns/returns.module';
 import { ControlsModule } from './controls/controls.module';
 import { CloseoutModule } from './closeout/closeout.module';
+import { JobsModule } from './jobs/jobs.module';
 import { TransfersModule } from './transfers/transfers.module';
 import { WebhooksModule } from './webhooks/webhooks.module';
 
@@ -96,6 +97,7 @@ import { WebhooksModule } from './webhooks/webhooks.module';
     ReturnsModule,
     ControlsModule,
     CloseoutModule,
+    JobsModule,
     SalesModule,
     OrdersModule,
     DeliveriesModule,
