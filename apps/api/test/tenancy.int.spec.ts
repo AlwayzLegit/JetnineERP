@@ -301,7 +301,7 @@ describe('RLS actually applies to handler queries (cross-tenant leak regression)
       .set('Cookie', owner.cookie)
       .set('X-Business-Id', businessId);
     expect(board.status).toBe(200);
-    expect((board.body as { number: string }[]).map((t) => t.number)).not.toContain(
+    expect((board.body.data as { number: string }[]).map((t) => t.number)).not.toContain(
       'SV-9999-000001',
     );
 

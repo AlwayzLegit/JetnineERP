@@ -10,13 +10,22 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
+import type { SQL } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { schema } from '@jetnine/db';
 import { AuditService } from '../audit/audit.service';
 import { CurrentTenant, CurrentUser } from '../auth/current-user.decorator';
 import type { CurrentUserPayload } from '../auth/current-user.decorator';
+import {
+  buildPage,
+  clampLimit,
+  decodeCursor,
+  timestampCursorOrder,
+  timestampCursorWhere,
+  type PageResponse,
+} from '../common/pagination';
 import { ExceptionsService } from '../controls/exceptions.service';
 import {
   SecurityOverrideService,
@@ -103,13 +112,25 @@ export class ExchangesController {
   async list(
     @CurrentTenant() _tenant: RequestTenantContext,
     @Query('status') status?: string,
-  ): Promise<ExchangeRow[]> {
+    @Query('limit') limitStr?: string,
+    @Query('cursor') cursorStr?: string,
+  ): Promise<PageResponse<ExchangeRow>> {
+    const limit = clampLimit(limitStr);
+    const cursor = decodeCursor(cursorStr);
+    const conditions: SQL[] = [];
+    if (status) conditions.push(eq(schema.exchanges.status, status));
+    if (cursor) {
+      conditions.push(
+        timestampCursorWhere(schema.exchanges.createdAt, schema.exchanges.id, cursor)!,
+      );
+    }
     const rows = await this.baseSelect()
-      .where(status ? eq(schema.exchanges.status, status) : undefined)
-      .orderBy(desc(schema.exchanges.createdAt))
-      .limit(200);
-    await this.lazyComplete(rows);
-    return rows;
+      .where(conditions.length ? and(...conditions) : undefined)
+      .orderBy(...timestampCursorOrder(schema.exchanges.createdAt, schema.exchanges.id))
+      .limit(limit + 1);
+    const page = buildPage(rows, limit, (r) => r.createdAt);
+    await this.lazyComplete(page.data);
+    return page;
   }
 
   @Get(':id')

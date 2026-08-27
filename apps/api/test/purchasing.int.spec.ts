@@ -733,7 +733,7 @@ describe('Purchasing controls: reject bucket, SoD, auto-clear, remit-to alert (P
     // Only accepted units became stock; the rejects are As-Is pieces.
     expect(await levelOf(variantAId)).toBe(stockBefore + 3);
     const queue = await as(ownerCookie).get('/v1/as-is?status=pending_review');
-    const pieces = queue.body.filter(
+    const pieces = queue.body.data.filter(
       (r: { referenceId: string | null; referenceType: string | null }) =>
         r.referenceType === 'purchase_order' && r.referenceId === po.body.id,
     );
@@ -741,7 +741,7 @@ describe('Purchasing controls: reject bucket, SoD, auto-clear, remit-to alert (P
     expect(pieces[0].quantity).toBe(1);
     const exceptions = await as(ownerCookie).get('/v1/exceptions?type=po_reject');
     expect(
-      exceptions.body.some((e: { entityId: string | null }) => e.entityId === po.body.id),
+      exceptions.body.data.some((e: { entityId: string | null }) => e.entityId === po.body.id),
     ).toBe(true);
 
     // Over-disposition is refused: nothing remains to accept.
@@ -829,7 +829,7 @@ describe('Purchasing controls: reject bucket, SoD, auto-clear, remit-to alert (P
       '/v1/exceptions?type=vendor_remit_change&severity=critical',
     );
     expect(
-      exceptions.body.some((e: { entityId: string | null }) => e.entityId === g11VendorId),
+      exceptions.body.data.some((e: { entityId: string | null }) => e.entityId === g11VendorId),
     ).toBe(true);
   });
 });
@@ -1226,7 +1226,7 @@ describe('Nightly batch runner (EOD-001 / JOB-002)', () => {
 
     // The replenishment draft exists for our vendor with the netted line.
     const pos = await asOwner().get('/v1/purchase-orders?status=draft');
-    const drafts = (pos.body as { id: string; vendorId: string; status: string }[]).filter(
+    const drafts = (pos.body.data as { id: string; vendorId: string; status: string }[]).filter(
       (p) => p.vendorId === nightlyVendorId,
     );
     expect(drafts).toHaveLength(1);
@@ -1242,7 +1242,9 @@ describe('Nightly batch runner (EOD-001 / JOB-002)', () => {
     // The overdue PO landed on the exception register.
     const exceptions = await asOwner().get('/v1/exceptions?type=po_overdue');
     expect(
-      (exceptions.body as { entityId: string | null }[]).some((e) => e.entityId === overduePoId),
+      (exceptions.body.data as { entityId: string | null }[]).some(
+        (e) => e.entityId === overduePoId,
+      ),
     ).toBe(true);
 
     // Second run for the same date: every step reports already_ran and
@@ -1253,7 +1255,7 @@ describe('Nightly batch runner (EOD-001 / JOB-002)', () => {
     ).toBe(true);
     const pos2 = await asOwner().get('/v1/purchase-orders?status=draft');
     expect(
-      (pos2.body as { vendorId: string }[]).filter((p) => p.vendorId === nightlyVendorId),
+      (pos2.body.data as { vendorId: string }[]).filter((p) => p.vendorId === nightlyVendorId),
     ).toHaveLength(1);
 
     // The run report shows every step with duration and records.
@@ -1275,7 +1277,7 @@ describe('Nightly batch runner (EOD-001 / JOB-002)', () => {
     expect(repl?.status).toBe('succeeded');
     const pos = await asOwner().get('/v1/purchase-orders?status=draft');
     expect(
-      (pos.body as { vendorId: string }[]).filter((p) => p.vendorId === nightlyVendorId),
+      (pos.body.data as { vendorId: string }[]).filter((p) => p.vendorId === nightlyVendorId),
     ).toHaveLength(1); // still just the one from the earlier run
   });
 });

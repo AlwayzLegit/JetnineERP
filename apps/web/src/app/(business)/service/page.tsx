@@ -6,6 +6,8 @@ import { useRouter } from 'next/navigation';
 import { Plus, X } from 'lucide-react';
 import { formatMoney } from '@jetnine/shared';
 import { api } from '@/lib/api';
+import { LoadMore } from '@/components/load-more';
+import { useCursorList } from '@/lib/use-cursor-list';
 import { Button, Card, Field, Input, LoadingRows, PageHeader, Select } from '@/components/ui';
 
 /**
@@ -46,26 +48,25 @@ const COLUMNS = [
 
 export default function ServiceBoardPage() {
   const router = useRouter();
-  const [tickets, setTickets] = useState<Ticket[] | null>(null);
+  const list = useCursorList<Ticket>('/v1/service-orders');
   const [locations, setLocations] = useState<LocationRow[]>([]);
   const [showIntake, setShowIntake] = useState(false);
   const [locationId, setLocationId] = useState('');
   const [customerQ, setCustomerQ] = useState('');
   const [customerHits, setCustomerHits] = useState<CustomerRow[]>([]);
+  const [customerHasMore, setCustomerHasMore] = useState(false);
   const [customer, setCustomer] = useState<CustomerRow | null>(null);
   const [itemDescription, setItemDescription] = useState('');
   const [issue, setIssue] = useState('');
   const [warranty, setWarranty] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const tickets = list.rows;
 
   async function load() {
+    void list.load();
     try {
-      const [rows, locs] = await Promise.all([
-        api<Ticket[]>('/v1/service-orders'),
-        api<LocationRow[]>('/v1/pos/locations'),
-      ]);
-      setTickets(rows);
+      const locs = await api<LocationRow[]>('/v1/pos/locations');
       setLocations(locs);
       if (locs[0] && !locationId) setLocationId(locs[0].id);
     } catch (err) {
@@ -81,15 +82,18 @@ export default function ServiceBoardPage() {
     setCustomerQ(q);
     if (q.trim().length < 2) {
       setCustomerHits([]);
+      setCustomerHasMore(false);
       return;
     }
     try {
-      const res = await api<{ data: CustomerRow[] }>(
-        `/v1/customers?q=${encodeURIComponent(q)}&limit=8`,
+      const res = await api<{ data: CustomerRow[]; nextCursor: string | null }>(
+        `/v1/customers?q=${encodeURIComponent(q)}&limit=20`,
       );
       setCustomerHits(res.data);
+      setCustomerHasMore(res.nextCursor != null);
     } catch {
       setCustomerHits([]);
+      setCustomerHasMore(false);
     }
   }
 
@@ -132,7 +136,9 @@ export default function ServiceBoardPage() {
           </Button>
         }
       />
-      {error && <p style={{ color: 'var(--danger)', fontSize: 13 }}>{error}</p>}
+      {(error ?? list.error) && (
+        <p style={{ color: 'var(--danger)', fontSize: 13 }}>{error ?? list.error}</p>
+      )}
 
       {showIntake && (
         <Card title="Intake" style={{ marginBottom: 16 }} data-testid="intake-form">
@@ -210,12 +216,22 @@ export default function ServiceBoardPage() {
                           onClick={() => {
                             setCustomer(c);
                             setCustomerHits([]);
+                            setCustomerHasMore(false);
                           }}
                           style={hitBtn}
                         >
                           {c.firstName} {c.lastName} {c.email ? `· ${c.email}` : ''}
                         </button>
                       ))}
+                      {customerHasMore && (
+                        <p
+                          className="muted"
+                          style={{ fontSize: 12, padding: '6px 10px', margin: 0 }}
+                          data-testid="intake-customer-more"
+                        >
+                          more matches — keep typing to narrow
+                        </p>
+                      )}
                     </div>
                   )}
                 </>
@@ -270,7 +286,7 @@ export default function ServiceBoardPage() {
         </Card>
       )}
 
-      {!tickets && !error && <LoadingRows rows={4} />}
+      {!tickets && !error && !list.error && <LoadingRows rows={4} />}
 
       {tickets && (
         <div className="overflow-x-auto pb-2">
@@ -342,6 +358,7 @@ export default function ServiceBoardPage() {
               );
             })}
           </div>
+          <LoadMore state={list} noun="tickets" />
         </div>
       )}
 

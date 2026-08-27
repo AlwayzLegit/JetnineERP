@@ -11,10 +11,18 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
-import { and, asc, desc, eq, sql } from 'drizzle-orm';
+import { and, asc, eq, sql } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { schema } from '@jetnine/db';
 import { AuditService } from '../audit/audit.service';
+import {
+  type PageResponse,
+  buildPage,
+  clampLimit,
+  decodeCursor,
+  timestampCursorOrder,
+  timestampCursorWhere,
+} from '../common/pagination';
 import { CurrentTenant, CurrentUser } from '../auth/current-user.decorator';
 import type { CurrentUserPayload } from '../auth/current-user.decorator';
 import { DRIZZLE } from '../database/database.module';
@@ -110,16 +118,27 @@ export class ServiceOrdersController {
   async list(
     @CurrentTenant() _tenant: RequestTenantContext,
     @Query('status') status?: string,
-  ): Promise<Detail[]> {
+    @Query('limit') limitStr?: string,
+    @Query('cursor') cursorStr?: string,
+  ): Promise<PageResponse<Detail>> {
+    const limit = clampLimit(limitStr);
+    const cursor = decodeCursor(cursorStr);
     const filters = [];
     if (status) filters.push(eq(schema.serviceOrders.status, status));
+    if (cursor) {
+      filters.push(
+        timestampCursorWhere(schema.serviceOrders.createdAt, schema.serviceOrders.id, cursor)!,
+      );
+    }
     const rows = await this.db
-      .select({ id: schema.serviceOrders.id })
+      .select({ id: schema.serviceOrders.id, createdAt: schema.serviceOrders.createdAt })
       .from(schema.serviceOrders)
       .where(filters.length ? and(...filters) : undefined)
-      .orderBy(desc(schema.serviceOrders.createdAt))
-      .limit(300);
-    return Promise.all(rows.map((r) => this.detail(r.id)));
+      .orderBy(...timestampCursorOrder(schema.serviceOrders.createdAt, schema.serviceOrders.id))
+      .limit(limit + 1);
+    const page = buildPage(rows, limit, (r) => r.createdAt);
+    const data = await Promise.all(page.data.map((r) => this.detail(r.id)));
+    return { data, nextCursor: page.nextCursor };
   }
 
   @Get(':id')

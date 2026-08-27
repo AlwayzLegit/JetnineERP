@@ -5,6 +5,8 @@ import { RefreshCw } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { api } from '@/lib/api';
+import { LoadMore } from '@/components/load-more';
+import { useCursorList } from '@/lib/use-cursor-list';
 import { Money } from '@/components/money';
 import {
   Button,
@@ -44,14 +46,14 @@ interface SuggestionGroup {
 }
 
 export default function PurchaseOrdersPage() {
-  const [rows, setRows] = useState<PoRow[] | null>(null);
+  const list = useCursorList<PoRow>('/v1/purchase-orders');
   const [suggestions, setSuggestions] = useState<SuggestionGroup[] | null>(null);
   const [drafting, setDrafting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { rows } = list;
 
-  async function load() {
+  async function loadSuggestions() {
     try {
-      setRows(await api<PoRow[]>('/v1/purchase-orders'));
       const s = await api<{ vendors: SuggestionGroup[] }>(
         '/v1/purchase-orders/reorder-suggestions',
       );
@@ -61,7 +63,9 @@ export default function PurchaseOrdersPage() {
     }
   }
   useEffect(() => {
-    void load();
+    void list.load();
+    void loadSuggestions();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function draftPo(group: SuggestionGroup) {
@@ -84,7 +88,7 @@ export default function PurchaseOrdersPage() {
         }),
       });
       toast.success(`Draft ${po.number} created`);
-      await load();
+      await Promise.all([list.load(), loadSuggestions()]);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err));
     } finally {
@@ -102,13 +106,17 @@ export default function PurchaseOrdersPage() {
           </LinkButton>
         }
       />
-      {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
+      {(error ?? list.error) && <p style={{ color: 'var(--danger)' }}>{error ?? list.error}</p>}
 
       {suggestions != null && suggestions.length > 0 && (
         <Card
           title="Reorder suggestions"
           actions={
-            <Button size="sm" onClick={() => void load()} aria-label="Refresh suggestions">
+            <Button
+              size="sm"
+              onClick={() => void loadSuggestions()}
+              aria-label="Refresh suggestions"
+            >
               <RefreshCw size={13} aria-hidden />
             </Button>
           }
@@ -203,40 +211,43 @@ export default function PurchaseOrdersPage() {
         ) : rows.length === 0 ? (
           <EmptyState>No purchase orders yet. Create a PO to restock from a vendor.</EmptyState>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>PO</th>
-                  <th>Vendor</th>
-                  <th>Status</th>
-                  <th className="num">Subtotal</th>
-                  <th>Created</th>
-                  <th>&nbsp;</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((p) => (
-                  <tr key={p.id}>
-                    <td>
-                      <code>{p.number}</code>
-                    </td>
-                    <td>{p.vendorName ?? '—'}</td>
-                    <td>
-                      <StatusBadge status={p.status} />
-                    </td>
-                    <td className="num">
-                      <Money cents={p.subtotalCents} />
-                    </td>
-                    <td>{new Date(p.createdAt).toLocaleDateString()}</td>
-                    <td style={{ textAlign: 'right' }}>
-                      <Link href={`/purchase-orders/${p.id}`}>Open</Link>
-                    </td>
+          <>
+            <div className="overflow-x-auto">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>PO</th>
+                    <th>Vendor</th>
+                    <th>Status</th>
+                    <th className="num">Subtotal</th>
+                    <th>Created</th>
+                    <th>&nbsp;</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {rows.map((p) => (
+                    <tr key={p.id}>
+                      <td>
+                        <code>{p.number}</code>
+                      </td>
+                      <td>{p.vendorName ?? '—'}</td>
+                      <td>
+                        <StatusBadge status={p.status} />
+                      </td>
+                      <td className="num">
+                        <Money cents={p.subtotalCents} />
+                      </td>
+                      <td>{new Date(p.createdAt).toLocaleDateString()}</td>
+                      <td style={{ textAlign: 'right' }}>
+                        <Link href={`/purchase-orders/${p.id}`}>Open</Link>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <LoadMore state={list} noun="purchase orders" />
+          </>
         )}
       </Card>
     </div>

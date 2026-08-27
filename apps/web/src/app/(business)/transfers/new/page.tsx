@@ -63,7 +63,9 @@ export default function NewTransferPage() {
       return;
     }
     try {
-      const rows = await api<VariantRow[]>(`/v1/pos/lookup?q=${encodeURIComponent(search.trim())}`);
+      const rows = await api<VariantRow[]>(
+        `/v1/pos/lookup?q=${encodeURIComponent(search.trim())}&limit=200`,
+      );
       setResults(rows);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -274,6 +276,11 @@ export default function NewTransferPage() {
                   <span style={{ color: 'var(--text-secondary)' }}>{r.sku ?? '—'}</span>
                 </button>
               ))}
+              {results.length >= 200 && (
+                <p style={{ color: 'var(--text-secondary)', fontSize: 12, marginTop: 4 }}>
+                  Showing first 200 matches — refine your search.
+                </p>
+              )}
             </div>
           )}
         </Card>

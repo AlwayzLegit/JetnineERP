@@ -137,6 +137,7 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
   } | null>(null);
   const [custQuery, setCustQuery] = useState('');
   const [custHits, setCustHits] = useState<CustomerHit[]>([]);
+  const [custMore, setCustMore] = useState(false);
   const [custOpen, setCustOpen] = useState(false);
   const [creatingCustomer, setCreatingCustomer] = useState(false);
   const [newCust, setNewCust] = useState({ firstName: '', lastName: '', phone: '', email: '' });
@@ -262,7 +263,7 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
   }, [exchangeOf]);
 
   const loadDrafts = useCallback(() => {
-    void api<{ data: DraftRow[] }>('/v1/orders?status=draft&limit=10')
+    void api<{ data: DraftRow[] }>('/v1/orders?status=draft&limit=30')
       .then((r) => setDrafts(r.data))
       .catch(() => setDrafts([]));
   }, []);
@@ -297,12 +298,20 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
       return;
     }
     custTimer.current = setTimeout(() => {
-      void api<{ data: CustomerHit[] }>(`/v1/customers?q=${encodeURIComponent(q)}&limit=8`)
+      void api<{ data: CustomerHit[]; nextCursor: string | null }>(
+        `/v1/customers?q=${encodeURIComponent(q)}&limit=20`,
+      )
         .then((r) => {
           setCustHits(r.data);
+          // The q-search branch server-side is a single ranked page with
+          // nextCursor always null, so a full page is the truncation signal.
+          setCustMore(r.nextCursor != null || r.data.length >= 20);
           setCustOpen(true);
         })
-        .catch(() => setCustHits([]));
+        .catch(() => {
+          setCustHits([]);
+          setCustMore(false);
+        });
     }, 250);
   }, [custQuery]);
 
@@ -799,6 +808,11 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
                       </span>
                     </button>
                   ))}
+                  {custMore && (
+                    <div className="muted" style={{ fontSize: 12, padding: '4px 8px' }}>
+                      More matches — keep typing.
+                    </div>
+                  )}
                 </Card>
               )}
               <div style={{ marginTop: 8 }}>
@@ -1438,6 +1452,7 @@ function ProductSearchDialog({
       if (vendorId) params.set('vendorId', vendorId);
       if (stockFilter) params.set('inStock', stockFilter);
       params.set('locationId', locationId);
+      params.set('limit', '100');
       void api<SearchRow[]>(`/v1/pos/product-search?${params.toString()}`)
         .then(setRows)
         .catch(() => setRows([]));
@@ -1554,6 +1569,11 @@ function ProductSearchDialog({
               </tbody>
             </table>
           </div>
+          {rows.length >= 100 && (
+            <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
+              Showing first 100 — refine your search.
+            </div>
+          )}
         </Card>
       </div>
     </div>

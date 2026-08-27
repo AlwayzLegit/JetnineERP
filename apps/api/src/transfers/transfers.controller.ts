@@ -10,10 +10,19 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
-import { and, desc, eq, inArray, lt, sql } from 'drizzle-orm';
+import { and, eq, inArray, lt, sql } from 'drizzle-orm';
+import type { SQL } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { schema } from '@jetnine/db';
+import {
+  buildPage,
+  clampLimit,
+  decodeCursor,
+  timestampCursorOrder,
+  timestampCursorWhere,
+  type PageResponse,
+} from '../common/pagination';
 
 const fromLoc = alias(schema.locations, 'from_loc');
 const toLoc = alias(schema.locations, 'to_loc');
@@ -116,10 +125,19 @@ export class TransfersController {
     @CurrentTenant() _tenant: RequestTenantContext,
     @Query('status') status?: string,
     @Query('limit') limitStr?: string,
-  ): Promise<ListRow[]> {
-    const limit = clampLimit(limitStr, 50);
-    const where = status ? eq(schema.stockTransfers.status, status) : undefined;
-    return this.db
+    @Query('cursor') cursorStr?: string,
+  ): Promise<PageResponse<ListRow>> {
+    const limit = clampLimit(limitStr);
+    const conditions: SQL[] = [];
+    if (status) conditions.push(eq(schema.stockTransfers.status, status));
+    const cursor = decodeCursor(cursorStr);
+    if (cursor) {
+      conditions.push(
+        timestampCursorWhere(schema.stockTransfers.createdAt, schema.stockTransfers.id, cursor)!,
+      );
+    }
+    const where = conditions.length ? and(...conditions) : undefined;
+    const rows = await this.db
       .select({
         id: schema.stockTransfers.id,
         number: schema.stockTransfers.number,
@@ -140,8 +158,9 @@ export class TransfersController {
       .leftJoin(fromLoc, eq(fromLoc.id, schema.stockTransfers.fromLocationId))
       .leftJoin(toLoc, eq(toLoc.id, schema.stockTransfers.toLocationId))
       .where(where)
-      .orderBy(desc(schema.stockTransfers.createdAt))
-      .limit(limit);
+      .orderBy(...timestampCursorOrder(schema.stockTransfers.createdAt, schema.stockTransfers.id))
+      .limit(limit + 1);
+    return buildPage(rows, limit, (r) => r.createdAt);
   }
 
   /**
@@ -935,10 +954,4 @@ export class TransfersController {
       .toString()
       .padStart(6, '0')}`;
   }
-}
-
-function clampLimit(raw: string | undefined, def: number): number {
-  const n = Number(raw ?? String(def));
-  if (!Number.isFinite(n) || n <= 0) return def;
-  return Math.min(Math.max(Math.floor(n), 1), 200);
 }

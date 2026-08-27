@@ -4,6 +4,8 @@ import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { api, ApiError } from '@/lib/api';
+import { LoadMore } from '@/components/load-more';
+import { useCursorList } from '@/lib/use-cursor-list';
 import { Button, EmptyState, LoadingRows, PageHeader, Select, StatusBadge } from '@/components/ui';
 import { SecurityOverrideDialog } from '@/components/security-override-dialog';
 
@@ -38,18 +40,11 @@ interface AsIsRow {
 
 export default function AsIsPage() {
   const [status, setStatus] = useState('pending_review');
-  const [rows, setRows] = useState<AsIsRow[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const list = useCursorList<AsIsRow>('/v1/as-is');
+  const { rows, error, load: listLoad } = list;
 
-  const load = useCallback(async (s: string) => {
-    try {
-      setRows(await api<AsIsRow[]>(`/v1/as-is${s ? `?status=${s}` : ''}`));
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    }
-  }, []);
+  const load = useCallback((s: string) => listLoad(s ? { status: s } : {}), [listLoad]);
 
   useEffect(() => {
     void load(status);
@@ -124,127 +119,130 @@ export default function AsIsPage() {
       {rows && rows.length === 0 && <EmptyState>Nothing here.</EmptyState>}
 
       {rows && rows.length > 0 && (
-        <div className="card" style={{ padding: 0, overflowX: 'auto' }}>
-          <table className="table" data-testid="as-is-table">
-            <thead>
-              <tr>
-                <th>Item</th>
-                <th className="num">Qty</th>
-                <th>Location</th>
-                <th>Source</th>
-                <th>Received</th>
-                <th>Status</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => (
-                <tr key={r.id} data-testid="as-is-row">
-                  <td>
-                    {r.productName ?? '(deleted)'}
-                    {r.variantName && (
-                      <span style={{ color: 'var(--text-secondary)' }}> — {r.variantName}</span>
-                    )}
-                    {r.sku && (
-                      <span style={{ color: 'var(--text-muted)', fontSize: 11, marginLeft: 6 }}>
-                        <code>{r.sku}</code>
-                      </span>
-                    )}
-                    {r.notes && (
-                      <div style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>{r.notes}</div>
-                    )}
-                    <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                      {r.pieceNumber && <code>{r.pieceNumber}</code>}
-                      {r.condition && <> · {r.condition.replace(/_/g, ' ')}</>}
-                      {r.storageLocation && <> · {r.storageLocation}</>}
-                      {r.asIsPriceCents != null && (
-                        <> · as-is ${(r.asIsPriceCents / 100).toFixed(2)}</>
-                      )}
-                      {r.status === 'pending_review' && (
-                        <>
-                          {' '}
-                          <button
-                            className="btn btn-ghost btn-sm"
-                            style={{ padding: '0 4px', fontSize: 11 }}
-                            disabled={busy}
-                            onClick={() => setPricingId(r.id)}
-                          >
-                            price…
-                          </button>
-                        </>
-                      )}
-                    </div>
-                  </td>
-                  <td className="num">{r.quantity}</td>
-                  <td>{r.locationName ?? '—'}</td>
-                  <td>{r.source.replace(/_/g, ' ')}</td>
-                  <td style={{ whiteSpace: 'nowrap' }}>
-                    {new Date(r.createdAt).toLocaleDateString()}
-                  </td>
-                  <td>
-                    <StatusBadge status={r.status} />
-                  </td>
-                  <td style={{ whiteSpace: 'nowrap' }}>
-                    {r.status === 'pending_review' && (
-                      <span style={{ display: 'inline-flex', gap: 4 }}>
-                        <Button
-                          size="sm"
-                          variant="primary"
-                          disabled={busy}
-                          onClick={() => void review(r.id, 'restock')}
-                          data-testid="review-restock"
-                        >
-                          Restock
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          disabled={busy}
-                          onClick={() => setVendorReturnId(r.id)}
-                        >
-                          Vendor
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="danger"
-                          disabled={busy}
-                          data-testid="review-scrap"
-                          onClick={() => setScrapId(r.id)}
-                        >
-                          Scrap
-                        </Button>
-                      </span>
-                    )}
-                    {r.status === 'vendor_return' && r.vendorCreditStatus === 'open' && (
-                      <span style={{ display: 'inline-flex', gap: 4, alignItems: 'center' }}>
-                        <span style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>
-                          R/A {r.vendorRaNumber}
-                          {r.vendorCreditCents != null &&
-                            ` · $${(r.vendorCreditCents / 100).toFixed(2)} open`}
-                        </span>
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          disabled={busy}
-                          onClick={() => void vendorCredit(r.id, 'received')}
-                        >
-                          Credit received
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          disabled={busy}
-                          onClick={() => void vendorCredit(r.id, 'write_off')}
-                        >
-                          Give up
-                        </Button>
-                      </span>
-                    )}
-                  </td>
+        <div className="card" style={{ padding: 0 }}>
+          <div style={{ overflowX: 'auto' }}>
+            <table className="table" data-testid="as-is-table">
+              <thead>
+                <tr>
+                  <th>Item</th>
+                  <th className="num">Qty</th>
+                  <th>Location</th>
+                  <th>Source</th>
+                  <th>Received</th>
+                  <th>Status</th>
+                  <th></th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr key={r.id} data-testid="as-is-row">
+                    <td>
+                      {r.productName ?? '(deleted)'}
+                      {r.variantName && (
+                        <span style={{ color: 'var(--text-secondary)' }}> — {r.variantName}</span>
+                      )}
+                      {r.sku && (
+                        <span style={{ color: 'var(--text-muted)', fontSize: 11, marginLeft: 6 }}>
+                          <code>{r.sku}</code>
+                        </span>
+                      )}
+                      {r.notes && (
+                        <div style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>{r.notes}</div>
+                      )}
+                      <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                        {r.pieceNumber && <code>{r.pieceNumber}</code>}
+                        {r.condition && <> · {r.condition.replace(/_/g, ' ')}</>}
+                        {r.storageLocation && <> · {r.storageLocation}</>}
+                        {r.asIsPriceCents != null && (
+                          <> · as-is ${(r.asIsPriceCents / 100).toFixed(2)}</>
+                        )}
+                        {r.status === 'pending_review' && (
+                          <>
+                            {' '}
+                            <button
+                              className="btn btn-ghost btn-sm"
+                              style={{ padding: '0 4px', fontSize: 11 }}
+                              disabled={busy}
+                              onClick={() => setPricingId(r.id)}
+                            >
+                              price…
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    </td>
+                    <td className="num">{r.quantity}</td>
+                    <td>{r.locationName ?? '—'}</td>
+                    <td>{r.source.replace(/_/g, ' ')}</td>
+                    <td style={{ whiteSpace: 'nowrap' }}>
+                      {new Date(r.createdAt).toLocaleDateString()}
+                    </td>
+                    <td>
+                      <StatusBadge status={r.status} />
+                    </td>
+                    <td style={{ whiteSpace: 'nowrap' }}>
+                      {r.status === 'pending_review' && (
+                        <span style={{ display: 'inline-flex', gap: 4 }}>
+                          <Button
+                            size="sm"
+                            variant="primary"
+                            disabled={busy}
+                            onClick={() => void review(r.id, 'restock')}
+                            data-testid="review-restock"
+                          >
+                            Restock
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            disabled={busy}
+                            onClick={() => setVendorReturnId(r.id)}
+                          >
+                            Vendor
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="danger"
+                            disabled={busy}
+                            data-testid="review-scrap"
+                            onClick={() => setScrapId(r.id)}
+                          >
+                            Scrap
+                          </Button>
+                        </span>
+                      )}
+                      {r.status === 'vendor_return' && r.vendorCreditStatus === 'open' && (
+                        <span style={{ display: 'inline-flex', gap: 4, alignItems: 'center' }}>
+                          <span style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>
+                            R/A {r.vendorRaNumber}
+                            {r.vendorCreditCents != null &&
+                              ` · $${(r.vendorCreditCents / 100).toFixed(2)} open`}
+                          </span>
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            disabled={busy}
+                            onClick={() => void vendorCredit(r.id, 'received')}
+                          >
+                            Credit received
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            disabled={busy}
+                            onClick={() => void vendorCredit(r.id, 'write_off')}
+                          >
+                            Give up
+                          </Button>
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <LoadMore state={list} noun="pieces" />
         </div>
       )}
       <p className="muted" style={{ fontSize: 12, marginTop: 10 }}>

@@ -774,6 +774,7 @@ describe('Physical counts — soft-freeze lifecycle', () => {
       .set('Cookie', cashierCookie)
       .set('X-Business-Id', businessId);
     expect(list.status).toBe(200);
-    expect((list.body as { status: string }[]).length).toBe(4);
+    expect((list.body.data as { status: string }[]).length).toBe(4);
+    expect(list.body.nextCursor).toBeNull();
   });
 });

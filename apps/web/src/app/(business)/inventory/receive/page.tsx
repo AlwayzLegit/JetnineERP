@@ -39,6 +39,7 @@ export default function ReceivePage() {
   const [locationId, setLocationId] = useState<string>('');
   const [search, setSearch] = useState('');
   const [searchResults, setSearchResults] = useState<ProductRow[]>([]);
+  const [searchMore, setSearchMore] = useState(false);
   const [lines, setLines] = useState<Line[]>([]);
   const [notes, setNotes] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -59,9 +60,12 @@ export default function ReceivePage() {
     }
     try {
       const res = await api<{ data: ProductRow[]; nextCursor: string | null }>(
-        `/v1/products?q=${encodeURIComponent(search)}&limit=10`,
+        `/v1/products?q=${encodeURIComponent(search)}&limit=50`,
       );
       setSearchResults(res.data);
+      // The q-search branch server-side is a single ranked page with
+      // nextCursor always null, so a full page is the truncation signal.
+      setSearchMore(res.nextCursor != null || res.data.length >= 50);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -208,6 +212,11 @@ export default function ReceivePage() {
                 </Button>
               </li>
             ))}
+            {searchMore && (
+              <li style={{ padding: '4px 0', color: 'var(--text-secondary)', fontSize: 12 }}>
+                More matches — refine your search.
+              </li>
+            )}
           </ul>
         )}
       </Card>

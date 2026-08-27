@@ -2144,3 +2144,36 @@ exchange credit-cap money bug) fixed and regression-locked in production.
 
 Nothing buildable remains queued. Owner-side only: needs-counsel privacy
 items (TCPA consent wording, erasure/retention policy).
+
+## Pagination sweep — owner report → 2 workflows → system-wide fix (2026-08-27)
+
+Owner reported Products showing only one page. Ran a 10-agent audit
+workflow over every list surface (81 findings: 15 high / 19 medium / 47
+confirmed fine), then a 10-agent fix workflow, gated centrally:
+
+- **Shared client primitives**: `useCursorList` hook (generation-guarded
+  against stale responses) + `LoadMore` control; the house pattern from
+  the customers page, now reusable everywhere.
+- **Pages that dropped the cursor, fixed**: Products, Gift cards, Audit
+  log, inventory-receive picker.
+- **Eight capped-array endpoints converted to the PageResponse cursor
+  contract** (+ their pages wired with Load more, + every test/consumer
+  updated): /v1/as-is (was 200) · /v1/exchanges (200) · /v1/order-returns
+  (200) · /v1/cash-shifts (50) · /v1/purchase-orders (50) ·
+  /v1/stock-transfers (50) · /v1/service-orders (300) · /v1/exceptions
+  (200) · /v1/inventory/counts (100).
+- **Picker caps de-silenced**: POS Add-Product browse 30→100 with a
+  refine hint; label/transfer/exchange/return lookups request limit=200
+  with truncation cues; customer typeaheads 8→20 with "keep typing";
+  draft chips 10→30; webhook delivery history 50→200.
+- Confirmed fine (deliberate): reports fetch complete data; bounded sets
+  (locations, roles, tax classes, categories, bins) stay unpaginated.
+  Deferred with notes: /v1/inventory/levels full-location fetch,
+  deliveries week view (500), commissions report caps (period-filtered),
+  admin templates (100), marketing tags ordering.
+- One straggler the agents missed (an /v1/exceptions read in orders spec)
+  caught by the central gate run and fixed.
+- Tests: exchanges 10 · orders 68 · transfers 29 · purchasing 39 ·
+  sales 21 · controls 22 · closeout 4 · service-crm 8 · inventory 21 all
+  green. Gates by exit code: typecheck 0 · lint 0 · test 0 · build 0 ·
+  prettier 0.
