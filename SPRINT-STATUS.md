@@ -2323,3 +2323,27 @@ Cleanup commit 940532e relocated the selling-location pack + tracker
 note that a cwd slip had put under apps/api/. Next slice: unified
 written/delivered sales report (Phase 1 dimension + catalog section A
 merge).
+
+## Unified sales summary — written vs delivered (2026-08-27)
+
+Catalog section A's four sales-dollar reports merged into one surface
+with written/delivered as a first-class dimension (pack 01/06):
+
+- `GET /v1/reports/sales/summary?basis=written|delivered&groupBy=day|
+location|salesperson&start&end&format=csv` — POS sales + sales orders
+  in one result; imported excluded (D8); store data scope applies; CSV
+  embeds provenance (`# basis=… generated=…`, pack's run-time-options
+  echo). Average merchandise counts documents, never
+  document-salesperson pairs (Report Average Value rule).
+- Written = documents dated by entry time, orders in any non-draft/
+  quote/cancelled status; Delivered = completed documents by completion
+  time. **Deliberate divergence:** written uses the document's CURRENT
+  totals — no at-entry snapshot exists, so later edits fold into the
+  written figure instead of listing as separate adjustment records
+  (STORIS's Written Business/BTA adjustment ledger is not ported).
+- Reports page gains the "Sales summary — written vs delivered" card:
+  basis + group-by selectors, shared date range, stat row, CSV.
+- reports.int.spec 21→25 (written−delivered == exactly the open orders;
+  location labels + per-location totals; scope diff == Annex dollars;
+  avg + CSV provenance). Gates: typecheck 0 · lint 0 · test 0 (full) ·
+  build 0 · prettier 0.
