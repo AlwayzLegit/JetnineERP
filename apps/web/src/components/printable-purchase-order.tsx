@@ -27,7 +27,22 @@ export interface PrintablePo {
   locationName: string | null;
   notes: string | null;
   subtotalCents: number;
+  /** PO-060: vendor ships straight to the customer named in shipToJson. */
+  directShip?: boolean;
+  shipToJson?: unknown;
   lines: PrintablePoLine[];
+}
+
+/** Best-effort address lines out of the opaque customer addressesJson. */
+function addressLines(value: unknown): string[] {
+  const first = Array.isArray(value) ? value[0] : value;
+  if (!first) return [];
+  if (typeof first === 'string') return [first];
+  if (typeof first !== 'object') return [];
+  return Object.values(first as Record<string, unknown>)
+    .filter((v): v is string | number => typeof v === 'string' || typeof v === 'number')
+    .map(String)
+    .filter((s) => s.trim().length > 0);
 }
 
 /**
@@ -81,16 +96,53 @@ export function PrintablePurchaseOrder({ po }: { po: PrintablePo }) {
           </p>
         </div>
         <div>
-          <h2>Ship to</h2>
-          <p>
-            <strong>{businessName}</strong>
-            {po.locationName && (
-              <>
-                <br />
-                {po.locationName}
-              </>
-            )}
-          </p>
+          <h2>Ship to{po.directShip ? ' (customer — direct shipment)' : ''}</h2>
+          {po.directShip ? (
+            <p>
+              {(() => {
+                const shipTo = (po.shipToJson ?? {}) as {
+                  name?: string | null;
+                  phone?: string | null;
+                  email?: string | null;
+                  address?: unknown;
+                  orderNumber?: string | null;
+                };
+                return (
+                  <>
+                    <strong>{shipTo.name ?? '—'}</strong>
+                    {addressLines(shipTo.address).map((line) => (
+                      <span key={line}>
+                        <br />
+                        {line}
+                      </span>
+                    ))}
+                    {shipTo.phone && (
+                      <>
+                        <br />
+                        {shipTo.phone}
+                      </>
+                    )}
+                    {shipTo.orderNumber && (
+                      <>
+                        <br />
+                        Our sales order {shipTo.orderNumber}
+                      </>
+                    )}
+                  </>
+                );
+              })()}
+            </p>
+          ) : (
+            <p>
+              <strong>{businessName}</strong>
+              {po.locationName && (
+                <>
+                  <br />
+                  {po.locationName}
+                </>
+              )}
+            </p>
+          )}
         </div>
       </section>
 

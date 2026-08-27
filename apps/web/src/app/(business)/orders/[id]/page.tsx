@@ -419,8 +419,44 @@ export default function OrderDetailPage() {
                     <tr key={l.id}>
                       <td>{l.description}</td>
                       <td>
-                        {l.lineType === 'special_order' ? (
+                        {l.lineType === 'custom' ? (
+                          'custom'
+                        ) : ['open', 'partially_fulfilled', 'draft', 'quote'].includes(
+                            order.status,
+                          ) && l.qtyFulfilled === 0 ? (
+                          // PO-060: the type stays changeable on an open
+                          // line — e.g. flip to direct ship when the
+                          // vendor will deliver straight to the customer.
+                          <select
+                            className="select"
+                            value={l.lineType}
+                            style={{ fontSize: 12, padding: '2px 4px' }}
+                            aria-label={`Line type for ${l.description}`}
+                            onChange={async (e) => {
+                              try {
+                                await api(`/v1/orders/${id}/lines/${l.id}`, {
+                                  method: 'PATCH',
+                                  body: JSON.stringify({ lineType: e.target.value }),
+                                });
+                                await load();
+                              } catch (err) {
+                                toast.error(err instanceof Error ? err.message : String(err));
+                              }
+                            }}
+                          >
+                            <option value="stock">stock</option>
+                            <option value="special_order">special order</option>
+                            <option value="direct_ship">direct ship</option>
+                          </select>
+                        ) : l.lineType === 'special_order' ? (
                           <span style={{ color: 'var(--warning)' }}>special order</span>
+                        ) : l.lineType === 'direct_ship' ? (
+                          <span
+                            style={{ color: 'var(--info, var(--warning))' }}
+                            title="The vendor ships straight to the customer"
+                          >
+                            direct ship
+                          </span>
                         ) : (
                           'stock'
                         )}

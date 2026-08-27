@@ -368,3 +368,236 @@ describe('PO builder pre-load: sold-not-in-stock lines carry the SO # (P6)', () 
     expect(after.body.lines[0].qtyReserved).toBe(1);
   });
 });
+
+describe('PO-060 (I7) — direct ship: vendor ships to the customer, stock never moves', () => {
+  let dsVariantId = '';
+  let orderId = '';
+  let orderLineId = '';
+  let poId = '';
+  let poLineId = '';
+
+  async function withDb<T>(fn: (db: ReturnType<typeof drizzle>) => Promise<T>): Promise<T> {
+    const sql2 = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    try {
+      return await fn(drizzle(sql2));
+    } finally {
+      await sql2.end({ timeout: 5 });
+    }
+  }
+
+  async function dsLevel(): Promise<{ onHand: number; reserved: number }> {
+    return withDb(async (db) => {
+      const [row] = await db
+        .select()
+        .from(schema.inventoryLevels)
+        .where(
+          and(
+            eq(schema.inventoryLevels.variantId, dsVariantId),
+            eq(schema.inventoryLevels.locationId, locationId),
+          ),
+        );
+      return { onHand: row?.onHand ?? 0, reserved: row?.reserved ?? 0 };
+    });
+  }
+
+  it('setup: stocked variant + a customer address on file', async () => {
+    await withDb(async (db) => {
+      const [p] = await db
+        .insert(schema.products)
+        .values({ businessId, sku: 'DS-SOFA', name: 'Drop-Ship Sofa' })
+        .returning();
+      const [v] = await db
+        .insert(schema.productVariants)
+        .values({
+          businessId,
+          productId: p!.id,
+          sku: 'DS-SOFA-1',
+          priceCents: 90_000,
+          costCents: 45_000,
+        })
+        .returning();
+      dsVariantId = v!.id;
+      await db.insert(schema.inventoryLevels).values({
+        businessId,
+        variantId: dsVariantId,
+        locationId,
+        onHand: 3,
+        reserved: 0,
+      });
+      await db
+        .update(schema.customers)
+        .set({ addressesJson: [{ line1: '1 Main St', city: 'Los Angeles', zip: '90001' }] })
+        .where(eq(schema.customers.id, customerId));
+    });
+  });
+
+  it('a stock line on an open order flips to direct_ship and releases its reservation', async () => {
+    const res = await ownerReq()
+      .post('/v1/orders')
+      .send({
+        locationId,
+        customerId,
+        lines: [{ variantId: dsVariantId, quantity: 2 }],
+        confirm: true,
+      });
+    expect(res.status).toBe(201);
+    orderId = res.body.id;
+    orderLineId = res.body.lines[0].id;
+    expect(res.body.lines[0].qtyReserved).toBe(2);
+    expect(await dsLevel()).toEqual({ onHand: 3, reserved: 2 });
+
+    const flipped = await request(app.getHttpServer())
+      .patch(`/v1/orders/${orderId}/lines/${orderLineId}`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ lineType: 'direct_ship' });
+    expect(flipped.status).toBe(200);
+    const line = flipped.body.lines.find((l: { id: string }) => l.id === orderLineId);
+    expect(line.lineType).toBe('direct_ship');
+    expect(line.qtyReserved).toBe(0);
+    expect(await dsLevel()).toEqual({ onHand: 3, reserved: 0 });
+  });
+
+  it('the queue flags it direct_ship; generate-PO snapshots the customer ship-to', async () => {
+    const queue = await ownerReq().get('/v1/special-orders/queue');
+    const row = queue.body.find((r: { orderLineId: string }) => r.orderLineId === orderLineId);
+    expect(row).toBeTruthy();
+    expect(row.lineType).toBe('direct_ship');
+    expect(row.toOrder).toBe(2);
+
+    const gen = await ownerReq()
+      .post('/v1/special-orders/generate-po')
+      .send({ vendorId, lines: [{ orderLineId, quantity: 2 }] });
+    expect(gen.status).toBe(201);
+    poId = gen.body.purchaseOrderId;
+
+    const po = await ownerReq().get(`/v1/purchase-orders/${poId}`);
+    expect(po.status).toBe(200);
+    expect(po.body.directShip).toBe(true);
+    expect(po.body.shipToJson.name).toBe('Sam Waits');
+    expect(po.body.shipToJson.address[0].line1).toBe('1 Main St');
+    poLineId = po.body.lines[0].id;
+  });
+
+  it('a direct-ship PO cannot mix with stock-bound special-order lines', async () => {
+    const other = await ownerReq()
+      .post('/v1/orders')
+      .send({
+        locationId,
+        customerId,
+        lines: [{ variantId: baseVariantId, quantity: 1, lineType: 'special_order' }],
+        confirm: true,
+      });
+    expect(other.status).toBe(201);
+    const mixed = await ownerReq()
+      .post('/v1/special-orders/generate-po')
+      .send({
+        vendorId,
+        lines: [
+          { orderLineId, quantity: 1 },
+          { orderLineId: other.body.lines[0].id, quantity: 1 },
+        ],
+      });
+    expect(mixed.status).toBe(400);
+    expect(mixed.body.message).toMatch(/[Dd]irect-ship/);
+  });
+
+  it('receiving fulfills the line with zero stock impact, posts COGS, and emails the customer', async () => {
+    const before = await dsLevel();
+    const res = await ownerReq()
+      .post(`/v1/purchase-orders/${poId}/receive`)
+      .send({ lines: [{ lineId: poLineId, quantity: 2 }] });
+    expect(res.status).toBe(201);
+    expect(res.body.status).toBe('received');
+
+    // Stock did not move — no on-hand, no reservation, no movement row.
+    expect(await dsLevel()).toEqual(before);
+    await withDb(async (db) => {
+      const movements = await db
+        .select()
+        .from(schema.inventoryMovements)
+        .where(eq(schema.inventoryMovements.referenceId, poId));
+      expect(movements).toHaveLength(0);
+      // COGS: the PO's cost layer exists but is fully consumed by a
+      // direct_ship consumption at the PO cost.
+      const layers = await db
+        .select()
+        .from(schema.costLayers)
+        .where(eq(schema.costLayers.referenceId, poId));
+      expect(layers).toHaveLength(1);
+      expect(layers[0]!.quantityRemaining).toBe(0);
+      const consumptions = await db
+        .select()
+        .from(schema.costConsumptions)
+        .where(eq(schema.costConsumptions.layerId, layers[0]!.id));
+      expect(consumptions).toHaveLength(1);
+      expect(consumptions[0]!.referenceType).toBe('direct_ship');
+      expect(consumptions[0]!.quantity).toBe(2);
+      expect(consumptions[0]!.unitCostCents).toBe(45_000);
+    });
+
+    // The customer's line is FULFILLED (not reserved) and the order follows.
+    const order = await ownerReq().get(`/v1/orders/${orderId}`);
+    const line = order.body.lines.find((l: { id: string }) => l.id === orderLineId);
+    expect(line.qtyFulfilled).toBe(2);
+    expect(line.qtyReserved).toBe(0);
+    expect(order.body.status).toBe('fulfilled');
+
+    const mail = await request(app.getHttpServer())
+      .get('/v1/dev/email/last')
+      .query({ to: 'sam.waits@example.test' });
+    expect(mail.status).toBe(200);
+    expect(mail.body.subject).toMatch(/on its way/);
+  });
+
+  it('un-receive and dock rejects are refused on a direct-ship PO', async () => {
+    const unrec = await ownerReq()
+      .post(`/v1/purchase-orders/${poId}/unreceive`)
+      .send({ lines: [{ lineId: poLineId, quantity: 1 }] });
+    expect(unrec.status).toBe(400);
+    expect(unrec.body.message).toMatch(/direct-ship/);
+
+    // A second direct-ship order + PO to probe the reject guard.
+    const order2 = await ownerReq()
+      .post('/v1/orders')
+      .send({
+        locationId,
+        customerId,
+        lines: [{ variantId: dsVariantId, quantity: 1, lineType: 'direct_ship' }],
+        confirm: true,
+      });
+    expect(order2.status).toBe(201);
+    const line2 = order2.body.lines[0].id;
+    const gen2 = await ownerReq()
+      .post('/v1/special-orders/generate-po')
+      .send({ vendorId, lines: [{ orderLineId: line2, quantity: 1 }] });
+    expect(gen2.status).toBe(201);
+    const po2 = await ownerReq().get(`/v1/purchase-orders/${gen2.body.purchaseOrderId}`);
+    const rejected = await ownerReq()
+      .post(`/v1/purchase-orders/${gen2.body.purchaseOrderId}/receiving`)
+      .send({
+        lines: [{ lineId: po2.body.lines[0].id, received: 1, inspected: 1, rejected: 1 }],
+      });
+    expect(rejected.status).toBe(400);
+    expect(rejected.body.message).toMatch(/return/);
+
+    // And the line type is now locked behind its PO.
+    const relock = await request(app.getHttpServer())
+      .patch(`/v1/orders/${order2.body.id}/lines/${line2}`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ lineType: 'stock' });
+    expect(relock.status).toBe(400);
+    expect(relock.body.message).toMatch(/purchase order/i);
+  });
+
+  it('line-type change is refused once units are fulfilled', async () => {
+    const res = await request(app.getHttpServer())
+      .patch(`/v1/orders/${orderId}/lines/${orderLineId}`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ lineType: 'stock' });
+    expect(res.status).toBe(400);
+    expect(res.body.message).toMatch(/fulfilled/);
+  });
+});

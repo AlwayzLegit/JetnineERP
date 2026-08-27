@@ -211,7 +211,11 @@ export const orderLines = pgTable(
     qtyFulfilled: integer('qty_fulfilled').notNull().default(0),
     /** §10: units taken back on a return (never exceeds qty_fulfilled). */
     qtyReturned: integer('qty_returned').notNull().default(0),
-    /** 'stock' | 'special_order' */
+    /**
+     * 'stock' | 'special_order' | 'custom' | 'direct_ship' (PO-060: the
+     * vendor ships straight to the customer — never reserves stock; its
+     * PO receipt fulfills the line without touching inventory).
+     */
     lineType: text('line_type').notNull().default('stock'),
     unitPriceCents: integer('unit_price_cents').notNull(),
     discountCents: integer('discount_cents').notNull().default(0),

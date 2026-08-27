@@ -335,6 +335,7 @@ export class DeliveriesController {
         quantity: schema.orderLines.quantity,
         qtyReserved: schema.orderLines.qtyReserved,
         qtyFulfilled: schema.orderLines.qtyFulfilled,
+        lineType: schema.orderLines.lineType,
       })
       .from(schema.orderLines)
       .where(eq(schema.orderLines.orderId, orderId));
@@ -342,12 +343,15 @@ export class DeliveriesController {
     // Units already promised to a live (not delivered/failed/cancelled)
     // delivery are spoken for.
     const pending = await this.pendingByOrderLine(orderId);
-    const schedulable = orderLines.map((l) => ({
-      ...l,
-      // For scheduling purposes, "fulfilled" includes what's already on a
-      // truck — planFulfillment then caps requests at what's truly free.
-      qtyFulfilled: l.qtyFulfilled + (pending.get(l.id) ?? 0),
-    }));
+    const schedulable = orderLines
+      // PO-060: direct-ship lines ride the vendor's truck, not ours.
+      .filter((l) => l.lineType !== 'direct_ship')
+      .map((l) => ({
+        ...l,
+        // For scheduling purposes, "fulfilled" includes what's already on a
+        // truck — planFulfillment then caps requests at what's truly free.
+        qtyFulfilled: l.qtyFulfilled + (pending.get(l.id) ?? 0),
+      }));
 
     const requests: FulfillmentRequest[] =
       body.lines && body.lines.length > 0
