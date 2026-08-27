@@ -61,6 +61,29 @@ interface SalesSummary {
     averageMerchandiseCents: number;
   };
 }
+interface GiftCardLiabilityRow {
+  code: string;
+  status: string;
+  customerName: string | null;
+  issuedAt: string;
+  expiresAt: string | null;
+  initialCents: number;
+  remainingCents: number;
+}
+interface GiftCardLiability {
+  cardCount: number;
+  outstandingCents: number;
+  rows: GiftCardLiabilityRow[];
+}
+interface DeliveryDateChangeRow {
+  at: string;
+  action: string;
+  deliveryId: string | null;
+  orderNumber: string | null;
+  actorEmail: string | null;
+  fromDate: string | null;
+  toDate: string | null;
+}
 interface DailyTotalRow {
   day: string;
   saleCount: number;
@@ -181,6 +204,8 @@ export default function ReportsPage() {
   const [valuation, setValuation] = useState<Valuation | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [summary, setSummary] = useState<SalesSummary | null>(null);
+  const [giftLiability, setGiftLiability] = useState<GiftCardLiability | null>(null);
+  const [dateChanges, setDateChanges] = useState<DeliveryDateChangeRow[] | null>(null);
   const [summaryBasis, setSummaryBasis] = useState<'written' | 'delivered'>('written');
   const [summaryGroupBy, setSummaryGroupBy] = useState<'day' | 'location' | 'salesperson'>('day');
 
@@ -247,6 +272,7 @@ export default function ReportsPage() {
     try {
       setTaxSummary(await api<TaxSummary>(`/v1/reports/tax/summary?start=${start}&end=${end}`));
       setValuation(await api<Valuation>(`/v1/reports/inventory/valuation`));
+      setGiftLiability(await api<GiftCardLiability>('/v1/reports/gift-cards/liability'));
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       if (/403|forbidden/i.test(msg)) setFinancialDenied(true);
@@ -254,7 +280,19 @@ export default function ReportsPage() {
     }
   }
 
+  async function loadDateChanges() {
+    try {
+      const res = await api<{ rows: DeliveryDateChangeRow[] }>(
+        '/v1/reports/delivery-date-changes?days=30',
+      );
+      setDateChanges(res.rows);
+    } catch {
+      setDateChanges([]);
+    }
+  }
+
   useEffect(() => {
+    void loadDateChanges();
     void loadSummary();
     void loadDaily();
     void loadProducts();
@@ -748,6 +786,93 @@ export default function ReportsPage() {
           </div>
         ) : (
           <LoadingRows />
+        )}
+      </Card>
+
+      {!financialDenied && giftLiability && (
+        <Card title="Gift card liability" data-testid="gift-card-liability">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+            <Stat label="Outstanding cards" value={String(giftLiability.cardCount)} />
+            <Stat
+              label="Total liability"
+              value={<Money cents={giftLiability.outstandingCents} />}
+              strong
+            />
+          </div>
+          <div style={{ overflowX: 'auto', marginTop: 12 }}>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Code</th>
+                  <th>Customer</th>
+                  <th>Issued</th>
+                  <th>Expires</th>
+                  <th className="num">Initial</th>
+                  <th className="num">Remaining</th>
+                </tr>
+              </thead>
+              <tbody>
+                {giftLiability.rows.length === 0 && <Empty colSpan={6} />}
+                {giftLiability.rows.map((r) => (
+                  <tr key={r.code}>
+                    <td>
+                      <code>{r.code}</code>
+                    </td>
+                    <td>{r.customerName ?? '—'}</td>
+                    <td>{r.issuedAt}</td>
+                    <td>{r.expiresAt ?? '—'}</td>
+                    <td className="num">
+                      <Money cents={r.initialCents} />
+                    </td>
+                    <td className="num">
+                      <Money cents={r.remainingCents} />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <CsvButton
+            path="/v1/reports/gift-cards/liability?format=csv"
+            filename="gift-card-liability.csv"
+            size="sm"
+          />
+        </Card>
+      )}
+
+      <Card title="Delivery date changes (30 days)" data-testid="delivery-date-changes">
+        {!dateChanges ? (
+          <LoadingRows />
+        ) : (
+          <div style={{ overflowX: 'auto' }}>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>When</th>
+                  <th>Order</th>
+                  <th>Change</th>
+                  <th>By</th>
+                </tr>
+              </thead>
+              <tbody>
+                {dateChanges.length === 0 && <Empty colSpan={4} />}
+                {dateChanges.map((r, i) => (
+                  <tr key={`${r.deliveryId ?? 'x'}-${i}`}>
+                    <td>{new Date(r.at).toLocaleString()}</td>
+                    <td>{r.orderNumber ?? '—'}</td>
+                    <td>
+                      {r.action === 'delivery.cancel'
+                        ? 'Cancelled'
+                        : r.fromDate && r.toDate
+                          ? `${r.fromDate} → ${r.toDate}`
+                          : (r.toDate ?? r.fromDate ?? r.action)}
+                    </td>
+                    <td>{r.actorEmail ?? '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </Card>
 
