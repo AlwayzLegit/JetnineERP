@@ -2239,3 +2239,20 @@ customer 360 inquiries, operational inquiries). Committed verbatim to
 read-order, `05-report-catalog.md`, `06-cross-cutting-rules.md`, and
 `07-build-plan.md` (phasing, acceptance criteria, what to cut) were not
 uploaded — build does not start until they arrive.
+
+## Sales Views & Reports — pack complete + Phase 0 triage (2026-08-27)
+
+Owner uploaded 05-report-catalog, 06-cross-cutting-rules, 07-build-plan (zip
+verified byte-identical for 00–04). Pack complete at `docs/erp-sales-views/`.
+Authored `PHASE0-TRIAGE.md` answering the build plan's seven Phase 0
+decisions: one surface not two (decided by architecture); no Regional
+Processing port (RLS + permission catalog); fixed layouts, no panel registry
+in v1; reports stay pure reads (EOD never mutates via reports); contradictions
+mostly moot; ATP partial (reservation basis + PO dates, no full projection).
+63-report triage: ~13 keep (merged into fewer surfaces), 3 already covered
+(exceptions queue, physical inventory, void integrity), rest dropped per
+locked decisions (no in-house financing, no protection plans, no leads/CRM).
+**Ops — owner confirms before Phase 5:** the keep/drop table; per-user
+location/data scoping (self/store/all axis); marketing attribution wanted?;
+lightweight AP (vendor bill/credit) in scope for received-not-billed /
+RTV-not-credited queues?; ATP projection scope.
