@@ -47,7 +47,7 @@ export async function computeReorderSuggestions(
       costCents: schema.productVariants.costCents,
       vendorId: schema.productVariants.preferredVendorId,
       vendorName: schema.vendors.name,
-      available: sql<number>`COALESCE(SUM(${schema.inventoryLevels.onHand} - ${schema.inventoryLevels.reserved}), 0)::int`,
+      available: sql<number>`COALESCE(SUM(${schema.inventoryLevels.onHand} - ${schema.inventoryLevels.reserved} - ${schema.inventoryLevels.floorSample}), 0)::int`,
     })
     .from(schema.productVariants)
     .innerJoin(schema.products, eq(schema.products.id, schema.productVariants.productId))
@@ -82,7 +82,7 @@ export async function computeReorderSuggestions(
       schema.vendors.name,
     )
     .having(
-      sql`COALESCE(SUM(${schema.inventoryLevels.onHand} - ${schema.inventoryLevels.reserved}), 0) <= ${schema.productVariants.reorderPoint}`,
+      sql`COALESCE(SUM(${schema.inventoryLevels.onHand} - ${schema.inventoryLevels.reserved} - ${schema.inventoryLevels.floorSample}), 0) <= ${schema.productVariants.reorderPoint}`,
     );
 
   const byVendor = new Map<string, ReorderVendorGroup>();

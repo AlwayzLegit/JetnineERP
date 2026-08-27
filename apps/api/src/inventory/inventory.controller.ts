@@ -43,6 +43,7 @@ interface LevelRow {
   variantBarcode: string | null;
   onHand: number;
   reserved: number;
+  floorSample: number;
   available: number;
   storageBinId: string | null;
   storageBinCode: string | null;
@@ -123,6 +124,7 @@ export class InventoryController {
         variantBarcode: schema.productVariants.barcode,
         onHand: schema.inventoryLevels.onHand,
         reserved: schema.inventoryLevels.reserved,
+        floorSample: schema.inventoryLevels.floorSample,
         storageBinId: schema.inventoryLevels.storageBinId,
         storageBinCode: schema.storageBins.code,
         updatedAt: schema.inventoryLevels.updatedAt,
@@ -138,7 +140,7 @@ export class InventoryController {
       .orderBy(asc(schema.products.name), asc(schema.productVariants.sku));
     return rows.map((r) => ({
       ...r,
-      available: Math.max(0, r.onHand - r.reserved),
+      available: Math.max(0, r.onHand - r.reserved - r.floorSample),
     }));
   }
 
@@ -290,6 +292,58 @@ export class InventoryController {
    * never had a level is meaningless — and the bin must be an active bin
    * of the same location.
    */
+  /**
+   * J2 (STK-020): set the floor-sample hold on a level — units that are
+   * physically on hand but never sellable or reservable as new. This is
+   * the manual "nail down" path; receiving a floor_sample transfer is
+   * the other. Absolute set, clamped to on-hand, audited.
+   */
+  @Post('levels/floor-sample')
+  @RequirePermission('inventory.adjust')
+  async setFloorSample(
+    @CurrentTenant() _tenant: RequestTenantContext,
+    @Body() body: { variantId?: string; locationId?: string; quantity?: number },
+  ): Promise<{ floorSample: number }> {
+    if (!body.variantId || !body.locationId) {
+      throw new BadRequestException('variantId and locationId are required');
+    }
+    if (!Number.isInteger(body.quantity) || (body.quantity ?? -1) < 0) {
+      throw new BadRequestException('quantity must be a non-negative integer');
+    }
+    const [level] = await this.db
+      .select({
+        onHand: schema.inventoryLevels.onHand,
+        floorSample: schema.inventoryLevels.floorSample,
+      })
+      .from(schema.inventoryLevels)
+      .where(
+        and(
+          eq(schema.inventoryLevels.variantId, body.variantId),
+          eq(schema.inventoryLevels.locationId, body.locationId),
+        ),
+      )
+      .limit(1);
+    if (!level) throw new NotFoundException('No stock level for that variant at that location');
+    const next = Math.min(body.quantity!, level.onHand);
+    await this.db
+      .update(schema.inventoryLevels)
+      .set({ floorSample: next, updatedAt: new Date() })
+      .where(
+        and(
+          eq(schema.inventoryLevels.variantId, body.variantId),
+          eq(schema.inventoryLevels.locationId, body.locationId),
+        ),
+      );
+    await this.audit.log({
+      action: 'inventory.floor_sample.set',
+      targetType: 'inventory_level',
+      targetId: body.variantId,
+      before: { floorSample: level.floorSample },
+      after: { floorSample: next, locationId: body.locationId },
+    });
+    return { floorSample: next };
+  }
+
   @Post('levels/assign-bin')
   @RequirePermission('inventory.adjust')
   async assignBin(

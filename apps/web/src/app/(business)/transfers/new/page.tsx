@@ -1,7 +1,7 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { useEffect, useState, type FormEvent } from 'react';
+import { Fragment, useEffect, useState, type FormEvent } from 'react';
 import { Plus, Search } from 'lucide-react';
 import { api } from '@/lib/api';
 import { Button, Card, EmptyState, Field, Input, PageHeader, Select } from '@/components/ui';
@@ -20,6 +20,14 @@ interface Line {
   variantId: string;
   description: string;
   quantity: number;
+  /** J3: specific pieces riding this line (ids of serial units). */
+  serialIds: string[];
+}
+
+interface SerialRow {
+  id: string;
+  serial: string;
+  status: string;
 }
 
 export default function NewTransferPage() {
@@ -70,10 +78,46 @@ export default function NewTransferPage() {
         variantId: v.variantId,
         description: [v.productName, v.variantName].filter(Boolean).join(' — '),
         quantity: 1,
+        serialIds: [],
       },
     ]);
     setSearch('');
     setResults([]);
+  }
+
+  // J3 serial picker: expand one line at a time; pieces come from the
+  // origin location's in-stock serials.
+  const [pickerLine, setPickerLine] = useState<number | null>(null);
+  const [pickerSerials, setPickerSerials] = useState<SerialRow[]>([]);
+
+  async function togglePicker(index: number) {
+    if (pickerLine === index) {
+      setPickerLine(null);
+      return;
+    }
+    try {
+      const rows = await api<SerialRow[]>(
+        `/v1/serials?variantId=${lines[index]!.variantId}&locationId=${fromLocationId}&status=in_stock`,
+      );
+      setPickerSerials(rows);
+      setPickerLine(index);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  function toggleSerial(index: number, id: string) {
+    setLines((prev) =>
+      prev.map((l, i) => {
+        if (i !== index) return l;
+        const has = l.serialIds.includes(id);
+        if (!has && l.serialIds.length >= l.quantity) return l; // ≤ quantity
+        return {
+          ...l,
+          serialIds: has ? l.serialIds.filter((x) => x !== id) : [...l.serialIds, id],
+        };
+      }),
+    );
   }
 
   function setLine(index: number, patch: Partial<Line>) {
@@ -104,7 +148,11 @@ export default function NewTransferPage() {
           toLocationId,
           notes: notes || null,
           ship: shipNow,
-          lines: lines.map((l) => ({ variantId: l.variantId, quantity: Number(l.quantity) })),
+          lines: lines.map((l) => ({
+            variantId: l.variantId,
+            quantity: Number(l.quantity),
+            ...(l.serialIds.length > 0 ? { serialIds: l.serialIds } : {}),
+          })),
         }),
       });
       router.push(`/transfers/${created.id}`);
@@ -247,28 +295,62 @@ export default function NewTransferPage() {
                 </thead>
                 <tbody>
                   {lines.map((l, i) => (
-                    <tr key={l.variantId}>
-                      <td>{l.description}</td>
-                      <td>
-                        <Input
-                          type="number"
-                          min={1}
-                          value={l.quantity}
-                          onChange={(e) => setLine(i, { quantity: Number(e.target.value) })}
-                          style={{ width: 80 }}
-                        />
-                      </td>
-                      <td style={{ textAlign: 'right' }}>
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="danger"
-                          onClick={() => removeLine(i)}
-                        >
-                          Remove
-                        </Button>
-                      </td>
-                    </tr>
+                    <Fragment key={l.variantId}>
+                      <tr>
+                        <td>{l.description}</td>
+                        <td>
+                          <Input
+                            type="number"
+                            min={1}
+                            value={l.quantity}
+                            onChange={(e) => setLine(i, { quantity: Number(e.target.value) })}
+                            style={{ width: 80 }}
+                          />
+                        </td>
+                        <td style={{ textAlign: 'right' }}>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => void togglePicker(i)}
+                          >
+                            {l.serialIds.length > 0 ? `Pieces (${l.serialIds.length})` : 'Pieces'}
+                          </Button>{' '}
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="danger"
+                            onClick={() => removeLine(i)}
+                          >
+                            Remove
+                          </Button>
+                        </td>
+                      </tr>
+                      {pickerLine === i && (
+                        <tr>
+                          <td colSpan={3} style={{ background: 'var(--surface-2, transparent)' }}>
+                            {pickerSerials.length === 0 ? (
+                              <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                                No in-stock serial pieces of this item at the origin.
+                              </span>
+                            ) : (
+                              <div className="flex flex-wrap gap-2">
+                                {pickerSerials.map((su) => (
+                                  <label key={su.id} style={{ fontSize: 12.5 }}>
+                                    <input
+                                      type="checkbox"
+                                      checked={l.serialIds.includes(su.id)}
+                                      onChange={() => toggleSerial(i, su.id)}
+                                    />{' '}
+                                    <code>{su.serial}</code>
+                                  </label>
+                                ))}
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
                   ))}
                 </tbody>
               </table>

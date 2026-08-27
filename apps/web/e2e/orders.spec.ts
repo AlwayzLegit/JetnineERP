@@ -131,10 +131,10 @@ test.describe('Day 2 — order writer', () => {
     await page.goto('/inventory');
     const invRow = page.locator('tr', { hasText: variantSku });
     await expect(invRow).toBeVisible();
-    // Columns: product, sku, barcode, on hand, reserved, available.
+    // Columns: product, sku, barcode, on hand, reserved, floor, available.
     await expect(invRow.locator('td').nth(3)).toHaveText('100');
     await expect(invRow.locator('td').nth(4)).toHaveText('1');
-    await expect(invRow.locator('td').nth(5)).toHaveText('99');
+    await expect(invRow.locator('td').nth(6)).toHaveText('99');
 
     // --- Orders table row opens the slide-over; full page returns here ---
     await page.goto('/orders');

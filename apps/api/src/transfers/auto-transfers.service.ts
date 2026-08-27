@@ -109,7 +109,7 @@ export class AutoTransfersService {
       .select({
         variantId: schema.inventoryLevels.variantId,
         locationId: schema.inventoryLevels.locationId,
-        free: sql<number>`${schema.inventoryLevels.onHand} - ${schema.inventoryLevels.reserved}`,
+        free: sql<number>`${schema.inventoryLevels.onHand} - ${schema.inventoryLevels.reserved} - ${schema.inventoryLevels.floorSample}`,
       })
       .from(schema.inventoryLevels)
       .innerJoin(schema.locations, eq(schema.locations.id, schema.inventoryLevels.locationId))
@@ -118,7 +118,7 @@ export class AutoTransfersService {
           inArray(schema.inventoryLevels.variantId, [...need.keys()]),
           ne(schema.inventoryLevels.locationId, args.locationId),
           eq(schema.locations.isActive, true),
-          sql`${schema.inventoryLevels.onHand} - ${schema.inventoryLevels.reserved} > 0`,
+          sql`${schema.inventoryLevels.onHand} - ${schema.inventoryLevels.reserved} - ${schema.inventoryLevels.floorSample} > 0`,
         ),
       );
 
