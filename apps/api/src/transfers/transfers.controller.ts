@@ -459,41 +459,50 @@ export class TransfersController {
       validated.push({ line, qty: r.quantity! });
     }
 
+    // An as_is consolidation stages what arrives in the As-Is review
+    // queue instead of sellable stock — damage never silently becomes
+    // sellable. No transfer_in ledger entry, no level bump, no cost
+    // layer; the pieces re-enter stock (and valuation) only through an
+    // as-is review disposition.
+    const stagesAsIs = transfer.transferType === 'as_is';
     for (const v of validated) {
-      // Ledger entry at the destination.
-      await this.db.insert(schema.inventoryMovements).values({
-        businessId: tenant.businessId!,
-        variantId: v.line.variantId,
-        locationId: transfer.toLocationId,
-        delta: v.qty,
-        reason: 'transfer_in',
-        referenceType: 'stock_transfer',
-        referenceId: transfer.id,
-        actorUserId: actor.id,
-        notes: body.notes ?? null,
-      });
-      // FIFO: the destination layer carries the cost shipped with the
-      // line (pre-costing transfers fall back to the catalog cost).
-      let inCost = v.line.unitCostCents;
-      if (inCost == null) {
-        const [pv] = await this.db
-          .select({ costCents: schema.productVariants.costCents })
-          .from(schema.productVariants)
-          .where(eq(schema.productVariants.id, v.line.variantId))
-          .limit(1);
-        inCost = pv?.costCents ?? null;
+      if (!stagesAsIs) {
+        // Ledger entry at the destination.
+        await this.db.insert(schema.inventoryMovements).values({
+          businessId: tenant.businessId!,
+          variantId: v.line.variantId,
+          locationId: transfer.toLocationId,
+          delta: v.qty,
+          reason: 'transfer_in',
+          referenceType: 'stock_transfer',
+          referenceId: transfer.id,
+          actorUserId: actor.id,
+          notes: body.notes ?? null,
+        });
+        // FIFO: the destination layer carries the cost shipped with the
+        // line (pre-costing transfers fall back to the catalog cost).
+        let inCost = v.line.unitCostCents;
+        if (inCost == null) {
+          const [pv] = await this.db
+            .select({ costCents: schema.productVariants.costCents })
+            .from(schema.productVariants)
+            .where(eq(schema.productVariants.id, v.line.variantId))
+            .limit(1);
+          inCost = pv?.costCents ?? null;
+        }
+        await this.costing.addLayer(this.db, {
+          businessId: tenant.businessId!,
+          variantId: v.line.variantId,
+          locationId: transfer.toLocationId,
+          sourceType: 'transfer_in',
+          referenceId: transfer.id,
+          quantity: v.qty,
+          unitCostCents: inCost,
+        });
       }
-      await this.costing.addLayer(this.db, {
-        businessId: tenant.businessId!,
-        variantId: v.line.variantId,
-        locationId: transfer.toLocationId,
-        sourceType: 'transfer_in',
-        referenceId: transfer.id,
-        quantity: v.qty,
-        unitCostCents: inCost,
-      });
       // J3: re-home the named pieces — up to the received quantity, in
-      // listed order; a floor-sample transfer flags them as such.
+      // listed order; a floor-sample transfer flags them as such, and
+      // an as_is one stages them as 'returned' pending review.
       const listedSerials = (v.line.serialIdsJson as string[] | null) ?? [];
       if (listedSerials.length > 0) {
         const inTransit = await this.db
@@ -511,34 +520,64 @@ export class TransfersController {
           await this.db
             .update(schema.serialUnits)
             .set({
-              status: transfer.transferType === 'floor_sample' ? 'floor_sample' : 'in_stock',
+              status: stagesAsIs
+                ? 'returned'
+                : transfer.transferType === 'floor_sample'
+                  ? 'floor_sample'
+                  : 'in_stock',
               locationId: transfer.toLocationId,
               updatedAt: new Date(),
             })
             .where(inArray(schema.serialUnits.id, toFlip));
         }
       }
-      // Increment the destination level. J2 (XFR-030): a floor-sample
-      // transfer also nails the units down — physically on hand, never
-      // sellable or reservable as new.
-      const floorInc = transfer.transferType === 'floor_sample' ? v.qty : 0;
-      await this.db
-        .insert(schema.inventoryLevels)
-        .values({
-          businessId: tenant.businessId!,
-          variantId: v.line.variantId,
-          locationId: transfer.toLocationId,
-          onHand: v.qty,
-          floorSample: floorInc,
-        })
-        .onConflictDoUpdate({
-          target: [schema.inventoryLevels.variantId, schema.inventoryLevels.locationId],
-          set: {
-            onHand: sql`${schema.inventoryLevels.onHand} + ${v.qty}`,
-            floorSample: sql`${schema.inventoryLevels.floorSample} + ${floorInc}`,
-            updatedAt: new Date(),
-          },
-        });
+      if (stagesAsIs) {
+        // One review piece per unit, numbered off the row id (same
+        // scheme as manual as-is intake).
+        const staged = await this.db
+          .insert(schema.asIsItems)
+          .values(
+            Array.from({ length: v.qty }, () => ({
+              businessId: tenant.businessId!,
+              variantId: v.line.variantId,
+              locationId: transfer.toLocationId,
+              quantity: 1,
+              source: 'transfer',
+              referenceType: 'stock_transfer',
+              referenceId: transfer.id,
+              notes: body.notes ?? null,
+            })),
+          )
+          .returning({ id: schema.asIsItems.id });
+        for (const row of staged) {
+          await this.db
+            .update(schema.asIsItems)
+            .set({ pieceNumber: `AS-${row.id.slice(0, 8).toUpperCase()}` })
+            .where(eq(schema.asIsItems.id, row.id));
+        }
+      } else {
+        // Increment the destination level. J2 (XFR-030): a floor-sample
+        // transfer also nails the units down — physically on hand, never
+        // sellable or reservable as new.
+        const floorInc = transfer.transferType === 'floor_sample' ? v.qty : 0;
+        await this.db
+          .insert(schema.inventoryLevels)
+          .values({
+            businessId: tenant.businessId!,
+            variantId: v.line.variantId,
+            locationId: transfer.toLocationId,
+            onHand: v.qty,
+            floorSample: floorInc,
+          })
+          .onConflictDoUpdate({
+            target: [schema.inventoryLevels.variantId, schema.inventoryLevels.locationId],
+            set: {
+              onHand: sql`${schema.inventoryLevels.onHand} + ${v.qty}`,
+              floorSample: sql`${schema.inventoryLevels.floorSample} + ${floorInc}`,
+              updatedAt: new Date(),
+            },
+          });
+      }
       // Bump the line counter.
       await this.db
         .update(schema.stockTransferLines)
@@ -574,6 +613,7 @@ export class TransfersController {
         lineCount: validated.length,
         unitsReceived: validated.reduce((s, v) => s + v.qty, 0),
         fullyReceived,
+        ...(stagesAsIs ? { stagedInAsIsReview: true } : {}),
       },
     });
 
