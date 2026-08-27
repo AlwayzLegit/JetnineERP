@@ -2272,3 +2272,13 @@ zip verified against loose uploads) — committed verbatim to
 `docs/erp-delivery-reprints/` (prettier-ignored). Its 02 state machine is
 normative with STORIS-published acceptance tests in 07 to port first.
 Queued after the Sales Views build.
+
+## Sales-Rate PO Replenishment pack committed (2026-08-27)
+
+Owner uploaded the sales-rate replenishment handoff (STORIS "Replenish
+Stock Inventory Based on Sales Rate") — committed verbatim to
+`docs/HANDOFF-po-replenishment-sales-rate.md`. One pure calculation engine
+for EOD/on-demand/scheduled (T-31 identical-numbers is the key test), 32
+acceptance tests, 11 open questions (several self-decidable, e.g. sold −
+returned; the rest flagged when built). Supersedes/extends the existing
+min-based auto-replenishment PO drafts. Queued after delivery reprints.
