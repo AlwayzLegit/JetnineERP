@@ -35,6 +35,32 @@ interface OrderPaymentsDayRow {
   amountCents: number;
   count: number;
 }
+interface JeopardyRow {
+  orderId: string;
+  orderNumber: string;
+  customerName: string | null;
+  locationId: string;
+  locationName: string | null;
+  lineId: string;
+  productName: string;
+  sku: string | null;
+  shortfall: number;
+  deliveryDate: string;
+  /** 'no_supply' — nothing inbound covers the shortfall;
+   *  'late' — earliest inbound supply lands after the promised date. */
+  risk: 'no_supply' | 'late';
+  daysLate: number | null;
+  supplySource: 'po' | 'transfer' | null;
+  supplyReference: string | null;
+  supplyDate: string | null;
+}
+
+interface JeopardyReport {
+  horizonDays: number;
+  generatedAt: string;
+  rows: JeopardyRow[];
+}
+
 interface SalesSummaryRow {
   key: string;
   label: string;
@@ -1128,6 +1154,263 @@ export class ReportsController {
         ]),
       );
       sendCsv(res!, `sales-summary-${basis}-${startDate}-to-${endDate}.csv`, header + csv);
+      return;
+    }
+    return report;
+  }
+
+  /**
+   * Delivery Dates in Jeopardy — the pack's top-value operational screen
+   * (catalog 85): open order lines whose unreserved quantity is not
+   * covered by inbound supply before the promised date. Explicit risk
+   * states, never the legacy 999 sentinel. Lines with no promised date
+   * anywhere (ASAP/CWC equivalents) are excluded — nothing to be in
+   * jeopardy of. Store data scope applies.
+   */
+  @Get('delivery-jeopardy')
+  @RequirePermission('orders.view')
+  async deliveryJeopardy(
+    @CurrentTenant() tenant: RequestTenantContext,
+    @Query('horizonDays') horizonStr?: string,
+    @Query('format') format?: string,
+    @Res({ passthrough: true }) res?: Response,
+  ): Promise<JeopardyReport | void> {
+    const horizonDays = Math.min(Math.max(Number(horizonStr) || 30, 1), 365);
+    const horizon = new Date();
+    horizon.setUTCDate(horizon.getUTCDate() + horizonDays);
+    const horizonDate = horizon.toISOString().slice(0, 10);
+
+    const lines = await this.db
+      .select({
+        orderId: schema.orders.id,
+        orderNumber: schema.orders.number,
+        customerId: schema.orders.customerId,
+        locationId: schema.orders.locationId,
+        requestedDate: schema.orders.requestedDate,
+        lineId: schema.orderLines.id,
+        variantId: schema.orderLines.variantId,
+        shortfall: sql<number>`(${schema.orderLines.quantity} - ${schema.orderLines.qtyReserved} - ${schema.orderLines.qtyFulfilled})::int`,
+        lineDeliveryDate: schema.orderLines.deliveryDate,
+      })
+      .from(schema.orderLines)
+      .innerJoin(schema.orders, eq(schema.orders.id, schema.orderLines.orderId))
+      .where(
+        and(
+          sql`${schema.orders.status} NOT IN ('draft', 'quote', 'cancelled', 'completed')`,
+          isNull(schema.orders.importedAt),
+          sql`(${schema.orderLines.quantity} - ${schema.orderLines.qtyReserved} - ${schema.orderLines.qtyFulfilled}) > 0`,
+          salesScopeCond(tenant, schema.orders.locationId),
+        ),
+      );
+    if (lines.length === 0) {
+      return { horizonDays, generatedAt: new Date().toISOString(), rows: [] };
+    }
+
+    // Promised-date resolution: line date, else the order's earliest live
+    // scheduled delivery, else the order's requested date.
+    const orderIds = [...new Set(lines.map((l) => l.orderId))];
+    const dels = await this.db
+      .select({
+        orderId: schema.deliveries.orderId,
+        scheduledDate: sql<string>`MIN(${schema.deliveries.scheduledDate})`,
+      })
+      .from(schema.deliveries)
+      .where(
+        and(
+          inArray(schema.deliveries.orderId, orderIds),
+          sql`${schema.deliveries.status} IN ('scheduled', 'loaded', 'out_for_delivery')`,
+        ),
+      )
+      .groupBy(schema.deliveries.orderId);
+    const deliveryByOrder = new Map(dels.map((d) => [d.orderId, d.scheduledDate]));
+
+    const variantIds = [...new Set(lines.map((l) => l.variantId).filter(Boolean))] as string[];
+
+    // Inbound supply, earliest first: open POs by expected date, and
+    // draft/in-transit transfers by scheduled date, per variant+location.
+    const poSupply = variantIds.length
+      ? await this.db
+          .select({
+            variantId: schema.purchaseOrderLines.variantId,
+            locationId: schema.purchaseOrders.locationId,
+            expectedAt: sql<string>`MIN(${schema.purchaseOrders.expectedAt})`,
+            reference: sql<string>`MIN(${schema.purchaseOrders.number})`,
+          })
+          .from(schema.purchaseOrderLines)
+          .innerJoin(
+            schema.purchaseOrders,
+            eq(schema.purchaseOrders.id, schema.purchaseOrderLines.purchaseOrderId),
+          )
+          .where(
+            and(
+              inArray(schema.purchaseOrderLines.variantId, variantIds),
+              sql`${schema.purchaseOrders.status} IN ('ordered', 'partially_received')`,
+              sql`${schema.purchaseOrders.expectedAt} IS NOT NULL`,
+              sql`(${schema.purchaseOrderLines.quantityOrdered} - ${schema.purchaseOrderLines.quantityAccepted}) > 0`,
+            ),
+          )
+          .groupBy(schema.purchaseOrderLines.variantId, schema.purchaseOrders.locationId)
+      : [];
+    const transferSupply = variantIds.length
+      ? await this.db
+          .select({
+            variantId: schema.stockTransferLines.variantId,
+            locationId: schema.stockTransfers.toLocationId,
+            scheduledFor: sql<string>`MIN(${schema.stockTransfers.scheduledFor})`,
+            reference: sql<string>`MIN(${schema.stockTransfers.number})`,
+          })
+          .from(schema.stockTransferLines)
+          .innerJoin(
+            schema.stockTransfers,
+            eq(schema.stockTransfers.id, schema.stockTransferLines.transferId),
+          )
+          .where(
+            and(
+              inArray(schema.stockTransferLines.variantId, variantIds),
+              sql`${schema.stockTransfers.status} IN ('draft', 'in_transit')`,
+              sql`${schema.stockTransfers.scheduledFor} IS NOT NULL`,
+            ),
+          )
+          .groupBy(schema.stockTransferLines.variantId, schema.stockTransfers.toLocationId)
+      : [];
+    const supplyBy = new Map<
+      string,
+      { date: string; source: 'po' | 'transfer'; reference: string }
+    >();
+    for (const r of poSupply) {
+      const date = new Date(r.expectedAt).toISOString().slice(0, 10);
+      supplyBy.set(`${r.variantId}:${r.locationId}`, {
+        date,
+        source: 'po',
+        reference: r.reference,
+      });
+    }
+    for (const r of transferSupply) {
+      const key = `${r.variantId}:${r.locationId}`;
+      const date = String(r.scheduledFor).slice(0, 10);
+      const cur = supplyBy.get(key);
+      if (!cur || date < cur.date)
+        supplyBy.set(key, { date, source: 'transfer', reference: r.reference });
+    }
+
+    // Labels.
+    const [customers, variants, locs] = await Promise.all([
+      this.db
+        .select({
+          id: schema.customers.id,
+          firstName: schema.customers.firstName,
+          lastName: schema.customers.lastName,
+        })
+        .from(schema.customers)
+        .where(
+          inArray(schema.customers.id, [
+            ...new Set(lines.map((l) => l.customerId).filter(Boolean)),
+          ] as string[]),
+        ),
+      variantIds.length
+        ? this.db
+            .select({
+              id: schema.productVariants.id,
+              sku: schema.productVariants.sku,
+              productName: schema.products.name,
+            })
+            .from(schema.productVariants)
+            .innerJoin(schema.products, eq(schema.products.id, schema.productVariants.productId))
+            .where(inArray(schema.productVariants.id, variantIds))
+        : Promise.resolve([]),
+      this.db
+        .select({ id: schema.locations.id, name: schema.locations.name })
+        .from(schema.locations)
+        .where(inArray(schema.locations.id, [...new Set(lines.map((l) => l.locationId))])),
+    ]);
+    const customerBy = new Map(
+      customers.map((c) => [c.id, [c.firstName, c.lastName].filter(Boolean).join(' ') || null]),
+    );
+    const variantBy = new Map(variants.map((v) => [v.id, v]));
+    const locBy = new Map(locs.map((l) => [l.id, l.name]));
+
+    const rows: JeopardyRow[] = [];
+    for (const l of lines) {
+      const promised =
+        l.lineDeliveryDate ?? deliveryByOrder.get(l.orderId) ?? l.requestedDate ?? null;
+      if (!promised || promised > horizonDate) continue;
+      const supply = l.variantId ? supplyBy.get(`${l.variantId}:${l.locationId}`) : undefined;
+      let risk: 'no_supply' | 'late';
+      let daysLate: number | null = null;
+      if (!supply) {
+        risk = 'no_supply';
+      } else if (supply.date > promised) {
+        risk = 'late';
+        daysLate = Math.round(
+          (new Date(supply.date).getTime() - new Date(promised).getTime()) / 86_400_000,
+        );
+      } else {
+        continue; // covered — inbound supply lands in time
+      }
+      const v = l.variantId ? variantBy.get(l.variantId) : undefined;
+      rows.push({
+        orderId: l.orderId,
+        orderNumber: l.orderNumber,
+        customerName: customerBy.get(l.customerId) ?? null,
+        locationId: l.locationId,
+        locationName: locBy.get(l.locationId) ?? null,
+        lineId: l.lineId,
+        productName: v?.productName ?? '(unknown product)',
+        sku: v?.sku ?? null,
+        shortfall: l.shortfall,
+        deliveryDate: promised,
+        risk,
+        daysLate,
+        supplySource: supply?.source ?? null,
+        supplyReference: supply?.reference ?? null,
+        supplyDate: supply?.date ?? null,
+      });
+    }
+    rows.sort((a, b) => a.deliveryDate.localeCompare(b.deliveryDate));
+
+    const report: JeopardyReport = {
+      horizonDays,
+      generatedAt: new Date().toISOString(),
+      rows,
+    };
+    if (format === 'csv') {
+      requireExport(tenant);
+      const header = `# horizonDays=${horizonDays} generated=${report.generatedAt}\n`;
+      sendCsv(
+        res!,
+        `delivery-jeopardy-${new Date().toISOString().slice(0, 10)}.csv`,
+        header +
+          toCsv(
+            [
+              'order',
+              'customer',
+              'location',
+              'product',
+              'sku',
+              'shortfall',
+              'promised',
+              'risk',
+              'days_late',
+              'supply_source',
+              'supply_reference',
+              'supply_date',
+            ],
+            rows.map((r) => [
+              r.orderNumber,
+              r.customerName,
+              r.locationName,
+              r.productName,
+              r.sku,
+              r.shortfall,
+              r.deliveryDate,
+              r.risk,
+              r.daysLate,
+              r.supplySource,
+              r.supplyReference,
+              r.supplyDate,
+            ]),
+          ),
+      );
       return;
     }
     return report;

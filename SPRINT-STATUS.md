@@ -2347,3 +2347,23 @@ location|salesperson&start&end&format=csv` — POS sales + sales orders
   location labels + per-location totals; scope diff == Annex dollars;
   avg + CSV provenance). Gates: typecheck 0 · lint 0 · test 0 (full) ·
   build 0 · prettier 0.
+
+## Delivery Dates in Jeopardy — the call list (2026-08-27)
+
+Catalog 85, the pack's top-value operational screen, built as a live
+queue over what we have (owner-confirmed ATP decision — reservations +
+inbound supply dates, no full ATP projection):
+
+- `GET /v1/reports/delivery-jeopardy?horizonDays=N` — open order lines
+  with unreserved shortfall, promised date resolved line.deliveryDate →
+  earliest live scheduled delivery → order.requestedDate (lines with no
+  date anywhere are excluded, the ASAP/CWC rule). Inbound supply per
+  variant+location = earliest of open POs (expected date) and
+  draft/in-transit transfers (scheduled date). **Explicit risk states —
+  `no_supply` vs `late` (+days) — never the 999 sentinel.** Covered
+  lines drop out. Store scope applies; CSV embeds provenance.
+- New "At risk" page (`/jeopardy`, Sell nav): promised date, order link,
+  customer, shortfall, risk badge, inbound supply reference.
+- reports.int.spec 25→27 (no-supply vs late-by-8-days vs covered
+  fixtures; horizon bound). Gates: typecheck 0 · lint 0 · test 0 (full)
+  · build 0 · prettier 0.
