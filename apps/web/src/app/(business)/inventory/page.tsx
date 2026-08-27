@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { PackageCheck } from 'lucide-react';
+import { ClipboardList, PackageCheck } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import { CsvImport } from '@/components/csv-import';
@@ -150,10 +150,16 @@ export default function InventoryPage() {
       <PageHeader
         title="Inventory"
         actions={
-          <LinkButton href="/inventory/receive" variant="primary">
-            <PackageCheck size={14} />
-            Receive
-          </LinkButton>
+          <div className="flex items-center gap-2">
+            <LinkButton href="/inventory/counts" variant="secondary">
+              <ClipboardList size={14} />
+              Count stock
+            </LinkButton>
+            <LinkButton href="/inventory/receive" variant="primary">
+              <PackageCheck size={14} />
+              Receive
+            </LinkButton>
+          </div>
         }
       />
 
