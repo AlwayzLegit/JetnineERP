@@ -127,9 +127,18 @@ export const orderReturns = pgTable(
     businessId: uuid('business_id')
       .notNull()
       .references(() => businesses.id, { onDelete: 'cascade' }),
-    orderId: uuid('order_id')
-      .notNull()
-      .references(() => orders.id, { onDelete: 'cascade' }),
+    /**
+     * Null for a no-original return (RTN-010/SEC-RTN-NOORIG): the
+     * customer has no findable order, so the document stands alone.
+     */
+    orderId: uuid('order_id').references(() => orders.id, { onDelete: 'cascade' }),
+    /** No-original returns name the customer directly (credit recipient). */
+    customerId: uuid('customer_id').references(() => customers.id, { onDelete: 'set null' }),
+    /**
+     * RTN-011: whatever order number the customer claimed, recorded
+     * verbatim (even a bogus one) for the loss-prevention trail.
+     */
+    referencedOrderNumber: text('referenced_order_number'),
     /** Customer-facing RMA: "RMA-{order number}-{n}". */
     rmaNumber: text('rma_number').notNull(),
     /** 'authorized' | 'completed' | 'cancelled' */
@@ -173,9 +182,11 @@ export const orderReturnLines = pgTable(
     returnId: uuid('return_id')
       .notNull()
       .references(() => orderReturns.id, { onDelete: 'cascade' }),
-    orderLineId: uuid('order_line_id')
-      .notNull()
-      .references(() => orderLines.id, { onDelete: 'restrict' }),
+    /** Null for no-original lines — they name the variant directly. */
+    orderLineId: uuid('order_line_id').references(() => orderLines.id, { onDelete: 'restrict' }),
+    variantId: uuid('variant_id').references(() => productVariants.id, { onDelete: 'set null' }),
+    /** Display description for lines with no order line to borrow from. */
+    description: text('description'),
     quantity: integer('quantity').notNull(),
     /** What the customer paid per unit (line total + tax share). */
     perUnitCents: integer('per_unit_cents').notNull(),

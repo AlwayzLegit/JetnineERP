@@ -40,6 +40,11 @@ export class OrderReturnsService {
     if (ret.status !== 'authorized') {
       throw new ConflictException(`Return ${ret.rmaNumber} is already ${ret.status}`);
     }
+    if (!ret.orderId) {
+      // No-original returns are written completed in one step and never
+      // sit in 'authorized' — this is a data-integrity backstop.
+      throw new ConflictException(`Return ${ret.rmaNumber} has no order to receive against`);
+    }
     const [order] = await this.db
       .select()
       .from(schema.orders)
@@ -68,6 +73,9 @@ export class OrderReturnsService {
 
     // Goods: bump returned counters and stage everything in As-Is.
     for (const rl of returnLines) {
+      if (!rl.orderLineId) {
+        throw new ConflictException(`Return line ${rl.id} has no order line`);
+      }
       const [line] = await this.db
         .select()
         .from(schema.orderLines)

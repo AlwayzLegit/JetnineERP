@@ -2242,3 +2242,259 @@ describe('B14 — delivery-date reservation basis + pending allocation', () => {
     expect(after.body.lines[0].qtyReserved).toBe(1);
   });
 });
+
+describe('Return windows + no-original returns (FAQ I4, I1/I8)', () => {
+  let rwVariantId = '';
+
+  function as(cookie: string) {
+    return {
+      post: (url: string) =>
+        request(app.getHttpServer())
+          .post(url)
+          .set('Cookie', cookie)
+          .set('X-Business-Id', businessId),
+      patch: (url: string) =>
+        request(app.getHttpServer())
+          .patch(url)
+          .set('Cookie', cookie)
+          .set('X-Business-Id', businessId),
+      get: (url: string) =>
+        request(app.getHttpServer())
+          .get(url)
+          .set('Cookie', cookie)
+          .set('X-Business-Id', businessId),
+    };
+  }
+
+  async function withDb<T>(fn: (db: ReturnType<typeof drizzle>) => Promise<T>): Promise<T> {
+    const sql2 = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    try {
+      return await fn(drizzle(sql2));
+    } finally {
+      await sql2.end({ timeout: 5 });
+    }
+  }
+
+  beforeAll(async () => {
+    await withDb(async (db) => {
+      const [p] = await db
+        .insert(schema.products)
+        .values({ businessId, sku: 'RW-BED', name: 'Window Fixture Bed' })
+        .returning();
+      const [v] = await db
+        .insert(schema.productVariants)
+        .values({ businessId, productId: p!.id, sku: 'RW-BED-V1', priceCents: 50000 })
+        .returning();
+      rwVariantId = v!.id;
+      await db.insert(schema.inventoryLevels).values({
+        businessId,
+        variantId: rwVariantId,
+        locationId,
+        onHand: 20,
+        reserved: 0,
+      });
+      // The system Cashier role has no refund permission; this business
+      // grants it so the window control (not the endpoint gate) is what
+      // the cashier hits.
+      const [cashierRole] = await db
+        .select({ id: schema.roles.id })
+        .from(schema.roles)
+        .where(and(eq(schema.roles.businessId, businessId), eq(schema.roles.name, 'Cashier')));
+      await db
+        .insert(schema.rolePermissions)
+        .values({ roleId: cashierRole!.id, permission: 'pos.refund.create' })
+        .onConflictDoNothing();
+    });
+  });
+
+  async function fulfilledPaidOrder(): Promise<{ id: string; lineId: string }> {
+    const created = await as(ownerCookie)
+      .post('/v1/orders')
+      .send({
+        locationId,
+        customerId,
+        fulfillmentType: 'pickup',
+        confirm: true,
+        lines: [{ variantId: rwVariantId, quantity: 1 }],
+      });
+    expect(created.status).toBe(201);
+    const pay = await as(ownerCookie)
+      .post(`/v1/orders/${created.body.id}/payments`)
+      .send({ method: 'cash', amountCents: created.body.totalCents });
+    expect(pay.status).toBe(201);
+    const ful = await as(ownerCookie).post(`/v1/orders/${created.body.id}/fulfill`).send({});
+    expect(ful.status).toBe(201);
+    return { id: created.body.id, lineId: created.body.lines[0].id };
+  }
+
+  async function backdate(orderId: string, days: number): Promise<void> {
+    const past = new Date(Date.now() - days * 86_400_000);
+    await withDb((db) =>
+      db
+        .update(schema.orders)
+        .set({ createdAt: past, completedAt: past })
+        .where(eq(schema.orders.id, orderId)),
+    );
+  }
+
+  it('settings: returnWindowDays validates (0 rejected) and saves', async () => {
+    const bad = await as(ownerCookie)
+      .patch('/v1/business/settings')
+      .send({ ops: { returnWindowDays: 0 } });
+    expect(bad.status).toBe(400);
+
+    const ok = await as(ownerCookie)
+      .patch('/v1/business/settings')
+      .send({ ops: { returnWindowDays: 30 } });
+    expect(ok.status).toBe(200);
+  });
+
+  it('inside the window a cashier returns with no override', async () => {
+    const order = await fulfilledPaidOrder();
+    const res = await as(cashierCookie)
+      .post(`/v1/orders/${order.id}/return`)
+      .send({
+        lines: [{ lineId: order.lineId, quantity: 1 }],
+        refundMethod: 'original',
+        reason: 'sagging',
+      });
+    expect(res.status).toBe(201);
+  });
+
+  it('outside the window: OVERRIDE_REQUIRED for a cashier, manager credentials pass, owner passes silently', async () => {
+    const order = await fulfilledPaidOrder();
+    await backdate(order.id, 60);
+
+    const refused = await as(cashierCookie)
+      .post(`/v1/orders/${order.id}/return`)
+      .send({
+        lines: [{ lineId: order.lineId, quantity: 1 }],
+        refundMethod: 'original',
+        reason: 'late return',
+      });
+    expect(refused.status).toBe(403);
+    expect(refused.body.code).toBe('OVERRIDE_REQUIRED');
+    expect(refused.body.permission).toBe('returns.override_window');
+
+    const approved = await as(cashierCookie)
+      .post(`/v1/orders/${order.id}/return`)
+      .send({
+        lines: [{ lineId: order.lineId, quantity: 1 }],
+        refundMethod: 'original',
+        reason: 'late return',
+        override: {
+          email: 'owner@orders-test.local',
+          password: PASSWORD,
+          reason: 'goodwill exception',
+        },
+      });
+    expect(approved.status).toBe(201);
+
+    await withDb(async (db) => {
+      const overrides = await db
+        .select()
+        .from(schema.securityOverrides)
+        .where(eq(schema.securityOverrides.permission, 'returns.override_window'));
+      expect(overrides).toHaveLength(1);
+    });
+
+    // The owner holds returns.override_window — no dialog, no register row.
+    const order2 = await fulfilledPaidOrder();
+    await backdate(order2.id, 60);
+    const direct = await as(ownerCookie)
+      .post(`/v1/orders/${order2.id}/return`)
+      .send({
+        lines: [{ lineId: order2.lineId, quantity: 1 }],
+        refundMethod: 'original',
+        reason: 'late return',
+      });
+    expect(direct.status).toBe(201);
+    await withDb(async (db) => {
+      const overrides = await db
+        .select()
+        .from(schema.securityOverrides)
+        .where(eq(schema.securityOverrides.permission, 'returns.override_window'));
+      expect(overrides).toHaveLength(1);
+    });
+  });
+
+  it('no-original return: gated, store-credit only, goods to As-Is, exception logged', async () => {
+    const stockBefore = await levelOf(rwVariantId);
+
+    const refused = await as(cashierCookie)
+      .post('/v1/order-returns/no-original')
+      .send({
+        customerId,
+        locationId,
+        referencedOrderNumber: 'STORIS-123456',
+        lines: [{ variantId: rwVariantId, quantity: 1, unitRefundCents: 5000 }],
+      });
+    expect(refused.status).toBe(403);
+    expect(refused.body.code).toBe('OVERRIDE_REQUIRED');
+    expect(refused.body.permission).toBe('returns.no_original');
+
+    const done = await as(cashierCookie)
+      .post('/v1/order-returns/no-original')
+      .send({
+        customerId,
+        locationId,
+        referencedOrderNumber: 'STORIS-123456',
+        reason: 'pre-cutover sale, no invoice found',
+        lines: [{ variantId: rwVariantId, quantity: 1, unitRefundCents: 5000 }],
+        override: {
+          email: 'owner@orders-test.local',
+          password: PASSWORD,
+          reason: 'verified with bank statement',
+        },
+      });
+    expect(done.status).toBe(201);
+    expect(done.body.rmaNumber).toBe('RMA-NOORIG-1');
+    expect(done.body.status).toBe('completed');
+    expect(done.body.refundMethod).toBe('store_credit');
+    expect(done.body.amountCents).toBe(5000);
+    expect(done.body.orderId).toBeNull();
+
+    await withDb(async (db) => {
+      const credits = await db
+        .select()
+        .from(schema.storeCreditEntries)
+        .where(eq(schema.storeCreditEntries.referenceId, done.body.id));
+      expect(credits).toHaveLength(1);
+      expect(credits[0]!.deltaCents).toBe(5000);
+
+      const pieces = await db
+        .select()
+        .from(schema.asIsItems)
+        .where(eq(schema.asIsItems.referenceId, done.body.id));
+      expect(pieces).toHaveLength(1);
+      expect(pieces[0]!.source).toBe('return');
+
+      const events = await db
+        .select()
+        .from(schema.exceptionEvents)
+        .where(eq(schema.exceptionEvents.type, 'no_original_return'));
+      expect(events).toHaveLength(1);
+      expect(events[0]!.summary).toMatch(/STORIS-123456/);
+    });
+
+    // As-Is intake, never straight to sellable stock.
+    expect((await levelOf(rwVariantId)).onHand).toBe(stockBefore.onHand);
+
+    // The register lists it with its claimed number.
+    const list = await as(ownerCookie).get('/v1/order-returns');
+    expect(list.status).toBe(200);
+    const row = (list.body as { rmaNumber: string; referencedOrderNumber: string | null }[]).find(
+      (r) => r.rmaNumber === 'RMA-NOORIG-1',
+    );
+    expect(row?.referencedOrderNumber).toBe('STORIS-123456');
+
+    const invalid = await as(ownerCookie)
+      .post('/v1/order-returns/no-original')
+      .send({
+        customerId,
+        locationId,
+        lines: [{ variantId: rwVariantId, quantity: 0, unitRefundCents: 100 }],
+      });
+    expect(invalid.status).toBe(400);
+  });
+});

@@ -626,7 +626,7 @@ export class OrdersController {
             eq(schema.orderReturns.status, 'authorized'),
           ),
         );
-      for (const r of openReturns) awaitingPickup.add(r.orderId);
+      for (const r of openReturns) if (r.orderId) awaitingPickup.add(r.orderId);
 
       // Stock lines not yet fully reserved → still "Pending".
       const shorts = await this.db
@@ -2150,6 +2150,7 @@ export class OrdersController {
       refundMethod?: 'original' | 'store_credit';
       fulfillment?: 'drop_off' | 'pickup';
       reason?: string | null;
+      override?: OverrideCredentials;
     },
   ): Promise<OrderDetail> {
     if (!body.lines || body.lines.length === 0) {
@@ -2167,6 +2168,31 @@ export class OrdersController {
     if (!order) throw new NotFoundException('Order not found');
     if (order.status === 'cancelled' || order.status === 'draft' || order.status === 'quote') {
       throw new BadRequestException(`Cannot return against a ${order.status} order`);
+    }
+
+    // I4 (RTN-040): outside the configured return window the return
+    // needs `returns.override_window` at the point of action — a
+    // manager passes untouched, anyone else retries under a manager's
+    // credentials and the override lands in the register.
+    const [bizRow] = await this.db
+      .select({ opsSettingsJson: schema.businesses.opsSettingsJson })
+      .from(schema.businesses)
+      .where(eq(schema.businesses.id, tenant.businessId!))
+      .limit(1);
+    const windowDays = (bizRow?.opsSettingsJson as { returnWindowDays?: number | null } | null)
+      ?.returnWindowDays;
+    if (windowDays != null && windowDays > 0) {
+      const anchor = order.completedAt ?? order.createdAt;
+      const ageDays = (Date.now() - anchor.getTime()) / 86_400_000;
+      if (ageDays > windowDays) {
+        await this.overrides.require({
+          permission: 'returns.override_window',
+          action: `Return on ${order.number} — ${Math.floor(ageDays)} days old, outside the ${windowDays}-day window`,
+          entityType: 'order',
+          entityId: id,
+          override: body.override,
+        });
+      }
     }
 
     const lines = await this.db
@@ -2189,6 +2215,7 @@ export class OrdersController {
       );
     const pendingByLine = new Map<string, number>();
     for (const r of openReturns) {
+      if (!r.orderLineId) continue;
       pendingByLine.set(r.orderLineId, (pendingByLine.get(r.orderLineId) ?? 0) + r.quantity);
     }
 
