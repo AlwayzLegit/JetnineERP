@@ -1638,3 +1638,34 @@ Ops unchanged: repoint the Render repo URL, rotate the shared owner password,
 accept the manager invite (expires 2026-08-29 17:53Z), optional DMARC record.
 Next backlog item: PO lifecycle corrections (no PO edit after order, no
 un-receive) per the coverage-matrix ranking.
+
+## PO lifecycle corrections shipped (2026-08-27)
+
+Backlog #2 from the FAQ coverage audit: a draft PO was a dead end (no place
+endpoint — could only be canceled), nothing on a PO could be edited after
+creation, and a mis-keyed receipt was permanent.
+
+- `POST /v1/purchase-orders/:id/place` — draft → ordered (403 otherwise),
+  audited `purchase_order.place`.
+- `PATCH /v1/purchase-orders/:id` (`purchase_orders.create`) — edit expected
+  date, notes, line qty/cost; remove untouched, unlinked lines; add lines.
+  Guards: immutable once received/canceled; qty never below received or below
+  sales-order-committed units; removal blocked for received/linked lines; at
+  least one line must remain; subtotal recomputed. Audited with before/after.
+- `POST /v1/purchase-orders/:id/unreceive` (`purchase_orders.receive`) —
+  backs N accepted units per line out of stock: `unreceive_po` ledger
+  movement (never a silent edit), level decrement, received/inspected/
+  accepted rolled back together, PO reopens (received → partially_received →
+  ordered as counters allow, closedAt cleared). Refuses to cut into units
+  committed to sales orders or reserved stock (free-stock-only, same
+  convention as physical counts). Info exception `po_unreceive` + audit.
+- Web (PO detail): Place order button on drafts; Edit order card (qty/cost
+  inline, remove with guard disables, add item via POS lookup, expected date,
+  notes); Correct-a-receipt card with per-line undo and notes.
+- Tests: purchasing.int.spec 27→34 (draft dead-end fixed, place-once, edit +
+  subtotal recompute, cashier 403, shrink-below-received / remove-received
+  guards, immutability after receive, un-receive stock + ledger + reopen,
+  over-accepted and reserved-stock guards). Gates by exit code: typecheck 0 ·
+  lint 0 · test 0 · build 0 · prettier 0. No migration.
+
+Next backlog item: return windows + no-original-invoice controls.

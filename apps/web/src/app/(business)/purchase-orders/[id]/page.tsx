@@ -195,12 +195,29 @@ export default function PurchaseOrderDetailPage() {
     }
   }
 
+  async function place() {
+    setBusy(true);
+    try {
+      await api(`/v1/purchase-orders/${id}/place`, { method: 'POST' });
+      toast.success('Purchase order placed.');
+      void load();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   if (error && !po) return <p style={{ color: 'var(--danger)' }}>{error}</p>;
   if (!po) return <LoadingRows rows={5} />;
 
   const receivable = po.status === 'ordered' || po.status === 'partially_received';
   const cancellable =
     po.status === 'draft' || po.status === 'ordered' || po.status === 'partially_received';
+  const editable = cancellable;
+  const unreceivable =
+    (po.status === 'partially_received' || po.status === 'received') &&
+    po.lines.some((l) => l.quantityAccepted > 0);
 
   return (
     <div>
@@ -217,6 +234,17 @@ export default function PurchaseOrderDetailPage() {
         }
         actions={
           <span style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            {po.status === 'draft' && (
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={() => void place()}
+                disabled={busy}
+                data-testid="place-po"
+              >
+                Place order
+              </Button>
+            )}
             <Button variant="secondary" size="sm" onClick={() => window.print()}>
               <Printer size={14} aria-hidden />
               Print for vendor
@@ -370,6 +398,9 @@ export default function PurchaseOrderDetailPage() {
         )}
       </Card>
 
+      {editable && <EditOrderCard po={po} onChanged={load} />}
+      {unreceivable && <UnreceiveCard po={po} onChanged={load} />}
+
       <Card style={{ marginBottom: 16 }}>
         <Row label="Subtotal" cents={po.subtotalCents} bold />
         {po.expectedAt && (
@@ -388,6 +419,397 @@ export default function PurchaseOrderDetailPage() {
         onChanged={load}
       />
     </div>
+  );
+}
+
+/**
+ * PO corrections: edit an un-closed order in place. Quantities can never
+ * drop below what is already received or committed to a sales order, and
+ * only an untouched, unlinked line can be removed — the API enforces the
+ * same rules, these are just friendly disables.
+ */
+function EditOrderCard({ po, onChanged }: { po: Po; onChanged: () => Promise<void> | void }) {
+  const [expectedAt, setExpectedAt] = useState(po.expectedAt ? po.expectedAt.slice(0, 10) : '');
+  const [notes, setNotes] = useState(po.notes ?? '');
+  const [drafts, setDrafts] = useState<
+    Record<string, { quantity: string; cost: string; remove: boolean }>
+  >({});
+  const [added, setAdded] = useState<
+    { variantId: string; description: string; quantity: string; cost: string }[]
+  >([]);
+  const [search, setSearch] = useState('');
+  const [results, setResults] = useState<
+    { variantId: string; productName: string; variantName: string | null; sku: string | null }[]
+  >([]);
+  const [busy, setBusy] = useState(false);
+
+  function draftFor(l: PoLine) {
+    return (
+      drafts[l.id] ?? {
+        quantity: String(l.quantityOrdered),
+        cost: (l.unitCostCents / 100).toFixed(2),
+        remove: false,
+      }
+    );
+  }
+  function setDraft(
+    l: PoLine,
+    patch: Partial<{ quantity: string; cost: string; remove: boolean }>,
+  ) {
+    setDrafts((prev) => ({ ...prev, [l.id]: { ...draftFor(l), ...prev[l.id], ...patch } }));
+  }
+
+  async function searchVariants() {
+    if (!search.trim()) return;
+    try {
+      setResults(
+        await api<
+          {
+            variantId: string;
+            productName: string;
+            variantName: string | null;
+            sku: string | null;
+          }[]
+        >(`/v1/pos/lookup?q=${encodeURIComponent(search.trim())}`),
+      );
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  async function save() {
+    const lines: {
+      lineId?: string;
+      variantId?: string;
+      quantity?: number;
+      unitCostCents?: number;
+      remove?: boolean;
+    }[] = [];
+    for (const l of po.lines) {
+      const d = drafts[l.id];
+      if (!d) continue;
+      if (d.remove) {
+        lines.push({ lineId: l.id, remove: true });
+        continue;
+      }
+      const quantity = Number(d.quantity);
+      const unitCostCents = Math.round(Number(d.cost) * 100);
+      if (!Number.isInteger(quantity) || quantity <= 0 || !Number.isFinite(unitCostCents)) {
+        toast.error('Quantities must be positive whole numbers and costs valid amounts.');
+        return;
+      }
+      if (quantity !== l.quantityOrdered || unitCostCents !== l.unitCostCents) {
+        lines.push({ lineId: l.id, quantity, unitCostCents });
+      }
+    }
+    for (const a of added) {
+      const quantity = Number(a.quantity);
+      const unitCostCents = Math.round(Number(a.cost) * 100);
+      if (!Number.isInteger(quantity) || quantity <= 0 || !Number.isFinite(unitCostCents)) {
+        toast.error(`Enter a quantity and cost for ${a.description}.`);
+        return;
+      }
+      lines.push({ variantId: a.variantId, quantity, unitCostCents });
+    }
+    const body: Record<string, unknown> = {};
+    const origExpected = po.expectedAt ? po.expectedAt.slice(0, 10) : '';
+    if (expectedAt !== origExpected) body.expectedAt = expectedAt || null;
+    if (notes !== (po.notes ?? '')) body.notes = notes || null;
+    if (lines.length > 0) body.lines = lines;
+    if (Object.keys(body).length === 0) {
+      toast.error('Nothing changed.');
+      return;
+    }
+    setBusy(true);
+    try {
+      await api(`/v1/purchase-orders/${po.id}`, { method: 'PATCH', body: JSON.stringify(body) });
+      setDrafts({});
+      setAdded([]);
+      toast.success('Purchase order updated.');
+      await onChanged();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Card title="Edit order" style={{ marginBottom: 16 }}>
+      <div className="overflow-x-auto">
+        <table className="table" data-testid="edit-po-table">
+          <thead>
+            <tr>
+              <th>Item</th>
+              <th className="num">Qty</th>
+              <th className="num">Unit cost ($)</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {po.lines.map((l) => {
+              const d = draftFor(l);
+              const locked = l.quantityReceived > 0 || l.linkedOrders.length > 0;
+              return (
+                <tr key={l.id} style={d.remove ? { opacity: 0.45 } : undefined}>
+                  <td>
+                    {l.productName}
+                    {l.variantName && (
+                      <span style={{ color: 'var(--text-secondary)' }}> — {l.variantName}</span>
+                    )}
+                  </td>
+                  <td className="num">
+                    <Input
+                      type="number"
+                      min={Math.max(l.quantityReceived, 1)}
+                      value={d.quantity}
+                      disabled={d.remove}
+                      onChange={(e) => setDraft(l, { quantity: e.target.value })}
+                      style={{ width: 72, padding: '4px 6px' }}
+                    />
+                  </td>
+                  <td className="num">
+                    <Input
+                      type="number"
+                      step="0.01"
+                      min={0}
+                      value={d.cost}
+                      disabled={d.remove}
+                      onChange={(e) => setDraft(l, { cost: e.target.value })}
+                      style={{ width: 90, padding: '4px 6px' }}
+                    />
+                  </td>
+                  <td>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={locked}
+                      title={
+                        locked
+                          ? 'Received or linked to a sales order — cannot remove'
+                          : 'Remove line'
+                      }
+                      onClick={() => setDraft(l, { remove: !d.remove })}
+                    >
+                      {d.remove ? 'Keep' : 'Remove'}
+                    </Button>
+                  </td>
+                </tr>
+              );
+            })}
+            {added.map((a, i) => (
+              <tr key={`add-${a.variantId}`}>
+                <td>
+                  {a.description} <span className="badge badge-info">new</span>
+                </td>
+                <td className="num">
+                  <Input
+                    type="number"
+                    min={1}
+                    value={a.quantity}
+                    onChange={(e) =>
+                      setAdded((prev) =>
+                        prev.map((x, j) => (j === i ? { ...x, quantity: e.target.value } : x)),
+                      )
+                    }
+                    style={{ width: 72, padding: '4px 6px' }}
+                  />
+                </td>
+                <td className="num">
+                  <Input
+                    type="number"
+                    step="0.01"
+                    min={0}
+                    value={a.cost}
+                    onChange={(e) =>
+                      setAdded((prev) =>
+                        prev.map((x, j) => (j === i ? { ...x, cost: e.target.value } : x)),
+                      )
+                    }
+                    style={{ width: 90, padding: '4px 6px' }}
+                  />
+                </td>
+                <td>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => setAdded((prev) => prev.filter((_, j) => j !== i))}
+                  >
+                    Remove
+                  </Button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="mt-3 flex flex-wrap items-end gap-2">
+        <Field label="Add item (name, SKU, or barcode)">
+          <Input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                void searchVariants();
+              }
+            }}
+            style={{ width: 240 }}
+          />
+        </Field>
+        <Button variant="secondary" size="sm" onClick={() => void searchVariants()}>
+          Search
+        </Button>
+      </div>
+      {results.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-2">
+          {results.slice(0, 8).map((r) => (
+            <Button
+              key={r.variantId}
+              size="sm"
+              variant="ghost"
+              disabled={
+                po.lines.some((l) => l.variantId === r.variantId) ||
+                added.some((a) => a.variantId === r.variantId)
+              }
+              onClick={() => {
+                setAdded((prev) => [
+                  ...prev,
+                  {
+                    variantId: r.variantId,
+                    description: [r.productName, r.variantName].filter(Boolean).join(' — '),
+                    quantity: '1',
+                    cost: '0.00',
+                  },
+                ]);
+                setResults([]);
+                setSearch('');
+              }}
+            >
+              + {[r.productName, r.variantName].filter(Boolean).join(' — ')}
+              {r.sku ? ` (${r.sku})` : ''}
+            </Button>
+          ))}
+        </div>
+      )}
+
+      <div className="mt-3 flex flex-wrap items-end gap-2">
+        <Field label="Expected date">
+          <Input
+            type="date"
+            value={expectedAt}
+            onChange={(e) => setExpectedAt(e.target.value)}
+            style={{ width: 150 }}
+          />
+        </Field>
+        <Field label="Notes">
+          <Input value={notes} onChange={(e) => setNotes(e.target.value)} style={{ width: 280 }} />
+        </Field>
+        <Button variant="primary" onClick={() => void save()} disabled={busy} data-testid="save-po">
+          {busy ? 'Saving…' : 'Save changes'}
+        </Button>
+      </div>
+    </Card>
+  );
+}
+
+/**
+ * Receipt corrections: back mis-keyed accepted units out of stock. The
+ * ledger gets an `unreceive_po` entry (never a silent edit); the API
+ * refuses to cut into reserved or sales-order-committed units.
+ */
+function UnreceiveCard({ po, onChanged }: { po: Po; onChanged: () => Promise<void> | void }) {
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [notes, setNotes] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  async function submit() {
+    const lines = Object.entries(drafts)
+      .map(([lineId, q]) => ({ lineId, quantity: Number(q) || 0 }))
+      .filter((l) => l.quantity > 0);
+    if (lines.length === 0) {
+      toast.error('Enter how many units to un-receive on at least one line.');
+      return;
+    }
+    if (
+      !confirm(
+        `Un-receive ${lines.reduce((s, l) => s + l.quantity, 0)} unit(s)? Stock will be reduced and the PO reopened.`,
+      )
+    )
+      return;
+    setBusy(true);
+    try {
+      await api(`/v1/purchase-orders/${po.id}/unreceive`, {
+        method: 'POST',
+        body: JSON.stringify({ notes: notes || null, lines }),
+      });
+      setDrafts({});
+      setNotes('');
+      toast.success('Receipt corrected.');
+      await onChanged();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const lines = po.lines.filter((l) => l.quantityAccepted > 0);
+  return (
+    <Card title="Correct a receipt (un-receive)" style={{ marginBottom: 16 }}>
+      <p style={{ color: 'var(--text-secondary)', fontSize: 12, margin: '0 0 8px' }}>
+        For mis-keyed receipts: backs units out of stock with an audited ledger entry and reopens
+        the PO. Units reserved for customers or committed to sales orders cannot be un-received.
+      </p>
+      <table className="table" data-testid="unreceive-table">
+        <thead>
+          <tr>
+            <th>Item</th>
+            <th className="num">Accepted</th>
+            <th className="num">Undo</th>
+          </tr>
+        </thead>
+        <tbody>
+          {lines.map((l) => (
+            <tr key={l.id}>
+              <td>
+                {l.productName}
+                {l.variantName && (
+                  <span style={{ color: 'var(--text-secondary)' }}> — {l.variantName}</span>
+                )}
+              </td>
+              <td className="num">{l.quantityAccepted}</td>
+              <td className="num">
+                <Input
+                  type="number"
+                  min={0}
+                  max={l.quantityAccepted}
+                  placeholder="0"
+                  value={drafts[l.id] ?? ''}
+                  onChange={(e) => setDrafts((prev) => ({ ...prev, [l.id]: e.target.value }))}
+                  data-testid="undo-qty"
+                  style={{ width: 72, padding: '4px 6px' }}
+                />
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div className="mt-3 flex flex-wrap items-end gap-2">
+        <Field label="Correction notes (optional)">
+          <Input value={notes} onChange={(e) => setNotes(e.target.value)} style={{ width: 280 }} />
+        </Field>
+        <Button
+          variant="danger"
+          onClick={() => void submit()}
+          disabled={busy}
+          data-testid="unreceive"
+        >
+          {busy ? 'Working…' : 'Un-receive'}
+        </Button>
+      </div>
+    </Card>
   );
 }
 
