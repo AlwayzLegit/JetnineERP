@@ -75,6 +75,14 @@ export const purchaseOrders = pgTable(
     placedAt: timestamp('placed_at', { withTimezone: true }),
     closedAt: timestamp('closed_at', { withTimezone: true }),
     subtotalCents: integer('subtotal_cents').notNull().default(0),
+    /**
+     * PO-060 (I7/B15): the vendor ships straight to the customer. The
+     * goods never touch our inventory — receiving posts cost of sale and
+     * fulfills the linked sales-order lines instead of raising stock.
+     */
+    directShip: boolean('direct_ship').notNull().default(false),
+    /** Direct-ship only: customer ship-to snapshot {name, phone, email, address}. */
+    shipToJson: jsonb('ship_to_json'),
     notes: text('notes'),
     createdByUserId: uuid('created_by_user_id').references(() => users.id, {
       onDelete: 'set null',

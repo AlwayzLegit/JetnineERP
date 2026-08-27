@@ -46,6 +46,9 @@ interface Po {
   notes: string | null;
   createdAt: string;
   blindReceiving: boolean;
+  /** PO-060: vendor ships straight to the customer in shipToJson. */
+  directShip: boolean;
+  shipToJson: unknown;
   lines: PoLine[];
 }
 
@@ -230,6 +233,18 @@ export default function PurchaseOrderDetailPage() {
           <>
             <StatusBadge status={po.status} /> · {po.vendorName ?? '(unknown vendor)'} ·{' '}
             {new Date(po.createdAt).toLocaleString()}
+            {po.directShip && (
+              <>
+                {' '}
+                <span
+                  className="badge badge-info"
+                  title="The vendor ships straight to the customer — receiving records the shipment and fulfills the sales order; nothing enters stock"
+                >
+                  direct ship to{' '}
+                  {((po.shipToJson ?? {}) as { name?: string | null }).name ?? 'customer'}
+                </span>
+              </>
+            )}
           </>
         }
         actions={

@@ -30,6 +30,8 @@ interface QueueRow {
   quantity: number;
   allocated: number;
   toOrder: number;
+  /** 'special_order' | 'direct_ship' (PO-060: vendor ships to the customer). */
+  lineType: string;
 }
 
 interface GeneratePoBody {
@@ -65,6 +67,7 @@ export class SpecialOrdersController {
         variantId: schema.orderLines.variantId,
         description: schema.orderLines.description,
         quantity: schema.orderLines.quantity,
+        lineType: schema.orderLines.lineType,
         orderNumber: schema.orders.number,
         customerId: schema.orders.customerId,
       })
@@ -72,7 +75,9 @@ export class SpecialOrdersController {
       .innerJoin(schema.orders, eq(schema.orders.id, schema.orderLines.orderId))
       .where(
         and(
-          eq(schema.orderLines.lineType, 'special_order'),
+          // PO-060: direct-ship lines need buying too — same queue, but
+          // the generated PO ships to the customer.
+          inArray(schema.orderLines.lineType, ['special_order', 'direct_ship']),
           inArray(schema.orders.status, ['open', 'partially_fulfilled']),
         ),
       );
@@ -142,6 +147,7 @@ export class SpecialOrdersController {
           quantity: l.quantity,
           allocated,
           toOrder: Math.max(0, l.quantity - allocated),
+          lineType: l.lineType,
         };
       })
       .filter((r) => r.toOrder > 0);
@@ -177,10 +183,54 @@ export class SpecialOrdersController {
         orderId: schema.orderLines.orderId,
         variantId: schema.orderLines.variantId,
         quantity: schema.orderLines.quantity,
+        lineType: schema.orderLines.lineType,
       })
       .from(schema.orderLines)
       .where(inArray(schema.orderLines.id, lineIds));
     const byId = new Map(orderLines.map((l) => [l.id, l]));
+
+    // PO-060: a direct-ship PO carries the customer's address as its
+    // ship-to, so it can only cover one customer's lines — and never mix
+    // with stock-bound special orders.
+    const directShip = orderLines.some((l) => l.lineType === 'direct_ship');
+    let shipToJson: Record<string, unknown> | null = null;
+    if (directShip) {
+      if (!orderLines.every((l) => l.lineType === 'direct_ship')) {
+        throw new BadRequestException('Direct-ship lines cannot share a PO with stock-bound lines');
+      }
+      const orderIds = [...new Set(orderLines.map((l) => l.orderId))];
+      if (orderIds.length > 1) {
+        throw new BadRequestException(
+          'A direct-ship PO ships to one customer — select lines from a single order',
+        );
+      }
+      const [ord] = await this.db
+        .select({ customerId: schema.orders.customerId, number: schema.orders.number })
+        .from(schema.orders)
+        .where(eq(schema.orders.id, orderIds[0]!))
+        .limit(1);
+      const [customer] = ord
+        ? await this.db
+            .select({
+              firstName: schema.customers.firstName,
+              lastName: schema.customers.lastName,
+              phone: schema.customers.phone,
+              email: schema.customers.email,
+              addressesJson: schema.customers.addressesJson,
+            })
+            .from(schema.customers)
+            .where(eq(schema.customers.id, ord.customerId))
+            .limit(1)
+        : [];
+      if (!customer) throw new BadRequestException('Direct-ship order has no customer to ship to');
+      shipToJson = {
+        name: [customer.firstName, customer.lastName].filter(Boolean).join(' ') || null,
+        phone: customer.phone,
+        email: customer.email,
+        address: customer.addressesJson ?? null,
+        orderNumber: ord!.number,
+      };
+    }
 
     // Location: explicit, or the first order's location.
     let locationId = body.locationId ?? null;
@@ -238,7 +288,11 @@ export class SpecialOrdersController {
         status: place ? 'ordered' : 'draft',
         placedAt: place ? new Date() : null,
         subtotalCents: subtotal,
-        notes: 'Generated from the special-orders queue',
+        directShip,
+        shipToJson,
+        notes: directShip
+          ? 'Direct ship to customer — generated from the special-orders queue'
+          : 'Generated from the special-orders queue',
         createdByUserId: actor?.id ?? null,
       })
       .returning();

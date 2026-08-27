@@ -1945,3 +1945,33 @@ unchanged — the manager invite expires 2026-08-29 17:53Z.
   sellable stock and the movement ledger untouched, staged piece restocks
   through normal review, RTV unwind round-trip + both refusal guards).
   Gates by exit code: typecheck 0 · lint 0 · test 0 · build 0 · prettier 0.
+
+## I7 / PO-060 — direct-ship vendor POs (2026-08-27)
+
+- **Migration 0057_direct_ship**: `purchase_orders.direct_ship` boolean +
+  `ship_to_json` (customer ship-to snapshot). `order_lines.line_type`
+  gains `direct_ship` (doc-typed text — no constraint change).
+- **Order side**: direct_ship lines never reserve (order-math skips them
+  like special_order); the manual fulfill endpoint and delivery
+  scheduling exclude them (they ride the vendor's truck). New
+  `PATCH /v1/orders/:id/lines/:lineId {lineType}` flips a line between
+  stock / special_order / direct_ship on a live order — releasing or
+  re-reserving stock — refused once fulfilled or carried by a PO.
+- **Queue → PO**: the to-order queue includes direct_ship lines (flagged);
+  generate-PO refuses to mix them with stock-bound lines or span two
+  orders, and stamps the PO `directShip` with a ship-to snapshot (name,
+  phone, address from the customer file + our SO number). The printed
+  vendor document's Ship-to block becomes the customer's address.
+- **Receipt = fulfillment**: receiving a direct-ship PO writes NO
+  movement/level; a cost layer at PO cost is consumed on the spot
+  (`direct_ship` consumption → COGS posted, valuation net zero); the
+  allocation flips received, the order line's qty_fulfilled rises, order
+  status recomputes via deriveFulfillmentStatus, and the customer gets
+  "your order is on its way". Dock rejects and un-receive are refused on
+  direct-ship POs (problems are customer returns).
+- Tests: special-orders.int.spec 7→13 (flip releases reservation; queue +
+  ship-to snapshot; mixing refusal; zero-stock receipt with COGS
+  assertion on layers/consumptions; unreceive + reject + relock guards;
+  fulfilled-line guard); orders 68, purchasing 39, deliveries 17 re-run
+  green. Gates by exit code: typecheck 0 · lint 0 · test 0 · build 0 ·
+  prettier 0.
