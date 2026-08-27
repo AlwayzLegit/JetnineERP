@@ -1704,3 +1704,36 @@ Backlog #3 (FAQ I4 P0-MISSING, I1/I8 P0-PARTIAL).
   by exit code: typecheck 0 · lint 0 · test 0 · build 0 · prettier 0.
 
 Next backlog item: automatic replenishment transfers (FAQ J4/J5).
+
+## Auto replenishment transfers shipped (2026-08-27)
+
+Backlog #4 (FAQ J4/J5 — XFR-051/052/053, both P0-MISSING).
+
+- **Trigger (XFR-051):** confirming a sales order (or re-running Reserve)
+  whose stock lines are short at the order's own location now writes a
+  **draft** transfer (`transferType='auto'`) from the sister location with
+  the most free stock, linked to the order and capped at what's actually
+  free. Generation is automatic, release stays manual — a person reviews
+  and ships it, exactly the STORIS behavior. Dedupes against open auto
+  transfers for the same order, so re-confirming never doubles up.
+- **Gate (XFR-052):** `ops.autoScheduleDays` — blank = feature off, 0 is
+  valid (= next day). Settings → Store operations.
+- **Schedule (XFR-053):** `transfer_date = autoScheduleDays + today + 1`,
+  rolled to the destination's next allowed weekday from the new
+  per-location **replenishment days** (Locations page, clickable weekday
+  badges; null = every day). An explicitly empty day set skips generation
+  with a warning exception (`auto_transfer_skipped`) instead of looping.
+  The STORIS worked example (created 4/6, days=2, Tuesdays-only → Tue
+  4/14) is a verbatim unit test in `auto-schedule.spec.ts`.
+- Migration `0053_auto_transfers`: `locations.replenishment_days_json`,
+  `stock_transfers.scheduled_for` + `order_id` FK. Transfers list/detail
+  carry type/scheduled/order; the Transfers page shows the auto badge,
+  schedule date, and a link to the generating order (XFR-054 lean queue).
+- Tests: auto-schedule.spec 4 unit tests (worked example verbatim, zero
+  vs blank, no-roll case, empty-set null); transfers.int.spec 15→19
+  (generation + schedule date + dedupe, blank-disables, empty-days skip +
+  exception); orders 65/65 + business 24/24 re-run. Gates by exit code:
+  typecheck 0 · lint 0 · test 0 · build 0 · prettier 0.
+
+Next backlog item: costing program (PARITY-NOTES C2) — last of the ranked
+five; needs an owner decision on costing method before build.

@@ -16,6 +16,9 @@ interface TransferRow {
   id: string;
   number: string;
   status: string;
+  transferType: string;
+  scheduledFor: string | null;
+  orderId: string | null;
   fromLocationName: string | null;
   toLocationName: string | null;
   shippedAt: string | null;
@@ -96,9 +99,11 @@ export default function TransfersPage() {
               <thead>
                 <tr>
                   <th>Transfer</th>
+                  <th>Type</th>
                   <th>From</th>
                   <th>To</th>
                   <th>Status</th>
+                  <th title="Auto transfers: the XFR-053 schedule date">Scheduled</th>
                   <th>Created</th>
                   <th>&nbsp;</th>
                 </tr>
@@ -108,11 +113,31 @@ export default function TransfersPage() {
                   <tr key={t.id}>
                     <td>
                       <code>{t.number}</code>
+                      {t.orderId && (
+                        <>
+                          {' '}
+                          <Link href={`/orders/${t.orderId}`} style={{ fontSize: 11.5 }}>
+                            order
+                          </Link>
+                        </>
+                      )}
+                    </td>
+                    <td>
+                      {t.transferType === 'auto' ? (
+                        <span className="badge badge-info">auto</span>
+                      ) : (
+                        t.transferType.replace('_', ' ')
+                      )}
                     </td>
                     <td>{t.fromLocationName ?? '—'}</td>
                     <td>{t.toLocationName ?? '—'}</td>
                     <td>
                       <StatusBadge status={t.status} />
+                    </td>
+                    <td>
+                      {t.scheduledFor
+                        ? new Date(`${t.scheduledFor}T00:00:00`).toLocaleDateString()
+                        : '—'}
                     </td>
                     <td>{new Date(t.createdAt).toLocaleDateString()}</td>
                     <td style={{ textAlign: 'right' }}>

@@ -29,6 +29,7 @@ interface OpsSettings {
   blindReceiving?: boolean | null;
   reserveBasis?: 'delivery_date' | 'order_date' | null;
   returnWindowDays?: number | null;
+  autoScheduleDays?: number | null;
   deliveryDailyPieceCap?: number | null;
   deliveryDailyCapacityUnits?: number | null;
   priceVariance?: {
@@ -255,6 +256,8 @@ function OpsCard({ settings, onSaved }: { settings: Settings; onSaved: (s: Setti
       body.reserveBasis = basis === 'order_date' ? 'order_date' : 'delivery_date';
       const rtnWindow = String(data.get('returnWindowDays') ?? '').trim();
       body.returnWindowDays = rtnWindow === '' ? null : Number(rtnWindow);
+      const autoSched = String(data.get('autoScheduleDays') ?? '').trim();
+      body.autoScheduleDays = autoSched === '' ? null : Number(autoSched);
       const capBal = String(data.get('maxBalanceForTicket') ?? '').trim();
       body.maxBalanceForTicketPrintCents = capBal === '' ? null : Math.round(Number(capBal) * 100);
       const t1 = String(data.get('pvTier1Pct') ?? '').trim();
@@ -399,6 +402,16 @@ function OpsCard({ settings, onSaved }: { settings: Settings; onSaved: (s: Setti
           min={1}
           placeholder="e.g. 120 — older returns need a manager"
           defaultValue={ops.returnWindowDays ?? ''}
+          style={{ width: '100%' }}
+        />
+      </Field>
+      <Field label="Auto transfer schedule days (blank = auto transfers off; 0 = next day)">
+        <Input
+          name="autoScheduleDays"
+          type="number"
+          min={0}
+          placeholder="blank disables auto transfers"
+          defaultValue={ops.autoScheduleDays ?? ''}
           style={{ width: '100%' }}
         />
       </Field>

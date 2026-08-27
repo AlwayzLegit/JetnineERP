@@ -11,8 +11,12 @@ interface Location {
   name: string;
   timezone: string;
   taxRateBps: number | null;
+  /** J5: weekdays (0=Sun…6=Sat) accepting auto transfers; null = all. */
+  replenishmentDays: number[] | null;
   isActive: boolean;
 }
+
+const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 export default function LocationsPage() {
   const [rows, setRows] = useState<Location[] | null>(null);
@@ -56,6 +60,25 @@ export default function LocationsPage() {
       await api(`/v1/business/locations/${loc.id}`, {
         method: 'PATCH',
         body: JSON.stringify({ isActive: !loc.isActive }),
+      });
+      await load();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  /**
+   * Toggle one weekday in the location's replenishment set. null (all
+   * days) materializes to the full set first so unchecking one day
+   * keeps the other six.
+   */
+  async function toggleDay(loc: Location, day: number) {
+    const current = loc.replenishmentDays ?? [0, 1, 2, 3, 4, 5, 6];
+    const next = current.includes(day) ? current.filter((d) => d !== day) : [...current, day];
+    try {
+      await api(`/v1/business/locations/${loc.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ replenishmentDays: next.length === 7 ? null : next.sort() }),
       });
       await load();
     } catch (err) {
@@ -123,6 +146,9 @@ export default function LocationsPage() {
                 <th>Name</th>
                 <th>Timezone</th>
                 <th>Tax</th>
+                <th title="Weekdays this store accepts auto replenishment transfers">
+                  Replenishment days
+                </th>
                 <th>Active</th>
                 <th>Actions</th>
               </tr>
@@ -130,7 +156,7 @@ export default function LocationsPage() {
             <tbody>
               {rows.length === 0 && (
                 <tr>
-                  <td colSpan={5}>
+                  <td colSpan={6}>
                     <EmptyState>No locations yet.</EmptyState>
                   </td>
                 </tr>
@@ -143,6 +169,29 @@ export default function LocationsPage() {
                   <td>{l.timezone}</td>
                   <td>
                     {l.taxRateBps != null ? `${(l.taxRateBps / 100).toFixed(2)}%` : 'inherit'}
+                  </td>
+                  <td>
+                    <div className="flex gap-1">
+                      {WEEKDAYS.map((label, day) => {
+                        const on = (l.replenishmentDays ?? [0, 1, 2, 3, 4, 5, 6]).includes(day);
+                        return (
+                          <button
+                            key={label}
+                            type="button"
+                            className={`badge ${on ? 'badge-success' : 'badge-neutral'}`}
+                            style={{ cursor: 'pointer', border: 'none' }}
+                            title={
+                              on
+                                ? `Accepts auto transfers on ${label}`
+                                : `No auto transfers on ${label}`
+                            }
+                            onClick={() => void toggleDay(l, day)}
+                          >
+                            {label[0]}
+                          </button>
+                        );
+                      })}
+                    </div>
                   </td>
                   <td>
                     <span className={`badge ${l.isActive ? 'badge-success' : 'badge-neutral'}`}>
