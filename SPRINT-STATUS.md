@@ -2423,3 +2423,33 @@ Next slice in the same sweep, gates green before push:
 - reports.int.spec 27→29 (liability counts only balance-carrying cards +
   403 for non-financial; audit-sourced before→after surfaces). Gates:
   typecheck 0 · lint 0 · test 0 (full) · build 0 · prettier 0.
+
+## Checkpoint 23 — #55 live; receipts + tax-by-location built (2026-08-27)
+
+PR #55 (gift-card liability + delivery date-change log) deployed:
+dep-da89ouvavr4c73es75dg live, boot log `61/61 applied,
+head=0060_membership_data_scope; this run applied none`. Next slice
+gated green:
+
+- `GET /v1/reports/receipts` (catalog 92) — every succeeded payment by
+  method × taking location (sale/order/service COALESCE), imported
+  excluded, store scope applies, CSV provenance; Reports page card.
+- Tax summary gains the **by-location jurisdiction block** (catalog 87
+  — LA Mattress jurisdictions map to locations): completed POS sales +
+  completed orders, documents/total/tax per location; the per-class
+  table (and now the whole endpoint) is store-scoped too.
+- reports.int.spec 29→31. Gates: typecheck 0 · lint 0 · test 0 (full) ·
+  build 0 · prettier 0.
+
+## Cash Balancing pack committed (2026-08-27)
+
+Owner uploaded the Cash Balancing & Cash-Position Reporting handoff
+(10 files: domain model, control settings, the three reports — drawer
+balancing totals, daily receipts register, cash requirements — shared
+report primitives, adjacent screens, acceptance criteria, open
+questions). Committed verbatim to `docs/handoffs/cash-balancing/` (the
+zip's own layout; prettier-ignored). Jetnine already has cash shifts
+with blind-count close + variance and the new receipts report — the
+build task starts by reconciling the pack's loop (system-date drawers,
+tolerance/retries, register vs balancing distinction) against that.
+Queued after the Sales Views program and the other packs.

@@ -958,3 +958,51 @@ describe('Sales Views — gift-card liability + delivery date changes', () => {
     expect(row.action).toBe('delivery.update');
   });
 });
+
+describe('Sales Views — receipts + tax by location', () => {
+  it('receipts group by method and location; scoped member is short the Annex money', async () => {
+    // The Epic 1.11 flow took a $20 cash + $5 card payment at Main.
+    const owner = await request(app.getHttpServer())
+      .get('/v1/reports/receipts')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .expect(200);
+    expect(owner.body.totals.amountCents).toBeGreaterThanOrEqual(2500);
+    const cashMain = owner.body.rows.find(
+      (r: { method: string; locationName: string | null }) =>
+        r.method === 'cash' && r.locationName === 'Main',
+    );
+    expect(cashMain).toBeTruthy();
+    expect(cashMain.amountCents).toBe(2000);
+
+    const scoped = await request(app.getHttpServer())
+      .get('/v1/reports/receipts')
+      .set('Cookie', scopedCookie)
+      .set('X-Business-Id', businessId)
+      .expect(200);
+    // No payments were taken at Annex in the fixtures, so totals match —
+    // the row set must at least never contain a non-Main location.
+    for (const r of scoped.body.rows) {
+      expect(r.locationName === 'Main' || r.locationName === null).toBe(true);
+    }
+  });
+
+  it('tax summary carries the by-location jurisdiction block', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/v1/reports/tax/summary')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .expect(200);
+    expect(Array.isArray(res.body.byLocation)).toBe(true);
+    const main = res.body.byLocation.find(
+      (r: { locationName: string | null }) => r.locationName === 'Main',
+    );
+    const annex = res.body.byLocation.find(
+      (r: { locationName: string | null }) => r.locationName === 'Annex',
+    );
+    // Completed POS sales exist at both locations (scope fixtures).
+    expect(main).toBeTruthy();
+    expect(annex).toBeTruthy();
+    expect(annex.totalCents).toBe(5000); // the Annex sale
+  });
+});
