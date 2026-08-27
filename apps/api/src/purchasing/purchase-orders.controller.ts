@@ -7,6 +7,7 @@ import {
   Inject,
   NotFoundException,
   Param,
+  Patch,
   Post,
   Query,
 } from '@nestjs/common';
@@ -53,6 +54,30 @@ interface CreatePoBody {
 }
 
 interface ReceivePoBody {
+  notes?: string | null;
+  lines?: { lineId?: string; quantity?: number }[];
+}
+
+/**
+ * PO corrections (FAQ pack D-group): edit an un-closed PO in place.
+ * A line entry either updates an existing line (`lineId`), removes it
+ * (`lineId` + `remove`), or adds a new one (`variantId`). Quantities can
+ * never drop below what has already been received.
+ */
+interface UpdatePoBody {
+  expectedAt?: string | null;
+  notes?: string | null;
+  lines?: {
+    lineId?: string;
+    variantId?: string;
+    quantity?: number;
+    unitCostCents?: number;
+    remove?: boolean;
+  }[];
+}
+
+/** Un-receive: back accepted units out of stock and off the PO counters. */
+interface UnreceivePoBody {
   notes?: string | null;
   lines?: { lineId?: string; quantity?: number }[];
 }
@@ -403,6 +428,379 @@ export class PurchaseOrdersController {
       },
     });
     return this.hydrate(po.id);
+  }
+
+  /**
+   * Place a draft. Before this endpoint a draft PO was a dead end —
+   * it could not be emailed, received against, or placed, only canceled.
+   */
+  @Post(':id/place')
+  @RequirePermission('purchase_orders.create')
+  async place(
+    @CurrentTenant() _tenant: RequestTenantContext,
+    @Param('id') id: string,
+  ): Promise<PoDetail> {
+    const [po] = await this.db
+      .select()
+      .from(schema.purchaseOrders)
+      .where(eq(schema.purchaseOrders.id, id))
+      .limit(1);
+    if (!po) throw new NotFoundException('Purchase order not found');
+    if (po.status !== 'draft') {
+      throw new ForbiddenException(`Cannot place a ${po.status} purchase order`);
+    }
+    await this.db
+      .update(schema.purchaseOrders)
+      .set({ status: 'ordered', placedAt: new Date(), updatedAt: new Date() })
+      .where(eq(schema.purchaseOrders.id, id));
+    await this.audit.log({
+      action: 'purchase_order.place',
+      targetType: 'purchase_order',
+      targetId: id,
+      before: { status: 'draft' },
+      after: { status: 'ordered' },
+    });
+    return this.hydrate(id);
+  }
+
+  /**
+   * Edit an un-closed PO: expected date, notes, line quantities/costs,
+   * remove untouched lines, add forgotten ones. Received / canceled POs
+   * are immutable — corrections after receipt go through `unreceive`.
+   * Guards: a quantity can never drop below what is already received or
+   * below the units committed to sales orders, and only a line with no
+   * receipts and no order linkage can be removed.
+   */
+  @Patch(':id')
+  @RequirePermission('purchase_orders.create')
+  async update(
+    @CurrentTenant() tenant: RequestTenantContext,
+    @Param('id') id: string,
+    @Body() body: UpdatePoBody,
+  ): Promise<PoDetail> {
+    const [po] = await this.db
+      .select()
+      .from(schema.purchaseOrders)
+      .where(eq(schema.purchaseOrders.id, id))
+      .limit(1);
+    if (!po) throw new NotFoundException('Purchase order not found');
+    if (po.status !== 'draft' && po.status !== 'ordered' && po.status !== 'partially_received') {
+      throw new ForbiddenException(`Cannot edit a ${po.status} purchase order`);
+    }
+
+    const lines = await this.db
+      .select()
+      .from(schema.purchaseOrderLines)
+      .where(eq(schema.purchaseOrderLines.purchaseOrderId, id));
+    const byId = new Map(lines.map((l) => [l.id, l]));
+    const lineIds = lines.map((l) => l.id);
+    const allocations = lineIds.length
+      ? await this.db
+          .select({
+            poLineId: schema.poLineAllocations.poLineId,
+            quantity: schema.poLineAllocations.quantity,
+          })
+          .from(schema.poLineAllocations)
+          .where(inArray(schema.poLineAllocations.poLineId, lineIds))
+      : [];
+    const allocatedByLine = new Map<string, number>();
+    for (const a of allocations) {
+      allocatedByLine.set(a.poLineId, (allocatedByLine.get(a.poLineId) ?? 0) + a.quantity);
+    }
+
+    // Validate the whole edit before touching anything.
+    const updates: { line: (typeof lines)[number]; quantity: number; unitCostCents: number }[] = [];
+    const removals: (typeof lines)[number][] = [];
+    const additions: { variantId: string; quantity: number; unitCostCents: number }[] = [];
+    const seen = new Set<string>();
+    for (const e of body.lines ?? []) {
+      if (e.lineId) {
+        if (seen.has(e.lineId)) {
+          throw new BadRequestException(`Duplicate lineId in request: ${e.lineId}`);
+        }
+        seen.add(e.lineId);
+        const line = byId.get(e.lineId);
+        if (!line) throw new NotFoundException(`PO line not found: ${e.lineId}`);
+        const allocated = allocatedByLine.get(line.id) ?? 0;
+        if (e.remove) {
+          if (line.quantityReceived > 0) {
+            throw new BadRequestException(
+              `Cannot remove a line with ${line.quantityReceived} unit(s) already received — un-receive them first`,
+            );
+          }
+          if (allocated > 0) {
+            throw new BadRequestException(
+              'Cannot remove a line committed to sales orders — unlink the special order first',
+            );
+          }
+          removals.push(line);
+          continue;
+        }
+        const quantity = e.quantity ?? line.quantityOrdered;
+        const unitCostCents = e.unitCostCents ?? line.unitCostCents;
+        if (!Number.isInteger(quantity) || quantity <= 0) {
+          throw new BadRequestException('lines[].quantity must be a positive integer');
+        }
+        if (!Number.isInteger(unitCostCents) || unitCostCents < 0) {
+          throw new BadRequestException('lines[].unitCostCents must be a non-negative integer');
+        }
+        if (quantity < line.quantityReceived) {
+          throw new BadRequestException(
+            `Cannot set quantity to ${quantity}: ${line.quantityReceived} unit(s) already received`,
+          );
+        }
+        if (quantity < allocated) {
+          throw new BadRequestException(
+            `Cannot set quantity to ${quantity}: ${allocated} unit(s) committed to sales orders`,
+          );
+        }
+        updates.push({ line, quantity, unitCostCents });
+      } else if (e.variantId) {
+        if (!Number.isInteger(e.quantity) || (e.quantity ?? 0) <= 0) {
+          throw new BadRequestException('lines[].quantity must be a positive integer');
+        }
+        if (!Number.isInteger(e.unitCostCents) || (e.unitCostCents ?? -1) < 0) {
+          throw new BadRequestException('lines[].unitCostCents must be a non-negative integer');
+        }
+        const [variant] = await this.db
+          .select({ id: schema.productVariants.id })
+          .from(schema.productVariants)
+          .where(eq(schema.productVariants.id, e.variantId))
+          .limit(1);
+        if (!variant) throw new NotFoundException(`Variant not found: ${e.variantId}`);
+        additions.push({
+          variantId: e.variantId,
+          quantity: e.quantity!,
+          unitCostCents: e.unitCostCents!,
+        });
+      } else {
+        throw new BadRequestException('Each line entry needs a lineId or a variantId');
+      }
+    }
+    if (lines.length - removals.length + additions.length === 0) {
+      throw new BadRequestException('A purchase order needs at least one line — cancel it instead');
+    }
+
+    for (const r of removals) {
+      await this.db.delete(schema.purchaseOrderLines).where(eq(schema.purchaseOrderLines.id, r.id));
+    }
+    for (const u of updates) {
+      await this.db
+        .update(schema.purchaseOrderLines)
+        .set({
+          quantityOrdered: u.quantity,
+          unitCostCents: u.unitCostCents,
+          lineTotalCents: u.quantity * u.unitCostCents,
+        })
+        .where(eq(schema.purchaseOrderLines.id, u.line.id));
+    }
+    for (const a of additions) {
+      await this.db.insert(schema.purchaseOrderLines).values({
+        businessId: tenant.businessId!,
+        purchaseOrderId: id,
+        variantId: a.variantId,
+        quantityOrdered: a.quantity,
+        unitCostCents: a.unitCostCents,
+        lineTotalCents: a.quantity * a.unitCostCents,
+      });
+    }
+
+    const refreshed = await this.db
+      .select({ lineTotalCents: schema.purchaseOrderLines.lineTotalCents })
+      .from(schema.purchaseOrderLines)
+      .where(eq(schema.purchaseOrderLines.purchaseOrderId, id));
+    const subtotalCents = refreshed.reduce((s, l) => s + l.lineTotalCents, 0);
+    const patch: Partial<typeof schema.purchaseOrders.$inferInsert> = {
+      subtotalCents,
+      updatedAt: new Date(),
+    };
+    if (body.expectedAt !== undefined) {
+      patch.expectedAt = body.expectedAt === null ? null : parseDate(body.expectedAt);
+    }
+    if (body.notes !== undefined) patch.notes = body.notes ?? null;
+    await this.db.update(schema.purchaseOrders).set(patch).where(eq(schema.purchaseOrders.id, id));
+
+    await this.audit.log({
+      action: 'purchase_order.update',
+      targetType: 'purchase_order',
+      targetId: id,
+      before: { subtotalCents: po.subtotalCents },
+      after: {
+        subtotalCents,
+        updatedLines: updates.length,
+        removedLines: removals.length,
+        addedLines: additions.length,
+      },
+    });
+    return this.hydrate(id);
+  }
+
+  /**
+   * Un-receive: correct a mis-keyed receipt. Backs `quantity` accepted
+   * units per line out of stock (an `unreceive_po` ledger entry, never a
+   * silent edit) and rolls the received/inspected/accepted counters back
+   * together, reopening the PO. Refuses to cut into units committed to
+   * sales orders or already reserved — free stock only, the same
+   * convention as physical counts.
+   */
+  @Post(':id/unreceive')
+  @RequirePermission('purchase_orders.receive')
+  async unreceive(
+    @CurrentTenant() tenant: RequestTenantContext,
+    @CurrentUser() actor: CurrentUserPayload,
+    @Param('id') id: string,
+    @Body() body: UnreceivePoBody,
+  ): Promise<PoDetail> {
+    if (!body.lines || body.lines.length === 0) {
+      throw new BadRequestException('lines must contain at least one entry');
+    }
+    const [po] = await this.db
+      .select()
+      .from(schema.purchaseOrders)
+      .where(eq(schema.purchaseOrders.id, id))
+      .limit(1);
+    if (!po) throw new NotFoundException('Purchase order not found');
+    if (po.status !== 'partially_received' && po.status !== 'received') {
+      throw new ForbiddenException(`Nothing received on a ${po.status} purchase order`);
+    }
+
+    const lines = await this.db
+      .select()
+      .from(schema.purchaseOrderLines)
+      .where(eq(schema.purchaseOrderLines.purchaseOrderId, id));
+    const byId = new Map(lines.map((l) => [l.id, l]));
+
+    const seen = new Set<string>();
+    const validated: { line: (typeof lines)[number]; qty: number }[] = [];
+    for (const r of body.lines) {
+      if (!r.lineId) throw new BadRequestException('lines[].lineId is required');
+      if (seen.has(r.lineId)) {
+        throw new BadRequestException(`Duplicate lineId in request: ${r.lineId}`);
+      }
+      seen.add(r.lineId);
+      const line = byId.get(r.lineId);
+      if (!line) throw new NotFoundException(`PO line not found: ${r.lineId}`);
+      if (!Number.isInteger(r.quantity) || (r.quantity ?? 0) <= 0) {
+        throw new BadRequestException('lines[].quantity must be a positive integer');
+      }
+      const qty = r.quantity!;
+      if (qty > line.quantityAccepted) {
+        throw new BadRequestException(
+          `Cannot un-receive ${qty} of line ${line.id}: only ${line.quantityAccepted} accepted`,
+        );
+      }
+      // Units already committed to a sales order stay committed.
+      const [committed] = await this.db
+        .select({
+          quantity: sql<number>`coalesce(sum(${schema.poLineAllocations.quantity}), 0)::int`,
+        })
+        .from(schema.poLineAllocations)
+        .where(
+          and(
+            eq(schema.poLineAllocations.poLineId, line.id),
+            eq(schema.poLineAllocations.status, 'received'),
+          ),
+        );
+      if (qty > line.quantityAccepted - (committed?.quantity ?? 0)) {
+        throw new BadRequestException(
+          `Cannot un-receive ${qty} of line ${line.id}: ${committed?.quantity ?? 0} unit(s) are committed to sales orders`,
+        );
+      }
+      // Free stock only — a reservation is never silently unwound.
+      const [level] = await this.db
+        .select({
+          onHand: schema.inventoryLevels.onHand,
+          reserved: schema.inventoryLevels.reserved,
+        })
+        .from(schema.inventoryLevels)
+        .where(
+          and(
+            eq(schema.inventoryLevels.variantId, line.variantId),
+            eq(schema.inventoryLevels.locationId, po.locationId),
+          ),
+        )
+        .limit(1);
+      const free = (level?.onHand ?? 0) - (level?.reserved ?? 0);
+      if (qty > free) {
+        throw new BadRequestException(
+          `Cannot un-receive ${qty} of line ${line.id}: only ${Math.max(free, 0)} free (unreserved) unit(s) at this location — release reservations first`,
+        );
+      }
+      validated.push({ line, qty });
+    }
+
+    let unitsUnreceived = 0;
+    for (const v of validated) {
+      await this.db.insert(schema.inventoryMovements).values({
+        businessId: tenant.businessId!,
+        variantId: v.line.variantId,
+        locationId: po.locationId,
+        delta: -v.qty,
+        reason: 'unreceive_po',
+        referenceType: 'purchase_order',
+        referenceId: po.id,
+        actorUserId: actor.id,
+        notes: body.notes ?? null,
+      });
+      await this.db
+        .update(schema.inventoryLevels)
+        .set({
+          onHand: sql`${schema.inventoryLevels.onHand} - ${v.qty}`,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(schema.inventoryLevels.variantId, v.line.variantId),
+            eq(schema.inventoryLevels.locationId, po.locationId),
+          ),
+        );
+      await this.db
+        .update(schema.purchaseOrderLines)
+        .set({
+          quantityReceived: v.line.quantityReceived - v.qty,
+          quantityInspected: v.line.quantityInspected - v.qty,
+          quantityAccepted: v.line.quantityAccepted - v.qty,
+        })
+        .where(eq(schema.purchaseOrderLines.id, v.line.id));
+      unitsUnreceived += v.qty;
+    }
+
+    const refreshed = await this.db
+      .select({
+        ordered: schema.purchaseOrderLines.quantityOrdered,
+        received: schema.purchaseOrderLines.quantityReceived,
+        accepted: schema.purchaseOrderLines.quantityAccepted,
+        rejected: schema.purchaseOrderLines.quantityRejected,
+      })
+      .from(schema.purchaseOrderLines)
+      .where(eq(schema.purchaseOrderLines.purchaseOrderId, id));
+    const fullyAccepted = refreshed.every((l) => l.accepted + l.rejected >= l.ordered);
+    const anyReceived = refreshed.some((l) => l.received > 0);
+    const nextStatus = fullyAccepted ? 'received' : anyReceived ? 'partially_received' : 'ordered';
+    await this.db
+      .update(schema.purchaseOrders)
+      .set({
+        status: nextStatus,
+        closedAt: fullyAccepted ? po.closedAt : null,
+        updatedAt: new Date(),
+      })
+      .where(eq(schema.purchaseOrders.id, id));
+
+    await this.exceptions.record({
+      type: 'po_unreceive',
+      severity: 'info',
+      entityType: 'purchase_order',
+      entityId: po.id,
+      summary: `${unitsUnreceived} unit(s) un-received on ${po.number} — receipt correction`,
+      metadata: { lines: validated.map((v) => ({ poLineId: v.line.id, quantity: v.qty })) },
+    });
+    await this.audit.log({
+      action: 'purchase_order.unreceive',
+      targetType: 'purchase_order',
+      targetId: po.id,
+      after: { status: nextStatus, unitsUnreceived, lineCount: validated.length },
+    });
+    return this.hydrate(id);
   }
 
   /**

@@ -833,3 +833,216 @@ describe('Purchasing controls: reject bucket, SoD, auto-clear, remit-to alert (P
     ).toBe(true);
   });
 });
+
+describe('PO lifecycle corrections — place / edit / un-receive', () => {
+  let vendorId = '';
+  let poId = '';
+  let lineAId = '';
+  let lineBId = '';
+
+  async function withDb<T>(fn: (db: ReturnType<typeof drizzle>) => Promise<T>): Promise<T> {
+    const sql = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    try {
+      return await fn(drizzle(sql));
+    } finally {
+      await sql.end({ timeout: 5 });
+    }
+  }
+
+  it('setup: vendor + a draft PO (place:false)', async () => {
+    const vendor = await request(app.getHttpServer())
+      .post('/v1/vendors')
+      .set('Cookie', clerkCookie)
+      .set('X-Business-Id', businessId)
+      .send({ name: 'Corrections Vendor Co' });
+    expect(vendor.status).toBe(201);
+    vendorId = vendor.body.id;
+
+    const res = await request(app.getHttpServer())
+      .post('/v1/purchase-orders')
+      .set('Cookie', clerkCookie)
+      .set('X-Business-Id', businessId)
+      .send({
+        vendorId,
+        locationId,
+        place: false,
+        lines: [{ variantId: variantAId, quantity: 2, unitCostCents: 300 }],
+      });
+    expect(res.status).toBe(201);
+    expect(res.body.status).toBe('draft');
+    expect(res.body.placedAt).toBeNull();
+    poId = res.body.id;
+    lineAId = res.body.lines[0].id;
+  });
+
+  it('a draft cannot be received against; Place flips it to ordered exactly once', async () => {
+    const recv = await request(app.getHttpServer())
+      .post(`/v1/purchase-orders/${poId}/receive`)
+      .set('Cookie', clerkCookie)
+      .set('X-Business-Id', businessId)
+      .send({ lines: [{ lineId: lineAId, quantity: 1 }] });
+    expect(recv.status).toBe(403);
+
+    const placed = await request(app.getHttpServer())
+      .post(`/v1/purchase-orders/${poId}/place`)
+      .set('Cookie', clerkCookie)
+      .set('X-Business-Id', businessId)
+      .send({});
+    expect(placed.status).toBe(201);
+    expect(placed.body.status).toBe('ordered');
+    expect(placed.body.placedAt).not.toBeNull();
+
+    const again = await request(app.getHttpServer())
+      .post(`/v1/purchase-orders/${poId}/place`)
+      .set('Cookie', clerkCookie)
+      .set('X-Business-Id', businessId)
+      .send({});
+    expect(again.status).toBe(403);
+  });
+
+  it('edit: quantity, cost, expected date, added line — subtotal recomputes', async () => {
+    const res = await request(app.getHttpServer())
+      .patch(`/v1/purchase-orders/${poId}`)
+      .set('Cookie', clerkCookie)
+      .set('X-Business-Id', businessId)
+      .send({
+        expectedAt: '2026-09-15',
+        notes: 'rev 2',
+        lines: [
+          { lineId: lineAId, quantity: 5, unitCostCents: 350 },
+          { variantId: variantBId, quantity: 2, unitCostCents: 100 },
+        ],
+      });
+    expect(res.status).toBe(200);
+    expect(res.body.lines).toHaveLength(2);
+    expect(res.body.subtotalCents).toBe(5 * 350 + 2 * 100);
+    expect(res.body.notes).toBe('rev 2');
+    expect(res.body.expectedAt).not.toBeNull();
+    lineBId = res.body.lines.find((l: { variantId: string }) => l.variantId === variantBId).id;
+  });
+
+  it('edit guards: cashier 403, no shrinking below received, no removing a received line', async () => {
+    const forbidden = await request(app.getHttpServer())
+      .patch(`/v1/purchase-orders/${poId}`)
+      .set('Cookie', cashierCookie)
+      .set('X-Business-Id', businessId)
+      .send({ notes: 'nope' });
+    expect(forbidden.status).toBe(403);
+
+    const recv = await request(app.getHttpServer())
+      .post(`/v1/purchase-orders/${poId}/receive`)
+      .set('Cookie', clerkCookie)
+      .set('X-Business-Id', businessId)
+      .send({ lines: [{ lineId: lineAId, quantity: 3 }] });
+    expect(recv.status).toBe(201);
+    expect(recv.body.status).toBe('partially_received');
+
+    const shrink = await request(app.getHttpServer())
+      .patch(`/v1/purchase-orders/${poId}`)
+      .set('Cookie', clerkCookie)
+      .set('X-Business-Id', businessId)
+      .send({ lines: [{ lineId: lineAId, quantity: 2 }] });
+    expect(shrink.status).toBe(400);
+    expect(shrink.body.message).toMatch(/already received/);
+
+    const remove = await request(app.getHttpServer())
+      .patch(`/v1/purchase-orders/${poId}`)
+      .set('Cookie', clerkCookie)
+      .set('X-Business-Id', businessId)
+      .send({ lines: [{ lineId: lineAId, remove: true }] });
+    expect(remove.status).toBe(400);
+    expect(remove.body.message).toMatch(/un-receive/);
+  });
+
+  it('a received PO is immutable via PATCH', async () => {
+    const finish = await request(app.getHttpServer())
+      .post(`/v1/purchase-orders/${poId}/receive`)
+      .set('Cookie', clerkCookie)
+      .set('X-Business-Id', businessId)
+      .send({
+        lines: [
+          { lineId: lineAId, quantity: 2 },
+          { lineId: lineBId, quantity: 2 },
+        ],
+      });
+    expect(finish.status).toBe(201);
+    expect(finish.body.status).toBe('received');
+    expect(finish.body.closedAt).not.toBeNull();
+
+    const patch = await request(app.getHttpServer())
+      .patch(`/v1/purchase-orders/${poId}`)
+      .set('Cookie', clerkCookie)
+      .set('X-Business-Id', businessId)
+      .send({ notes: 'too late' });
+    expect(patch.status).toBe(403);
+    expect(patch.body.message).toMatch(/received/);
+  });
+
+  it('un-receive backs units out of stock, writes an unreceive_po movement, reopens the PO', async () => {
+    const before = await levelOf(variantAId);
+    const res = await request(app.getHttpServer())
+      .post(`/v1/purchase-orders/${poId}/unreceive`)
+      .set('Cookie', clerkCookie)
+      .set('X-Business-Id', businessId)
+      .send({ notes: 'keyed 5, only 3 arrived', lines: [{ lineId: lineAId, quantity: 2 }] });
+    expect(res.status).toBe(201);
+    expect(res.body.status).toBe('partially_received');
+    expect(res.body.closedAt).toBeNull();
+    const lineA = res.body.lines.find((l: { id: string }) => l.id === lineAId);
+    expect(lineA.quantityAccepted).toBe(3);
+    expect(lineA.quantityReceived).toBe(3);
+
+    expect(await levelOf(variantAId)).toBe(before - 2);
+
+    await withDb(async (db) => {
+      const movements = await db
+        .select()
+        .from(schema.inventoryMovements)
+        .where(eq(schema.inventoryMovements.reason, 'unreceive_po'));
+      expect(movements).toHaveLength(1);
+      expect(movements[0]!.delta).toBe(-2);
+      expect(movements[0]!.referenceId).toBe(poId);
+    });
+  });
+
+  it('un-receive guards: over-accepted refused; reserved stock never cut into', async () => {
+    const over = await request(app.getHttpServer())
+      .post(`/v1/purchase-orders/${poId}/unreceive`)
+      .set('Cookie', clerkCookie)
+      .set('X-Business-Id', businessId)
+      .send({ lines: [{ lineId: lineAId, quantity: 4 }] });
+    expect(over.status).toBe(400);
+    expect(over.body.message).toMatch(/only 3 accepted/);
+
+    const onHand = await levelOf(variantAId);
+    await withDb(async (db) => {
+      await db
+        .update(schema.inventoryLevels)
+        .set({ reserved: onHand })
+        .where(
+          and(
+            eq(schema.inventoryLevels.variantId, variantAId),
+            eq(schema.inventoryLevels.locationId, locationId),
+          ),
+        );
+    });
+    const blocked = await request(app.getHttpServer())
+      .post(`/v1/purchase-orders/${poId}/unreceive`)
+      .set('Cookie', clerkCookie)
+      .set('X-Business-Id', businessId)
+      .send({ lines: [{ lineId: lineAId, quantity: 1 }] });
+    expect(blocked.status).toBe(400);
+    expect(blocked.body.message).toMatch(/free \(unreserved\)/);
+    await withDb(async (db) => {
+      await db
+        .update(schema.inventoryLevels)
+        .set({ reserved: 0 })
+        .where(
+          and(
+            eq(schema.inventoryLevels.variantId, variantAId),
+            eq(schema.inventoryLevels.locationId, locationId),
+          ),
+        );
+    });
+  });
+});
