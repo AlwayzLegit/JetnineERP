@@ -13,6 +13,17 @@ Produces, with positions and counts matching 99-source-index.md:
 Usage:  python3 build-sections.py [--out .] [--check]
         --check  re-pull and report drift against 99-source-index.md without writing
 
+IMPORTANT — this generator reproduces SOURCE ARTICLES ONLY.
+
+The original section files each ended with a hand-authored synthesis (lifecycle, entities,
+state machine, numbered rules R-F*/R-I*/R-T*, metrics M1-M83, and the section anchors
+(S3/S4/S8/S9/H/B/E). That is analysis, not source material, and CANNOT be regenerated from the
+help center. 05-cross-cutting-model.md, 07-parity-checklist.md and 08-open-questions.md cite
+those IDs directly, so a regenerated file will satisfy the filename but break every inbound
+citation. Prefer the originals if they exist anywhere.
+
+By default this script REFUSES to overwrite an existing section file. Use --force to override.
+
 No auth required. Pure stdlib.
 """
 from __future__ import annotations
@@ -119,6 +130,17 @@ def to_markdown(body: str) -> str:
     return s.strip()
 
 
+BANNER = """> [!WARNING]
+> **Regenerated file — source articles only, no synthesis.**
+> This file was rebuilt by `build-sections.py` from the STORIS Help Center. It does **not**
+> contain the section synthesis the original carried: lifecycle, entities, state machine,
+> numbered rules (`R-F*` / `R-I*` / `R-T*`), metric definitions (`M1`-`M83`), or the
+> `§S3` / `§S4` / `§S8` / `§S9` / `§H` / `§B` / `§E` anchors.
+> Citations to those IDs from `05-cross-cutting-model.md`, `07-parity-checklist.md` and
+> `08-open-questions.md` will **not** resolve against this file. Trace to article text instead,
+> or restore the original.
+"""
+
 ACCESS = re.compile(r"^Access\s*\n+(.+?)(?=\n\n)", re.S)
 
 def split_access(md: str) -> tuple[str, str]:
@@ -134,6 +156,8 @@ def split_access(md: str) -> tuple[str, str]:
 def render(fname: str, section_name: str, articles: list, offset: int) -> str:
     head = [
         f"# {fname.removesuffix('.md')}",
+        "",
+        BANNER,
         "",
         f"Source section: **{section_name}** · {len(articles)} articles "
         f"(positions {offset}–{offset + len(articles) - 1})",
@@ -164,6 +188,8 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default=".", help="output directory (default: cwd)")
     ap.add_argument("--check", action="store_true", help="report drift, write nothing")
+    ap.add_argument("--force", action="store_true",
+                    help="overwrite existing section files (they may be the originals)")
     args = ap.parse_args()
 
     out = pathlib.Path(args.out)
@@ -171,6 +197,12 @@ def main() -> int:
     drift = 0
 
     for fname, sec_name, sec_id, sl in TARGETS:
+        dest = out / fname
+        if dest.exists() and not args.force and not args.check:
+            print(f"SKIP  {fname}: already exists — it may be the original (with synthesis). "
+                  f"Use --force to overwrite.", file=sys.stderr)
+            continue
+
         allarts = section_articles(sec_id)
         arts = allarts[sl] if sl else allarts
         offset = sl.start if sl else 0
@@ -186,8 +218,9 @@ def main() -> int:
             continue
 
         text = render(fname, sec_name, arts, offset)
-        (out / fname).write_text(text, encoding="utf-8")
-        print(f"{fname}: {len(arts)} articles, {text.count(chr(10)) + 1} lines")
+        dest.write_text(text, encoding="utf-8")
+        print(f"{fname}: {len(arts)} articles, {text.count(chr(10)) + 1} lines "
+              f"(raw articles only — no synthesis)")
 
     if drift:
         print(f"\n{drift} file(s) drifted from 99-source-index.md — "
