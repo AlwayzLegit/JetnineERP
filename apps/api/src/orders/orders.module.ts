@@ -5,12 +5,21 @@ import { ReturnsModule } from '../returns/returns.module';
 import { ControlsModule } from '../controls/controls.module';
 import { AuthModule } from '../auth/auth.module';
 import { TenancyModule } from '../tenancy/tenancy.module';
+import { TransfersModule } from '../transfers/transfers.module';
 import { OrdersController } from './orders.controller';
 import { PublicOrderController } from './public-order.controller';
 import { OrdersService } from './orders.service';
 
 @Module({
-  imports: [AuthModule, TenancyModule, AuditModule, MoneyModule, ReturnsModule, ControlsModule],
+  imports: [
+    AuthModule,
+    TenancyModule,
+    AuditModule,
+    MoneyModule,
+    ReturnsModule,
+    ControlsModule,
+    TransfersModule,
+  ],
   controllers: [OrdersController, PublicOrderController],
   providers: [OrdersService],
   // Deliveries (Day 3) reserve, release, and reprice through the same

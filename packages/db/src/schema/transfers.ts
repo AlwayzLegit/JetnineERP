@@ -1,5 +1,6 @@
 import {
   check,
+  date,
   index,
   integer,
   pgTable,
@@ -13,6 +14,7 @@ import { businesses, users } from './platform';
 import { locations } from './tenancy';
 import { productVariants } from './catalog';
 import { reasonCodes } from './controls';
+import { orders } from './orders';
 
 /**
  * Stock transfers move inventory between two of the business's own
@@ -45,10 +47,15 @@ export const stockTransfers = pgTable(
     status: text('status').notNull(),
     /**
      * G8 (STORIS transfer types): 'replenishment' | 'floor_sample' |
-     * 'customer' | 'as_is' — a floor model moved to a store is not
-     * silently sellable as new.
+     * 'customer' | 'as_is' | 'auto' — a floor model moved to a store is
+     * not silently sellable as new. 'auto' (XFR-051) is generated from a
+     * sales-order shortfall and released manually.
      */
     transferType: text('transfer_type').notNull().default('replenishment'),
+    /** XFR-053: the calculated auto-transfer date (auto transfers only). */
+    scheduledFor: date('scheduled_for'),
+    /** The sales order whose shortfall generated this auto transfer. */
+    orderId: uuid('order_id').references(() => orders.id, { onDelete: 'set null' }),
     /** G8: coded reason (class `transfer_variance`) on a short close. */
     varianceReasonCodeId: uuid('variance_reason_code_id').references(() => reasonCodes.id, {
       onDelete: 'set null',

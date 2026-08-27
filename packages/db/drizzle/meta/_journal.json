@@ -372,6 +372,13 @@
       "when": 1787816615720,
       "tag": "0052_no_original_returns",
       "breakpoints": true
+    },
+    {
+      "idx": 53,
+      "version": "7",
+      "when": 1787818642342,
+      "tag": "0053_auto_transfers",
+      "breakpoints": true
     }
   ]
 }

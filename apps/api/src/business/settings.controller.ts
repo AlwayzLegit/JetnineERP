@@ -59,6 +59,9 @@ interface OpsSettings {
   /** I4 (RTN-040): days after completion a return is allowed without a
    * manager override (null = no window, returns always allowed). */
   returnWindowDays?: number | null;
+  /** J4 (XFR-052 / CFG-POS-AUTOSCHED): blank disables auto transfers;
+   * 0 is valid and means same-day + 1 per the XFR-053 formula. */
+  autoScheduleDays?: number | null;
   /** G6 three-tier price-variance thresholds (defaults 5% / $50 / 15%). */
   priceVariance?: {
     tier1Pct?: number | null;
@@ -183,6 +186,15 @@ function validateOps(input: OpsSettings): OpsSettings {
       throw new BadRequestException('ops.returnWindowDays must be a positive integer or null');
     }
     out.returnWindowDays = input.returnWindowDays;
+  }
+  if (input.autoScheduleDays !== undefined) {
+    if (
+      input.autoScheduleDays !== null &&
+      (!Number.isInteger(input.autoScheduleDays) || input.autoScheduleDays < 0)
+    ) {
+      throw new BadRequestException('ops.autoScheduleDays must be a non-negative integer or null');
+    }
+    out.autoScheduleDays = input.autoScheduleDays;
   }
   if (input.priceVariance !== undefined) {
     if (input.priceVariance !== null) {

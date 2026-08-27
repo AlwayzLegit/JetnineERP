@@ -28,6 +28,7 @@ interface LocationRow {
   taxRateBps: number | null;
   addressJson: unknown;
   orderPrefix: string | null;
+  replenishmentDays: number[] | null;
   isActive: boolean;
   createdAt: Date;
 }
@@ -39,10 +40,23 @@ interface CreateBody {
   addressJson?: unknown;
   /** Store code for per-store order numbering, e.g. "WL" (1-4 A-Z). */
   orderPrefix?: string | null;
+  /** J5: weekdays (0=Sun…6=Sat) that accept auto transfers; null = all. */
+  replenishmentDays?: number[] | null;
 }
 
 interface UpdateBody extends CreateBody {
   isActive?: boolean;
+}
+
+/** J5: null = every day; [] deliberately disables auto transfers in. */
+function validateReplenishmentDays(raw: number[] | null): number[] | null {
+  if (raw === null) return null;
+  if (!Array.isArray(raw) || raw.some((d) => !Number.isInteger(d) || d < 0 || d > 6)) {
+    throw new BadRequestException(
+      'replenishmentDays must be weekday numbers 0 (Sun) through 6 (Sat)',
+    );
+  }
+  return [...new Set(raw)].sort();
 }
 
 function normalizeOrderPrefix(raw: string | null | undefined): string | null {
@@ -88,6 +102,9 @@ export class LocationsController {
         taxRateBps: schema.locations.taxRateBps,
         addressJson: schema.locations.addressJson,
         orderPrefix: schema.locations.orderPrefix,
+        replenishmentDays: sql<number[] | null>`${schema.locations.replenishmentDaysJson}`.as(
+          'replenishment_days',
+        ),
         isActive: schema.locations.isActive,
         createdAt: schema.locations.createdAt,
       })
@@ -172,6 +189,11 @@ export class LocationsController {
       update.addressJson = body.addressJson as never;
       before.addressJson = existing.addressJson;
       after.addressJson = body.addressJson;
+    }
+    if (body.replenishmentDays !== undefined) {
+      update.replenishmentDaysJson = validateReplenishmentDays(body.replenishmentDays) as never;
+      before.replenishmentDays = existing.replenishmentDaysJson;
+      after.replenishmentDays = update.replenishmentDaysJson;
     }
     if (body.orderPrefix !== undefined) {
       const prefix = normalizeOrderPrefix(body.orderPrefix);
@@ -298,6 +320,7 @@ function toRow(row: typeof schema.locations.$inferSelect): LocationRow {
     taxRateBps: row.taxRateBps ?? null,
     addressJson: row.addressJson,
     orderPrefix: row.orderPrefix ?? null,
+    replenishmentDays: (row.replenishmentDaysJson as number[] | null) ?? null,
     isActive: row.isActive,
     createdAt: row.createdAt,
   };

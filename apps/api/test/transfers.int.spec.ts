@@ -545,3 +545,162 @@ describe('Transfer variance + aging + types (PLAN-STORIS-GAP G8)', () => {
     expect(hit.daysInTransit).toBeGreaterThanOrEqual(6);
   });
 });
+
+describe('Auto transfers (FAQ J4/J5 — XFR-051/052/053)', () => {
+  let atVariantId = '';
+  let customerId = '';
+
+  function as(cookie: string) {
+    return {
+      post: (url: string) =>
+        request(app.getHttpServer())
+          .post(url)
+          .set('Cookie', cookie)
+          .set('X-Business-Id', businessId),
+      patch: (url: string) =>
+        request(app.getHttpServer())
+          .patch(url)
+          .set('Cookie', cookie)
+          .set('X-Business-Id', businessId),
+      get: (url: string) =>
+        request(app.getHttpServer())
+          .get(url)
+          .set('Cookie', cookie)
+          .set('X-Business-Id', businessId),
+    };
+  }
+
+  async function autoTransfersFor(orderId: string) {
+    const sql2 = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    const db = drizzle(sql2);
+    try {
+      return await db
+        .select()
+        .from(schema.stockTransfers)
+        .where(eq(schema.stockTransfers.orderId, orderId));
+    } finally {
+      await sql2.end({ timeout: 5 });
+    }
+  }
+
+  async function shortOrder(quantity: number): Promise<{ id: string }> {
+    const res = await as(managerCookie)
+      .post('/v1/orders')
+      .send({
+        locationId: mainLocationId,
+        customerId,
+        fulfillmentType: 'pickup',
+        confirm: true,
+        lines: [{ variantId: atVariantId, quantity }],
+      });
+    expect(res.status).toBe(201);
+    return { id: res.body.id };
+  }
+
+  it('setup: fixture variant stocked only at the warehouse; schedule days = 2', async () => {
+    const sql2 = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    const db = drizzle(sql2);
+    try {
+      const [p] = await db
+        .insert(schema.products)
+        .values({ businessId, sku: 'AT-BED', name: 'Auto Transfer Bed' })
+        .returning();
+      const [v] = await db
+        .insert(schema.productVariants)
+        .values({ businessId, productId: p!.id, sku: 'AT-BED-V1', priceCents: 40000 })
+        .returning();
+      atVariantId = v!.id;
+      await db.insert(schema.inventoryLevels).values({
+        businessId,
+        variantId: atVariantId,
+        locationId: warehouseLocationId,
+        onHand: 10,
+        reserved: 0,
+      });
+    } finally {
+      await sql2.end({ timeout: 5 });
+    }
+
+    const customer = await as(managerCookie)
+      .post('/v1/customers')
+      .send({ firstName: 'Auto', lastName: 'Transfer' });
+    expect(customer.status).toBe(201);
+    customerId = customer.body.id;
+
+    const settings = await as(managerCookie)
+      .patch('/v1/business/settings')
+      .send({ ops: { autoScheduleDays: 2 } });
+    expect(settings.status).toBe(200);
+  });
+
+  it('a confirmed short order writes ONE draft auto transfer from the stocked store', async () => {
+    const order = await shortOrder(3);
+
+    const transfers = await autoTransfersFor(order.id);
+    expect(transfers).toHaveLength(1);
+    const t = transfers[0]!;
+    expect(t.transferType).toBe('auto');
+    expect(t.status).toBe('draft');
+    expect(t.fromLocationId).toBe(warehouseLocationId);
+    expect(t.toLocationId).toBe(mainLocationId);
+
+    // XFR-053: scheduled = today + 2 + 1, every weekday allowed.
+    const expected = new Date();
+    expected.setHours(12, 0, 0, 0);
+    expected.setDate(expected.getDate() + 3);
+    expect(t.scheduledFor).toBe(expected.toISOString().slice(0, 10));
+
+    const sql2 = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    const db = drizzle(sql2);
+    try {
+      const lines = await db
+        .select()
+        .from(schema.stockTransferLines)
+        .where(eq(schema.stockTransferLines.transferId, t.id));
+      expect(lines).toHaveLength(1);
+      expect(lines[0]!.variantId).toBe(atVariantId);
+      expect(lines[0]!.quantityShipped).toBe(3);
+    } finally {
+      await sql2.end({ timeout: 5 });
+    }
+
+    // Re-running the reservation must not double-generate (dedupe against
+    // the open auto transfer).
+    const again = await as(managerCookie).post(`/v1/orders/${order.id}/reserve`).send({});
+    expect(again.status).toBe(201);
+    expect(await autoTransfersFor(order.id)).toHaveLength(1);
+  });
+
+  it('blank Auto Schedule Days disables the feature entirely (XFR-052)', async () => {
+    await as(managerCookie)
+      .patch('/v1/business/settings')
+      .send({ ops: { autoScheduleDays: null } })
+      .expect(200);
+    const order = await shortOrder(2);
+    expect(await autoTransfersFor(order.id)).toHaveLength(0);
+  });
+
+  it('a destination with no replenishment days checked skips with a warning, never loops', async () => {
+    await as(managerCookie)
+      .patch('/v1/business/settings')
+      .send({ ops: { autoScheduleDays: 1 } })
+      .expect(200);
+    await as(managerCookie)
+      .patch(`/v1/business/locations/${mainLocationId}`)
+      .send({ replenishmentDays: [] })
+      .expect(200);
+
+    const order = await shortOrder(1);
+    expect(await autoTransfersFor(order.id)).toHaveLength(0);
+
+    const exceptions = await as(managerCookie).get('/v1/exceptions?type=auto_transfer_skipped');
+    expect(exceptions.status).toBe(200);
+    expect(exceptions.body.length).toBeGreaterThan(0);
+
+    // Restore: all days again.
+    await as(managerCookie)
+      .patch(`/v1/business/locations/${mainLocationId}`)
+      .send({ replenishmentDays: null })
+      .expect(200);
+  });
+});
