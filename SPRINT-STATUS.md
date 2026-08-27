@@ -2197,3 +2197,35 @@ items are owner-side only:
 - Deferred pagination mediums (noted in the sweep section above):
   /v1/inventory/levels full-location fetch, deliveries week view,
   commissions report caps, admin templates, marketing tag ordering.
+
+## Users & Security docs domain — §10 kickoff (2026-08-27)
+
+Owner uploaded `HANDOFF-users-and-security.md` (STORIS Users, Roles &
+Security — first content domain for the STORIS docs system). Executed its
+§10 kickoff exactly (5 deliverables, then stop):
+
+- `docs/HANDOFF-users-and-security.md` — handoff committed verbatim
+  (prettier-ignored like the other packs).
+- `docs/settings/general-system-control-settings.md` — security-relevant
+  fields from §2/§3; every value TBD — unverified, status: draft.
+- `docs/processes/user-access-model.md` (the eight layers) +
+  `docs/processes/login-chain.md`, both ending with the required
+  "Settings that control this process" section.
+- `docs/erp/system-administration/user-settings/create-a-user.md` —
+  field-per-entry across all four tabs in screen order (37 entries), each
+  carrying a Documented / "Unverified — needs test in Learn" status.
+- `docs/decisions/d1…d10` — ten ADR stubs, status: proposed, each with
+  decision, recommended default, and verify-first list.
+- `docs/open-questions.md` — the five source contradictions, each with the
+  exact test and environment.
+
+**Divergence, flagged:** the paired spec `docs/STORIS-DOCS-HANDOFF.md`
+(authoring rules, P0 scaffold, six scripts) was never uploaded to this
+repo. Conventions were inferred from the handoff itself and enforced by an
+interim validator, `docs/scripts/validate-user-security-docs.mjs`
+(frontmatter, required sections, ADR count/status, per-field status lines,
+link integrity — exit 0). **Ops:** owner to upload STORIS-DOCS-HANDOFF.md
+so frontmatter/scripts can be retrofitted to the real spec before Phase 2.
+Per the handoff: run the five §7 Learn tests before authoring more
+articles; remaining screen articles and the role matrix are deliberately
+NOT started.
