@@ -1142,3 +1142,140 @@ describe('FIFO costing — PO receipts create layers, un-receive backs them out'
     });
   });
 });
+
+describe('Nightly batch runner (EOD-001 / JOB-002)', () => {
+  let nightlyVendorId = '';
+  let managedVariantId = '';
+  let overduePoId = '';
+  const businessDate = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
+
+  function asOwner() {
+    return {
+      get: (url: string) =>
+        request(app.getHttpServer())
+          .get(url)
+          .set('Cookie', ownerCookie)
+          .set('X-Business-Id', businessId),
+      post: (url: string) =>
+        request(app.getHttpServer())
+          .post(url)
+          .set('Cookie', ownerCookie)
+          .set('X-Business-Id', businessId),
+      patch: (url: string) =>
+        request(app.getHttpServer())
+          .patch(url)
+          .set('Cookie', ownerCookie)
+          .set('X-Business-Id', businessId),
+    };
+  }
+
+  it('the step list is declared, ordered, and nothing is destructive', async () => {
+    const res = await asOwner().get('/v1/jobs');
+    expect(res.status).toBe(200);
+    const jobs = res.body as { id: string; order: number; destructive: boolean }[];
+    expect(jobs.map((j) => j.id)).toEqual([
+      'po_overdue_sweep',
+      'auto_replenishment',
+      'transfer_aging',
+    ]);
+    expect(jobs.every((j) => j.destructive === false)).toBe(true);
+  });
+
+  it('a run drafts replenishment POs, flags overdue POs, and is idempotent per business date', async () => {
+    // Fixtures: a managed variant at zero stock + an overdue open PO.
+    const vendor = await asOwner().post('/v1/vendors').send({ name: 'Nightly Vendor Co' });
+    nightlyVendorId = vendor.body.id;
+    const product = await asOwner()
+      .post('/v1/products')
+      .send({
+        name: 'Nightly Mattress',
+        sku: 'NIGHTLY',
+        variants: [{ sku: 'NIGHTLY-1', priceCents: 79900, costCents: 25000 }],
+      });
+    managedVariantId = product.body.variants[0].id;
+    await asOwner()
+      .patch(`/v1/products/variants/${managedVariantId}/reorder`)
+      .send({ reorderPoint: 4, reorderQty: 6, preferredVendorId: nightlyVendorId })
+      .expect(200);
+
+    const overdue = await asOwner()
+      .post('/v1/purchase-orders')
+      .send({
+        vendorId: nightlyVendorId,
+        locationId,
+        expectedAt: '2026-08-01',
+        lines: [{ variantId: variantAId, quantity: 2, unitCostCents: 100 }],
+      });
+    expect(overdue.status).toBe(201);
+    overduePoId = overdue.body.id;
+
+    await asOwner()
+      .patch('/v1/business/settings')
+      .send({ ops: { autoReplenishmentEnabled: true } })
+      .expect(200);
+
+    const run = await asOwner().post('/v1/jobs/run').send({ businessDate });
+    expect(run.status).toBe(201);
+    expect(run.body.businessDate).toBe(businessDate);
+    const statuses = Object.fromEntries(
+      (run.body.results as { jobId: string; status: string }[]).map((r) => [r.jobId, r.status]),
+    );
+    expect(statuses.po_overdue_sweep).toBe('succeeded');
+    expect(statuses.auto_replenishment).toBe('succeeded');
+    expect(statuses.transfer_aging).toBe('succeeded');
+
+    // The replenishment draft exists for our vendor with the netted line.
+    const pos = await asOwner().get('/v1/purchase-orders?status=draft');
+    const drafts = (pos.body as { id: string; vendorId: string; status: string }[]).filter(
+      (p) => p.vendorId === nightlyVendorId,
+    );
+    expect(drafts).toHaveLength(1);
+    const detail = await asOwner().get(`/v1/purchase-orders/${drafts[0]!.id}`);
+    const line = detail.body.lines.find(
+      (l: { variantId: string }) => l.variantId === managedVariantId,
+    );
+    expect(line).toBeTruthy();
+    expect(line.quantityOrdered).toBe(6);
+    expect(line.unitCostCents).toBe(25000);
+    expect(detail.body.notes).toMatch(/Auto-replenishment/);
+
+    // The overdue PO landed on the exception register.
+    const exceptions = await asOwner().get('/v1/exceptions?type=po_overdue');
+    expect(
+      (exceptions.body as { entityId: string | null }[]).some((e) => e.entityId === overduePoId),
+    ).toBe(true);
+
+    // Second run for the same date: every step reports already_ran and
+    // no second draft appears — re-running is always safe.
+    const again = await asOwner().post('/v1/jobs/run').send({ businessDate });
+    expect(
+      (again.body.results as { status: string }[]).every((r) => r.status === 'already_ran'),
+    ).toBe(true);
+    const pos2 = await asOwner().get('/v1/purchase-orders?status=draft');
+    expect(
+      (pos2.body as { vendorId: string }[]).filter((p) => p.vendorId === nightlyVendorId),
+    ).toHaveLength(1);
+
+    // The run report shows every step with duration and records.
+    const runs = await asOwner().get(`/v1/jobs/runs?date=${businessDate}`);
+    expect(runs.status).toBe(200);
+    expect((runs.body as { jobId: string }[]).length).toBe(3);
+  });
+
+  it('with the gate off, auto_replenishment succeeds as a no-op', async () => {
+    await asOwner()
+      .patch('/v1/business/settings')
+      .send({ ops: { autoReplenishmentEnabled: null } })
+      .expect(200);
+    const priorDate = new Date(Date.now() - 2 * 86_400_000).toISOString().slice(0, 10);
+    const run = await asOwner().post('/v1/jobs/run').send({ businessDate: priorDate });
+    const repl = (run.body.results as { jobId: string; status: string }[]).find(
+      (r) => r.jobId === 'auto_replenishment',
+    );
+    expect(repl?.status).toBe('succeeded');
+    const pos = await asOwner().get('/v1/purchase-orders?status=draft');
+    expect(
+      (pos.body as { vendorId: string }[]).filter((p) => p.vendorId === nightlyVendorId),
+    ).toHaveLength(1); // still just the one from the earlier run
+  });
+});

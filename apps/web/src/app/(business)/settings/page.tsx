@@ -30,6 +30,7 @@ interface OpsSettings {
   reserveBasis?: 'delivery_date' | 'order_date' | null;
   returnWindowDays?: number | null;
   autoScheduleDays?: number | null;
+  autoReplenishmentEnabled?: boolean | null;
   deliveryDailyPieceCap?: number | null;
   deliveryDailyCapacityUnits?: number | null;
   priceVariance?: {
@@ -258,6 +259,7 @@ function OpsCard({ settings, onSaved }: { settings: Settings; onSaved: (s: Setti
       body.returnWindowDays = rtnWindow === '' ? null : Number(rtnWindow);
       const autoSched = String(data.get('autoScheduleDays') ?? '').trim();
       body.autoScheduleDays = autoSched === '' ? null : Number(autoSched);
+      body.autoReplenishmentEnabled = data.get('autoReplenishmentEnabled') === 'on' ? true : null;
       const capBal = String(data.get('maxBalanceForTicket') ?? '').trim();
       body.maxBalanceForTicketPrintCents = capBal === '' ? null : Math.round(Number(capBal) * 100);
       const t1 = String(data.get('pvTier1Pct') ?? '').trim();
@@ -414,6 +416,16 @@ function OpsCard({ settings, onSaved }: { settings: Settings; onSaved: (s: Setti
           defaultValue={ops.autoScheduleDays ?? ''}
           style={{ width: '100%' }}
         />
+      </Field>
+      <Field label="Nightly auto-replenishment POs">
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
+          <input
+            type="checkbox"
+            name="autoReplenishmentEnabled"
+            defaultChecked={Boolean(ops.autoReplenishmentEnabled)}
+          />
+          Draft a PO per vendor overnight for items at or below their reorder point
+        </label>
       </Field>
       <Field label="Price variance — no-friction tier (%; blank = 5)">
         <Input

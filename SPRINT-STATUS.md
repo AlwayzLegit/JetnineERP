@@ -1823,3 +1823,53 @@ multi-currency, no region/district scopes** (D2/D4).
   lint 0 · test 0 · build 0 · prettier 0.
 
 **The five-item ranked backlog from the FAQ audit is now complete.**
+
+## Checkpoint 15 — FIFO costing live; ranked backlog COMPLETE (2026-08-27)
+
+PR #43 squash-merged on green CI, deploy branch rolled (c4d2f8f), Render
+deploy dep-da806bhsrm7s73dnroug live — boot log verified `55/55 applied,
+head=0054_fifo_costing; this run applied 0054`. Sprint branch restarted
+from main.
+
+All five FAQ-audit backlog items are now shipped, deployed, and
+boot-verified in one day: physical inventory (0051) · PO lifecycle
+corrections · return windows + no-original returns (0052) · auto
+replenishment transfers (0053) · FIFO costing (0054). Owner decisions
+D1/D2/D4/D10 + pricing-parity divergence recorded above.
+
+Open threads: sysadmin-pack follow-ups beyond the descopes (settings
+registry, audit-stream and batch-runner substrate designs in
+docs/erp-sysadmin/03–05 — unscheduled, awaiting owner priorities); the two
+needs-counsel items (TCPA consent, erasure vs warranty retention); standing
+ops items (manager invite expires 2026-08-29 17:53Z, Render repo URL,
+owner password rotation, DMARC). To make costing accurate on day one:
+keep variant catalog costs current — they price the opening layers.
+
+## EOD batch runner shipped (2026-08-27)
+
+EOD-001 (P0 cross-cutting rollup) built to the sysadmin pack's JOB-002 spec —
+deliberately the opposite of STORIS's Generate Daily Reports:
+
+- **Declared step registry** the operator can see (`GET /v1/jobs`), each step
+  with explicit order, dependencies, and a destructive flag (none are).
+- **`job_runs` log (migration 0055):** one row per (business, job, business
+  date) — status, duration, records affected, detail, error. The unique key
+  IS the idempotency: re-running a date never repeats a succeeded step.
+- **Explicit business dates:** the hourly scheduler fires after 2am
+  business-local (JOB-003: never at the date boundary), and catch-up runs
+  ONE PASS PER MISSED DATE (7-day window) — days are never collapsed.
+- **First registered jobs:** `po_overdue_sweep` (open POs past expected date
+  → warning exceptions, deduped) · `auto_replenishment` (REPL-040: drafts one
+  PO per preferred vendor for variants at/below reorder point, netting out
+  quantities already on open POs; gated on new `ops.autoReplenishmentEnabled`,
+  off by default; drafts only — a buyer reviews and places, same convention
+  as auto transfers) · `transfer_aging` (in-transit > 3 days → exceptions).
+- Shared `computeReorderSuggestions` extracted from the PO controller so the
+  interactive endpoint and the nightly job can't drift.
+- Web: **Nightly jobs** page (nav → Insights) — the registry, the morning run
+  report, and a safe "Run now" for any business date. Settings gains the
+  auto-replenishment checkbox.
+- Tests: purchasing.int.spec 36→39 (registry shape, run drafts the netted
+  replenishment PO + flags the overdue PO + writes the run report, per-date
+  idempotency with no duplicate drafts, gate-off no-op). Gates by exit code:
+  typecheck 0 · lint 0 · test 0 · build 0 · prettier 0.

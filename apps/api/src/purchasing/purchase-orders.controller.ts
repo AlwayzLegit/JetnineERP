@@ -15,6 +15,7 @@ import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { schema } from '@jetnine/db';
 import { AuditService } from '../audit/audit.service';
+import { computeReorderSuggestions } from './replenishment';
 import { CostingService } from '../costing/costing.service';
 import { ExceptionsService } from '../controls/exceptions.service';
 import { CurrentTenant, CurrentUser } from '../auth/current-user.decorator';
@@ -222,79 +223,9 @@ export class PurchaseOrdersController {
       }[];
     }[];
   }> {
-    const rows = await this.db
-      .select({
-        variantId: schema.productVariants.id,
-        productName: schema.products.name,
-        variantName: schema.productVariants.name,
-        sku: schema.productVariants.sku,
-        vendorSku: schema.productVariants.vendorSku,
-        reorderPoint: schema.productVariants.reorderPoint,
-        reorderQty: schema.productVariants.reorderQty,
-        costCents: schema.productVariants.costCents,
-        vendorId: schema.productVariants.preferredVendorId,
-        vendorName: schema.vendors.name,
-        available: sql<number>`COALESCE(SUM(${schema.inventoryLevels.onHand} - ${schema.inventoryLevels.reserved}), 0)::int`,
-      })
-      .from(schema.productVariants)
-      .innerJoin(schema.products, eq(schema.products.id, schema.productVariants.productId))
-      .leftJoin(
-        schema.inventoryLevels,
-        eq(schema.inventoryLevels.variantId, schema.productVariants.id),
-      )
-      .leftJoin(schema.vendors, eq(schema.vendors.id, schema.productVariants.preferredVendorId))
-      .where(
-        and(
-          sql`${schema.productVariants.reorderPoint} IS NOT NULL`,
-          eq(schema.productVariants.isActive, true),
-          eq(schema.products.isActive, true),
-        ),
-      )
-      .groupBy(
-        schema.productVariants.id,
-        schema.products.name,
-        schema.productVariants.name,
-        schema.productVariants.sku,
-        schema.productVariants.vendorSku,
-        schema.productVariants.reorderPoint,
-        schema.productVariants.reorderQty,
-        schema.productVariants.costCents,
-        schema.productVariants.preferredVendorId,
-        schema.vendors.name,
-      )
-      .having(
-        sql`COALESCE(SUM(${schema.inventoryLevels.onHand} - ${schema.inventoryLevels.reserved}), 0) <= ${schema.productVariants.reorderPoint}`,
-      );
-
-    const byVendor = new Map<
-      string,
-      { vendorId: string | null; vendorName: string | null; lines: unknown[] }
-    >();
-    for (const r of rows) {
-      const point = r.reorderPoint!;
-      const suggestedQty = r.reorderQty ?? Math.max(1, point * 2 - r.available);
-      const key = r.vendorId ?? 'unassigned';
-      const group = byVendor.get(key) ?? {
-        vendorId: r.vendorId ?? null,
-        vendorName: r.vendorName ?? null,
-        lines: [],
-      };
-      group.lines.push({
-        variantId: r.variantId,
-        productName: r.productName,
-        variantName: r.variantName,
-        sku: r.sku,
-        vendorSku: r.vendorSku,
-        available: r.available,
-        reorderPoint: point,
-        suggestedQty,
-        unitCostCents: r.costCents ?? null,
-      });
-      byVendor.set(key, group);
-    }
-    const vendors = [...byVendor.values()].sort((a, b) =>
-      (a.vendorName ?? 'zzz').localeCompare(b.vendorName ?? 'zzz'),
-    ) as Awaited<ReturnType<PurchaseOrdersController['reorderSuggestions']>>['vendors'];
+    const vendors = (await computeReorderSuggestions(this.db)) as Awaited<
+      ReturnType<PurchaseOrdersController['reorderSuggestions']>
+    >['vendors'];
     return { vendors };
   }
 
