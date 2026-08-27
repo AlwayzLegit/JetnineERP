@@ -885,3 +885,195 @@ describe('J2/J3 — floor samples + serial pieces on transfers', () => {
     expect(back.body.floorSample).toBe(1);
   });
 });
+
+describe('As-Is consolidation intake + H2 RTV unwind', () => {
+  let asVariantId = '';
+  let asSerialId = '';
+  let transferId = '';
+  let pieceIds: string[] = [];
+
+  function asManager() {
+    return {
+      get: (url: string) =>
+        request(app.getHttpServer())
+          .get(url)
+          .set('Cookie', managerCookie)
+          .set('X-Business-Id', businessId),
+      post: (url: string) =>
+        request(app.getHttpServer())
+          .post(url)
+          .set('Cookie', managerCookie)
+          .set('X-Business-Id', businessId),
+    };
+  }
+
+  async function withDb<T>(fn: (db: ReturnType<typeof drizzle>) => Promise<T>): Promise<T> {
+    const sql2 = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    try {
+      return await fn(drizzle(sql2));
+    } finally {
+      await sql2.end({ timeout: 5 });
+    }
+  }
+
+  it('setup: damaged-goods fixture with two units + a serial at the warehouse', async () => {
+    await withDb(async (db) => {
+      const [p] = await db
+        .insert(schema.products)
+        .values({ businessId, sku: 'ASIS-BED', name: 'As-Is Fixture Bed' })
+        .returning();
+      const [v] = await db
+        .insert(schema.productVariants)
+        .values({ businessId, productId: p!.id, sku: 'ASIS-BED-V1', priceCents: 50000 })
+        .returning();
+      asVariantId = v!.id;
+      await db.insert(schema.inventoryLevels).values({
+        businessId,
+        variantId: asVariantId,
+        locationId: warehouseLocationId,
+        onHand: 2,
+        reserved: 0,
+      });
+      const [su] = await db
+        .insert(schema.serialUnits)
+        .values({
+          businessId,
+          variantId: asVariantId,
+          locationId: warehouseLocationId,
+          serial: 'SN-ASIS-1',
+        })
+        .returning({ id: schema.serialUnits.id });
+      asSerialId = su!.id;
+    });
+  });
+
+  it('an as_is transfer stages received units in review, not sellable stock', async () => {
+    const created = await asManager()
+      .post('/v1/stock-transfers')
+      .send({
+        fromLocationId: warehouseLocationId,
+        toLocationId: mainLocationId,
+        transferType: 'as_is',
+        ship: true,
+        lines: [{ variantId: asVariantId, quantity: 2, serialIds: [asSerialId] }],
+      });
+    expect(created.status).toBe(201);
+    transferId = created.body.id;
+
+    const received = await asManager()
+      .post(`/v1/stock-transfers/${transferId}/receive`)
+      .send({ lines: [{ lineId: created.body.lines[0].id, quantity: 2 }] });
+    expect(received.status).toBe(201);
+    expect(received.body.status).toBe('received');
+
+    // Nothing sellable landed at the destination…
+    const levels = await asManager().get(`/v1/inventory/levels?locationId=${mainLocationId}`);
+    const row = (levels.body as { variantId: string; onHand: number }[]).find(
+      (l) => l.variantId === asVariantId,
+    );
+    expect(row?.onHand ?? 0).toBe(0);
+
+    // …the origin still shows the outflow…
+    const origin = await asManager().get(`/v1/inventory/levels?locationId=${warehouseLocationId}`);
+    const orow = (origin.body as { variantId: string; onHand: number }[]).find(
+      (l) => l.variantId === asVariantId,
+    );
+    expect(orow?.onHand ?? 0).toBe(0);
+
+    // …and the units wait in the as-is review queue, one piece each.
+    const queue = await asManager().get('/v1/as-is?status=pending_review');
+    const pieces = (
+      queue.body as {
+        id: string;
+        variantId: string;
+        referenceType: string | null;
+        referenceId: string | null;
+        pieceNumber: string | null;
+        source: string;
+        locationId: string;
+      }[]
+    ).filter((r) => r.referenceType === 'stock_transfer' && r.referenceId === transferId);
+    expect(pieces).toHaveLength(2);
+    pieceIds = pieces.map((r) => r.id);
+    for (const piece of pieces) {
+      expect(piece.variantId).toBe(asVariantId);
+      expect(piece.source).toBe('transfer');
+      expect(piece.locationId).toBe(mainLocationId);
+      expect(piece.pieceNumber).toMatch(/^AS-/);
+    }
+
+    await withDb(async (db) => {
+      // The named serial is staged, not sellable.
+      const [su] = await db
+        .select()
+        .from(schema.serialUnits)
+        .where(eq(schema.serialUnits.id, asSerialId));
+      expect(su!.status).toBe('returned');
+      expect(su!.locationId).toBe(mainLocationId);
+      // No transfer_in ledger entry was written for an as_is receive.
+      const movements = await db
+        .select()
+        .from(schema.inventoryMovements)
+        .where(
+          and(
+            eq(schema.inventoryMovements.referenceId, transferId),
+            eq(schema.inventoryMovements.reason, 'transfer_in'),
+          ),
+        );
+      expect(movements).toHaveLength(0);
+    });
+  });
+
+  it('a staged piece restocks through the normal as-is review', async () => {
+    const reviewed = await asManager()
+      .post(`/v1/as-is/${pieceIds[0]}/review`)
+      .send({ action: 'restock' });
+    expect(reviewed.status).toBe(201);
+    expect(reviewed.body.status).toBe('restocked');
+
+    const levels = await asManager().get(`/v1/inventory/levels?locationId=${mainLocationId}`);
+    const row = (levels.body as { variantId: string; onHand: number }[]).find(
+      (l) => l.variantId === asVariantId,
+    );
+    expect(row?.onHand).toBe(1);
+  });
+
+  it('H2: a wrong-vendor RTV unwinds — piece back to review, credit voided', async () => {
+    const sent = await asManager()
+      .post(`/v1/as-is/${pieceIds[1]}/review`)
+      .send({ action: 'vendor_return', raNumber: 'RA-WRONG-1', expectedCreditCents: 12500 });
+    expect(sent.status).toBe(201);
+    expect(sent.body.status).toBe('vendor_return');
+    expect(sent.body.vendorCreditStatus).toBe('open');
+
+    const reopened = await asManager().post(`/v1/as-is/${pieceIds[1]}/reopen`).send({
+      notes: 'Sent to the wrong vendor — pulling it back',
+    });
+    expect(reopened.status).toBe(201);
+    expect(reopened.body.status).toBe('pending_review');
+    expect(reopened.body.vendorRaNumber).toBeNull();
+    expect(reopened.body.vendorCreditCents).toBeNull();
+    expect(reopened.body.vendorCreditStatus).toBeNull();
+
+    // Reopening a piece that is not a vendor_return is refused.
+    const again = await asManager().post(`/v1/as-is/${pieceIds[1]}/reopen`).send({});
+    expect(again.status).toBe(400);
+    expect(again.body.message).toMatch(/vendor_return/);
+  });
+
+  it('H2: a received credit blocks the unwind — reverse with the vendor first', async () => {
+    const resent = await asManager()
+      .post(`/v1/as-is/${pieceIds[1]}/review`)
+      .send({ action: 'vendor_return', raNumber: 'RA-RIGHT-1', expectedCreditCents: 12500 });
+    expect(resent.status).toBe(201);
+    await withDb(async (db) => {
+      await db
+        .update(schema.asIsItems)
+        .set({ vendorCreditStatus: 'received' })
+        .where(eq(schema.asIsItems.id, pieceIds[1]!));
+    });
+    const blocked = await asManager().post(`/v1/as-is/${pieceIds[1]}/reopen`).send({});
+    expect(blocked.status).toBe(400);
+    expect(blocked.body.message).toMatch(/received/);
+  });
+});

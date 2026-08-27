@@ -131,6 +131,7 @@ export const serialUnits = pgTable(
       .references(() => locations.id, { onDelete: 'restrict' }),
     serial: text('serial').notNull(),
     /** 'in_stock' | 'committed' | 'sold' | 'in_service' | 'returned'
+     *  (back from a customer, or staged in as-is review)
      *  | 'in_transit' (riding a transfer, J3) | 'floor_sample' (J2). */
     status: text('status').notNull().default('in_stock'),
     orderLineId: uuid('order_line_id'),
