@@ -35,6 +35,34 @@ interface OrderPaymentsDayRow {
   amountCents: number;
   count: number;
 }
+interface GiftCardLiabilityRow {
+  code: string;
+  status: string;
+  customerName: string | null;
+  issuedAt: string;
+  expiresAt: string | null;
+  initialCents: number;
+  remainingCents: number;
+}
+
+interface GiftCardLiability {
+  generatedAt: string;
+  includeExpired: boolean;
+  cardCount: number;
+  outstandingCents: number;
+  rows: GiftCardLiabilityRow[];
+}
+
+interface DeliveryDateChangeRow {
+  at: string;
+  action: string;
+  deliveryId: string | null;
+  orderNumber: string | null;
+  actorEmail: string | null;
+  fromDate: string | null;
+  toDate: string | null;
+}
+
 interface JeopardyRow {
   orderId: string;
   orderNumber: string;
@@ -1414,6 +1442,154 @@ export class ReportsController {
       return;
     }
     return report;
+  }
+
+  /**
+   * Outstanding gift-card liability (catalog 76): every card still
+   * carrying a balance, with the total the business owes. Cards are
+   * business-wide (no location dimension), so store scope does not
+   * apply; the figure is financial, so it sits behind
+   * reports.financial.view.
+   */
+  @Get('gift-cards/liability')
+  @RequirePermission('reports.financial.view')
+  async giftCardLiability(
+    @CurrentTenant() tenant: RequestTenantContext,
+    @Query('includeExpired') includeExpiredStr?: string,
+    @Query('format') format?: string,
+    @Res({ passthrough: true }) res?: Response,
+  ): Promise<GiftCardLiability | void> {
+    const includeExpired = includeExpiredStr === 'true';
+    const statuses = includeExpired ? ['active', 'expired'] : ['active'];
+    const rows = await this.db
+      .select({
+        code: schema.giftCards.code,
+        status: schema.giftCards.status,
+        customerName: sql<
+          string | null
+        >`nullif(trim(concat(${schema.customers.firstName}, ' ', ${schema.customers.lastName})), '')`,
+        issuedAt: schema.giftCards.createdAt,
+        expiresAt: schema.giftCards.expiresAt,
+        initialCents: schema.giftCards.initialBalanceCents,
+        remainingCents: schema.giftCards.currentBalanceCents,
+      })
+      .from(schema.giftCards)
+      .leftJoin(schema.customers, eq(schema.customers.id, schema.giftCards.issuedForCustomerId))
+      .where(
+        and(
+          inArray(schema.giftCards.status, statuses),
+          sql`${schema.giftCards.currentBalanceCents} > 0`,
+        ),
+      )
+      .orderBy(desc(schema.giftCards.currentBalanceCents));
+
+    const out: GiftCardLiability = {
+      generatedAt: new Date().toISOString(),
+      includeExpired,
+      cardCount: rows.length,
+      outstandingCents: rows.reduce((a, r) => a + r.remainingCents, 0),
+      rows: rows.map((r) => ({
+        ...r,
+        issuedAt: r.issuedAt.toISOString().slice(0, 10),
+        expiresAt: r.expiresAt ? r.expiresAt.toISOString().slice(0, 10) : null,
+      })),
+    };
+    if (format === 'csv') {
+      requireExport(tenant);
+      const header = `# includeExpired=${includeExpired} generated=${out.generatedAt}\n`;
+      sendCsv(
+        res!,
+        `gift-card-liability-${new Date().toISOString().slice(0, 10)}.csv`,
+        header +
+          toCsv(
+            ['code', 'status', 'customer', 'issued', 'expires', 'initial_cents', 'remaining_cents'],
+            out.rows.map((r) => [
+              r.code,
+              r.status,
+              r.customerName,
+              r.issuedAt,
+              r.expiresAt,
+              r.initialCents,
+              r.remainingCents,
+            ]),
+          ),
+      );
+      return;
+    }
+    return out;
+  }
+
+  /**
+   * Delivery date changes (catalog 86 — Sales Reservation
+   * Reassignments): the change log for delivery commitments, read from
+   * the audit trail (schedule / update / cancel events), with the
+   * before/after dates when the diff captured them.
+   */
+  @Get('delivery-date-changes')
+  @RequirePermission('deliveries.view')
+  async deliveryDateChanges(
+    @CurrentTenant() tenant: RequestTenantContext,
+    @Query('days') daysStr?: string,
+  ): Promise<{ days: number; rows: DeliveryDateChangeRow[] }> {
+    const days = Math.min(Math.max(Number(daysStr) || 30, 1), 365);
+    const since = new Date();
+    since.setUTCDate(since.getUTCDate() - days);
+
+    const events = await this.db
+      .select({
+        at: schema.auditLogs.createdAt,
+        action: schema.auditLogs.action,
+        targetId: schema.auditLogs.targetId,
+        changesJson: schema.auditLogs.changesJson,
+        actorEmail: schema.users.email,
+      })
+      .from(schema.auditLogs)
+      .leftJoin(schema.users, eq(schema.users.id, schema.auditLogs.actorUserId))
+      .where(
+        and(
+          inArray(schema.auditLogs.action, [
+            'delivery.schedule',
+            'delivery.update',
+            'delivery.cancel',
+          ]),
+          gte(schema.auditLogs.createdAt, since),
+        ),
+      )
+      .orderBy(desc(schema.auditLogs.createdAt))
+      .limit(500);
+
+    const deliveryIds = [
+      ...new Set(events.map((e) => e.targetId).filter((x): x is string => Boolean(x))),
+    ];
+    const orders = deliveryIds.length
+      ? await this.db
+          .select({ deliveryId: schema.deliveries.id, orderNumber: schema.orders.number })
+          .from(schema.deliveries)
+          .innerJoin(schema.orders, eq(schema.orders.id, schema.deliveries.orderId))
+          .where(inArray(schema.deliveries.id, deliveryIds))
+      : [];
+    const orderBy = new Map(orders.map((o) => [o.deliveryId, o.orderNumber]));
+
+    const rows: DeliveryDateChangeRow[] = events.map((e) => {
+      const changes = (e.changesJson ?? {}) as {
+        before?: { scheduledDate?: unknown };
+        after?: { scheduledDate?: unknown };
+      };
+      const pick = (v: unknown) => (typeof v === 'string' ? v : null);
+      return {
+        at: e.at.toISOString(),
+        action: e.action,
+        deliveryId: e.targetId,
+        orderNumber: e.targetId ? (orderBy.get(e.targetId) ?? null) : null,
+        actorEmail: e.actorEmail,
+        fromDate: pick(changes.before?.scheduledDate),
+        toDate: pick(changes.after?.scheduledDate),
+      };
+    });
+    // Only date-relevant events: keep rows where a date moved, appeared,
+    // or the delivery was cancelled outright.
+    const filtered = rows.filter((r) => r.action === 'delivery.cancel' || r.toDate || r.fromDate);
+    return { days, rows: filtered };
   }
 }
 

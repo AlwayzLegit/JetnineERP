@@ -880,3 +880,81 @@ describe('Sales Views — delivery dates in jeopardy', () => {
     expect(numbers).not.toContain('JEO-1'); // promised +5, outside horizon
   });
 });
+
+describe('Sales Views — gift-card liability + delivery date changes', () => {
+  beforeAll(async () => {
+    const sql3 = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    const db = drizzle(sql3);
+    try {
+      await db.insert(schema.giftCards).values([
+        {
+          businessId,
+          code: 'LIAB-ACTIVE-1',
+          initialBalanceCents: 5000,
+          currentBalanceCents: 4000,
+          status: 'active',
+        },
+        {
+          businessId,
+          code: 'LIAB-ACTIVE-2',
+          initialBalanceCents: 2500,
+          currentBalanceCents: 2500,
+          status: 'active',
+        },
+        {
+          businessId,
+          code: 'LIAB-SPENT',
+          initialBalanceCents: 1000,
+          currentBalanceCents: 0,
+          status: 'redeemed',
+        },
+      ]);
+      await db.insert(schema.auditLogs).values({
+        businessId,
+        actorType: 'user',
+        action: 'delivery.update',
+        targetType: 'delivery',
+        targetId: '00000000-0000-4000-8000-000000000001',
+        changesJson: {
+          before: { scheduledDate: '2026-08-20' },
+          after: { scheduledDate: '2026-08-25' },
+        },
+      });
+    } finally {
+      await sql3.end({ timeout: 5 });
+    }
+  });
+
+  it('liability totals only cards still carrying a balance; financial-gated', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/v1/reports/gift-cards/liability')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .expect(200);
+    expect(res.body.cardCount).toBe(2);
+    expect(res.body.outstandingCents).toBe(6500);
+    const codes = res.body.rows.map((r: { code: string }) => r.code);
+    expect(codes).not.toContain('LIAB-SPENT');
+
+    await request(app.getHttpServer())
+      .get('/v1/reports/gift-cards/liability')
+      .set('Cookie', cashierCookie)
+      .set('X-Business-Id', businessId)
+      .expect(403);
+  });
+
+  it('delivery date change log surfaces before -> after from the audit trail', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/v1/reports/delivery-date-changes?days=7')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .expect(200);
+    const row = res.body.rows.find(
+      (r: { deliveryId: string | null }) => r.deliveryId === '00000000-0000-4000-8000-000000000001',
+    );
+    expect(row).toBeTruthy();
+    expect(row.fromDate).toBe('2026-08-20');
+    expect(row.toDate).toBe('2026-08-25');
+    expect(row.action).toBe('delivery.update');
+  });
+});
