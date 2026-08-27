@@ -1502,3 +1502,19 @@ notes the pack questions the shipped system already answers, and recommends trea
 the packs as post-cutover hardening backlog rather than a pre-cutover rebuild.
 No code changed for this. The STORIS-docs documentation-system handoff remains on
 hold (owner dismissed the kickoff question).
+
+## Email is LIVE — invite delivered end to end (2026-08-27)
+
+The HANDOFF §4a thread is closed. Chain executed in order: root `a-prompt.ai`
+verified in Resend (owner's GoDaddy records, all three green) → sending-scoped API
+key `jetnine-api-render-sending` (domain-restricted; token lives only in the Render
+env) → `RESEND_API_KEY` + `RESEND_FROM_EMAIL` (`LA Mattress ERP
+<notifications@a-prompt.ai>`) set on `srv-da4tua3m8hqs73apsflg` → deploy
+`dep-da7kc6fqj5pc73835nvg` live 20:03Z, boot log `Schema migrations: 49/49 applied…
+this run applied none`. **Proof:** owner clicked Resend invite for
+`me.lamattress@gmail.com` at 04:51:29Z — Render logged the POST 201 (595ms, real
+API call, no inviteLink fallback in the response), Resend shows the message
+**delivered** via SES on the verified domain. The key was set only after
+verification, so the copy-link path was never broken. Production email works for
+the first time. Ops next: accept that invite to create the manager/second account
+(expires 2026-08-29 17:53Z), which unblocks browser-QA step 2.
