@@ -2177,3 +2177,82 @@ confirmed fine), then a 10-agent fix workflow, gated centrally:
   sales 21 · controls 22 · closeout 4 · service-crm 8 · inventory 21 all
   green. Gates by exit code: typecheck 0 · lint 0 · test 0 · build 0 ·
   prettier 0.
+
+## Checkpoint 20 — pagination sweep LIVE; all 20 tasks complete (2026-08-27)
+
+PR #50 squash-merged on green CI (main 84eb3af), deploy branch rolled
+(3361981), Render deploy dep-da87ke2jnfac73d27fng live — boot log
+verified `Schema migrations: 60/60 applied,
+head=0059_exchange_partial_unique; this run applied none` (correct: no
+migration in this PR). Vercel production READY on main 84eb3af
+(dpl_8bD1fdMSqnWHafhydxAwRuTEzyW9), so the web side (Products,
+Inventory, and every converted list page) is serving the Load-more UI.
+
+All 20 tracked tasks complete. Queue holds nothing buildable. Remaining
+items are owner-side only:
+
+- Policy values awaiting owner: restocking fee %, E1 hold-at-entry,
+  return window, delivery auto-schedule days, auto-replenishment.
+- Needs-counsel privacy items: TCPA consent wording, retention/erasure.
+- Deferred pagination mediums (noted in the sweep section above):
+  /v1/inventory/levels full-location fetch, deliveries week view,
+  commissions report caps, admin templates, marketing tag ordering.
+
+## Users & Security docs domain — §10 kickoff (2026-08-27)
+
+Owner uploaded `HANDOFF-users-and-security.md` (STORIS Users, Roles &
+Security — first content domain for the STORIS docs system). Executed its
+§10 kickoff exactly (5 deliverables, then stop):
+
+- `docs/HANDOFF-users-and-security.md` — handoff committed verbatim
+  (prettier-ignored like the other packs).
+- `docs/settings/general-system-control-settings.md` — security-relevant
+  fields from §2/§3; every value TBD — unverified, status: draft.
+- `docs/processes/user-access-model.md` (the eight layers) +
+  `docs/processes/login-chain.md`, both ending with the required
+  "Settings that control this process" section.
+- `docs/erp/system-administration/user-settings/create-a-user.md` —
+  field-per-entry across all four tabs in screen order (37 entries), each
+  carrying a Documented / "Unverified — needs test in Learn" status.
+- `docs/decisions/d1…d10` — ten ADR stubs, status: proposed, each with
+  decision, recommended default, and verify-first list.
+- `docs/open-questions.md` — the five source contradictions, each with the
+  exact test and environment.
+
+**Divergence, flagged:** the paired spec `docs/STORIS-DOCS-HANDOFF.md`
+(authoring rules, P0 scaffold, six scripts) was never uploaded to this
+repo. Conventions were inferred from the handoff itself and enforced by an
+interim validator, `docs/scripts/validate-user-security-docs.mjs`
+(frontmatter, required sections, ADR count/status, per-field status lines,
+link integrity — exit 0). **Ops:** owner to upload STORIS-DOCS-HANDOFF.md
+so frontmatter/scripts can be retrofitted to the real spec before Phase 2.
+Per the handoff: run the five §7 Learn tests before authoring more
+articles; remaining screen articles and the role matrix are deliberately
+NOT started.
+
+## Sales Views & Reports pack — partial upload committed (2026-08-27)
+
+Owner uploaded 5 of the 7 files of the STORIS "Sales Views and Reports"
+handoff (139 articles: reporting platform, 18-picker shared components,
+customer 360 inquiries, operational inquiries). Committed verbatim to
+`docs/erp-sales-views/` (prettier-ignored). **Ops:** per the pack's own
+read-order, `05-report-catalog.md`, `06-cross-cutting-rules.md`, and
+`07-build-plan.md` (phasing, acceptance criteria, what to cut) were not
+uploaded — build does not start until they arrive.
+
+## Sales Views & Reports — pack complete + Phase 0 triage (2026-08-27)
+
+Owner uploaded 05-report-catalog, 06-cross-cutting-rules, 07-build-plan (zip
+verified byte-identical for 00–04). Pack complete at `docs/erp-sales-views/`.
+Authored `PHASE0-TRIAGE.md` answering the build plan's seven Phase 0
+decisions: one surface not two (decided by architecture); no Regional
+Processing port (RLS + permission catalog); fixed layouts, no panel registry
+in v1; reports stay pure reads (EOD never mutates via reports); contradictions
+mostly moot; ATP partial (reservation basis + PO dates, no full projection).
+63-report triage: ~13 keep (merged into fewer surfaces), 3 already covered
+(exceptions queue, physical inventory, void integrity), rest dropped per
+locked decisions (no in-house financing, no protection plans, no leads/CRM).
+**Ops — owner confirms before Phase 5:** the keep/drop table; per-user
+location/data scoping (self/store/all axis); marketing attribution wanted?;
+lightweight AP (vendor bill/credit) in scope for received-not-billed /
+RTV-not-credited queues?; ATP projection scope.
