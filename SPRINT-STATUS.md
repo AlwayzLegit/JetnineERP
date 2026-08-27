@@ -2041,3 +2041,30 @@ over the existing returns + order machinery (the pack's own instruction):
   credit at bind, same-customer guard. orders 68 · business 24 · sales 21
   re-run green. Gates by exit code: typecheck 0 · lint 0 · test 0 ·
   build 0 · prettier 0.
+
+## Sysadmin substrate — RPT-AUDIT + settings registry (2026-08-27)
+
+The "after" half of the owner's instruction (exchange pack, then sysadmin
+pack). Built the buildable substrate items from docs/erp-sysadmin:
+
+- **AUD-004 — denials are events**: PermissionGuard now writes every 403
+  to the audit stream (`permission.denied`, route + missing permissions,
+  explicit businessId through the root handle since guards run before the
+  RLS request context). Denial patterns are the pack's loss-prevention
+  signal.
+- **AUD-006 + AUD-003 — queryable, exportable, and reads leave traces**:
+  `GET /v1/audit-logs/export.csv` (same filters as the list, 10k cap,
+  newest-first) and the export itself is audited (`audit.export`). Export
+  button on the Audit page.
+- **SET-007 + SET-002 — registry as data**: `GET /v1/business/settings/
+registry` serves the declared registry (key, label, type, explicit
+  `nullMeans` for every setting — no implicit tri-state — class tags,
+  read-by). The Settings page renders a reference table from it.
+- Deliberate scale-down (recorded): no multi-scope resolver (SET-001) —
+  our settings model is deliberately flat per the owner-approved triage;
+  SET-004 already holds (no kill-switch exists); settings writes were
+  already audited (SET-006).
+- Tests: audit.int.spec 4→7 (denial event, CSV export + its audit trace,
+  registry completeness incl. TRISTATE tags); business 24, tenancy 8
+  re-run green. Gates by exit code: typecheck 0 · lint 0 · test 0 ·
+  build 0 · prettier 0.

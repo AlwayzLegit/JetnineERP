@@ -3,7 +3,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { Button, Card, EmptyState, Field, Input, LoadingRows, PageHeader } from '@/components/ui';
 import { useSession } from '@/lib/auth-client';
-import { api } from '@/lib/api';
+import { api, apiUrl } from '@/lib/api';
 
 interface AuditLogRow {
   id: string;
@@ -71,9 +71,31 @@ export default function AuditLogPage() {
       </Wrapper>
     );
 
+  const exportHref = (() => {
+    const params = new URLSearchParams();
+    if (filters.action) params.set('action', filters.action);
+    if (filters.actorUserId) params.set('actorUserId', filters.actorUserId);
+    if (filters.since) params.set('since', filters.since);
+    if (filters.until) params.set('until', filters.until);
+    const qs = params.toString();
+    return `${apiUrl}/v1/audit-logs/export.csv${qs ? `?${qs}` : ''}`;
+  })();
+
   return (
     <Wrapper>
-      <PageHeader title="Audit log" />
+      <PageHeader
+        title="Audit log"
+        actions={
+          <a
+            className="btn btn-secondary btn-sm"
+            href={exportHref}
+            title="Download the filtered stream as CSV (the export itself is audited)"
+            data-testid="audit-export"
+          >
+            Export CSV
+          </a>
+        }
+      />
       <FilterForm filters={filters} onChange={setFilters} onSubmit={(next) => fetchRows(next)} />
       {error && (
         <p data-testid="audit-error" style={{ color: 'var(--danger)' }}>

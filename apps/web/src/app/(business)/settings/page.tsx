@@ -216,7 +216,91 @@ export default function SettingsPage() {
       <ReasonCodesCard />
 
       <BrandingCard settings={settings} onSaved={setSettings} />
+
+      <RegistryReference />
     </div>
+  );
+}
+
+/**
+ * SET-007 (sysadmin pack): the settings registry rendered as reference —
+ * every setting the system reads, its type, and what BLANK means
+ * (SET-002: no implicit tri-state, ever). Served by the API so the doc
+ * can never drift from the code.
+ */
+function RegistryReference() {
+  const [rows, setRows] = useState<
+    | {
+        key: string;
+        label: string;
+        type: string;
+        nullMeans: string;
+        classTags: string[];
+        readBy: string;
+      }[]
+    | null
+  >(null);
+  const [failed, setFailed] = useState(false);
+
+  async function open() {
+    if (rows || failed) return;
+    try {
+      setRows(await api('/v1/business/settings/registry'));
+    } catch {
+      setFailed(true);
+    }
+  }
+
+  return (
+    <details style={{ marginTop: 24 }} data-testid="settings-registry" onToggle={() => void open()}>
+      <summary style={{ cursor: 'pointer', fontSize: 14, fontWeight: 500 }}>
+        Settings registry — what each setting does and what blank means
+      </summary>
+      {failed && (
+        <p style={{ color: 'var(--danger)', fontSize: 13 }}>Could not load the registry.</p>
+      )}
+      {rows && (
+        <div className="overflow-x-auto" style={{ marginTop: 8 }}>
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Setting</th>
+                <th>Type</th>
+                <th>Blank means</th>
+                <th>Read by</th>
+                <th>Class</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.key}>
+                  <td>
+                    {r.label}
+                    <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
+                      <code>{r.key}</code>
+                    </div>
+                  </td>
+                  <td>
+                    <code>{r.type}</code>
+                  </td>
+                  <td>{r.nullMeans}</td>
+                  <td style={{ fontSize: 12.5 }}>{r.readBy}</td>
+                  <td>
+                    {r.classTags.length > 0
+                      ? r.classTags.map((t) => (
+                          <span key={t} className="badge badge-warning" style={{ marginRight: 4 }}>
+                            {t}
+                          </span>
+                        ))
+                      : '—'}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </details>
   );
 }
 
