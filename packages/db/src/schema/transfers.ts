@@ -102,6 +102,14 @@ export const stockTransferLines = pgTable(
     quantityShipped: integer('quantity_shipped').notNull(),
     quantityReceived: integer('quantity_received').notNull().default(0),
     /**
+     * Transfers pack D18: total wanted on the line. When it exceeds
+     * quantity_shipped the difference is the HELD remainder — not
+     * shipped, not on the ticket. On full receipt the remainder rolls
+     * into a fresh draft transfer (D19: "becomes schedulable"). Null =
+     * no hold (ordered == shipped).
+     */
+    quantityOrdered: integer('quantity_ordered'),
+    /**
      * FIFO cost carried across the transfer: the weighted unit cost of
      * the origin layers consumed at ship time. Receiving creates the
      * destination layer at this cost. Null on transfers shipped before

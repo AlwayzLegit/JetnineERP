@@ -43,6 +43,12 @@ import { WebhookDispatcher } from '../webhooks/webhook-dispatcher.service';
 interface TransferLineInput {
   variantId?: string;
   quantity?: number;
+  /**
+   * Transfers pack D18: total wanted. When > quantity, the difference
+   * is HELD — not shipped, not on the ticket; it rolls into a fresh
+   * draft on full receipt (D19).
+   */
+  quantityOrdered?: number;
   /** J3 (XFR-040): the specific serial pieces riding this line. */
   serialIds?: string[];
 }
@@ -95,6 +101,10 @@ interface LineRow {
   sku: string | null;
   quantityShipped: number;
   quantityReceived: number;
+  /** D18: total wanted; null = no hold. */
+  quantityOrdered: number | null;
+  /** D18: ordered − shipped, the not-yet-scheduled remainder. */
+  quantityHeld: number;
 }
 
 interface Detail extends ListRow {
@@ -212,6 +222,66 @@ export class TransfersController {
     }));
   }
 
+  @Get('excess')
+  @RequirePermission('inventory.view')
+  async excess(@CurrentTenant() _tenant: RequestTenantContext): Promise<{
+    rows: {
+      variantId: string;
+      productName: string;
+      variantName: string | null;
+      sku: string | null;
+      totalQuantity: number;
+      maxTransferQuantity: number;
+    }[];
+  }> {
+    const maxMoved = await this.db
+      .select({
+        variantId: schema.stockTransferLines.variantId,
+        productName: schema.products.name,
+        variantName: schema.productVariants.name,
+        sku: schema.productVariants.sku,
+        maxTransferQuantity: sql<number>`MAX(${schema.stockTransferLines.quantityShipped})::int`,
+      })
+      .from(schema.stockTransferLines)
+      .innerJoin(
+        schema.productVariants,
+        eq(schema.productVariants.id, schema.stockTransferLines.variantId),
+      )
+      .innerJoin(schema.products, eq(schema.products.id, schema.productVariants.productId))
+      .groupBy(
+        schema.stockTransferLines.variantId,
+        schema.products.name,
+        schema.productVariants.name,
+        schema.productVariants.sku,
+      );
+    if (maxMoved.length === 0) return { rows: [] };
+
+    const totals = await this.db
+      .select({
+        variantId: schema.inventoryLevels.variantId,
+        qty: sql<number>`COALESCE(SUM(${schema.inventoryLevels.onHand} - ${schema.inventoryLevels.reserved} - ${schema.inventoryLevels.floorSample}), 0)::int`,
+      })
+      .from(schema.inventoryLevels)
+      .where(
+        inArray(
+          schema.inventoryLevels.variantId,
+          maxMoved.map((m) => m.variantId),
+        ),
+      )
+      .groupBy(schema.inventoryLevels.variantId);
+    const totalBy = new Map(totals.map((t) => [t.variantId, t.qty]));
+
+    return {
+      rows: maxMoved
+        .map((m) => ({ ...m, totalQuantity: totalBy.get(m.variantId) ?? 0 }))
+        .filter((m) => m.totalQuantity > m.maxTransferQuantity)
+        .sort(
+          (a, b) =>
+            b.totalQuantity - b.maxTransferQuantity - (a.totalQuantity - a.maxTransferQuantity),
+        ),
+    };
+  }
+
   @Get(':id')
   @RequirePermission('inventory.transfer')
   async get(
@@ -252,6 +322,13 @@ export class TransfersController {
       if (!l.variantId) throw new BadRequestException('lines[].variantId is required');
       if (!Number.isInteger(l.quantity) || (l.quantity ?? 0) <= 0) {
         throw new BadRequestException('lines[].quantity must be a positive integer');
+      }
+      if (l.quantityOrdered !== undefined) {
+        if (!Number.isInteger(l.quantityOrdered) || l.quantityOrdered < l.quantity!) {
+          throw new BadRequestException(
+            'lines[].quantityOrdered must be an integer ≥ the scheduled quantity',
+          );
+        }
       }
       variantIds.push(l.variantId);
     }
@@ -324,6 +401,8 @@ export class TransfersController {
         transferId: transfer.id,
         variantId: l.variantId!,
         quantityShipped: l.quantity!,
+        quantityOrdered:
+          l.quantityOrdered != null && l.quantityOrdered > l.quantity! ? l.quantityOrdered : null,
         serialIdsJson: l.serialIds && l.serialIds.length > 0 ? l.serialIds : null,
       })),
     );
@@ -617,6 +696,7 @@ export class TransfersController {
         .update(schema.stockTransfers)
         .set({ status: 'received', receivedAt: new Date(), updatedAt: new Date() })
         .where(eq(schema.stockTransfers.id, id));
+      await this.rollOverHeldQuantities(tenant.businessId!, actor.id, transfer);
     } else {
       await this.db
         .update(schema.stockTransfers)
@@ -854,6 +934,78 @@ export class TransfersController {
     }
   }
 
+  /**
+   * Transfers pack 12 §"Product Quantity in Excess of Transfer
+   * Quantity" — informational only: variants whose total available
+   * stock exceeds the largest quantity ever moved in one transfer
+   * line. A planning aid for consolidating moves; changes nothing.
+   */
+  /**
+   * D19: on full receipt, held remainders (ordered > shipped) become
+   * schedulable again — as a fresh draft transfer on the same lane, so
+   * nothing silently evaporates and nothing ships unpicked.
+   */
+  private async rollOverHeldQuantities(
+    businessId: string,
+    actorUserId: string,
+    transfer: {
+      id: string;
+      number: string;
+      fromLocationId: string;
+      toLocationId: string;
+      transferType: string;
+    },
+  ): Promise<void> {
+    const held = (
+      await this.db
+        .select({
+          variantId: schema.stockTransferLines.variantId,
+          shipped: schema.stockTransferLines.quantityShipped,
+          ordered: schema.stockTransferLines.quantityOrdered,
+        })
+        .from(schema.stockTransferLines)
+        .where(eq(schema.stockTransferLines.transferId, transfer.id))
+    )
+      .map((l) => ({ variantId: l.variantId, quantity: (l.ordered ?? l.shipped) - l.shipped }))
+      .filter((l) => l.quantity > 0);
+    if (held.length === 0) return;
+
+    const number = await this.generateNumber(businessId);
+    const [draft] = await this.db
+      .insert(schema.stockTransfers)
+      .values({
+        businessId,
+        fromLocationId: transfer.fromLocationId,
+        toLocationId: transfer.toLocationId,
+        number,
+        status: 'draft',
+        transferType: transfer.transferType,
+        notes: `Held quantity rolled over from ${transfer.number} (D19)`,
+        createdByUserId: actorUserId,
+      })
+      .returning();
+    if (!draft) return;
+    await this.db.insert(schema.stockTransferLines).values(
+      held.map((l) => ({
+        businessId,
+        transferId: draft.id,
+        variantId: l.variantId,
+        quantityShipped: l.quantity,
+      })),
+    );
+    await this.audit.log({
+      action: 'stock_transfer.hold_rollover',
+      targetType: 'stock_transfer',
+      targetId: draft.id,
+      after: {
+        number,
+        rolledFrom: transfer.number,
+        lineCount: held.length,
+        units: held.reduce((s, l) => s + l.quantity, 0),
+      },
+    });
+  }
+
   private async hydrate(id: string): Promise<Detail> {
     const [row] = await this.db
       .select({
@@ -894,6 +1046,7 @@ export class TransfersController {
         sku: schema.productVariants.sku,
         quantityShipped: schema.stockTransferLines.quantityShipped,
         quantityReceived: schema.stockTransferLines.quantityReceived,
+        quantityOrdered: schema.stockTransferLines.quantityOrdered,
       })
       .from(schema.stockTransferLines)
       .innerJoin(
@@ -905,7 +1058,11 @@ export class TransfersController {
 
     return {
       ...row,
-      lines: lines.map((l) => ({ ...l, productName: l.productName ?? '(deleted)' })),
+      lines: lines.map((l) => ({
+        ...l,
+        productName: l.productName ?? '(deleted)',
+        quantityHeld: Math.max(0, (l.quantityOrdered ?? l.quantityShipped) - l.quantityShipped),
+      })),
     };
   }
 

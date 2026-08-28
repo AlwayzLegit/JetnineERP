@@ -25,6 +25,8 @@ interface TransferLine {
   sku: string | null;
   quantityShipped: number;
   quantityReceived: number;
+  quantityOrdered: number | null;
+  quantityHeld: number;
 }
 interface Transfer {
   id: string;
@@ -153,6 +155,7 @@ export default function TransferDetailPage() {
               <tr>
                 <th>Item</th>
                 <th className="num">Shipped</th>
+                <th className="num">Held</th>
                 <th className="num">Received</th>
                 {isInTransit && <th>Receive qty</th>}
               </tr>
@@ -174,6 +177,7 @@ export default function TransferDetailPage() {
                       )}
                     </td>
                     <td className="num">{l.quantityShipped}</td>
+                    <td className="num">{l.quantityHeld > 0 ? l.quantityHeld : '—'}</td>
                     <td className="num">{l.quantityReceived}</td>
                     {isInTransit && (
                       <td>

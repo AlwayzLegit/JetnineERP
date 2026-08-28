@@ -1077,3 +1077,147 @@ describe('As-Is consolidation intake + H2 RTV unwind', () => {
     expect(blocked.body.message).toMatch(/received/);
   });
 });
+
+describe('Transfers pack quick wins — hold/scheduled quantity (D18/D19) + excess inquiry', () => {
+  function asClerk() {
+    return {
+      get: (url: string) =>
+        request(app.getHttpServer())
+          .get(url)
+          .set('Cookie', clerkCookie)
+          .set('X-Business-Id', businessId),
+      post: (url: string) =>
+        request(app.getHttpServer())
+          .post(url)
+          .set('Cookie', clerkCookie)
+          .set('X-Business-Id', businessId),
+    };
+  }
+
+  let holdTransferId = '';
+  let holdLineId = '';
+
+  beforeAll(async () => {
+    // Top the warehouse back up so earlier suites cannot starve these
+    // tests: 30 widgets available at the origin.
+    const sqlc = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    const db = drizzle(sqlc);
+    try {
+      await db
+        .update(schema.inventoryLevels)
+        .set({ onHand: 30, reserved: 0, floorSample: 0 })
+        .where(
+          and(
+            eq(schema.inventoryLevels.variantId, variantAId),
+            eq(schema.inventoryLevels.locationId, warehouseLocationId),
+          ),
+        );
+    } finally {
+      await sqlc.end({ timeout: 5 });
+    }
+  });
+
+  it('D18: ordered 10 / scheduled 4 → 6 held, and only 4 ship', async () => {
+    const bad = await asClerk()
+      .post('/v1/stock-transfers')
+      .send({
+        fromLocationId: warehouseLocationId,
+        toLocationId: mainLocationId,
+        lines: [{ variantId: variantAId, quantity: 4, quantityOrdered: 2 }],
+      });
+    expect(bad.status).toBe(400); // ordered below scheduled is nonsense
+
+    const res = await asClerk()
+      .post('/v1/stock-transfers')
+      .send({
+        fromLocationId: warehouseLocationId,
+        toLocationId: mainLocationId,
+        lines: [{ variantId: variantAId, quantity: 4, quantityOrdered: 10 }],
+      });
+    expect(res.status).toBe(201);
+    holdTransferId = res.body.id;
+    holdLineId = res.body.lines[0].id;
+    expect(res.body.lines[0].quantityOrdered).toBe(10);
+    expect(res.body.lines[0].quantityHeld).toBe(6);
+    expect(res.body.lines[0].quantityShipped).toBe(4);
+
+    const originBefore = await levelAt(variantAId, warehouseLocationId);
+    const shipped = await asClerk().post(`/v1/stock-transfers/${holdTransferId}/ship`).send({});
+    expect(shipped.status).toBe(201);
+    // Only the scheduled 4 leave the origin — held units never move.
+    expect(await levelAt(variantAId, warehouseLocationId)).toBe(originBefore - 4);
+  });
+
+  it('D19: full receipt completes the transfer and rolls the held 6 into a fresh draft', async () => {
+    const received = await asClerk()
+      .post(`/v1/stock-transfers/${holdTransferId}/receive`)
+      .send({ lines: [{ lineId: holdLineId, quantity: 4 }] });
+    expect(received.status).toBe(201);
+    expect(received.body.status).toBe('received');
+
+    const list = await asClerk().get('/v1/stock-transfers?status=draft');
+    const rollover = (list.body.data as { id: string; number: string; status: string }[]).filter(
+      (t) => t.id !== holdTransferId,
+    );
+    const detailed = await Promise.all(
+      rollover.map(async (t) => (await asClerk().get(`/v1/stock-transfers/${t.id}`)).body),
+    );
+    const draft = detailed.find(
+      (d: { notes?: string | null }) => d.notes?.includes('rolled over') ?? false,
+    ) as { notes: string; lines: { variantId: string; quantityShipped: number }[] } | undefined;
+    expect(draft).toBeTruthy();
+    expect(draft!.notes).toContain('D19');
+    const line = draft!.lines.find((l) => l.variantId === variantAId);
+    expect(line?.quantityShipped).toBe(6); // schedulable again, nothing lost
+  });
+
+  it('excess inquiry lists variants whose stock exceeds their largest single move', async () => {
+    // Self-contained fixture: 50 in stock, largest single move is 2.
+    let excessVariantId = '';
+    const sqlc = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    const db = drizzle(sqlc);
+    try {
+      const [p] = await db
+        .insert(schema.products)
+        .values({ businessId, sku: 'EXCESS', name: 'Excess Widget' })
+        .returning();
+      const [v] = await db
+        .insert(schema.productVariants)
+        .values({ businessId, productId: p!.id, sku: 'EXCESS-1', priceCents: 100 })
+        .returning();
+      excessVariantId = v!.id;
+      await db.insert(schema.inventoryLevels).values({
+        businessId,
+        variantId: excessVariantId,
+        locationId: warehouseLocationId,
+        onHand: 50,
+      });
+    } finally {
+      await sqlc.end({ timeout: 5 });
+    }
+    const moved = await asClerk()
+      .post('/v1/stock-transfers')
+      .send({
+        fromLocationId: warehouseLocationId,
+        toLocationId: mainLocationId,
+        lines: [{ variantId: excessVariantId, quantity: 2 }],
+      });
+    expect(moved.status).toBe(201);
+
+    const res = await asClerk().get('/v1/stock-transfers/excess');
+    expect(res.status).toBe(200);
+    const row = (
+      res.body.rows as { variantId: string; totalQuantity: number; maxTransferQuantity: number }[]
+    ).find((r) => r.variantId === excessVariantId);
+    expect(row).toBeTruthy();
+    expect(row!.totalQuantity).toBe(50);
+    expect(row!.maxTransferQuantity).toBe(2);
+
+    // The widget from earlier suites has a 100-unit line on record —
+    // larger than its whole stock — so it must NOT appear (that is the
+    // point of the report: only genuinely excess stock shows).
+    expect(
+      (res.body.rows as { variantId: string }[]).find((r) => r.variantId === variantAId),
+    ).toBeUndefined();
+  });
+});
