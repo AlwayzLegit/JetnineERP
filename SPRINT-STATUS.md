@@ -3033,3 +3033,31 @@ User Security` and `Review Settings Activity` extracts. "A morning's
   operational events through GlService via the system keys) + the
   period-12 retained-earnings roll (F7).
   Gates: typecheck 0 · lint 0 · test 0 · build 0 · format 0.
+
+## Checkpoint — 2026-08-28 (GL slice 2: journal-event derivation)
+
+- New EOD job `gl_derivation` (order 70, last): derives the business
+  date into POSTED `derived` batches through GlService inside the
+  tenant RLS context — one batch per family per date, idempotent by
+  (`eod_<family>`, business_date). Spec: docs/erp-gl/DERIVATION-SPEC.md.
+- Eight families live: POS sales (tender split by method → revenue+tax),
+  order money in (→ deposit liability), order revenue at FULL
+  completion (deposit release → revenue/tax/delivery/fees), COGS at
+  actual FIFO cents, receipts (→ Received Not Recorded, un-receives
+  reversed), vendor bills (RNR → AP at approval), cash over/short,
+  inventory adjustments (shrink/count/as-is recovery both directions).
+- Tender map: cash→drawer · card/external_card/check→bank ·
+  gift_card→gift-card liability · store_credit→deposit liability ·
+  financing→AR. D8 imported records excluded everywhere.
+- Anti-F1 enforced: a family with unmapped system keys is SKIPPED with
+  the reason in the job report — nothing defaults; a closed period
+  skips the whole run with reason; defensive imbalance skip.
+- **Refunds/exchanges not yet derived** — visible note in every job
+  outcome; manual batches until that slice.
+- GlService refactored to take explicit db handles so the EOD path and
+  request path share the same gates. Jobs registry now 6 steps.
+- gl.int.spec 6→9 (8-family fixture day with exact cents, POS batch
+  line-level spot check, pipeline idempotency, anti-F1 skip via the
+  job_runs report); purchasing jobs-list assertions updated (6 ids).
+- Production verified through slice 1: 71/71, head=0070_general_ledger.
+  Gates: typecheck 0 · lint 0 · test 0 · build 0 · format 0.
