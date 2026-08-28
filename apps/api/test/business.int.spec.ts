@@ -193,6 +193,39 @@ describe('Epic 1.6 — Business admin console', () => {
       .send({ name: 'Main Store', timezone: 'America/New_York', taxRateBps: 1000 });
     expect(res.status).toBe(201);
     expect(res.body.taxRateBps).toBe(1000);
+    // Q2: type defaults to store.
+    expect(res.body.locationType).toBe('store');
+  });
+
+  it('Q2: locationType is store/warehouse only, settable at create and PATCH', async () => {
+    const server = app.getHttpServer();
+    const created = await request(server)
+      .post('/v1/business/locations')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({
+        name: 'Distribution Center',
+        timezone: 'America/Los_Angeles',
+        locationType: 'warehouse',
+      });
+    expect(created.status).toBe(201);
+    expect(created.body.locationType).toBe('warehouse');
+
+    const bad = await request(server)
+      .post('/v1/business/locations')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ name: 'Bad Type', timezone: 'America/Los_Angeles', locationType: 'outlet' });
+    expect(bad.status).toBe(400);
+    expect(bad.body.message).toContain("locationType must be 'store' or 'warehouse'");
+
+    const flipped = await request(server)
+      .patch(`/v1/business/locations/${created.body.id}`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ locationType: 'store' });
+    expect(flipped.status).toBe(200);
+    expect(flipped.body.locationType).toBe('store');
   });
 
   it('Location timezone must be a real IANA name (create and update)', async () => {

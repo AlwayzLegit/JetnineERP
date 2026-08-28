@@ -376,13 +376,17 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
       for (const r of rows) if (r.remaining > 0) onOrder.set(r.variantId, r.remaining);
     }
 
-    // Ship-to: the business's first active location (single-warehouse
-    // reality today; per-vendor ship-to is a follow-up).
+    // Ship-to: the first active warehouse-typed location (Q2), falling
+    // back to the oldest active location; per-vendor ship-to is a
+    // follow-up.
     const [loc] = await this.rootDb
       .select({ id: schema.locations.id })
       .from(schema.locations)
       .where(and(eq(schema.locations.businessId, businessId), eq(schema.locations.isActive, true)))
-      .orderBy(schema.locations.createdAt)
+      .orderBy(
+        sql`(${schema.locations.locationType} = 'warehouse') DESC`,
+        schema.locations.createdAt,
+      )
       .limit(1);
     if (!loc) return { recordsAffected: 0, detail: { skipped: 'no active location' } };
 
@@ -482,7 +486,10 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
       .select({ id: schema.locations.id })
       .from(schema.locations)
       .where(and(eq(schema.locations.businessId, businessId), eq(schema.locations.isActive, true)))
-      .orderBy(schema.locations.createdAt)
+      .orderBy(
+        sql`(${schema.locations.locationType} = 'warehouse') DESC`,
+        schema.locations.createdAt,
+      )
       .limit(1);
     if (!loc) return { recordsAffected: 0, detail: { skipped: 'no active location' } };
 

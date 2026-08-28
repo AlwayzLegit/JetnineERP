@@ -2877,3 +2877,29 @@ Gates: typecheck 0 · lint 0 · test 0 (704) · build 0 · format 0.
   financing providers/commission values, customer merge tooling, cutover
   pilot-vs-full). None block the first slices; configurable settings +
   recorded defaults where needed.
+
+## Checkpoint — 2026-08-28 (Q2+Q3: location types, store↔store gate, print-before-ship)
+
+- Migration `0066_location_types_transfer_ticket`:
+  `locations.location_type` ('store'|'warehouse', default store) +
+  `stock_transfers.ticket_printed_at` / `ticket_print_count`.
+- Ops block `transfers` in SET-007 registry: `storeToStore` (null/true =
+  allowed; false rejects store→store at create, E20) and
+  `requireTicketBeforeShip` (null/true = **required**, per the owner's Q3
+  decision — the default gate is ON in production).
+- `POST /v1/stock-transfers/:id/ticket-printed` records the print (audit
+  `stock_transfer.ticket_print`); the web print page calls it before
+  `window.print()`. Ship (and create-with-ship) are blocked until a
+  ticket has printed. Drafts are immutable in Jetnine, so no P/R
+  staleness machinery is needed — printedAt is sufficient.
+- Locations API/UI expose the type (create select + click-to-toggle
+  badge); replenishment picker sorts warehouses first; both EOD location
+  picks (auto-replenishment ship-to, sales-rate warehouse) now prefer
+  warehouse-typed locations via `ORDER BY (location_type='warehouse')
+DESC, created_at` — fallback path (no warehouse) is what every
+  existing EOD test exercises, so no second vendor fixture was added.
+- transfers.int.spec 32→36 (gate suite: block/print/unlock/reprint,
+  ship:true rejection, E20 store→store, canceled-print refusal);
+  business.int.spec +1 (type CRUD + validation). Legacy transfer suites
+  run with the gate off via fixture ops, mirroring pre-Q3 behavior.
+  Gates: typecheck 0 · lint 0 · test 0 · build 0 · format 0.

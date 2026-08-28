@@ -10,7 +10,8 @@ import { PrintToolbar } from '../../print-toolbar';
  * lines, and signature lines for the §5 workflow — create → print
  * ticket → deliver → sign → complete (receiving side confirms in the
  * system). The paper carries the signatures; the system records who
- * confirmed receipt. Printing never changes state.
+ * confirmed receipt. Q3 (owner 2026-08-28): printing records
+ * ticket-printed on the transfer — shipping is gated on it by default.
  */
 
 interface TransferLine {
@@ -84,7 +85,12 @@ export default function TransferTicketPrintPage() {
     <div style={{ background: '#fff', minHeight: '100vh' }}>
       <PrintToolbar
         backHref={`/transfers/${id}`}
-        onPrint={() => window.print()}
+        onPrint={() => {
+          // Record the print first — it is what unlocks shipping (Q3).
+          api(`/v1/stock-transfers/${id}/ticket-printed`, { method: 'POST' })
+            .then(() => window.print())
+            .catch((err) => setError(err instanceof Error ? err.message : String(err)));
+        }}
         label="Print transfer ticket"
       />
       {error && <p style={{ color: '#b00', padding: 16 }}>{error}</p>}

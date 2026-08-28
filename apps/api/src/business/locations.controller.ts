@@ -24,6 +24,7 @@ import type { RequestTenantContext } from '../tenancy/request-context';
 interface LocationRow {
   id: string;
   name: string;
+  locationType: string;
   timezone: string;
   taxRateBps: number | null;
   addressJson: unknown;
@@ -35,6 +36,8 @@ interface LocationRow {
 
 interface CreateBody {
   name?: string;
+  /** Q2: 'store' (default) or 'warehouse'. */
+  locationType?: string;
   timezone?: string;
   taxRateBps?: number | null;
   addressJson?: unknown;
@@ -57,6 +60,14 @@ function validateReplenishmentDays(raw: number[] | null): number[] | null {
     );
   }
   return [...new Set(raw)].sort();
+}
+
+function validateLocationType(raw: string): 'store' | 'warehouse' {
+  const type = raw.trim().toLowerCase();
+  if (type !== 'store' && type !== 'warehouse') {
+    throw new BadRequestException("locationType must be 'store' or 'warehouse'");
+  }
+  return type;
 }
 
 function normalizeOrderPrefix(raw: string | null | undefined): string | null {
@@ -98,6 +109,7 @@ export class LocationsController {
       .select({
         id: schema.locations.id,
         name: schema.locations.name,
+        locationType: schema.locations.locationType,
         timezone: schema.locations.timezone,
         taxRateBps: schema.locations.taxRateBps,
         addressJson: schema.locations.addressJson,
@@ -132,6 +144,8 @@ export class LocationsController {
       .values({
         businessId: tenant.businessId!,
         name,
+        locationType:
+          body.locationType === undefined ? 'store' : validateLocationType(body.locationType),
         timezone,
         taxRateBps: body.taxRateBps ?? null,
         addressJson: (body.addressJson ?? null) as never,
@@ -143,7 +157,7 @@ export class LocationsController {
       action: 'location.create',
       targetType: 'location',
       targetId: row.id,
-      after: { name, timezone, taxRateBps: row.taxRateBps },
+      after: { name, timezone, locationType: row.locationType, taxRateBps: row.taxRateBps },
     });
     return toRow(row);
   }
@@ -170,6 +184,14 @@ export class LocationsController {
       update.name = body.name.trim();
       before.name = existing.name;
       after.name = update.name;
+    }
+    if (body.locationType !== undefined) {
+      const type = validateLocationType(body.locationType);
+      if (type !== existing.locationType) {
+        update.locationType = type;
+        before.locationType = existing.locationType;
+        after.locationType = type;
+      }
     }
     if (body.timezone !== undefined && body.timezone.trim() !== existing.timezone) {
       assertValidTimezone(body.timezone.trim());
@@ -316,6 +338,7 @@ function toRow(row: typeof schema.locations.$inferSelect): LocationRow {
   return {
     id: row.id,
     name: row.name,
+    locationType: row.locationType,
     timezone: row.timezone,
     taxRateBps: row.taxRateBps ?? null,
     addressJson: row.addressJson,

@@ -65,6 +65,14 @@ export const stockTransfers = pgTable(
     createdByUserId: uuid('created_by_user_id').references(() => users.id, {
       onDelete: 'set null',
     }),
+    /**
+     * Q3 (transfers pack, owner 2026-08-28): shipping is gated on the
+     * transfer ticket having printed (ops.transfers.requireTicketBeforeShip,
+     * default on). Null = never printed. Drafts are immutable in Jetnine,
+     * so a printed ticket cannot go stale — no P/R demotion needed.
+     */
+    ticketPrintedAt: timestamp('ticket_printed_at', { withTimezone: true }),
+    ticketPrintCount: integer('ticket_print_count').notNull().default(0),
     shippedAt: timestamp('shipped_at', { withTimezone: true }),
     receivedAt: timestamp('received_at', { withTimezone: true }),
     canceledAt: timestamp('canceled_at', { withTimezone: true }),

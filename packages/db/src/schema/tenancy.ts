@@ -20,6 +20,12 @@ export const locations = pgTable(
       .notNull()
       .references(() => businesses.id, { onDelete: 'cascade' }),
     name: text('name').notNull(),
+    /**
+     * Q2 (transfers pack, owner 2026-08-28): 'store' | 'warehouse'.
+     * Drives store↔store transfer gating and the sales-rate
+     * replenishment warehouse pick (warehouse-typed locations win).
+     */
+    locationType: text('location_type').notNull().default('store'),
     timezone: text('timezone').notNull(),
     addressJson: jsonb('address_json'),
     // Optional override of businesses.default_tax_rate_bps. Null inherits.
