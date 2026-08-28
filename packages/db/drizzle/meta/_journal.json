@@ -484,6 +484,13 @@
       "when": 1787895805863,
       "tag": "0068_cash_blind_count",
       "breakpoints": true
+    },
+    {
+      "idx": 69,
+      "version": "7",
+      "when": 1787897013896,
+      "tag": "0069_stock_manifests",
+      "breakpoints": true
     }
   ]
 }

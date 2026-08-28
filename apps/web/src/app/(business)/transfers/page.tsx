@@ -49,9 +49,14 @@ export default function TransfersPage() {
       <PageHeader
         title="Stock transfers"
         actions={
-          <LinkButton href="/transfers/new" variant="primary">
-            + New transfer
-          </LinkButton>
+          <div className="flex gap-2">
+            <LinkButton href="/transfers/manifests" variant="secondary">
+              Manifests
+            </LinkButton>
+            <LinkButton href="/transfers/new" variant="primary">
+              + New transfer
+            </LinkButton>
+          </div>
         }
       />
       {aging.length > 0 && (

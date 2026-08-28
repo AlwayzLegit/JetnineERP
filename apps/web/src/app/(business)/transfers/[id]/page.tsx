@@ -36,6 +36,9 @@ interface Transfer {
   toLocationName: string | null;
   ticketPrintedAt: string | null;
   ticketPrintCount: number;
+  manifestId: string | null;
+  manifestNumber: string | null;
+  loadNumber: number | null;
   shippedAt: string | null;
   receivedAt: string | null;
   canceledAt: string | null;
@@ -229,6 +232,16 @@ export default function TransferDetailPage() {
               <Truck size={14} />
               {busy ? 'Shipping…' : 'Ship transfer'}
             </Button>
+            {t.manifestId && (
+              <span style={{ fontSize: 12, color: 'var(--text-secondary)', alignSelf: 'center' }}>
+                On manifest{' '}
+                <Link href={`/transfers/manifests/${t.manifestId}`}>
+                  <code>{t.manifestNumber}</code>
+                </Link>
+                {t.loadNumber != null ? ` (load ${t.loadNumber})` : ''} — ships when the manifest
+                completes
+              </span>
+            )}
             {/* Q3: shipping is gated on a printed ticket by default. */}
             <span style={{ fontSize: 12, color: 'var(--text-secondary)', alignSelf: 'center' }}>
               {t.ticketPrintedAt

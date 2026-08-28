@@ -73,6 +73,16 @@ export const stockTransfers = pgTable(
      */
     ticketPrintedAt: timestamp('ticket_printed_at', { withTimezone: true }),
     ticketPrintCount: integer('ticket_print_count').notNull().default(0),
+    /**
+     * Q1 manifests (owner 2026-08-28: manifests without scanning): the
+     * truck/date manifest this transfer rides on. Null = not manifested.
+     * A draft on an open manifest ships via the manifest's Complete.
+     */
+    manifestId: uuid('manifest_id').references(() => stockManifests.id, {
+      onDelete: 'set null',
+    }),
+    /** Loading order on the manifest, 0-99 — lower loads first. */
+    loadNumber: integer('load_number'),
     shippedAt: timestamp('shipped_at', { withTimezone: true }),
     receivedAt: timestamp('received_at', { withTimezone: true }),
     canceledAt: timestamp('canceled_at', { withTimezone: true }),
@@ -135,5 +145,54 @@ export const stockTransferLines = pgTable(
     transferIdx: index('stock_transfer_lines_transfer_id_idx').on(t.transferId),
     businessIdx: index('stock_transfer_lines_business_id_idx').on(t.businessId),
     variantIdx: index('stock_transfer_lines_variant_id_idx').on(t.variantId),
+  }),
+);
+
+/**
+ * Q1 (transfers pack / run-04, owner 2026-08-28): truck/date manifests
+ * without scanning. A manifest groups draft transfers on one lane for
+ * one truck run; building against the same open (toLocation, routeName,
+ * manifestDate) key APPENDS rather than creating a duplicate (STORIS
+ * 08-manifests key semantics). Complete ships every draft on it — the
+ * print-before-ship gate still applies per transfer. Receiving stays
+ * tap-based per transfer at the destination.
+ */
+export const stockManifests = pgTable(
+  'stock_manifests',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    businessId: uuid('business_id')
+      .notNull()
+      .references(() => businesses.id, { onDelete: 'cascade' }),
+    fromLocationId: uuid('from_location_id')
+      .notNull()
+      .references(() => locations.id, { onDelete: 'restrict' }),
+    toLocationId: uuid('to_location_id')
+      .notNull()
+      .references(() => locations.id, { onDelete: 'restrict' }),
+    number: text('number').notNull(),
+    /** The truck run's date. */
+    manifestDate: date('manifest_date').notNull(),
+    /** Free-text route / truck label; null = unrouted. */
+    routeName: text('route_name'),
+    /** 'open' | 'completed' | 'canceled' */
+    status: text('status').notNull().default('open'),
+    notes: text('notes'),
+    createdByUserId: uuid('created_by_user_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+    completedAt: timestamp('completed_at', { withTimezone: true }),
+    canceledAt: timestamp('canceled_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    businessNumberUnique: uniqueIndex('stock_manifests_business_number_uniq').on(
+      t.businessId,
+      t.number,
+    ),
+    businessIdx: index('stock_manifests_business_id_idx').on(t.businessId),
+    statusIdx: index('stock_manifests_status_idx').on(t.businessId, t.status),
+    laneIdx: index('stock_manifests_lane_idx').on(t.toLocationId, t.manifestDate),
   }),
 );

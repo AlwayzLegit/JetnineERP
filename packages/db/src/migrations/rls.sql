@@ -109,6 +109,7 @@ DECLARE
     'purchase_order_lines',
     'stock_transfers',
     'stock_transfer_lines',
+    'stock_manifests',
     'tax_classes',
     'tax_class_rates',
     'discount_codes',
