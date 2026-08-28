@@ -193,7 +193,9 @@ export default function GlPage() {
                 {accounts.map((a) => (
                   <tr key={a.id} style={a.isActive ? undefined : { opacity: 0.5 }}>
                     <td>
-                      <code>{a.code}</code>
+                      <Link href={`/gl/accounts/${a.id}`}>
+                        <code>{a.code}</code>
+                      </Link>
                     </td>
                     <td>{a.name}</td>
                     <td>{a.accountType}</td>
