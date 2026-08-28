@@ -3086,3 +3086,21 @@ User Security` and `Review Settings Activity` extracts. "A morning's
 - gl.int.spec 9→12 (roll balance + RE credit 50100 assertion, refund
   batch line math 9500/950/10450, activity per-period totals).
   Gates: typecheck 0 · lint 0 · test 0 · build 0 · format 0.
+
+## Checkpoint — 2026-08-28 (GL polish: account drill-down UI; program core complete)
+
+- Web /gl/accounts/[id]: the F277-lean drill-down — per-period totals
+  (click filters), posted lines with batch provenance, year picker;
+  chart rows on /gl now link through. PRs #73/#74 deployed and
+  verified (71/71, head=0070).
+- **The in-house GL core is complete**: chart + periods + journal
+  (slice 1) · nine-family nightly derivation (slice 2) · year-end
+  retained-earnings roll + refunds + inquiry (slice 3). Remaining GL
+  scope is OWNER-GATED: AP payment operations (run-01 Q2 — check runs
+  /EFT/positive pay), layaway statements (Q5), fiscal calendar
+  confirmation (Q4, calendar months presumed).
+- Run 07 continues arriving (17 batches filed); its batch-17
+  integration registry (23 external systems) + the payment-gateway
+  question (Shift4 legacy vs "the new gateway"; tokens not portable)
+  flagged to the owner for the cutover plan.
+  Gates: typecheck 0 · lint 0 · test 0 · build 0 · format 0.
