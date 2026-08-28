@@ -21,6 +21,7 @@ interface Vendor {
 interface Location {
   id: string;
   name: string;
+  locationType: string;
 }
 interface VendorSettings {
   generateAutomaticPos: boolean;
@@ -224,11 +225,21 @@ export default function ReplenishmentPage() {
           <Field label="Warehouse location">
             <Select value={locationId} onChange={(e) => setLocationId(e.target.value)}>
               <option value="">Select a location…</option>
-              {(locations ?? []).map((l) => (
-                <option key={l.id} value={l.id}>
-                  {l.name}
-                </option>
-              ))}
+              {/* Q2: warehouses first — they are the replenishment target. */}
+              {[...(locations ?? [])]
+                .sort((a, b) =>
+                  a.locationType === b.locationType
+                    ? a.name.localeCompare(b.name)
+                    : a.locationType === 'warehouse'
+                      ? -1
+                      : 1,
+                )
+                .map((l) => (
+                  <option key={l.id} value={l.id}>
+                    {l.name}
+                    {l.locationType === 'warehouse' ? ' (warehouse)' : ''}
+                  </option>
+                ))}
             </Select>
           </Field>
           <Field label="Variance % (blank = 100)">

@@ -79,6 +79,13 @@ interface OpsSettings {
     includeStoreStockInAvailability?: boolean | null;
     layawayInNetPurchaseOrder?: boolean | null;
   } | null;
+  /** Transfers pack Q2/Q3 (owner 2026-08-28). Null field = default. */
+  transfers?: {
+    /** E20: store↔store transfers. Null/true = allowed; false rejects. */
+    storeToStore?: boolean | null;
+    /** Q3: ship requires a printed transfer ticket. Null/true = required. */
+    requireTicketBeforeShip?: boolean | null;
+  } | null;
   /** G6 three-tier price-variance thresholds (defaults 5% / $50 / 15%). */
   priceVariance?: {
     tier1Pct?: number | null;
@@ -230,6 +237,14 @@ const OPS_SETTINGS_REGISTRY = [
       'Defaults: written basis, calendar-day lead divisor, standard rounding on, store stock excluded, layaway excluded',
     classTags: [],
     readBy: 'Sales-rate replenishment runs (interactive + EOD)',
+  },
+  {
+    key: 'transfers',
+    label: 'Stock-transfer gates',
+    type: 'map',
+    nullMeans: 'Defaults: store↔store allowed, printed ticket required before ship',
+    classTags: [],
+    readBy: 'Stock-transfer create + ship endpoints',
   },
   {
     key: 'autoReplenishmentEnabled',
@@ -427,6 +442,20 @@ function validateOps(input: OpsSettings): OpsSettings {
       }
     }
     out.salesRateReplenishment = v;
+  }
+  if (input.transfers !== undefined) {
+    const v = input.transfers;
+    if (v !== null) {
+      if (typeof v !== 'object' || Array.isArray(v)) {
+        throw new BadRequestException('ops.transfers must be an object or null');
+      }
+      for (const key of ['storeToStore', 'requireTicketBeforeShip'] as const) {
+        if (v[key] != null && typeof v[key] !== 'boolean') {
+          throw new BadRequestException(`ops.transfers.${key} must be a boolean`);
+        }
+      }
+    }
+    out.transfers = v;
   }
   if (input.autoReplenishmentEnabled !== undefined) {
     if (

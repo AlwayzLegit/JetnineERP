@@ -3,12 +3,23 @@
 import { Plus } from 'lucide-react';
 import { toast } from 'sonner';
 import { useEffect, useState, type FormEvent } from 'react';
-import { Button, Card, EmptyState, Field, Input, LoadingRows, PageHeader } from '@/components/ui';
+import {
+  Button,
+  Card,
+  EmptyState,
+  Field,
+  Input,
+  LoadingRows,
+  PageHeader,
+  Select,
+} from '@/components/ui';
 import { api } from '@/lib/api';
 
 interface Location {
   id: string;
   name: string;
+  /** Q2: 'store' | 'warehouse' — drives transfer gating + replenishment. */
+  locationType: string;
   timezone: string;
   taxRateBps: number | null;
   /** J5: weekdays (0=Sun…6=Sat) accepting auto transfers; null = all. */
@@ -44,6 +55,7 @@ export default function LocationsPage() {
         method: 'POST',
         body: JSON.stringify({
           name: String(data.get('name') ?? ''),
+          locationType: String(data.get('locationType') ?? 'store'),
           timezone: String(data.get('timezone') ?? ''),
           taxRateBps: taxRaw ? Number(taxRaw) : null,
         }),
@@ -86,6 +98,19 @@ export default function LocationsPage() {
     }
   }
 
+  async function toggleType(loc: Location) {
+    const next = loc.locationType === 'warehouse' ? 'store' : 'warehouse';
+    try {
+      await api(`/v1/business/locations/${loc.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ locationType: next }),
+      });
+      await load();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    }
+  }
+
   async function remove(loc: Location) {
     if (
       !window.confirm(
@@ -111,6 +136,12 @@ export default function LocationsPage() {
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             <Field label="Name">
               <Input name="name" required style={{ width: '100%' }} />
+            </Field>
+            <Field label="Type">
+              <Select name="locationType" defaultValue="store" style={{ width: '100%' }}>
+                <option value="store">Store</option>
+                <option value="warehouse">Warehouse</option>
+              </Select>
             </Field>
             <Field label="Timezone">
               <Input
@@ -144,6 +175,7 @@ export default function LocationsPage() {
             <thead>
               <tr>
                 <th>Name</th>
+                <th>Type</th>
                 <th>Timezone</th>
                 <th>Tax</th>
                 <th title="Weekdays this store accepts auto replenishment transfers">
@@ -156,7 +188,7 @@ export default function LocationsPage() {
             <tbody>
               {rows.length === 0 && (
                 <tr>
-                  <td colSpan={6}>
+                  <td colSpan={7}>
                     <EmptyState>No locations yet.</EmptyState>
                   </td>
                 </tr>
@@ -165,6 +197,17 @@ export default function LocationsPage() {
                 <tr key={l.id}>
                   <td>
                     <strong>{l.name}</strong>
+                  </td>
+                  <td>
+                    <button
+                      type="button"
+                      className={`badge ${l.locationType === 'warehouse' ? 'badge-info' : 'badge-neutral'}`}
+                      style={{ cursor: 'pointer', border: 'none' }}
+                      title="Click to switch between store and warehouse"
+                      onClick={() => void toggleType(l)}
+                    >
+                      {l.locationType}
+                    </button>
                   </td>
                   <td>{l.timezone}</td>
                   <td>

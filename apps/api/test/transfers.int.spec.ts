@@ -59,7 +59,15 @@ async function seed() {
     const passwordHash = await hashPassword(PASSWORD);
     const [biz] = await db
       .insert(schema.businesses)
-      .values({ slug: 'trans-test', name: 'Transfer Test Co', status: 'active' })
+      .values({
+        slug: 'trans-test',
+        name: 'Transfer Test Co',
+        status: 'active',
+        // Q3 default is print-before-ship ON; the legacy flow tests here
+        // predate the gate, so the fixture switches it off. Dedicated
+        // gate tests flip it back on.
+        opsSettingsJson: { transfers: { requireTicketBeforeShip: false } },
+      })
       .returning();
     businessId = biz!.id;
 
@@ -106,7 +114,12 @@ async function seed() {
     mainLocationId = main!.id;
     const [warehouse] = await db
       .insert(schema.locations)
-      .values({ businessId, name: 'Warehouse', timezone: 'America/New_York' })
+      .values({
+        businessId,
+        name: 'Warehouse',
+        timezone: 'America/New_York',
+        locationType: 'warehouse',
+      })
       .returning();
     warehouseLocationId = warehouse!.id;
 
@@ -1219,5 +1232,167 @@ describe('Transfers pack quick wins — hold/scheduled quantity (D18/D19) + exce
     expect(
       (res.body.rows as { variantId: string }[]).find((r) => r.variantId === variantAId),
     ).toBeUndefined();
+  });
+});
+
+describe('Transfers pack Q2/Q3 — location types + ship gates (owner 2026-08-28)', () => {
+  let secondStoreId = '';
+  let gateVariantId = '';
+
+  function asClerk() {
+    return {
+      get: (url: string) =>
+        request(app.getHttpServer())
+          .get(url)
+          .set('Cookie', clerkCookie)
+          .set('X-Business-Id', businessId),
+      post: (url: string) =>
+        request(app.getHttpServer())
+          .post(url)
+          .set('Cookie', clerkCookie)
+          .set('X-Business-Id', businessId),
+    };
+  }
+
+  /** Whole-object overwrite is fine here — this suite owns the fixture. */
+  async function setTransferOps(ops: Record<string, unknown>): Promise<void> {
+    const sqlc = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    try {
+      await drizzle(sqlc)
+        .update(schema.businesses)
+        .set({ opsSettingsJson: { transfers: ops } })
+        .where(eq(schema.businesses.id, businessId));
+    } finally {
+      await sqlc.end({ timeout: 5 });
+    }
+  }
+
+  beforeAll(async () => {
+    const sqlc = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    try {
+      const db = drizzle(sqlc);
+      const [store] = await db
+        .insert(schema.locations)
+        .values({ businessId, name: 'Second Store', timezone: 'America/New_York' })
+        .returning();
+      secondStoreId = store!.id;
+      const [p] = await db
+        .insert(schema.products)
+        .values({ businessId, sku: 'GATE-1', name: 'Gate Widget' })
+        .returning();
+      const [v] = await db
+        .insert(schema.productVariants)
+        .values({
+          businessId,
+          productId: p!.id,
+          sku: 'GATE-1-V',
+          priceCents: 5000,
+          costCents: 2500,
+        })
+        .returning();
+      gateVariantId = v!.id;
+      await db.insert(schema.inventoryLevels).values([
+        { businessId, locationId: mainLocationId, variantId: gateVariantId, onHand: 20 },
+        { businessId, locationId: warehouseLocationId, variantId: gateVariantId, onHand: 20 },
+      ]);
+    } finally {
+      await sqlc.end({ timeout: 5 });
+    }
+  });
+
+  afterAll(async () => {
+    // Back to the legacy-flow fixture the earlier suites rely on.
+    await setTransferOps({ requireTicketBeforeShip: false });
+  });
+
+  it('Q3: ship is blocked until the ticket prints; printing unlocks it and reprints bump the count', async () => {
+    await setTransferOps({}); // defaults: gate ON
+    const created = await asClerk()
+      .post('/v1/stock-transfers')
+      .send({
+        fromLocationId: mainLocationId,
+        toLocationId: secondStoreId,
+        lines: [{ variantId: gateVariantId, quantity: 3 }],
+      });
+    expect(created.status).toBe(201);
+    expect(created.body.ticketPrintedAt).toBeNull();
+    expect(created.body.ticketPrintCount).toBe(0);
+    const id = created.body.id as string;
+
+    const blocked = await asClerk().post(`/v1/stock-transfers/${id}/ship`).send({});
+    expect(blocked.status).toBe(400);
+    expect(blocked.body.message).toContain('Print the transfer ticket before shipping');
+
+    const printed = await asClerk().post(`/v1/stock-transfers/${id}/ticket-printed`).send({});
+    expect(printed.status).toBe(201);
+    expect(printed.body.ticketPrintCount).toBe(1);
+
+    const detail = await asClerk().get(`/v1/stock-transfers/${id}`);
+    expect(detail.body.ticketPrintedAt).not.toBeNull();
+    expect(detail.body.ticketPrintCount).toBe(1);
+
+    const shipped = await asClerk().post(`/v1/stock-transfers/${id}/ship`).send({});
+    expect(shipped.status).toBe(201);
+    expect(shipped.body.status).toBe('in_transit');
+
+    // Reprint after ship stays legal and only bumps the count.
+    const reprint = await asClerk().post(`/v1/stock-transfers/${id}/ticket-printed`).send({});
+    expect(reprint.status).toBe(201);
+    expect(reprint.body.ticketPrintCount).toBe(2);
+  });
+
+  it('Q3: create with {ship: true} is rejected while the gate is on', async () => {
+    await setTransferOps({});
+    const res = await asClerk()
+      .post('/v1/stock-transfers')
+      .send({
+        fromLocationId: mainLocationId,
+        toLocationId: secondStoreId,
+        ship: true,
+        lines: [{ variantId: gateVariantId, quantity: 1 }],
+      });
+    expect(res.status).toBe(400);
+    expect(res.body.message).toContain('printed transfer ticket is required');
+  });
+
+  it('Q2/E20: store→store is rejected when the gate is off; a warehouse origin still passes', async () => {
+    await setTransferOps({ storeToStore: false, requireTicketBeforeShip: false });
+    const rejected = await asClerk()
+      .post('/v1/stock-transfers')
+      .send({
+        fromLocationId: mainLocationId,
+        toLocationId: secondStoreId,
+        lines: [{ variantId: gateVariantId, quantity: 1 }],
+      });
+    expect(rejected.status).toBe(400);
+    expect(rejected.body.message).toContain('Store-to-store transfers are disabled');
+
+    const viaWarehouse = await asClerk()
+      .post('/v1/stock-transfers')
+      .send({
+        fromLocationId: warehouseLocationId,
+        toLocationId: secondStoreId,
+        lines: [{ variantId: gateVariantId, quantity: 1 }],
+      });
+    expect(viaWarehouse.status).toBe(201);
+  });
+
+  it('Q3: a canceled transfer cannot print a ticket', async () => {
+    await setTransferOps({ requireTicketBeforeShip: false });
+    const created = await asClerk()
+      .post('/v1/stock-transfers')
+      .send({
+        fromLocationId: mainLocationId,
+        toLocationId: secondStoreId,
+        lines: [{ variantId: gateVariantId, quantity: 1 }],
+      });
+    expect(created.status).toBe(201);
+    const canceled = await asClerk().post(`/v1/stock-transfers/${created.body.id}/cancel`).send({});
+    expect(canceled.status).toBe(201);
+    const res = await asClerk()
+      .post(`/v1/stock-transfers/${created.body.id}/ticket-printed`)
+      .send({});
+    expect(res.status).toBe(400);
+    expect(res.body.message).toContain('canceled');
   });
 });

@@ -109,12 +109,21 @@ interface LineRow {
 
 interface Detail extends ListRow {
   notes: string | null;
+  /** Q3: last transfer-ticket print; ship is gated on this by default. */
+  ticketPrintedAt: Date | null;
+  ticketPrintCount: number;
   createdByUserId: string | null;
   /** From/to store blocks + letterhead for the printed ticket (§11). */
   fromLocationAddressJson: unknown;
   toLocationAddressJson: unknown;
   businessName: string | null;
   lines: LineRow[];
+}
+
+/** Ops gates for transfers (Q2/Q3, owner 2026-08-28). Null = default. */
+interface TransferOps {
+  storeToStore?: boolean | null;
+  requireTicketBeforeShip?: boolean | null;
 }
 
 @TenantScoped()
@@ -312,10 +321,24 @@ export class TransfersController {
     }
 
     const locs = await this.db
-      .select({ id: schema.locations.id })
+      .select({ id: schema.locations.id, locationType: schema.locations.locationType })
       .from(schema.locations)
       .where(inArray(schema.locations.id, [body.fromLocationId, body.toLocationId]));
     if (locs.length !== 2) throw new NotFoundException('One or both locations not found');
+
+    const ops = await this.transferOps(tenant.businessId!);
+    // E20: store→store is rejected when the gate is switched off.
+    if (ops.storeToStore === false && locs.every((l) => l.locationType === 'store')) {
+      throw new BadRequestException(
+        'Store-to-store transfers are disabled (ops.transfers.storeToStore). Route the stock through a warehouse.',
+      );
+    }
+    // Q3: create+ship in one step can never have a printed ticket.
+    if (body.ship === true && ops.requireTicketBeforeShip !== false) {
+      throw new BadRequestException(
+        'A printed transfer ticket is required before shipping (ops.transfers.requireTicketBeforeShip). Create the draft, print the ticket, then ship.',
+      );
+    }
 
     const variantIds: string[] = [];
     for (const l of body.lines) {
@@ -457,6 +480,12 @@ export class TransfersController {
     if (!transfer) throw new NotFoundException('Transfer not found');
     if (transfer.status !== 'draft') {
       throw new ForbiddenException(`Cannot ship a ${transfer.status} transfer`);
+    }
+    const ops = await this.transferOps(tenant.businessId!);
+    if (ops.requireTicketBeforeShip !== false && transfer.ticketPrintedAt === null) {
+      throw new BadRequestException(
+        'Print the transfer ticket before shipping (ops.transfers.requireTicketBeforeShip).',
+      );
     }
 
     const lines = await this.db
@@ -876,6 +905,57 @@ export class TransfersController {
     return this.hydrate(id);
   }
 
+  /**
+   * Q3: the print page calls this when the ticket is actually sent to
+   * the printer. It is the record that unlocks shipping — reprints are
+   * allowed at any status and only bump the count.
+   */
+  @Post(':id/ticket-printed')
+  @RequirePermission('inventory.transfer')
+  async recordTicketPrint(
+    @CurrentTenant() tenant: RequestTenantContext,
+    @Param('id') id: string,
+  ): Promise<{ ticketPrintedAt: Date; ticketPrintCount: number }> {
+    const [transfer] = await this.db
+      .select({
+        id: schema.stockTransfers.id,
+        status: schema.stockTransfers.status,
+        ticketPrintCount: schema.stockTransfers.ticketPrintCount,
+      })
+      .from(schema.stockTransfers)
+      .where(eq(schema.stockTransfers.id, id))
+      .limit(1);
+    if (!transfer) throw new NotFoundException('Transfer not found');
+    if (transfer.status === 'canceled') {
+      throw new BadRequestException('Cannot print a ticket for a canceled transfer');
+    }
+    const printedAt = new Date();
+    await this.db
+      .update(schema.stockTransfers)
+      .set({
+        ticketPrintedAt: printedAt,
+        ticketPrintCount: transfer.ticketPrintCount + 1,
+        updatedAt: printedAt,
+      })
+      .where(eq(schema.stockTransfers.id, id));
+    await this.audit.log({
+      action: 'stock_transfer.ticket_print',
+      targetType: 'stock_transfer',
+      targetId: id,
+      after: { printCount: transfer.ticketPrintCount + 1 },
+    });
+    return { ticketPrintedAt: printedAt, ticketPrintCount: transfer.ticketPrintCount + 1 };
+  }
+
+  private async transferOps(businessId: string): Promise<TransferOps> {
+    const [biz] = await this.db
+      .select({ opsSettingsJson: schema.businesses.opsSettingsJson })
+      .from(schema.businesses)
+      .where(eq(schema.businesses.id, businessId))
+      .limit(1);
+    return ((biz?.opsSettingsJson ?? {}) as { transfers?: TransferOps | null }).transfers ?? {};
+  }
+
   private async deductOrigin(
     businessId: string,
     actorId: string,
@@ -1025,6 +1105,8 @@ export class TransfersController {
         shippedAt: schema.stockTransfers.shippedAt,
         receivedAt: schema.stockTransfers.receivedAt,
         canceledAt: schema.stockTransfers.canceledAt,
+        ticketPrintedAt: schema.stockTransfers.ticketPrintedAt,
+        ticketPrintCount: schema.stockTransfers.ticketPrintCount,
         notes: schema.stockTransfers.notes,
         createdByUserId: schema.stockTransfers.createdByUserId,
         createdAt: schema.stockTransfers.createdAt,

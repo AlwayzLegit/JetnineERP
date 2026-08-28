@@ -34,6 +34,8 @@ interface Transfer {
   status: string;
   fromLocationName: string | null;
   toLocationName: string | null;
+  ticketPrintedAt: string | null;
+  ticketPrintCount: number;
   shippedAt: string | null;
   receivedAt: string | null;
   canceledAt: string | null;
@@ -227,6 +229,12 @@ export default function TransferDetailPage() {
               <Truck size={14} />
               {busy ? 'Shipping…' : 'Ship transfer'}
             </Button>
+            {/* Q3: shipping is gated on a printed ticket by default. */}
+            <span style={{ fontSize: 12, color: 'var(--text-secondary)', alignSelf: 'center' }}>
+              {t.ticketPrintedAt
+                ? `Ticket printed ${new Date(t.ticketPrintedAt).toLocaleString()}${t.ticketPrintCount > 1 ? ` (×${t.ticketPrintCount})` : ''}`
+                : 'Ticket not printed yet — print it before shipping'}
+            </span>
             <Button variant="danger" onClick={cancel} disabled={busy}>
               Cancel
             </Button>

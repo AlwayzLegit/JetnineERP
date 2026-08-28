@@ -235,6 +235,12 @@ export default function NewTransferPage() {
             />
             Ship immediately (skip the draft step)
           </label>
+          {shipNow && (
+            <p style={{ fontSize: 12, color: 'var(--text-secondary)', margin: '4px 0 0' }}>
+              Blocked when a printed transfer ticket is required before shipping (the default) —
+              create the draft, print the ticket, then ship.
+            </p>
+          )}
         </Card>
 
         <Card title="Add items">
