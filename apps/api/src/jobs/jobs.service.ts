@@ -7,11 +7,16 @@ import {
 } from '@nestjs/common';
 import { and, eq, inArray, lt, sql } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
-import { schema } from '@jetnine/db';
+import { schema, withDrizzleTenantContext } from '@jetnine/db';
 import { AuditService } from '../audit/audit.service';
 import { ExceptionsService } from '../controls/exceptions.service';
 import { ROOT_DRIZZLE } from '../database/database.module';
 import { computeReorderSuggestions } from '../purchasing/replenishment';
+import { vendorRunsToday } from '../purchasing/replenishment-engine';
+import { parseVendorReplenishment } from '../purchasing/replenishment-data';
+import { ReplenishmentRunService } from '../purchasing/replenishment.controller';
+import { executeReportRun } from '../report-builder/report-runner';
+import { getSource } from '../report-builder/report-sources';
 
 /** The declared step list (JOB-002): the operator can always see it. */
 export interface JobDefinition {
@@ -48,6 +53,29 @@ export const JOB_REGISTRY: JobDefinition[] = [
     destructive: false,
   },
   {
+    id: 'sales_rate_replenishment',
+    name: 'Sales-rate replenishment purchase orders',
+    description:
+      'STORIS-model sales-rate replenishment (HANDOFF-po-replenishment-sales-rate §3.1): for ' +
+      'each vendor with Generate Automatic POs on and today in its Build POs days, runs the ' +
+      'ONE calculation engine with default criteria and creates a PO for lines with quantity ' +
+      'to order. Automatically Hold POs leaves it a draft for buyer review.',
+    order: 35,
+    dependsOn: [],
+    destructive: false,
+  },
+  {
+    id: 'report_builder_schedule',
+    name: 'Scheduled report-builder reports',
+    description:
+      'Runs every report-builder definition marked Add to Schedule and archives the result ' +
+      '(report-builder pack 08: scheduled output goes to the archive; date-code prompts ' +
+      're-resolve each run so scheduled reports follow the calendar).',
+    order: 60,
+    dependsOn: [],
+    destructive: false,
+  },
+  {
     id: 'transfer_aging',
     name: 'Transfer aging',
     description:
@@ -78,6 +106,9 @@ const RUN_LOCAL_HOUR = 2;
 export class JobsService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(JobsService.name);
   private timer: ReturnType<typeof setInterval> | null = null;
+  /** Stateless; instantiated directly so the EOD path shares the exact
+   * run code the interactive endpoint uses (T-31). */
+  private readonly replenishmentRunner = new ReplenishmentRunService();
 
   constructor(
     @Inject(ROOT_DRIZZLE) private readonly rootDb: PostgresJsDatabase,
@@ -245,6 +276,10 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
         return this.poOverdueSweep(businessId, businessDate);
       case 'auto_replenishment':
         return this.autoReplenishment(businessId);
+      case 'sales_rate_replenishment':
+        return this.salesRateReplenishment(businessId, businessDate);
+      case 'report_builder_schedule':
+        return this.reportBuilderSchedule(businessId);
       case 'transfer_aging':
         return this.transferAging(businessId, businessDate);
       default:
@@ -341,13 +376,17 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
       for (const r of rows) if (r.remaining > 0) onOrder.set(r.variantId, r.remaining);
     }
 
-    // Ship-to: the business's first active location (single-warehouse
-    // reality today; per-vendor ship-to is a follow-up).
+    // Ship-to: the first active warehouse-typed location (Q2), falling
+    // back to the oldest active location; per-vendor ship-to is a
+    // follow-up.
     const [loc] = await this.rootDb
       .select({ id: schema.locations.id })
       .from(schema.locations)
       .where(and(eq(schema.locations.businessId, businessId), eq(schema.locations.isActive, true)))
-      .orderBy(schema.locations.createdAt)
+      .orderBy(
+        sql`(${schema.locations.locationType} = 'warehouse') DESC`,
+        schema.locations.createdAt,
+      )
       .limit(1);
     if (!loc) return { recordsAffected: 0, detail: { skipped: 'no active location' } };
 
@@ -415,6 +454,167 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
       });
     }
     return { recordsAffected: created, detail: { created, skippedUnassigned } };
+  }
+
+  /**
+   * §3.1 EOD mode of sales-rate replenishment. Same engine, same data
+   * path as POST /v1/purchasing/replenishment/run — only the trigger
+   * differs (T-31). Ship-to follows the auto_replenishment convention:
+   * the business's first active location is the warehouse.
+   */
+  private async salesRateReplenishment(
+    businessId: string,
+    businessDate: string,
+  ): Promise<JobOutcome> {
+    const vendors = await this.rootDb
+      .select({
+        id: schema.vendors.id,
+        name: schema.vendors.name,
+        replenishmentJson: schema.vendors.replenishmentJson,
+      })
+      .from(schema.vendors)
+      .where(
+        and(
+          eq(schema.vendors.businessId, businessId),
+          eq(schema.vendors.isActive, true),
+          sql`${schema.vendors.replenishmentJson} IS NOT NULL`,
+        ),
+      );
+    if (vendors.length === 0) return { recordsAffected: 0, detail: { vendors: 0 } };
+
+    const [loc] = await this.rootDb
+      .select({ id: schema.locations.id })
+      .from(schema.locations)
+      .where(and(eq(schema.locations.businessId, businessId), eq(schema.locations.isActive, true)))
+      .orderBy(
+        sql`(${schema.locations.locationType} = 'warehouse') DESC`,
+        schema.locations.createdAt,
+      )
+      .limit(1);
+    if (!loc) return { recordsAffected: 0, detail: { skipped: 'no active location' } };
+
+    // Noon UTC of the business date keeps getUTCDay() on that calendar day.
+    const today = new Date(`${businessDate}T12:00:00Z`);
+    let created = 0;
+    let skippedGate = 0;
+    let empty = 0;
+    const pos: string[] = [];
+    for (const v of vendors) {
+      const settings = parseVendorReplenishment(v.replenishmentJson);
+      if (!settings || !vendorRunsToday(settings, today)) {
+        skippedGate += 1;
+        continue;
+      }
+      const result = await this.replenishmentRunner.createPurchaseOrder(this.rootDb, {
+        vendorId: v.id,
+        locationId: loc.id,
+        criteria: {
+          variancePercent: null,
+          daysForReplenishment: null,
+          salesWindow: 'this_year_prior',
+          includeOverstocks: false,
+          includeServiceItems: false,
+          productIds: null,
+        },
+        businessId,
+        today,
+        audit: this.audit,
+      });
+      if (!result) {
+        empty += 1;
+        continue;
+      }
+      created += 1;
+      pos.push(result.number);
+    }
+    if (created > 0) {
+      await this.exceptions.record({
+        type: 'auto_replenishment',
+        severity: 'info',
+        entityType: 'business',
+        entityId: businessId,
+        summary: `Sales-rate replenishment created ${created} purchase order(s): ${pos.join(', ')}`,
+        metadata: { created, pos, skippedGate, empty },
+        businessId,
+      });
+    }
+    return { recordsAffected: created, detail: { created, pos, skippedGate, empty } };
+  }
+
+  /**
+   * Pack 08 (report builder): the scheduler runs the SAME pipeline as
+   * the interactive endpoint (executeReportRun) inside the tenant's
+   * RLS context, and its only output is an archive record with
+   * runSource='eod' (acceptance #38/#64). Reports whose required
+   * prompts have no answer are skipped with the error recorded —
+   * scheduled runs carry no operator to ask.
+   */
+  private async reportBuilderSchedule(businessId: string): Promise<JobOutcome> {
+    const defs = await this.rootDb
+      .select()
+      .from(schema.reportDefinitions)
+      .where(
+        and(
+          eq(schema.reportDefinitions.businessId, businessId),
+          eq(schema.reportDefinitions.addToSchedule, true),
+        ),
+      );
+    if (defs.length === 0) return { recordsAffected: 0, detail: { scheduled: 0 } };
+
+    let archived = 0;
+    const errors: Record<string, string> = {};
+    for (const row of defs) {
+      const source = getSource(row.sourceId);
+      if (!source) {
+        errors[row.name] = `unknown source '${row.sourceId}'`;
+        continue;
+      }
+      try {
+        const result = await withDrizzleTenantContext(this.rootDb, { businessId }, async (tx) => {
+          const userDicts = await tx
+            .select()
+            .from(schema.reportDictionaries)
+            .where(eq(schema.reportDictionaries.sourceId, row.sourceId));
+          return executeReportRun(tx as never, {
+            row,
+            source,
+            userDicts: userDicts.map((d) => ({
+              name: d.name,
+              kind: d.kind as 'formula' | 'joined',
+              width: d.width,
+              maskPermission: d.maskPermission,
+              columnHeading: d.columnHeading,
+              justification: d.justification,
+              formula: d.formula,
+              joinSourceId: d.joinSourceId,
+              joinFieldName: d.joinFieldName,
+            })),
+            answers: {},
+            runBy: 'scheduler',
+          });
+        });
+        await this.rootDb.insert(schema.reportArchives).values({
+          businessId,
+          reportDefinitionId: row.id,
+          reportName: row.name,
+          sourceId: row.sourceId,
+          access: row.access,
+          ownerUserId: row.ownerUserId,
+          runSource: 'eod',
+          definitionSnapshotJson: row.definitionJson as never,
+          resultJson: result as never,
+          rowCount: result.rows.length,
+          createdByUserId: null,
+        });
+        archived += 1;
+      } catch (err) {
+        errors[row.name] = err instanceof Error ? err.message : String(err);
+      }
+    }
+    return {
+      recordsAffected: archived,
+      detail: { scheduled: defs.length, archived, errors },
+    };
   }
 
   private async transferAging(businessId: string, businessDate: string): Promise<JobOutcome> {

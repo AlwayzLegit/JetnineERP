@@ -11,7 +11,7 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { schema } from '@jetnine/db';
 import { AuditService } from '../audit/audit.service';
@@ -132,6 +132,122 @@ export class CustomersController {
       .limit(20);
 
     return { ...row, recentSales };
+  }
+
+  /**
+   * Customer 360 summary (Sales Views Phase 4): lifetime and
+   * year-to-date activity totals over POS sales + orders, and the open
+   * orders with their computed balance (Balance = Total − Amount Paid —
+   * derived, never stored). Imported documents count toward totals:
+   * their history is real even though their money flows are excluded
+   * elsewhere.
+   */
+  @Get(':id/summary')
+  @RequirePermission('customers.view')
+  async summary(
+    @CurrentTenant() _tenant: RequestTenantContext,
+    @Param('id') id: string,
+  ): Promise<{
+    lifetime: { documents: number; totalCents: number };
+    ytd: { documents: number; totalCents: number };
+    openOrders: {
+      id: string;
+      number: string;
+      status: string;
+      totalCents: number;
+      paidCents: number;
+      balanceCents: number;
+      requestedDate: string | null;
+    }[];
+  }> {
+    const [exists] = await this.db
+      .select({ id: schema.customers.id })
+      .from(schema.customers)
+      .where(eq(schema.customers.id, id))
+      .limit(1);
+    if (!exists) throw new NotFoundException('Customer not found');
+    const yearStart = new Date(Date.UTC(new Date().getUTCFullYear(), 0, 1));
+
+    const [saleTotals] = await this.db
+      .select({
+        documents: sql<number>`COUNT(*)::int`,
+        totalCents: sql<number>`COALESCE(SUM(${schema.sales.totalCents}), 0)::int`,
+        ytdDocuments: sql<number>`COUNT(*) FILTER (WHERE ${schema.sales.completedAt} >= ${yearStart.toISOString()}::timestamptz)::int`,
+        ytdTotalCents: sql<number>`COALESCE(SUM(${schema.sales.totalCents}) FILTER (WHERE ${schema.sales.completedAt} >= ${yearStart.toISOString()}::timestamptz), 0)::int`,
+      })
+      .from(schema.sales)
+      .where(
+        and(
+          eq(schema.sales.customerId, id),
+          sql`${schema.sales.status} IN ('completed', 'partially_refunded', 'refunded')`,
+        ),
+      );
+    const [orderTotals] = await this.db
+      .select({
+        documents: sql<number>`COUNT(*)::int`,
+        totalCents: sql<number>`COALESCE(SUM(${schema.orders.totalCents}), 0)::int`,
+        ytdDocuments: sql<number>`COUNT(*) FILTER (WHERE ${schema.orders.createdAt} >= ${yearStart.toISOString()}::timestamptz)::int`,
+        ytdTotalCents: sql<number>`COALESCE(SUM(${schema.orders.totalCents}) FILTER (WHERE ${schema.orders.createdAt} >= ${yearStart.toISOString()}::timestamptz), 0)::int`,
+      })
+      .from(schema.orders)
+      .where(
+        and(
+          eq(schema.orders.customerId, id),
+          sql`${schema.orders.status} NOT IN ('draft', 'quote', 'cancelled')`,
+        ),
+      );
+
+    const open = await this.db
+      .select({
+        id: schema.orders.id,
+        number: schema.orders.number,
+        status: schema.orders.status,
+        totalCents: schema.orders.totalCents,
+        requestedDate: schema.orders.requestedDate,
+      })
+      .from(schema.orders)
+      .where(
+        and(
+          eq(schema.orders.customerId, id),
+          sql`${schema.orders.status} NOT IN ('draft', 'quote', 'cancelled', 'completed')`,
+        ),
+      )
+      .orderBy(desc(schema.orders.createdAt))
+      .limit(50);
+    const paid = open.length
+      ? await this.db
+          .select({
+            orderId: schema.payments.orderId,
+            paidCents: sql<number>`COALESCE(SUM(${schema.payments.amountCents}), 0)::int`,
+          })
+          .from(schema.payments)
+          .where(
+            and(
+              inArray(
+                schema.payments.orderId,
+                open.map((o) => o.id),
+              ),
+              eq(schema.payments.status, 'succeeded'),
+            ),
+          )
+          .groupBy(schema.payments.orderId)
+      : [];
+    const paidBy = new Map(paid.map((p) => [p.orderId, p.paidCents]));
+
+    return {
+      lifetime: {
+        documents: (saleTotals?.documents ?? 0) + (orderTotals?.documents ?? 0),
+        totalCents: (saleTotals?.totalCents ?? 0) + (orderTotals?.totalCents ?? 0),
+      },
+      ytd: {
+        documents: (saleTotals?.ytdDocuments ?? 0) + (orderTotals?.ytdDocuments ?? 0),
+        totalCents: (saleTotals?.ytdTotalCents ?? 0) + (orderTotals?.ytdTotalCents ?? 0),
+      },
+      openOrders: open.map((o) => {
+        const paidCents = paidBy.get(o.id) ?? 0;
+        return { ...o, paidCents, balanceCents: o.totalCents - paidCents };
+      }),
+    };
   }
 
   @Post()

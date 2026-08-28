@@ -2177,3 +2177,729 @@ confirmed fine), then a 10-agent fix workflow, gated centrally:
   sales 21 · controls 22 · closeout 4 · service-crm 8 · inventory 21 all
   green. Gates by exit code: typecheck 0 · lint 0 · test 0 · build 0 ·
   prettier 0.
+
+## Checkpoint 20 — pagination sweep LIVE; all 20 tasks complete (2026-08-27)
+
+PR #50 squash-merged on green CI (main 84eb3af), deploy branch rolled
+(3361981), Render deploy dep-da87ke2jnfac73d27fng live — boot log
+verified `Schema migrations: 60/60 applied,
+head=0059_exchange_partial_unique; this run applied none` (correct: no
+migration in this PR). Vercel production READY on main 84eb3af
+(dpl_8bD1fdMSqnWHafhydxAwRuTEzyW9), so the web side (Products,
+Inventory, and every converted list page) is serving the Load-more UI.
+
+All 20 tracked tasks complete. Queue holds nothing buildable. Remaining
+items are owner-side only:
+
+- Policy values awaiting owner: restocking fee %, E1 hold-at-entry,
+  return window, delivery auto-schedule days, auto-replenishment.
+- Needs-counsel privacy items: TCPA consent wording, retention/erasure.
+- Deferred pagination mediums (noted in the sweep section above):
+  /v1/inventory/levels full-location fetch, deliveries week view,
+  commissions report caps, admin templates, marketing tag ordering.
+
+## Users & Security docs domain — §10 kickoff (2026-08-27)
+
+Owner uploaded `HANDOFF-users-and-security.md` (STORIS Users, Roles &
+Security — first content domain for the STORIS docs system). Executed its
+§10 kickoff exactly (5 deliverables, then stop):
+
+- `docs/HANDOFF-users-and-security.md` — handoff committed verbatim
+  (prettier-ignored like the other packs).
+- `docs/settings/general-system-control-settings.md` — security-relevant
+  fields from §2/§3; every value TBD — unverified, status: draft.
+- `docs/processes/user-access-model.md` (the eight layers) +
+  `docs/processes/login-chain.md`, both ending with the required
+  "Settings that control this process" section.
+- `docs/erp/system-administration/user-settings/create-a-user.md` —
+  field-per-entry across all four tabs in screen order (37 entries), each
+  carrying a Documented / "Unverified — needs test in Learn" status.
+- `docs/decisions/d1…d10` — ten ADR stubs, status: proposed, each with
+  decision, recommended default, and verify-first list.
+- `docs/open-questions.md` — the five source contradictions, each with the
+  exact test and environment.
+
+**Divergence, flagged:** the paired spec `docs/STORIS-DOCS-HANDOFF.md`
+(authoring rules, P0 scaffold, six scripts) was never uploaded to this
+repo. Conventions were inferred from the handoff itself and enforced by an
+interim validator, `docs/scripts/validate-user-security-docs.mjs`
+(frontmatter, required sections, ADR count/status, per-field status lines,
+link integrity — exit 0). **Ops:** owner to upload STORIS-DOCS-HANDOFF.md
+so frontmatter/scripts can be retrofitted to the real spec before Phase 2.
+Per the handoff: run the five §7 Learn tests before authoring more
+articles; remaining screen articles and the role matrix are deliberately
+NOT started.
+
+## Sales Views & Reports pack — partial upload committed (2026-08-27)
+
+Owner uploaded 5 of the 7 files of the STORIS "Sales Views and Reports"
+handoff (139 articles: reporting platform, 18-picker shared components,
+customer 360 inquiries, operational inquiries). Committed verbatim to
+`docs/erp-sales-views/` (prettier-ignored). **Ops:** per the pack's own
+read-order, `05-report-catalog.md`, `06-cross-cutting-rules.md`, and
+`07-build-plan.md` (phasing, acceptance criteria, what to cut) were not
+uploaded — build does not start until they arrive.
+
+## Sales Views & Reports — pack complete + Phase 0 triage (2026-08-27)
+
+Owner uploaded 05-report-catalog, 06-cross-cutting-rules, 07-build-plan (zip
+verified byte-identical for 00–04). Pack complete at `docs/erp-sales-views/`.
+Authored `PHASE0-TRIAGE.md` answering the build plan's seven Phase 0
+decisions: one surface not two (decided by architecture); no Regional
+Processing port (RLS + permission catalog); fixed layouts, no panel registry
+in v1; reports stay pure reads (EOD never mutates via reports); contradictions
+mostly moot; ATP partial (reservation basis + PO dates, no full projection).
+63-report triage: ~13 keep (merged into fewer surfaces), 3 already covered
+(exceptions queue, physical inventory, void integrity), rest dropped per
+locked decisions (no in-house financing, no protection plans, no leads/CRM).
+**Ops — owner confirms before Phase 5:** the keep/drop table; per-user
+location/data scoping (self/store/all axis); marketing attribution wanted?;
+lightweight AP (vendor bill/credit) in scope for received-not-billed /
+RTV-not-credited queues?; ATP projection scope.
+
+## Phase 0 locked + Delivery Ticket Reprints pack committed (2026-08-27)
+
+Owner answered all five Phase 0 questions on the Sales Views pack (recorded
+in `docs/erp-sales-views/PHASE0-TRIAGE.md`): keep/drop table confirmed;
+salespeople scoped to **their store's** numbers; marketing attribution
+wanted (capture code on orders); no mini-AP (received-not-billed /
+RTV-not-credited queues dropped); ATP stays partial. Build starts at
+Phase 1 (data-scope substrate) — note `membership_location_scopes` already
+exists in schema, currently read only by locations.controller.
+
+Owner also uploaded the **Delivery Ticket Print & Reprint** pack (9 files,
+zip verified against loose uploads) — committed verbatim to
+`docs/erp-delivery-reprints/` (prettier-ignored). Its 02 state machine is
+normative with STORIS-published acceptance tests in 07 to port first.
+Queued after the Sales Views build.
+
+## Sales-Rate PO Replenishment pack committed (2026-08-27)
+
+Owner uploaded the sales-rate replenishment handoff (STORIS "Replenish
+Stock Inventory Based on Sales Rate") — committed verbatim to
+`docs/HANDOFF-po-replenishment-sales-rate.md`. One pure calculation engine
+for EOD/on-demand/scheduled (T-31 identical-numbers is the key test), 32
+acceptance tests, 11 open questions (several self-decidable, e.g. sold −
+returned; the rest flagged when built). Supersedes/extends the existing
+min-based auto-replenishment PO drafts. Queued after delivery reprints.
+
+## Sales Views Phase 1 — store-level data scope (2026-08-27)
+
+Owner-confirmed decision 2 built as substrate before any report work:
+
+- `memberships.data_scope` ('all' | 'store', migration
+  0060_membership_data_scope); a 'store' member's visible locations come
+  from the previously-dormant `membership_location_scopes` table, loaded
+  once per request into the tenant context by the tenancy guard.
+- `salesScopeCond()` (`apps/api/src/common/sales-scope.ts`) — one WHERE
+  fragment ANDed into every sales-dollar surface: orders list, POS sales
+  list, cash-shifts list, reports sales/daily + by-product + by-category,
+  the Z-report (all five sub-queries incl. the tender COALESCE), and the
+  morning dashboard. Empty scope list = FALSE (fail closed, never open);
+  a caller-requested locationId outside scope intersects to zero rows.
+- Members page: per-member "Sales data" control (All locations / Their
+  store only + store checkboxes, warning when none selected); PATCH
+  /v1/business/members/:id accepts dataScope + scopeLocationIds
+  (validated against the business, audited before/after).
+- reports.int.spec +7 tests (owner-vs-scoped diff = exactly the other
+  store's dollars; out-of-scope Z request → zero; empty scope → nothing;
+  scope restore round-trip). 21/21.
+
+Also committed the **STORIS Selling Location pack** (8 files,
+`docs/erp-selling-location/` — 4 independent tracks + a shared lookup
+control per its README; queued). Note: container restart had wiped 17
+per-suite test DBs (jetnine_admin …) — recreated; full `pnpm test` green.
+Gates by exit code: typecheck 0 · lint 0 · test 0 · build 0 · prettier 0.
+
+## Checkpoint 21 — store data scope LIVE (2026-08-27)
+
+PR #52 squash-merged on green CI (main 102b6ed), deploy branch rolled
+(8c90245), Render deploy dep-da88tm0n74is739t3i2g live — boot log
+verified `Schema migrations: 61/61 applied,
+head=0060_membership_data_scope; this run applied
+0060_membership_data_scope.` Vercel production READY on main 102b6ed.
+Store-scoped members now see only their store's sales data end to end.
+Cleanup commit 940532e relocated the selling-location pack + tracker
+note that a cwd slip had put under apps/api/. Next slice: unified
+written/delivered sales report (Phase 1 dimension + catalog section A
+merge).
+
+## Unified sales summary — written vs delivered (2026-08-27)
+
+Catalog section A's four sales-dollar reports merged into one surface
+with written/delivered as a first-class dimension (pack 01/06):
+
+- `GET /v1/reports/sales/summary?basis=written|delivered&groupBy=day|
+location|salesperson&start&end&format=csv` — POS sales + sales orders
+  in one result; imported excluded (D8); store data scope applies; CSV
+  embeds provenance (`# basis=… generated=…`, pack's run-time-options
+  echo). Average merchandise counts documents, never
+  document-salesperson pairs (Report Average Value rule).
+- Written = documents dated by entry time, orders in any non-draft/
+  quote/cancelled status; Delivered = completed documents by completion
+  time. **Deliberate divergence:** written uses the document's CURRENT
+  totals — no at-entry snapshot exists, so later edits fold into the
+  written figure instead of listing as separate adjustment records
+  (STORIS's Written Business/BTA adjustment ledger is not ported).
+- Reports page gains the "Sales summary — written vs delivered" card:
+  basis + group-by selectors, shared date range, stat row, CSV.
+- reports.int.spec 21→25 (written−delivered == exactly the open orders;
+  location labels + per-location totals; scope diff == Annex dollars;
+  avg + CSV provenance). Gates: typecheck 0 · lint 0 · test 0 (full) ·
+  build 0 · prettier 0.
+
+## Delivery Dates in Jeopardy — the call list (2026-08-27)
+
+Catalog 85, the pack's top-value operational screen, built as a live
+queue over what we have (owner-confirmed ATP decision — reservations +
+inbound supply dates, no full ATP projection):
+
+- `GET /v1/reports/delivery-jeopardy?horizonDays=N` — open order lines
+  with unreserved shortfall, promised date resolved line.deliveryDate →
+  earliest live scheduled delivery → order.requestedDate (lines with no
+  date anywhere are excluded, the ASAP/CWC rule). Inbound supply per
+  variant+location = earliest of open POs (expected date) and
+  draft/in-transit transfers (scheduled date). **Explicit risk states —
+  `no_supply` vs `late` (+days) — never the 999 sentinel.** Covered
+  lines drop out. Store scope applies; CSV embeds provenance.
+- New "At risk" page (`/jeopardy`, Sell nav): promised date, order link,
+  customer, shortfall, risk badge, inbound supply reference.
+- reports.int.spec 25→27 (no-supply vs late-by-8-days vs covered
+  fixtures; horizon bound). Gates: typecheck 0 · lint 0 · test 0 (full)
+  · build 0 · prettier 0.
+
+## Transfers pack committed (2026-08-27)
+
+Owner uploaded the STORIS Transfers handoff (16 files — all 22 section
+articles: domain model, settings, permissions, entry + variants,
+distributed + multi-leg transfers, manifests, receiving, replenishment,
+scheduling, inquiries, acceptance tests, phased build plan). Committed
+verbatim to `docs/erp-transfers/` (prettier-ignored). Note: Jetnine
+already has a transfers module (entry, ship/receive, serials, as-is +
+floor-sample variants, auto replenishment) — the build task starts with
+a gap reconciliation of the pack against shipped work, then its
+[DECISION] items batched to the owner per the pack's own instruction.
+Queued after the Sales Views program.
+
+## Sales Order Maintenance (SOM) mega-pack committed (2026-08-27)
+
+Owner uploaded the full Sales Processing specification — 27 files, two
+layers: module-level 00–13 (domain model, state machines, order entry,
+pricing/discounts/tax, payments/cards, financing, settlement/cash,
+salesperson/UP/CRM, views, security, cutover, acceptance tests, open
+questions) and screen-level 20–31 covering **all 172 SOM screens** field
+by field (index, 8 area files, cross-cutting corrections, 131 more
+acceptance tests, open questions #29–#58). Committed verbatim to
+`docs/erp/` (top-level \*.md prettier-ignored), alongside the existing
+`docs/erp/system-administration/` domain — this directory is now the
+unified spec tree, as the pack's own layout intends. Loose uploads
+(20-index, 29-cross-cutting) verified byte-identical to the zip.
+
+Key protocol from its 00-HANDOFF: read 29 before trusting 01–13 (the
+screen layer wins); [DECIDE] items are stop-and-ask; enum gaps are
+ask-not-guess; quantities become decimal(12,4). Much overlaps work
+already shipped (orders, returns, exchanges, POS, deliveries) — like the
+transfers pack, the build task starts with a reconciliation pass, then
+batches the [DECIDE]/open-question asks to the owner. Queued behind the
+Sales Views program and the other queued packs.
+
+## Checkpoint 22 — jeopardy queue merged; liability + date-change views (2026-08-27)
+
+PR #54 squash-merged on green CI (main 32dee00): Delivery Dates in
+Jeopardy live queue + /jeopardy page, plus the transfers pack (16 files)
+and the SOM mega-pack (27 files) committed. Deploy branch rolled
+(4f1eb8e), Render deploy dep-da89k2favr4c73ersb6g triggered (no
+migration — boot log verify pending).
+
+Next slice in the same sweep, gates green before push:
+
+- `GET /v1/reports/gift-cards/liability` (catalog 76) — every card still
+  carrying a balance + total owed; reports.financial.view; CSV with
+  provenance. Reports page card in the financial section.
+- `GET /v1/reports/delivery-date-changes?days=N` (catalog 86) — the
+  delivery-commitment change log read from the audit trail
+  (schedule/update/cancel, before→after dates from the diff), actor
+  attribution; deliveries.view; Reports page card.
+- reports.int.spec 27→29 (liability counts only balance-carrying cards +
+  403 for non-financial; audit-sourced before→after surfaces). Gates:
+  typecheck 0 · lint 0 · test 0 (full) · build 0 · prettier 0.
+
+## Checkpoint 23 — #55 live; receipts + tax-by-location built (2026-08-27)
+
+PR #55 (gift-card liability + delivery date-change log) deployed:
+dep-da89ouvavr4c73es75dg live, boot log `61/61 applied,
+head=0060_membership_data_scope; this run applied none`. Next slice
+gated green:
+
+- `GET /v1/reports/receipts` (catalog 92) — every succeeded payment by
+  method × taking location (sale/order/service COALESCE), imported
+  excluded, store scope applies, CSV provenance; Reports page card.
+- Tax summary gains the **by-location jurisdiction block** (catalog 87
+  — LA Mattress jurisdictions map to locations): completed POS sales +
+  completed orders, documents/total/tax per location; the per-class
+  table (and now the whole endpoint) is store-scoped too.
+- reports.int.spec 29→31. Gates: typecheck 0 · lint 0 · test 0 (full) ·
+  build 0 · prettier 0.
+
+## Cash Balancing pack committed (2026-08-27)
+
+Owner uploaded the Cash Balancing & Cash-Position Reporting handoff
+(10 files: domain model, control settings, the three reports — drawer
+balancing totals, daily receipts register, cash requirements — shared
+report primitives, adjacent screens, acceptance criteria, open
+questions). Committed verbatim to `docs/handoffs/cash-balancing/` (the
+zip's own layout; prettier-ignored). Jetnine already has cash shifts
+with blind-count close + variance and the new receipts report — the
+build task starts by reconciling the pack's loop (system-date drawers,
+tolerance/retries, register vs balancing distinction) against that.
+Queued after the Sales Views program and the other packs.
+
+## Merchandising activity — the buyer's report (2026-08-27)
+
+Catalog 67 built over Jetnine's own model (no regional cost overlays —
+one cost, one price):
+
+- `GET /v1/reports/merchandising?vendorId&categoryId&brandId&
+includeNoActivity` — per variant: on hand / reserved / floor / net
+  available (all locations), as-is holdings (pending_review pieces), on
+  order (open PO remainder), sold MTD/YTD units (completed POS sales +
+  completed orders; FILTER params cast ::timestamptz — untyped Date
+  params 500'd), replacement cost, price, markup %. No-activity rows
+  drop unless asked (the catalog's detail-line rule); top-2000 cap is
+  announced, never silent. reports.financial.view (cost-bearing).
+- New page `/reports/merchandising` (linked from Reports): vendor/
+  category/brand filters, include-all toggle, CSV with provenance.
+- reports.int.spec 31→32 (widget stock 18 after the POS sale, 150%
+  markup, gadget on-order 5 from the jeopardy PO fixture, 403 for
+  non-financial). Gates: typecheck 0 · lint 0 · test 0 (full) · build 0
+  · prettier 0.
+
+## Inventory adjustments view + customer purchase export (2026-08-27)
+
+The last two report-catalog keeps:
+
+- `GET /v1/reports/inventory-adjustments?start&end&reason` (catalog 40)
+  — the movements ledger over a window, grouped by reason (units in /
+  out) with a labeled detail list (product, location, actor, reference,
+  notes); pure read, nothing EOD-coupled or self-deleting; store scope
+  applies; announced 1000-row cap; CSV provenance. Reports page card.
+- `GET /v1/reports/customer-purchases?customerId&start&end` (catalog 42) — completed POS sale lines + completed order lines, one customer
+  or all, announced 5000 cap, CSV; store scope applies. "Export purchase
+  history CSV" button on the customer page.
+- reports.int.spec 32→34. Gates: typecheck 0 · lint 0 · test 0 (full) ·
+  build 0 · prettier 0.
+
+**Report-catalog phase COMPLETE.** Every keep-table row is now built or
+covered: unified sales summary, avg/document, receipts, tax (class +
+jurisdiction), open-orders surfaces + jeopardy queue, date-change log,
+gift-card liability, merchandising activity, inventory adjustments,
+customer purchases; exceptions/physical-count/void-integrity covered by
+existing modules. Remaining in the Sales Views program: Phase 4 record
+pages (customer 360 panels, product activity, salesperson page) — the
+existing customer/product/orders pages already carry much of this;
+scoped as the next slice(s).
+
+## Phase 4 record-page slice + Report Builder pack (2026-08-27)
+
+Sales Views Phase 4 gap-fill, gates green:
+
+- `GET /v1/customers/:id/summary` — customer-360 totals (lifetime + YTD
+  documents/dollars over POS sales + orders) and open orders with
+  computed Balance = Total − Amount Paid (derived, never stored).
+  Customer page gains "Activity totals" + "Open orders" cards.
+- Orders list gains `salespersonMembershipId` filter; sales list gains
+  `associateUserId` — the parameterized "salesperson's documents" grid.
+- New **Salespeople** page (People nav): written activity per
+  salesperson over a window (via the sales summary), drill-in to the
+  person's orders + POS sales. reports.int.spec 34→36.
+
+Owner re-sent the cash-balancing zip (verified byte-identical to the
+committed pack — no changes) and uploaded the **STORIS Report Builder
+handoff** (13 files: report definitions, dictionaries/joins, run/output/
+viewer, security, scheduling, menu integration, acceptance tests, open
+questions) — committed verbatim to `docs/handoffs/storis-report-builder/`.
+Queued last: it layers on the reporting engine this sprint just built.
+
+## Checkpoint 24 — SALES VIEWS PROGRAM COMPLETE (2026-08-27)
+
+PR #59 squash-merged on green CI (main 9abbb43); deploy branch rolled
+(3577d68), Render deploy dep-da8as0btqb8s739lkepg triggered (no
+migration — verify on next check). #57 and #58 deploys verified live
+earlier (boot logs 21:05 and 21:21, `61/61 applied … none`).
+
+The 139-article Sales Views & Reports program (task #22) is COMPLETE
+across all five phases on the owner-locked Phase 0: substrate (store
+data scope, migration 0060), shared primitives (already in place from
+the pagination sweep), operational queues (jeopardy + existing
+exceptions), record pages (customer 360 totals/open-orders, salespeople
+page, buyer's report), and the full report catalog (sales summary,
+receipts, tax class+jurisdiction, date changes, gift-card liability,
+merchandising, adjustments, customer purchases). Deferred by triage:
+leads/CRM, protection plans, in-house financing reports, mini-AP queues,
+full ATP projection.
+
+Next: task #23 — Delivery Ticket Print & Reprint (port the pack's
+acceptance tests first, per its own instruction).
+
+## Delivery Ticket Print & Reprint — flag state machine (2026-08-27)
+
+Task #23 built per the pack's own protocol: 07's acceptance tests ported
+FIRST (S1–S9, T1–T7, T9, T10, R10 — 21 pure unit tests), then the
+normative 02 state machine as a pure function:
+
+- `apps/api/src/deliveries/ticket-flags.ts` — applyTicketEdit (R1–R8,
+  R11), canPrintSecondDate (R10), recordTicketPrint (print → P +
+  assignment); every transition returns the rule that fired. Pick-list
+  invariant (R7) enforced centrally; line slots outside the header's
+  first two dates are never ticketable.
+- Migration 0061_ticket_flags: ticket_flag/pick_list_flag on deliveries
+  (header slots) + delivery_lines (line slots).
+- TicketFlagsService persists snapshots and writes the transition log to
+  audit (`delivery.ticket_flags`) — "why did this reprint?" is always
+  answerable. Wired: delivery schedule/cancel (R8 next-delivery-date),
+  delivery date move (R8), order payments (R8 deposit), and the
+  delivery-ticket-print endpoint (sets P; optional deliveryId; R10 409
+  `SECOND_DATE_NOT_PRINTABLE` for premature second-date prints).
+- deliveries.int.spec 17→19 (print→P, date-move→R with R8 in the audit
+  log, reprint→P; R10 refusal then first-date print).
+
+**Owner items from the pack's open questions (08), decisions taken —
+say the word to change any:**
+
+- Q2/S3: the published S3 header-second-slot result rests on a
+  parenthetical the pack itself calls a source error; implemented S7's
+  quantity-conditional rule instead (S3 test documents the divergence).
+  Verify against live STORIS when convenient.
+- Q3: two ticketable slots only (dates roll forward) — pack's best guess.
+- Q8: destroyed print history IS retained (audit transition log).
+- Q9: `R` stays advisory (never blocks) — confirm the warehouse wants it
+  advisory rather than gating manifest creation.
+- Q6 (line deletion) and per-line reschedule UI: machine supports them
+  (line_reschedule/line_inventory_change) but no UI path exercises them
+  yet; whole-delivery date moves map to R8.
+  Gates: typecheck 0 · lint 0 · test 0 (full) · build 0 · prettier 0.
+
+## Sales-rate PO replenishment — engine slice (2026-08-27)
+
+Task #24 slice 1 (docs/HANDOFF-po-replenishment-sales-rate): the ONE
+pure calculation engine, tests first per the pack.
+
+- `apps/api/src/purchasing/replenishment-engine.ts` — QuantityToOrder =
+  Required + Additional − Available − NetPO. Required always ÷7;
+  Additional ÷5/÷7 per Exclude Weekends; per-COLUMN rounding (on =
+  half-up, off = truncate); NetPO never clamped (branch A subtracts
+  uncommitted + layaway-per-control; branch B subtracts due-soon
+  demand, adds inbound transfers); strict `<` Minimum Sales Rate drops
+  the row; category-exception hierarchy for stock/lead days;
+  validateCriteria (products×model, IncludeAllBackOrders×DaysForRepl),
+  salesWindow (this-year-prior / last-year-subsequent, injected clock),
+  vendorRunsToday (GenerateAutomaticPOs + Build POs weekday gate).
+- `replenishment-engine.spec.ts` — 18 tests: T-01…T-09, T-10/11,
+  T-12/13, T-15, T-16, T-17, T-20, T-25/26 + category exception +
+  returns-subtract. All passing.
+- Migration `0062_vendor_replenishment`: `vendors.replenishment_json`
+  (jsonb) — per-vendor settings (§4 field list) live here.
+
+**§9 self-decisions (flag to owner):** §9.1 sales rate = sold −
+returned (source "=" read as typo) · §9.2 rounding off = truncate
+toward zero · §9.10 minimum-sales-rate filter is strict `<` · Jetnine
+divergences: no product groups (category exceptions only), no PO types
+(every open PO is supply), no PO-from-order-entry flag (§3.4 n/a).
+
+Remaining slices: data layer (build engine inputs from sales/inventory/
+POs/transfers), vendor-settings endpoint + UI, criteria screen +
+Items-for-Replenishment grid (session overrides, Rebuild List T-32),
+PO creation (qty>0 only, auto-hold T-28), delivery dates T-29/T-30,
+EOD mode via jobs runner (T-25/26) + T-31 identical-modes test.
+Gates: typecheck 0 · lint 0 · test 0 · build 0 · prettier 0.
+
+## Sales-rate replenishment — data layer, run modes, UI (2026-08-27)
+
+Task #24 slice 2: the engine now runs against live data in all modes.
+PR #61 (engine) merged; deploy verified `63/63, head=0062` at 22:24.
+
+- `replenishment-data.ts` — the ONE data path (T-31 rests here too):
+  builds every engine input per vendor × warehouse. Jetnine mappings,
+  recorded in the file: warehouse = the run's chosen location, all
+  other locations are "store stock"; written basis = order + POS write
+  dates, delivered = delivered deliveries + POS completions (imports
+  excluded — timestamps are import-time); returns = refund lines;
+  branch-B fill window = criteria ?? vendor daysForReplenishment ??
+  lead days; layaway demand kept out of uncommitted (no
+  double-subtract); dateless transfers excluded; direct-ship POs are
+  never supply; held PO = draft (still supply, per pack); unitVolume =
+  capacityUnits; as-is qty from pending-review as-is items.
+- `replenishment.controller.ts` — ReplenishmentRunService (shared by
+  endpoint + EOD; only the db handle differs) and endpoints:
+  GET/PATCH `/v1/purchasing/replenishment/vendors/:id/settings`
+  (validated, audited; PATCH null or enabled:false clears), POST
+  `…/run` (criteria → grid rows with product meta), POST
+  `…/purchase-order` (T-32 session overrides in the body; only qty>0
+  written; T-28 hold = draft, else placed; §5.1/T-29/T-30 header
+  expected date = furthest lead-day date or today).
+- EOD: `sales_rate_replenishment` job (order 35) — per vendor:
+  Generate Automatic POs + Build POs weekday gate (T-25/26), then the
+  identical run path; info exception lists created PO numbers.
+- Ops block `salesRateReplenishment` (settings registry + validation):
+  written/delivered basis, exclude-weekends divisor, standard rounding,
+  store-stock availability, layaway-in-NetPO.
+- Web `/replenishment` (nav: Catalog → Replenishment): criteria screen,
+  vendor-settings editor (incl. Build POs weekdays), Items-for-
+  Replenishment grid with session-only Order Qty edits, Rebuild List,
+  Create Purchase Order.
+- purchasing.int.spec 39→43: settings round-trip + refusals, §8
+  baseline from live data (80 sold/8wk, 45 on hand/15 committed →
+  20/30/30/0 → order 20), EOD writes the identical qty held+dated
+  (T-31/T-28/T-29), supply feedback zeroes the next run, override
+  creates qty>0 only (T-32).
+
+Deferred within the pack (flagged): GMROI/turns/average-units detail
+panel, vendor ship-from + buying groups + volume-limit cap (no Jetnine
+equivalents yet), print report. Criteria filters shipped: products,
+category; group/collection/model n/a.
+Gates: typecheck 0 · lint 0 · test 0 (full) · build 0 · format 0.
+
+## Checkpoint 25 — replenishment SHIPPED · transfers pack reconciled (2026-08-27)
+
+PR #62 squash-merged on green CI (main 39a9f07); deploy branch rolled
+(7ad4b21), deploy dep-da8bqpon74is73dfrbmg live, boot log verified
+`63/63 applied, head=0062_vendor_replenishment` (22:44). Task #24
+(sales-rate PO replenishment) is COMPLETE: engine (#61) + data layer,
+endpoints, EOD job, ops block, /replenishment UI (#62), 18 unit + 4
+int acceptance scenarios (T-31 identity proven). Earlier this window:
+#60's deploy verified `62/62, head=0061_ticket_flags` (22:05).
+
+Task #25 kickoff per the pack's own protocol (00-README step 5:
+collect [DECISION]s, never guess): authored
+`docs/erp-transfers/GAP-RECONCILE.md` — discovery-pass answers, the
+full shipped/partial/missing map (five transfer types, lifecycle,
+serials, auto transfers, FIFO carry = shipped; hold quantities,
+store↔store gate, numbering suffixes = partial; security tables,
+cartons, route capacity, distributed, one-time-buy, multi-leg,
+manifests, RF/phantom, reschedule screen, EDI 214 = missing and
+scope-gated), acceptance-map, and **ten batched owner questions**
+(§4) — manifests/RF, location_type, completion gates, distributed
+transfers + rounding, security tables, skip-list confirmations, plus
+the pack's four [DECISION] markers (§10's stock-level model recorded
+as already answered by the shipped replenishment programs).
+
+**Owner: answer GAP-RECONCILE.md §4 (10 numbered questions) to unlock
+the transfers build phases.** Next while that waits: decision-free
+quick wins (hold/scheduled qty D18–19, transfer-comment audit, excess-
+quantity inquiry), then task #26 (SOM pack reconcile).
+
+## Checkpoints 26–28 kickoff — remaining packs reconciled (2026-08-27)
+
+Same protocol as the transfers reconcile, one doc per pack, all
+questions batched:
+
+- **Task #26 (SOM)**: `docs/erp/GAP-RECONCILE.md` — shipped-stack map
+  across all module phases; open-question register #1–#58 triaged
+  (~35 answered by shipped code or locked decisions — Stripe
+  tokenization, one return window, snapshot-at-write, permission
+  precedence, cash-shift opening, all ten documented bypasses never
+  built; financing quartet moot under third-party-only); **twelve
+  owner questions** incl. the headline `decimal(12,4)` quantity
+  decision (recommendation: keep integers), commission plan values +
+  the #54 date-attribution conflict, deposit policy, discount-model
+  parity, provider set, merge tooling, COM/rooms/loyalty scope.
+- **Task #27 (cash balancing)**:
+  `docs/handoffs/cash-balancing/GAP-RECONCILE.md` — the loop exists
+  lean (shifts with float, counted close, variance, receipts report,
+  Z-report); pack Q1–Q10 triaged (7 answered by shipped design);
+  owner: fiscal calendar, cash-only tolerance confirm, retention, and
+  the scope pick for blind-count/tolerance/retries/suspension +
+  balance-by-cashier.
+- **Task #28 (report builder)**:
+  `docs/handoffs/storis-report-builder/GAP-RECONCILE.md` — one gating
+  question: fixed catalog (recommended), full self-service builder, or
+  BI-on-replica; `12`'s twenty semantic edges adopted as written only
+  if the builder is chosen.
+
+**Owner: the four GAP-RECONCILE docs are the complete ask backlog —
+answer §4 of each (transfers 10, SOM 12, cash 4, report-builder 1) and
+the corresponding builds unlock.** Until answers land the sprint holds
+no unchecked decision-free build items.
+
+## Transfers quick wins + Run-01 accounting pack landed (2026-08-28)
+
+Task #25's decision-free quick wins (the GAP-RECONCILE §4 tail),
+built while the owner scope answers are pending:
+
+- **Hold / scheduled quantity (pack D18/D19)** — migration
+  `0063_transfer_hold` adds `stock_transfer_lines.quantity_ordered`
+  (null = no hold). Create accepts `lines[].quantityOrdered ≥
+quantity`; only the scheduled quantity ever ships or leaves origin
+  stock; detail exposes `quantityOrdered`/`quantityHeld`. On FULL
+  receipt the held remainder rolls into a fresh draft transfer on the
+  same lane ("Held quantity rolled over from ST-… (D19)"), audited as
+  `stock_transfer.hold_rollover` — Jetnine idiom for "hold is cleared
+  and the remainder becomes schedulable"; divergence from STORIS's
+  reserve-at-origin hold is documented in the schema comment.
+- **Excess inquiry (pack 12)** — `GET /v1/stock-transfers/excess`:
+  variants whose total available stock exceeds their largest single
+  transfer line. Informational only. (Route registered before `:id` —
+  the literal-after-param 500 was caught by the new test.)
+- Web: transfer detail gains a Held column; the create form gains an
+  optional "Ordered (hold)" input per line.
+- transfers.int.spec 29→32 (D18 validation + partial ship, D19
+  rollover draft, excess incl. the 100-unit-line exclusion case).
+
+**Run-01 Accounting pack** uploaded by owner (~00:40) and committed
+verbatim: `docs/handoffs/run01-accounting/` — 30 batch returns over
+307 STORIS Accounting articles (GL 10, Payables 63, Receivables 124,
+Views/Reports 100) + coverage queue + run summary + assignment card.
+Queued as **task #29**; kickoff will reconcile against shipped Jetnine
+(no GL/AP/AR modules today; the receivables layer must be read against
+the locked third-party-financing-only decision) and batch the owner
+asks like the other four packs.
+Gates: typecheck 0 · lint 0 · test 0 (full) · build 0 · format 0.
+
+## Report builder — slice 1 SHIPPED · Run-02 pack landed (2026-08-28)
+
+**Owner decision (~01:00): "self-service builder"** — option (b) of the
+report-builder GAP-RECONCILE. The pack's 20 `12-open-questions`
+recommendations are adopted as written, per that doc's own terms.
+
+Task #28 slice 1 (pack build order 1–3 + runner + security), tests
+ported first (`11-acceptance-tests` #1–31 pure/stack subset + 54–58,
+62 — 34 tests green):
+
+- Migration `0064_report_builder`: `report_dictionaries` (user formula
+  - joined dictionaries) and `report_definitions` (jsonb doc), both
+    tenant tables (RLS lists updated).
+- `report-sources.ts` — the code-owned source catalog (orders, sales,
+  customers, products, purchase_orders) with system dictionaries,
+  per-source permission gates (pack 07 layer 2 mapped to Jetnine
+  permissions), relation graph, pk tiebreakers, and the shipped Cost
+  masking code (`reports.cost.view`) on cost-bearing dictionaries.
+- `formula.ts` — closed-set expression language (arith, comparison,
+  CONCAT/IF/ROUND/ABS/UPPER/LOWER), parse-time rejection of anything
+  else, unknown-ref hard errors; evaluated in-process, never SQL.
+- `definition.ts` — the pack-02 validation checklist (break⇒sort,
+  newPage⇒break, period-prompt ban, token↔prompt match, reserved S$
+  prefix at creation, width-132 warning, TR/FL valueless, derived
+  Summary Only).
+- Controller: sources catalog, dictionary create/delete (join
+  assistant honours the relation graph; deletion reports affected
+  definitions), definition CRUD + clone (system-owned runnable/
+  cloneable, never editable), and the runner — AND-only filters with
+  the `""` blank idiom, prompts (simple/range/multi include-exclude),
+  date codes TDAY/YDAY/CPTD/LPTD resolved at execution, break/total
+  groups + Summary Only, field masking as a render rule (header stays,
+  cells empty, no WHERE), 5000-row announced cap, provenance in every
+  output, CSV with house injection guards.
+- Permissions: `reports.builder.run` / `reports.builder.author` /
+  `reports.cost.view` (Owner/Manager inherit; Bookkeeper granted).
+- Web `/reports/builder` (nav under Insights): list/clone/run +
+  editor (headings, columns with break/total, filters, prompts,
+  sorts) + runner with prompt answers, Summary Only, grid with group
+  and grand totals.
+
+Deferred to later slices (flagged): PDF/archive destinations, viewer
+saved views, scheduling via the jobs runner, USER-DEFINED menus,
+WorkingDataSet sources. CPTD/LPTD use calendar months pending the
+fiscal-calendar answer (cash pack Q1).
+
+**Run-02 Merchandising pack** uploaded (~01:15) and committed verbatim:
+`docs/handoffs/run02-merchandising/` — 11 batches, 129 articles, 145
+findings over the purchasing/inventory domain. Queued as **task #30**
+(reconcile vs the already-shipped PO/costing/replenishment/transfers/
+physical-inventory stack).
+Gates: typecheck 0 · lint 0 · test 0 (694) · build 0 · format 0.
+
+## Run-02 merchandising reconciled (2026-08-28)
+
+Task #30: `docs/handoffs/run02-merchandising/GAP-RECONCILE.md` — the
+run's ten headline findings adjudicated against shipped code (eight
+are STORIS traps Jetnine avoided by construction: one cost, one
+availability definition, one PO lifecycle with guards, audited holds,
+membership-derived access, declared EOD, quantity-link PO↔SO parity,
+inventory_movements as the one Kardex); §G cautions adopted into the
+cutover runbook notes; **three owner questions**: landed cost into
+FIFO layers (lean freight field vs per-component vs no), PO types as
+policy bundles (answer with transfers Q4/Q6), and Open To Buy scope
+(default skip). No code changes until answers land.
+
+## Report builder — slice 2: archives + scheduling (2026-08-28)
+
+Task #28 slice 2 (pack 05 archive destination + pack 08 scheduling),
+acceptance #36–38, #42, #61, #63–64 ported:
+
+- The run pipeline extracted to `report-runner.ts` — the ONE execution
+  path now shared by the interactive endpoint, the archive
+  destination, and the EOD scheduler (same one-engine discipline as
+  replenishment). Masking became `applyMasking(result, can)`: archives
+  store the UNMASKED result + definition snapshot; masking re-applies
+  per viewer at read time, and entitlements are re-checked at view
+  time (#61) — a revoked user loses archives generated before the
+  revocation.
+- Migration `0065_report_archives`: `report_archives` (snapshot +
+  structured result + runSource regular|eod), tenant table.
+- Endpoints: run gains `format:'archive'` (no render, one record);
+  GET/DELETE `/v1/report-builder/archives[/:id]` with per-viewer
+  masking + CSV re-render (#37).
+- EOD job `report_builder_schedule` (order 60): every definition with
+  Add-to-Schedule runs inside `withDrizzleTenantContext` (RLS applied
+  on the root db) through the same pipeline; output is archive-only
+  with runSource 'eod' and runBy 'scheduler' (#63/#64); reports whose
+  required prompts lack answers are skipped with the error recorded.
+- Web: "Send to archive" on the runner + an Archived-runs card with
+  per-viewer CSV download.
+- report-builder.int.spec 17→22; purchasing jobs-list assertions
+  updated (5 steps).
+
+Still deferred: PDF output, viewer saved views, USER-DEFINED menus,
+WorkingDataSet sources, retention windows (owner said keep-everything
+stands unless Accounting answers cash Q3 differently).
+Gates: typecheck 0 · lint 0 · test 0 (704) · build 0 · format 0.
+
+## Checkpoint — 2026-08-28 (STORIS parity audit complete: runs 03–06 landed + 8 owner decisions)
+
+- Landed the remaining parity-audit packs under `docs/handoffs/` (canonical
+  copies from the complete-audit zip): `run03-sales-processing/` (18 files,
+  405-article Sales Processing dissection), `run04-logistics-delivery/` (13),
+  `run05-customer-service/` (4), `run06-getting-started/` (4), and
+  `AUDIT-CLOSEOUT.md`. All six runs (~1500 articles) are now in-repo.
+- Recorded the owner's 8 locked decisions (2026-08-28, AskUserQuestion
+  rounds 1+2) as "Decisions received" appendices in the five GAP-RECONCILE
+  docs: keep integer quantities · **in-house full GL** (run-01 batches
+  1/18/24 are the spec; journal-event derivation first) · manifests only,
+  no scanning · add store/warehouse location types · skip distributed
+  inventory · require print-before-ship on transfers · blind count +
+  cash-only $ tolerance (per-location) · landed cost lean.
+- Owner authorized build start ("go ahead and start"). Build queue order:
+  location_type migration → transfer print-before-ship gate → landed cost
+  lean → blind-count cash discipline → manifests (run-04 feeds this) →
+  in-house GL program (largest, phased).
+- Still-open owner questions carried in the GAP-RECONCILE docs (fiscal
+  calendar, cash tolerance $, PO types, OTB, discount-model parity,
+  financing providers/commission values, customer merge tooling, cutover
+  pilot-vs-full). None block the first slices; configurable settings +
+  recorded defaults where needed.
+
+## Checkpoint — 2026-08-28 (Q2+Q3: location types, store↔store gate, print-before-ship)
+
+- Migration `0066_location_types_transfer_ticket`:
+  `locations.location_type` ('store'|'warehouse', default store) +
+  `stock_transfers.ticket_printed_at` / `ticket_print_count`.
+- Ops block `transfers` in SET-007 registry: `storeToStore` (null/true =
+  allowed; false rejects store→store at create, E20) and
+  `requireTicketBeforeShip` (null/true = **required**, per the owner's Q3
+  decision — the default gate is ON in production).
+- `POST /v1/stock-transfers/:id/ticket-printed` records the print (audit
+  `stock_transfer.ticket_print`); the web print page calls it before
+  `window.print()`. Ship (and create-with-ship) are blocked until a
+  ticket has printed. Drafts are immutable in Jetnine, so no P/R
+  staleness machinery is needed — printedAt is sufficient.
+- Locations API/UI expose the type (create select + click-to-toggle
+  badge); replenishment picker sorts warehouses first; both EOD location
+  picks (auto-replenishment ship-to, sales-rate warehouse) now prefer
+  warehouse-typed locations via `ORDER BY (location_type='warehouse')
+DESC, created_at` — fallback path (no warehouse) is what every
+  existing EOD test exercises, so no second vendor fixture was added.
+- transfers.int.spec 32→36 (gate suite: block/print/unlock/reprint,
+  ship:true rejection, E20 store→store, canceled-print refusal);
+  business.int.spec +1 (type CRUD + validation). Legacy transfer suites
+  run with the gate off via fixture ops, mirroring pre-Q3 behavior.
+  Gates: typecheck 0 · lint 0 · test 0 · build 0 · format 0.

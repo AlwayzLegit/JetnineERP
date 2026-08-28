@@ -76,6 +76,7 @@ jobs:
       ONBOARDING_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/jetnine_onboarding
       CONTROLS_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/jetnine_controls
       CLOSEOUT_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/jetnine_closeout
+      REPORT_BUILDER_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/jetnine_report_builder
       REDIS_URL: redis://localhost:6379
 
     steps:
@@ -128,6 +129,7 @@ jobs:
           createdb -h localhost -U postgres jetnine_onboarding
           createdb -h localhost -U postgres jetnine_controls
           createdb -h localhost -U postgres jetnine_closeout
+          createdb -h localhost -U postgres jetnine_report_builder
 
       - name: Format check
         run: pnpm format:check

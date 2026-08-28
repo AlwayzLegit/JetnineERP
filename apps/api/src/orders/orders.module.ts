@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { TicketFlagsService } from '../deliveries/ticket-flags.service';
 import { AuditModule } from '../audit/audit.module';
 import { MoneyModule } from '../money/money.module';
 import { ReturnsModule } from '../returns/returns.module';
@@ -23,7 +24,7 @@ import { OrdersService } from './orders.service';
     CostingModule,
   ],
   controllers: [OrdersController, PublicOrderController],
-  providers: [OrdersService],
+  providers: [OrdersService, TicketFlagsService],
   // Deliveries (Day 3) reserve, release, and reprice through the same
   // service rather than reimplementing the stock math.
   exports: [OrdersService],

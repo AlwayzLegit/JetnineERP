@@ -1176,7 +1176,9 @@ describe('Nightly batch runner (EOD-001 / JOB-002)', () => {
     expect(jobs.map((j) => j.id)).toEqual([
       'po_overdue_sweep',
       'auto_replenishment',
+      'sales_rate_replenishment',
       'transfer_aging',
+      'report_builder_schedule',
     ]);
     expect(jobs.every((j) => j.destructive === false)).toBe(true);
   });
@@ -1261,7 +1263,7 @@ describe('Nightly batch runner (EOD-001 / JOB-002)', () => {
     // The run report shows every step with duration and records.
     const runs = await asOwner().get(`/v1/jobs/runs?date=${businessDate}`);
     expect(runs.status).toBe(200);
-    expect((runs.body as { jobId: string }[]).length).toBe(3);
+    expect((runs.body as { jobId: string }[]).length).toBe(5);
   });
 
   it('with the gate off, auto_replenishment succeeds as a no-op', async () => {
@@ -1279,5 +1281,207 @@ describe('Nightly batch runner (EOD-001 / JOB-002)', () => {
     expect(
       (pos.body.data as { vendorId: string }[]).filter((p) => p.vendorId === nightlyVendorId),
     ).toHaveLength(1); // still just the one from the earlier run
+  });
+});
+
+describe('Sales-rate PO replenishment — run modes over live data (T-28/T-29/T-31/T-32)', () => {
+  let srrVendorId = '';
+  let srrVariantId = '';
+
+  function asOwner() {
+    return {
+      get: (url: string) =>
+        request(app.getHttpServer())
+          .get(url)
+          .set('Cookie', ownerCookie)
+          .set('X-Business-Id', businessId),
+      post: (url: string) =>
+        request(app.getHttpServer())
+          .post(url)
+          .set('Cookie', ownerCookie)
+          .set('X-Business-Id', businessId),
+      patch: (url: string) =>
+        request(app.getHttpServer())
+          .patch(url)
+          .set('Cookie', ownerCookie)
+          .set('X-Business-Id', businessId),
+    };
+  }
+
+  beforeAll(async () => {
+    const vendor = await asOwner().post('/v1/vendors').send({ name: 'SRR Vendor Co' });
+    srrVendorId = vendor.body.id;
+    const product = await asOwner()
+      .post('/v1/products')
+      .send({
+        name: 'SRR Hybrid Queen',
+        sku: 'SRR-HYB',
+        variants: [{ sku: 'SRR-HYB-Q', priceCents: 99900, costCents: 30000 }],
+      });
+    srrVariantId = product.body.variants[0].id;
+
+    // Fixtures the API has no writer for: preferred vendor, the §8
+    // baseline sales history (80 sold / 8 weeks) and stock (45 on hand,
+    // 15 committed) — inserted directly, mirroring T-01.
+    const sqlc = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    const db = drizzle(sqlc);
+    try {
+      await db
+        .update(schema.productVariants)
+        .set({ preferredVendorId: srrVendorId })
+        .where(eq(schema.productVariants.id, srrVariantId));
+      const [cust] = await db
+        .insert(schema.customers)
+        .values({ businessId, firstName: 'Replen', lastName: 'Fixture' })
+        .returning();
+      // Written 10 days back so both the interactive window ([now−8w,
+      // now]) and the EOD pass for an earlier business date contain it.
+      const writtenAt = new Date(Date.now() - 10 * 86_400_000);
+      const [order] = await db
+        .insert(schema.orders)
+        .values({
+          businessId,
+          locationId,
+          number: 'SRR-SOLD-1',
+          status: 'completed',
+          customerId: cust!.id,
+          createdAt: writtenAt,
+        })
+        .returning();
+      await db.insert(schema.orderLines).values({
+        businessId,
+        orderId: order!.id,
+        variantId: srrVariantId,
+        description: 'SRR Hybrid Queen',
+        quantity: 80,
+        qtyReserved: 0,
+        qtyFulfilled: 80,
+        unitPriceCents: 99900,
+        totalCents: 80 * 99900,
+        createdAt: writtenAt,
+      });
+      await db.insert(schema.inventoryLevels).values({
+        businessId,
+        variantId: srrVariantId,
+        locationId,
+        onHand: 45,
+        reserved: 15,
+      });
+    } finally {
+      await sqlc.end({ timeout: 5 });
+    }
+
+    await asOwner()
+      .patch(`/v1/purchasing/replenishment/vendors/${srrVendorId}/settings`)
+      .send({
+        generateAutomaticPos: true,
+        automaticallyHoldPos: true,
+        weeklySalesRateWeeks: 8,
+        minimumStockDays: 14,
+        leadDays: 21,
+        variancePercent: 100,
+        minimumSalesRate: 0,
+        buildDays: [0, 1, 2, 3, 4, 5, 6],
+      })
+      .expect(200);
+  });
+
+  it('vendor settings round-trip; invalid combinations are refused', async () => {
+    const got = await asOwner().get(`/v1/purchasing/replenishment/vendors/${srrVendorId}/settings`);
+    expect(got.status).toBe(200);
+    expect(got.body.settings.weeklySalesRateWeeks).toBe(8);
+    expect(got.body.settings.automaticallyHoldPos).toBe(true);
+
+    await asOwner()
+      .patch(`/v1/purchasing/replenishment/vendors/${srrVendorId}/settings`)
+      .send({ variancePercent: 1500 })
+      .expect(400);
+    // T-17 at the settings layer: the combination can never be stored.
+    await asOwner()
+      .patch(`/v1/purchasing/replenishment/vendors/${srrVendorId}/settings`)
+      .send({ includeAllBackOrders: true, daysForReplenishment: 30 })
+      .expect(400);
+  });
+
+  it('the interactive run reproduces the §8 baseline from live data', async () => {
+    const res = await asOwner()
+      .post('/v1/purchasing/replenishment/run')
+      .send({ vendorId: srrVendorId, locationId });
+    expect(res.status).toBe(201);
+    const row = (res.body.rows as { variantId: string }[]).find(
+      (r) => r.variantId === srrVariantId,
+    ) as {
+      required: number;
+      additional: number;
+      available: number;
+      netPo: number;
+      orderQty: number;
+      sku: string | null;
+      costCents: number | null;
+    };
+    expect(row).toBeTruthy();
+    expect(row.required).toBe(20); // (14/7) * 10
+    expect(row.additional).toBe(30); // (21/7) * 10
+    expect(row.available).toBe(30); // 45 − 15
+    expect(row.netPo).toBe(0);
+    expect(row.orderQty).toBe(20);
+    expect(row.sku).toBe('SRR-HYB-Q');
+    expect(row.costCents).toBe(30000);
+  });
+
+  it('T-31/T-28/T-29: the EOD mode writes the identical quantity, held, dated by lead days', async () => {
+    const businessDate = new Date(Date.now() - 3 * 86_400_000).toISOString().slice(0, 10);
+    const run = await asOwner().post('/v1/jobs/run').send({ businessDate });
+    expect(run.status).toBe(201);
+    const step = (run.body.results as { jobId: string; status: string }[]).find(
+      (r) => r.jobId === 'sales_rate_replenishment',
+    );
+    expect(step?.status).toBe('succeeded');
+
+    const pos = await asOwner().get('/v1/purchase-orders?status=draft');
+    const drafts = (pos.body.data as { id: string; vendorId: string }[]).filter(
+      (p) => p.vendorId === srrVendorId,
+    );
+    expect(drafts).toHaveLength(1); // T-28: held = draft, never auto-placed
+    const detail = await asOwner().get(`/v1/purchase-orders/${drafts[0]!.id}`);
+    const line = detail.body.lines.find((l: { variantId: string }) => l.variantId === srrVariantId);
+    // T-31: same engine, same data path — same quantity as the run above.
+    expect(line.quantityOrdered).toBe(20);
+    expect(line.unitCostCents).toBe(30000);
+    expect(detail.body.notes).toMatch(/held for review/);
+    // T-29: header expected date = furthest lead-day date (21 days out
+    // from the business date the EOD pass ran for).
+    const expected = new Date(new Date(`${businessDate}T12:00:00Z`).getTime() + 21 * 86_400_000)
+      .toISOString()
+      .slice(0, 10);
+    expect(String(detail.body.expectedAt).slice(0, 10)).toBe(expected);
+  });
+
+  it('open supply feeds back: the next run shows nothing to order; overrides still create (T-32)', async () => {
+    const res = await asOwner()
+      .post('/v1/purchasing/replenishment/run')
+      .send({ vendorId: srrVendorId, locationId });
+    expect(
+      (res.body.rows as { variantId: string }[]).find((r) => r.variantId === srrVariantId),
+    ).toBeUndefined(); // orderQty 0 → suppressed without Include Overstocks
+
+    await asOwner()
+      .post('/v1/purchasing/replenishment/purchase-order')
+      .send({ vendorId: srrVendorId, locationId })
+      .expect(400); // nothing with quantity to order
+
+    const created = await asOwner()
+      .post('/v1/purchasing/replenishment/purchase-order')
+      .send({
+        vendorId: srrVendorId,
+        locationId,
+        includeOverstocks: true,
+        overrides: [{ variantId: srrVariantId, orderQty: 5 }],
+      });
+    expect(created.status).toBe(201);
+    expect(created.body.status).toBe('draft');
+    const detail = await asOwner().get(`/v1/purchase-orders/${created.body.poId}`);
+    const line = detail.body.lines.find((l: { variantId: string }) => l.variantId === srrVariantId);
+    expect(line.quantityOrdered).toBe(5); // the buyer override, only qty > 0 written
   });
 });

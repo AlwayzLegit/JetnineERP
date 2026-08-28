@@ -20,6 +20,12 @@ export const locations = pgTable(
       .notNull()
       .references(() => businesses.id, { onDelete: 'cascade' }),
     name: text('name').notNull(),
+    /**
+     * Q2 (transfers pack, owner 2026-08-28): 'store' | 'warehouse'.
+     * Drives store↔store transfer gating and the sales-rate
+     * replenishment warehouse pick (warehouse-typed locations win).
+     */
+    locationType: text('location_type').notNull().default('store'),
     timezone: text('timezone').notNull(),
     addressJson: jsonb('address_json'),
     // Optional override of businesses.default_tax_rate_bps. Null inherits.
@@ -120,6 +126,14 @@ export const memberships = pgTable(
       .references(() => roles.id, { onDelete: 'restrict' }),
     /** G5: which commission plan pays this member; null = no commission. */
     commissionPlanId: uuid('commission_plan_id'),
+    /**
+     * Sales-data visibility (Sales Views Phase 1, owner-confirmed
+     * 2026-08-27): 'all' sees every location; 'store' limits sales
+     * documents and dollars (orders, POS sales, cash shifts, sales
+     * reports) to the locations listed in membership_location_scopes.
+     * A 'store' member with no scope rows sees no sales data.
+     */
+    dataScope: text('data_scope').notNull().default('all'),
     // 'active' | 'invited' | 'disabled'
     status: text('status').notNull(),
     invitedByUserId: uuid('invited_by').references(() => users.id, { onDelete: 'set null' }),

@@ -20,6 +20,8 @@ interface Line {
   variantId: string;
   description: string;
   quantity: number;
+  /** D18: total wanted; blank = no hold. Remainder above quantity is held. */
+  quantityOrdered: string;
   /** J3: specific pieces riding this line (ids of serial units). */
   serialIds: string[];
 }
@@ -80,6 +82,7 @@ export default function NewTransferPage() {
         variantId: v.variantId,
         description: [v.productName, v.variantName].filter(Boolean).join(' — '),
         quantity: 1,
+        quantityOrdered: '',
         serialIds: [],
       },
     ]);
@@ -153,6 +156,9 @@ export default function NewTransferPage() {
           lines: lines.map((l) => ({
             variantId: l.variantId,
             quantity: Number(l.quantity),
+            ...(l.quantityOrdered !== '' && Number(l.quantityOrdered) > Number(l.quantity)
+              ? { quantityOrdered: Number(l.quantityOrdered) }
+              : {}),
             ...(l.serialIds.length > 0 ? { serialIds: l.serialIds } : {}),
           })),
         }),
@@ -229,6 +235,12 @@ export default function NewTransferPage() {
             />
             Ship immediately (skip the draft step)
           </label>
+          {shipNow && (
+            <p style={{ fontSize: 12, color: 'var(--text-secondary)', margin: '4px 0 0' }}>
+              Blocked when a printed transfer ticket is required before shipping (the default) —
+              create the draft, print the ticket, then ship.
+            </p>
+          )}
         </Card>
 
         <Card title="Add items">
@@ -297,6 +309,7 @@ export default function NewTransferPage() {
                   <tr>
                     <th>Item</th>
                     <th>Quantity</th>
+                    <th>Ordered (hold)</th>
                     <th>&nbsp;</th>
                   </tr>
                 </thead>
@@ -311,6 +324,17 @@ export default function NewTransferPage() {
                             min={1}
                             value={l.quantity}
                             onChange={(e) => setLine(i, { quantity: Number(e.target.value) })}
+                            style={{ width: 80 }}
+                          />
+                        </td>
+                        <td>
+                          <Input
+                            type="number"
+                            min={l.quantity}
+                            placeholder="—"
+                            title="Total wanted (D18): anything above the shipped quantity is held and rolls into a new draft on receipt"
+                            value={l.quantityOrdered}
+                            onChange={(e) => setLine(i, { quantityOrdered: e.target.value })}
                             style={{ width: 80 }}
                           />
                         </td>

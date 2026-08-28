@@ -18,6 +18,8 @@ import { and, desc, eq, inArray, isNull, lt, or, sql } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { schema } from '@jetnine/db';
 import { AuditService } from '../audit/audit.service';
+import { salesScopeCond } from '../common/sales-scope';
+import { TicketFlagsService } from '../deliveries/ticket-flags.service';
 import { CurrentTenant, CurrentUser } from '../auth/current-user.decorator';
 import type { CurrentUserPayload } from '../auth/current-user.decorator';
 import {
@@ -360,26 +362,32 @@ export class OrdersController {
     @Inject(ExceptionsService) private readonly exceptions: ExceptionsService,
     @Inject(PriceVarianceService) private readonly priceVariance: PriceVarianceService,
     @Inject(AutoTransfersService) private readonly autoTransfers: AutoTransfersService,
+    @Inject(TicketFlagsService) private readonly ticketFlags: TicketFlagsService,
   ) {}
 
   @Get('orders')
   @RequirePermission('orders.view')
   async list(
-    @CurrentTenant() _tenant: RequestTenantContext,
+    @CurrentTenant() tenant: RequestTenantContext,
     @Query('limit') limitStr?: string,
     @Query('cursor') cursorStr?: string,
     @Query('status') status?: string,
     @Query('customerId') customerId?: string,
     @Query('number') number?: string,
+    @Query('salespersonMembershipId') salespersonMembershipId?: string,
   ): Promise<PageResponse<OrderListRow>> {
     const limit = clampLimit(limitStr);
     const cursor = decodeCursor(cursorStr);
     const filters = [];
+    const scope = salesScopeCond(tenant, schema.orders.locationId);
+    if (scope) filters.push(scope);
     if (status) filters.push(eq(schema.orders.status, status));
     if (customerId) filters.push(eq(schema.orders.customerId, customerId));
     // Exact document-number recall (the exchange writer's original-order
     // field types the number off the paper invoice).
     if (number) filters.push(eq(schema.orders.number, number.trim()));
+    if (salespersonMembershipId)
+      filters.push(eq(schema.orders.salespersonMembershipId, salespersonMembershipId));
     if (cursor) {
       filters.push(
         or(
@@ -1737,6 +1745,14 @@ export class OrdersController {
       },
     });
 
+    // R8 (erp-delivery-reprints): a deposit of any kind on an order with
+    // printed delivery tickets stales them all.
+    await this.ticketFlags.applyEdit(
+      id,
+      { kind: 'header_change', field: 'deposit' },
+      'order.payment',
+    );
+
     const detail = await this.loadDetail(id);
     this.fireOrderEvent('order.payment_received', tenant.businessId!, detail, {
       paymentId: payment!.id,
@@ -2027,7 +2043,7 @@ export class OrdersController {
   async deliveryTicketPrint(
     @CurrentTenant() tenant: RequestTenantContext,
     @Param('id') id: string,
-    @Body() body: { override?: OverrideCredentials },
+    @Body() body: { override?: OverrideCredentials; deliveryId?: string },
   ): Promise<{ lockedAt: Date | null; copyNumber: number }> {
     const [order] = await this.db
       .select()
@@ -2038,6 +2054,20 @@ export class OrdersController {
 
     if (!isLiveOrderStatus(order.status)) {
       return { lockedAt: order.lockedAt, copyNumber: order.ticketPrintCount };
+    }
+    // R10 (erp-delivery-reprints): a second-date ticket may only print
+    // once the first date's ticket exists and a line qualifies; recorded
+    // flags go P for the printed date. Runs before the lock so a refused
+    // print changes nothing.
+    const flagResult = await this.ticketFlags.recordPrint(id, body.deliveryId);
+    if (!flagResult.ok) {
+      throw new ConflictException({
+        statusCode: 409,
+        code: 'SECOND_DATE_NOT_PRINTABLE',
+        message:
+          'A ticket for this date cannot print yet: the first delivery date must be ticketed first, and a line must qualify (reserved-only second date, or first date fully assigned).',
+        date: flagResult.date,
+      });
     }
 
     // G9 / STORIS print preconditions — enforced server-side, reported

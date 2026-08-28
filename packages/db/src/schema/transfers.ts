@@ -65,6 +65,14 @@ export const stockTransfers = pgTable(
     createdByUserId: uuid('created_by_user_id').references(() => users.id, {
       onDelete: 'set null',
     }),
+    /**
+     * Q3 (transfers pack, owner 2026-08-28): shipping is gated on the
+     * transfer ticket having printed (ops.transfers.requireTicketBeforeShip,
+     * default on). Null = never printed. Drafts are immutable in Jetnine,
+     * so a printed ticket cannot go stale — no P/R demotion needed.
+     */
+    ticketPrintedAt: timestamp('ticket_printed_at', { withTimezone: true }),
+    ticketPrintCount: integer('ticket_print_count').notNull().default(0),
     shippedAt: timestamp('shipped_at', { withTimezone: true }),
     receivedAt: timestamp('received_at', { withTimezone: true }),
     canceledAt: timestamp('canceled_at', { withTimezone: true }),
@@ -101,6 +109,14 @@ export const stockTransferLines = pgTable(
       .references(() => productVariants.id, { onDelete: 'restrict' }),
     quantityShipped: integer('quantity_shipped').notNull(),
     quantityReceived: integer('quantity_received').notNull().default(0),
+    /**
+     * Transfers pack D18: total wanted on the line. When it exceeds
+     * quantity_shipped the difference is the HELD remainder — not
+     * shipped, not on the ticket. On full receipt the remainder rolls
+     * into a fresh draft transfer (D19: "becomes schedulable"). Null =
+     * no hold (ordered == shipped).
+     */
+    quantityOrdered: integer('quantity_ordered'),
     /**
      * FIFO cost carried across the transfer: the weighted unit cost of
      * the origin layers consumed at ship time. Receiving creates the

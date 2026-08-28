@@ -4,6 +4,8 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useState, type ReactNode } from 'react';
 import {
+  BadgeDollarSign,
+  AlertTriangle,
   ArrowLeftRight,
   BadgePercent,
   Boxes,
@@ -64,6 +66,7 @@ const NAV: NavGroup[] = [
       { href: '/pos', label: 'New Sale', icon: Monitor },
       { href: '/orders', label: 'Orders', icon: ShoppingCart },
       { href: '/deliveries', label: 'Deliveries', icon: Truck },
+      { href: '/jeopardy', label: 'At risk', icon: AlertTriangle },
       { href: '/service', label: 'Service', icon: Wrench },
       { href: '/special-orders', label: 'Special orders', icon: PackageSearch },
       { href: '/sales', label: 'Sales', icon: Receipt },
@@ -80,6 +83,7 @@ const NAV: NavGroup[] = [
       { href: '/inventory', label: 'Inventory', icon: Boxes },
       { href: '/purchase-orders', label: 'Purchasing', icon: ClipboardList },
       { href: '/vendors', label: 'Vendors', icon: Factory },
+      { href: '/replenishment', label: 'Replenishment', icon: PackageSearch },
       { href: '/transfers', label: 'Transfers', icon: ArrowLeftRight },
       { href: '/as-is', label: 'As-Is review', icon: Recycle },
       { href: '/gift-cards', label: 'Gift cards', icon: Gift },
@@ -89,6 +93,7 @@ const NAV: NavGroup[] = [
     label: 'People',
     items: [
       { href: '/customers', label: 'Customers', icon: Users },
+      { href: '/salespeople', label: 'Salespeople', icon: BadgeDollarSign },
       { href: '/marketing', label: 'Marketing', icon: Megaphone },
       { href: '/members', label: 'Members', icon: UserCog },
       { href: '/roles', label: 'Roles', icon: ShieldCheck },
@@ -98,6 +103,7 @@ const NAV: NavGroup[] = [
     label: 'Insights',
     items: [
       { href: '/reports', label: 'Reports', icon: BadgePercent },
+      { href: '/reports/builder', label: 'Report builder', icon: ScrollText },
       { href: '/commissions', label: 'Commissions', icon: CreditCard },
       { href: '/exceptions', label: 'Exceptions', icon: TriangleAlert },
       { href: '/jobs', label: 'Nightly jobs', icon: MoonStar },

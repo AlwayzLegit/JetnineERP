@@ -25,8 +25,15 @@ interface Member {
   status: string;
   roleId: string;
   roleName: string;
+  dataScope: 'all' | 'store';
+  scopeLocationIds: string[];
   invitedAt: string | null;
   acceptedAt: string | null;
+}
+
+interface LocationRow {
+  id: string;
+  name: string;
 }
 
 interface Role {
@@ -38,6 +45,7 @@ interface Role {
 export default function MembersPage() {
   const [members, setMembers] = useState<Member[] | null>(null);
   const [roles, setRoles] = useState<Role[]>([]);
+  const [locations, setLocations] = useState<LocationRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   // Set when the API tells us the invitation mail was captured rather than
@@ -47,12 +55,14 @@ export default function MembersPage() {
 
   async function load() {
     try {
-      const [m, r] = await Promise.all([
+      const [m, r, locs] = await Promise.all([
         api<Member[]>('/v1/business/members'),
         api<Role[]>('/v1/business/roles'),
+        api<LocationRow[]>('/v1/business/locations'),
       ]);
       setMembers(m);
       setRoles(r);
+      setLocations(locs);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -110,6 +120,33 @@ export default function MembersPage() {
       await api(`/v1/business/members/${membershipId}`, {
         method: 'PATCH',
         body: JSON.stringify({ roleId }),
+      });
+      await load();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  async function changeScope(member: Member, dataScope: 'all' | 'store') {
+    try {
+      await api(`/v1/business/members/${member.membershipId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ dataScope }),
+      });
+      await load();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  async function toggleScopeLocation(member: Member, locationId: string, checked: boolean) {
+    const next = checked
+      ? [...member.scopeLocationIds, locationId]
+      : member.scopeLocationIds.filter((id) => id !== locationId);
+    try {
+      await api(`/v1/business/members/${member.membershipId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ scopeLocationIds: next }),
       });
       await load();
     } catch (err) {
@@ -229,6 +266,7 @@ export default function MembersPage() {
               <tr>
                 <th>Email</th>
                 <th>Role</th>
+                <th>Sales data</th>
                 <th>Status</th>
                 <th>Actions</th>
               </tr>
@@ -236,7 +274,7 @@ export default function MembersPage() {
             <tbody>
               {members.length === 0 && (
                 <tr>
-                  <td colSpan={4}>
+                  <td colSpan={5}>
                     <EmptyState>No members yet. Invite someone above.</EmptyState>
                   </td>
                 </tr>
@@ -260,6 +298,44 @@ export default function MembersPage() {
                         </option>
                       ))}
                     </Select>
+                  </td>
+                  <td>
+                    <Select
+                      value={m.dataScope}
+                      data-testid={`data-scope-${m.membershipId}`}
+                      onChange={(e) => changeScope(m, e.target.value as 'all' | 'store')}
+                    >
+                      <option value="all">All locations</option>
+                      <option value="store">Their store only</option>
+                    </Select>
+                    {m.dataScope === 'store' && (
+                      <div style={{ marginTop: 6, display: 'grid', gap: 2 }}>
+                        {locations.map((loc) => (
+                          <label
+                            key={loc.id}
+                            style={{
+                              display: 'flex',
+                              gap: 6,
+                              alignItems: 'center',
+                              fontSize: 12,
+                              color: 'var(--text-secondary)',
+                            }}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={m.scopeLocationIds.includes(loc.id)}
+                              onChange={(e) => toggleScopeLocation(m, loc.id, e.target.checked)}
+                            />
+                            {loc.name}
+                          </label>
+                        ))}
+                        {m.scopeLocationIds.length === 0 && (
+                          <span style={{ fontSize: 12, color: 'var(--danger)' }}>
+                            No store selected — this member sees no sales data.
+                          </span>
+                        )}
+                      </div>
+                    )}
                   </td>
                   <td>
                     <StatusBadge status={m.status} />

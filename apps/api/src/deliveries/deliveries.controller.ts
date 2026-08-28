@@ -15,6 +15,7 @@ import { and, asc, eq, gte, inArray, lte, sql } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { schema } from '@jetnine/db';
 import { AuditService } from '../audit/audit.service';
+import { TicketFlagsService } from './ticket-flags.service';
 import { ExceptionsService } from '../controls/exceptions.service';
 import { SecurityOverrideService } from '../controls/security-override.service';
 import { CurrentTenant, CurrentUser } from '../auth/current-user.decorator';
@@ -164,6 +165,7 @@ export class DeliveriesController {
     @Inject(WebhookDispatcher) private readonly webhooks: WebhookDispatcher,
     @Inject(ExceptionsService) private readonly exceptions: ExceptionsService,
     @Inject(SecurityOverrideService) private readonly overrides: SecurityOverrideService,
+    @Inject(TicketFlagsService) private readonly ticketFlags: TicketFlagsService,
   ) {}
 
   /**
@@ -492,6 +494,12 @@ export class DeliveriesController {
         lineCount: plan.steps.length,
       },
     });
+    // R8 — a new delivery date on the order stales every printed ticket.
+    await this.ticketFlags.applyEdit(
+      orderId,
+      { kind: 'header_change', field: 'next_delivery_date' },
+      'delivery.schedule',
+    );
     const detail = await this.hydrate(delivery);
     this.fireEvent('delivery.scheduled', tenant.businessId!, detail);
     return detail;
@@ -531,8 +539,22 @@ export class DeliveriesController {
       action: 'delivery.update',
       targetType: 'delivery',
       targetId: id,
+      before:
+        body.scheduledDate !== undefined && body.scheduledDate !== row.scheduledDate
+          ? { scheduledDate: row.scheduledDate }
+          : undefined,
       after: body as Record<string, unknown>,
     });
+    if (body.scheduledDate !== undefined && body.scheduledDate !== row.scheduledDate) {
+      // R8 — moving a delivery date is a header-level change: every
+      // printed ticket on the order goes stale (runs on the post-move
+      // snapshot so flags land on the delivery's new date).
+      await this.ticketFlags.applyEdit(
+        row.orderId,
+        { kind: 'header_change', field: 'next_delivery_date' },
+        'delivery.update',
+      );
+    }
     return this.hydrate(await this.load(id));
   }
 
@@ -672,6 +694,11 @@ export class DeliveriesController {
       .set({ status: 'cancelled', updatedAt: new Date() })
       .where(eq(schema.deliveries.id, id));
     await this.audit.log({ action: 'delivery.cancel', targetType: 'delivery', targetId: id });
+    await this.ticketFlags.applyEdit(
+      row.orderId,
+      { kind: 'header_change', field: 'next_delivery_date' },
+      'delivery.cancel',
+    );
     return this.hydrate(await this.load(id));
   }
 

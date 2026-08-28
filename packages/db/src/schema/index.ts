@@ -30,6 +30,7 @@ export * from './physical-inventory';
 export * from './costing';
 export * from './jobs';
 export * from './exchanges';
+export * from './reporting';
 
 // List of tables that carry a `business_id` and need RLS. Kept in sync with
 // the migration script in src/migrations/rls.sql — when you add a new
@@ -115,4 +116,7 @@ export const TENANT_SCOPED_TABLES = [
   'exchanges',
   'daily_closeouts',
   'delivery_runs',
+  'report_dictionaries',
+  'report_definitions',
+  'report_archives',
 ] as const;

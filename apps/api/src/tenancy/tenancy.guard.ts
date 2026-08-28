@@ -76,6 +76,8 @@ export class TenancyGuard implements CanActivate {
         userAgent,
         impersonatorUserId: null,
         apiKeyId: req.apiKey.id,
+        dataScope: 'all',
+        scopeLocationIds: null,
         auditLogged: false,
       };
       return true;
@@ -132,6 +134,8 @@ export class TenancyGuard implements CanActivate {
           userAgent,
           impersonatorUserId,
           apiKeyId: null,
+          dataScope: 'all',
+          scopeLocationIds: null,
           auditLogged: false,
         };
         return true;
@@ -153,6 +157,17 @@ export class TenancyGuard implements CanActivate {
       if (o.allowed) permissions.add(o.permission as Permission);
       else permissions.delete(o.permission as Permission);
     }
+    // Sales-data scoping (Sales Views Phase 1): a 'store'-scoped member's
+    // visible locations come from membership_location_scopes. Loaded here
+    // once per request so query-layer helpers never re-fetch.
+    let scopeLocationIds: string[] | null = null;
+    if (membership.dataScope === 'store') {
+      const scopeRows = await this.db
+        .select({ locationId: schema.membershipLocationScopes.locationId })
+        .from(schema.membershipLocationScopes)
+        .where(eq(schema.membershipLocationScopes.membershipId, membership.membershipId));
+      scopeLocationIds = scopeRows.map((r) => r.locationId);
+    }
     req.tenant = {
       userId: user.id,
       isSuperAdmin: user.isSuperAdmin,
@@ -165,6 +180,8 @@ export class TenancyGuard implements CanActivate {
       userAgent,
       impersonatorUserId,
       apiKeyId: null,
+      dataScope: membership.dataScope,
+      scopeLocationIds,
       auditLogged: false,
     };
     return true;
@@ -173,13 +190,19 @@ export class TenancyGuard implements CanActivate {
   private async loadMembership(
     userId: string,
     businessId: string,
-  ): Promise<{ membershipId: string; roleId: string; roleName: string } | null> {
+  ): Promise<{
+    membershipId: string;
+    roleId: string;
+    roleName: string;
+    dataScope: 'all' | 'store';
+  } | null> {
     const rows = await this.db
       .select({
         membershipId: schema.memberships.id,
         roleId: schema.memberships.roleId,
         roleName: schema.roles.name,
         status: schema.memberships.status,
+        dataScope: schema.memberships.dataScope,
       })
       .from(schema.memberships)
       .innerJoin(schema.roles, eq(schema.roles.id, schema.memberships.roleId))
@@ -194,6 +217,7 @@ export class TenancyGuard implements CanActivate {
       membershipId: found.membershipId,
       roleId: found.roleId,
       roleName: found.roleName,
+      dataScope: found.dataScope === 'store' ? 'store' : 'all',
     };
   }
 
@@ -245,6 +269,8 @@ function emptyTenantContext(
     userAgent,
     impersonatorUserId,
     apiKeyId: null,
+    dataScope: 'all',
+    scopeLocationIds: null,
     auditLogged: false,
   };
 }

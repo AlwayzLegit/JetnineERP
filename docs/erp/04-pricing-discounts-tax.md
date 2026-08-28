@@ -26,7 +26,7 @@ inventory price moves to position **4** and the promotional price drops to **5**
 price in warehouse inventory settings. The warehouse price is used only when the kit master's
 source-of-price is `Product`.
 
-**Customer price matrices `[DOC]`** are applied _after_ the hierarchy resolves:
+**Customer price matrices `[DOC]`** are applied *after* the hierarchy resolves:
 
 ```
 matrix price < hierarchy price  →  matrix price wins
@@ -59,22 +59,22 @@ hierarchy is deep enough that nobody can reconstruct it by inspection.
 ## Discounts `[DOC]`
 
 - **Line-level** discount codes, **multiple per line**, selectable only if the product is flagged
-  discountable _and_ the "apply discount codes to individual line items" setting is on. Editing
+  discountable *and* the "apply discount codes to individual line items" setting is on. Editing
   requires the line-discounts permission or an override.
 - **Subtotal-level** discount code and amount, plus an additional discount percent/amount.
 - **Coupons** — single coupon id per order; redemption sets a flag that a net-total adjustment
   resets.
-- **As-is discounts** appear only after the line is flagged as-is _and_ a piece with a matching
+- **As-is discounts** appear only after the line is flagged as-is *and* a piece with a matching
   reason code is assigned.
 - **Formation-qualifying discounts** appear only if another qualifying line exists on the order.
 - Subtotal-adjustment discounting requires the "apply to sales order by adjusting subtotal amount"
-  setting _and_ a maximum-subtotal-discount-percent of zero or null.
+  setting *and* a maximum-subtotal-discount-percent of zero or null.
 - Dropping below a discount's or coupon's minimum subtotal requires the override-minimum-purchase
   permission.
 - Global/subtotal discounts are unavailable under an alternate tax interface (the field inactivates).
 - Net-total adjustment and discounts/coupons are mutually exclusive (see `03`).
 
-`[DECIDE]` The source docs never enumerate discount _types_ or their precedence among themselves —
+`[DECIDE]` The source docs never enumerate discount *types* or their precedence among themselves —
 only price derivation. Define the discount type set and stacking rules explicitly before phase 2.
 This is the most likely place for a silent margin leak.
 
@@ -95,12 +95,12 @@ fulfillment types exist.
 
 ### Order tax exemptions
 
-| Field                     | Behaviour                                                                                                                                                                                                                                                                                                                 |
-| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Charge Sales Tax          | Defaults from the customer's charge-on-sales setting. **Unchecking** a defaulted-checked value needs the override permission — **except no security is required if the customer is tax exempt**. **Checking** a defaulted-unchecked value clears tax id and expiration for this order. Toggling recalculates applied tax. |
-| Charge National Sales Tax | Same pattern; editing needs the change-taxable-settings permission or an override                                                                                                                                                                                                                                         |
-| Tax ID                    | Display-only from the customer record. Under a CCH interface, becomes **required** if either charge flag is blank                                                                                                                                                                                                         |
-| Expiration Date           | Read-only from the customer record                                                                                                                                                                                                                                                                                        |
+| Field | Behaviour |
+|---|---|
+| Charge Sales Tax | Defaults from the customer's charge-on-sales setting. **Unchecking** a defaulted-checked value needs the override permission — **except no security is required if the customer is tax exempt**. **Checking** a defaulted-unchecked value clears tax id and expiration for this order. Toggling recalculates applied tax. |
+| Charge National Sales Tax | Same pattern; editing needs the change-taxable-settings permission or an override |
+| Tax ID | Display-only from the customer record. Under a CCH interface, becomes **required** if either charge flag is blank |
+| Expiration Date | Read-only from the customer record |
 
 All of these apply to **this order only** and never change the customer's future tax status.
 

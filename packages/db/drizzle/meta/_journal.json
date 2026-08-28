@@ -421,6 +421,55 @@
       "when": 1787847463905,
       "tag": "0059_exchange_partial_unique",
       "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "7",
+      "when": 1787856950388,
+      "tag": "0060_membership_data_scope",
+      "breakpoints": true
+    },
+    {
+      "idx": 61,
+      "version": "7",
+      "when": 1787867045110,
+      "tag": "0061_ticket_flags",
+      "breakpoints": true
+    },
+    {
+      "idx": 62,
+      "version": "7",
+      "when": 1787868270532,
+      "tag": "0062_vendor_replenishment",
+      "breakpoints": true
+    },
+    {
+      "idx": 63,
+      "version": "7",
+      "when": 1787877036402,
+      "tag": "0063_transfer_hold",
+      "breakpoints": true
+    },
+    {
+      "idx": 64,
+      "version": "7",
+      "when": 1787879013450,
+      "tag": "0064_report_builder",
+      "breakpoints": true
+    },
+    {
+      "idx": 65,
+      "version": "7",
+      "when": 1787882139991,
+      "tag": "0065_report_archives",
+      "breakpoints": true
+    },
+    {
+      "idx": 66,
+      "version": "7",
+      "when": 1787894323209,
+      "tag": "0066_location_types_transfer_ticket",
+      "breakpoints": true
     }
   ]
 }
