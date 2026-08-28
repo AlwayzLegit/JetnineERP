@@ -9,10 +9,12 @@ import {
   Param,
   Patch,
   Post,
+  Put,
 } from '@nestjs/common';
 import { and, eq, inArray } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { schema } from '@jetnine/db';
+import { BUSINESS_PERMISSIONS, type Permission } from '@jetnine/shared';
 import { AuditService } from '../audit/audit.service';
 import { CurrentTenant, CurrentUser } from '../auth/current-user.decorator';
 import type { CurrentUserPayload } from '../auth/current-user.decorator';
@@ -51,6 +53,15 @@ interface UpdateMemberBody {
   dataScope?: 'all' | 'store';
   /** Replaces the member's location scope set (only meaningful with 'store'). */
   scopeLocationIds?: string[];
+}
+
+interface MemberAccess {
+  membershipId: string;
+  roleId: string;
+  roleName: string;
+  rolePermissions: Permission[];
+  overrides: { permission: Permission; allowed: boolean }[];
+  effective: Permission[];
 }
 
 const VALID_STATUS_TARGETS = new Set(['active', 'disabled']);
@@ -357,6 +368,149 @@ export class MembersController {
     });
 
     return { disabled: true };
+  }
+
+  /**
+   * The member's access sheet: what the role grants, what this member's
+   * overrides change, and the effective result the guard will enforce
+   * (role permissions + allowed:true rows − allowed:false rows).
+   */
+  @Get(':id/permissions')
+  @RequirePermission('users.view')
+  async permissions(
+    @CurrentTenant() tenant: RequestTenantContext,
+    @Param('id') membershipId: string,
+  ): Promise<MemberAccess> {
+    const m = await this.loadMembership(tenant.businessId!, membershipId);
+    const [roleRows, overrideRows] = await Promise.all([
+      this.db
+        .select({ permission: schema.rolePermissions.permission })
+        .from(schema.rolePermissions)
+        .where(eq(schema.rolePermissions.roleId, m.roleId)),
+      this.db
+        .select({
+          permission: schema.membershipPermissionOverrides.permission,
+          allowed: schema.membershipPermissionOverrides.allowed,
+        })
+        .from(schema.membershipPermissionOverrides)
+        .where(eq(schema.membershipPermissionOverrides.membershipId, membershipId)),
+    ]);
+    const rolePermissions = roleRows.map((r) => r.permission as Permission).sort();
+    const overrides = overrideRows
+      .map((o) => ({ permission: o.permission as Permission, allowed: o.allowed }))
+      .sort((a, b) => a.permission.localeCompare(b.permission));
+    const effective = new Set<Permission>(rolePermissions);
+    for (const o of overrides) {
+      if (o.allowed) effective.add(o.permission);
+      else effective.delete(o.permission);
+    }
+    return {
+      membershipId,
+      roleId: m.roleId,
+      roleName: m.roleName,
+      rolePermissions,
+      overrides,
+      effective: [...effective].sort(),
+    };
+  }
+
+  /**
+   * Replace the member's override set. Overrides are stored as diffs
+   * against the role: an entry equal to what the role already says is
+   * dropped (so switching roles later re-inherits cleanly), and unknown
+   * or super-admin permissions are rejected outright.
+   */
+  @Put(':id/permissions')
+  @RequirePermission('users.update')
+  async setPermissions(
+    @CurrentTenant() tenant: RequestTenantContext,
+    @Param('id') membershipId: string,
+    @Body() body: { overrides?: { permission?: string; allowed?: boolean }[] },
+  ): Promise<MemberAccess> {
+    const m = await this.loadMembership(tenant.businessId!, membershipId);
+    if (!Array.isArray(body.overrides)) {
+      throw new BadRequestException('overrides must be an array');
+    }
+    const valid = new Set<string>(BUSINESS_PERMISSIONS);
+    const wanted = new Map<Permission, boolean>();
+    for (const o of body.overrides) {
+      if (!o || typeof o.permission !== 'string' || typeof o.allowed !== 'boolean') {
+        throw new BadRequestException('each override needs { permission, allowed }');
+      }
+      if (!valid.has(o.permission)) {
+        throw new BadRequestException(`Unknown or non-grantable permission: ${o.permission}`);
+      }
+      if (wanted.has(o.permission as Permission)) {
+        throw new BadRequestException(`Duplicate override for ${o.permission}`);
+      }
+      wanted.set(o.permission as Permission, o.allowed);
+    }
+
+    const roleRows = await this.db
+      .select({ permission: schema.rolePermissions.permission })
+      .from(schema.rolePermissions)
+      .where(eq(schema.rolePermissions.roleId, m.roleId));
+    const roleHas = new Set(roleRows.map((r) => r.permission));
+    // Keep only real diffs against the role.
+    for (const [permission, allowed] of [...wanted]) {
+      if (roleHas.has(permission) === allowed) wanted.delete(permission);
+    }
+
+    const current = await this.db
+      .select({
+        permission: schema.membershipPermissionOverrides.permission,
+        allowed: schema.membershipPermissionOverrides.allowed,
+      })
+      .from(schema.membershipPermissionOverrides)
+      .where(eq(schema.membershipPermissionOverrides.membershipId, membershipId));
+
+    await this.db
+      .delete(schema.membershipPermissionOverrides)
+      .where(eq(schema.membershipPermissionOverrides.membershipId, membershipId));
+    if (wanted.size > 0) {
+      await this.db.insert(schema.membershipPermissionOverrides).values(
+        [...wanted].map(([permission, allowed]) => ({
+          businessId: tenant.businessId!,
+          membershipId,
+          permission,
+          allowed,
+        })),
+      );
+    }
+
+    await this.audit.log({
+      action: 'membership.permissions.update',
+      targetType: 'membership',
+      targetId: membershipId,
+      before: {
+        overrides: current
+          .map((c) => ({ permission: c.permission, allowed: c.allowed }))
+          .sort((a, b) => a.permission.localeCompare(b.permission)),
+      },
+      after: {
+        overrides: [...wanted]
+          .map(([permission, allowed]) => ({ permission, allowed }))
+          .sort((a, b) => a.permission.localeCompare(b.permission)),
+      },
+    });
+
+    return this.permissions(tenant, membershipId);
+  }
+
+  private async loadMembership(
+    businessId: string,
+    membershipId: string,
+  ): Promise<{ roleId: string; roleName: string }> {
+    const [m] = await this.db
+      .select({ roleId: schema.memberships.roleId, roleName: schema.roles.name })
+      .from(schema.memberships)
+      .innerJoin(schema.roles, eq(schema.roles.id, schema.memberships.roleId))
+      .where(
+        and(eq(schema.memberships.id, membershipId), eq(schema.memberships.businessId, businessId)),
+      )
+      .limit(1);
+    if (!m) throw new NotFoundException('Membership not found');
+    return m;
   }
 
   private async resolveRoleId(
