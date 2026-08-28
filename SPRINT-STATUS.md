@@ -3104,3 +3104,23 @@ User Security` and `Review Settings Activity` extracts. "A morning's
   question (Shift4 legacy vs "the new gateway"; tokens not portable)
   flagged to the owner for the cutover plan.
   Gates: typecheck 0 · lint 0 · test 0 · build 0 · format 0.
+
+## Checkpoint — 2026-08-28 (run-03 SOM reconcile: 164 findings adjudicated, 5-question owner batch)
+
+- `docs/handoffs/run03-sales-processing/GAP-RECONCILE.md`: the Sales
+  Processing audit reconciled against the shipped stack. The run's
+  three "obviously correct breaks parity" timing traps (EOD hold
+  release F153, cost restatement F144, returns-at-completion F64) are
+  all **deliberate anti-parity** in Jetnine — event-time release, FIFO
+  actual cost, refund-date GL derivation. Blind cash balancing
+  (F99–F101) and manifest route-freeze (F30) adjudicate as parity
+  shipped THIS sprint; the two exception semantics (F130/F154 vs the
+  cost queue) already sit on the correct sides by design.
+- Seven migration cautions adopted for the cutover runbook — headline:
+  never drive a STORIS extract by date range (ASAP/CWC invisibility,
+  F127); import approved-pre-EOD holds as released.
+- **[DECIDE] owner batch (§4, five questions)**: trade/customer
+  pricing tiers · out-the-door total entry · tax-exempt customers ·
+  customer merge tool (recommended yes — cutover dedupe) · membership
+  rewards run/convert/drop (mechanics now known via run-07 F568).
+  Docs-only PR; no code changes until §4 lands.
