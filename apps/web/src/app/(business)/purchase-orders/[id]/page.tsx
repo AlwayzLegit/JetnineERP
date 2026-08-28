@@ -43,6 +43,8 @@ interface Po {
   placedAt: string | null;
   closedAt: string | null;
   subtotalCents: number;
+  /** Q1 landed cost lean: spread into unit cost at receipt. */
+  freightCents: number | null;
   notes: string | null;
   createdAt: string;
   blindReceiving: boolean;
@@ -418,6 +420,9 @@ export default function PurchaseOrderDetailPage() {
 
       <Card style={{ marginBottom: 16 }}>
         <Row label="Subtotal" cents={po.subtotalCents} bold />
+        {po.freightCents != null && po.freightCents > 0 && (
+          <Row label="Freight (loads into unit cost at receipt)" cents={po.freightCents} />
+        )}
         {po.expectedAt && (
           <Row label="Expected" text={new Date(po.expectedAt).toLocaleDateString()} />
         )}

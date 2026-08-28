@@ -64,6 +64,7 @@ export default function NewPurchaseOrderPage() {
   const [vendorId, setVendorId] = useState('');
   const [locationId, setLocationId] = useState('');
   const [expectedAt, setExpectedAt] = useState('');
+  const [freightStr, setFreightStr] = useState('');
   const [notes, setNotes] = useState('');
   const [lines, setLines] = useState<Line[]>([]);
   const [search, setSearch] = useState('');
@@ -163,6 +164,7 @@ export default function NewPurchaseOrderPage() {
         vendorId,
         locationId,
         expectedAt: expectedAt || undefined,
+        freightCents: freightStr ? Math.round(Number(freightStr) * 100) : null,
         notes: notes || null,
         lines: lines.map((l) => ({
           variantId: l.variantId,
@@ -243,6 +245,16 @@ export default function NewPurchaseOrderPage() {
                 type="date"
                 value={expectedAt}
                 onChange={(e) => setExpectedAt(e.target.value)}
+                style={{ width: '100%' }}
+              />
+            </Field>
+            <Field label="Freight ($, spread into unit cost at receipt)">
+              <Input
+                type="number"
+                min={0}
+                step="0.01"
+                value={freightStr}
+                onChange={(e) => setFreightStr(e.target.value)}
                 style={{ width: '100%' }}
               />
             </Field>

@@ -31,6 +31,18 @@ export const cashShifts = pgTable(
     expectedCashCents: integer('expected_cash_cents'),
     countedCashCents: integer('counted_cash_cents'),
     varianceCents: integer('variance_cents'),
+    /**
+     * Blind-count discipline (cash-balancing pack, owner 2026-08-28):
+     * failed out-of-tolerance close attempts. Exhausting
+     * ops.cashBalancing.maxAttempts suspends the drawer.
+     */
+    closeAttempts: integer('close_attempts').notNull().default(0),
+    /** Set on attempt exhaustion; only pos.cash.approve can then close. */
+    suspendedAt: timestamp('suspended_at', { withTimezone: true }),
+    /** The manager who approved an out-of-tolerance/suspended close. */
+    approvedByUserId: uuid('approved_by_user_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
     notes: text('notes'),
   },
   (t) => ({

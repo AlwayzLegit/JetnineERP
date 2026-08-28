@@ -16,6 +16,8 @@ import type { SQL } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { schema } from '@jetnine/db';
 import { AuditService } from '../audit/audit.service';
+import { SecurityOverrideService } from '../controls/security-override.service';
+import type { OverrideCredentials } from '../controls/security-override.service';
 import { salesScopeCond } from '../common/sales-scope';
 import {
   buildPage,
@@ -27,7 +29,7 @@ import {
 } from '../common/pagination';
 import { CurrentTenant, CurrentUser } from '../auth/current-user.decorator';
 import type { CurrentUserPayload } from '../auth/current-user.decorator';
-import { DRIZZLE } from '../database/database.module';
+import { DRIZZLE, ROOT_DRIZZLE } from '../database/database.module';
 import { RequirePermission, TenantScoped } from '../tenancy/decorators';
 import type { RequestTenantContext } from '../tenancy/request-context';
 
@@ -40,6 +42,13 @@ interface OpenBody {
 interface CloseBody {
   countedCashCents?: number;
   notes?: string;
+  /**
+   * Blind-count discipline: explicitly request a manager force-balance
+   * on an out-of-tolerance count (a suspended drawer implies it). The
+   * standard override dialog credentials ride along on the retry.
+   */
+  approve?: boolean;
+  override?: OverrideCredentials;
 }
 
 interface ShiftRow {
@@ -56,6 +65,10 @@ interface ShiftRow {
   expectedCashCents: number | null;
   countedCashCents: number | null;
   varianceCents: number | null;
+  /** Blind-count discipline: failed out-of-tolerance close attempts. */
+  closeAttempts: number;
+  suspendedAt: Date | null;
+  approvedByUserId: string | null;
   notes: string | null;
 }
 
@@ -65,6 +78,12 @@ export class CashShiftsController {
   constructor(
     @Inject(DRIZZLE) private readonly db: PostgresJsDatabase,
     @Inject(AuditService) private readonly audit: AuditService,
+    @Inject(SecurityOverrideService) private readonly overrides: SecurityOverrideService,
+    // Failed blind-count attempts end the request with a 4xx, which rolls
+    // back the per-request RLS transaction — so the attempt counter,
+    // suspension flag, and their register rows must go through the root
+    // pool to survive the throw.
+    @Inject(ROOT_DRIZZLE) private readonly rootDb: PostgresJsDatabase,
   ) {}
 
   /**
@@ -199,6 +218,62 @@ export class CashShiftsController {
     const expectedCashCents = shift.openingFloatCents + cashIn;
     const varianceCents = body.countedCashCents - expectedCashCents;
 
+    // Blind-count discipline (cash pack AC-5..10, owner 2026-08-28).
+    // Tolerance is cash-only by construction: this close counts cash.
+    // The failure message never reveals expected cash or the variance —
+    // that is the point of a blind count.
+    const ops = await this.cashBalancingOps(tenant.businessId!);
+    const tolerance = ops?.toleranceCents ?? null;
+    let approvedByUserId: string | null = null;
+    if (tolerance != null && (shift.suspendedAt || Math.abs(varianceCents) > tolerance)) {
+      if (shift.suspendedAt || body.approve === true) {
+        const result = await this.overrides.require({
+          permission: 'pos.cash.approve',
+          action: shift.suspendedAt
+            ? 'Approve a suspended drawer count'
+            : 'Approve an out-of-tolerance drawer count',
+          entityType: 'cash_shift',
+          entityId: id,
+          before: {
+            closeAttempts: shift.closeAttempts,
+            suspendedAt: shift.suspendedAt,
+          },
+          after: { countedCashCents: body.countedCashCents },
+          override: body.override,
+        });
+        approvedByUserId = result.authorizingUserId ?? actor.id;
+      } else {
+        const attempts = shift.closeAttempts + 1;
+        const max = ops?.maxAttempts ?? null;
+        if (max != null && attempts >= max) {
+          await this.rootDb
+            .update(schema.cashShifts)
+            .set({ closeAttempts: attempts, suspendedAt: new Date() })
+            .where(eq(schema.cashShifts.id, id));
+          await this.rootDb.insert(schema.exceptionEvents).values({
+            businessId: tenant.businessId!,
+            type: 'cash_drawer_suspended',
+            severity: 'warning',
+            actorUserId: actor.id,
+            entityType: 'cash_shift',
+            entityId: id,
+            summary: `Drawer count out of tolerance ${attempts} time(s) — shift suspended pending manager approval`,
+            metadataJson: { locationId: shift.locationId, attempts },
+          });
+          throw new ForbiddenException(
+            'Count is out of tolerance and the drawer is now suspended — a manager must approve the close',
+          );
+        }
+        await this.rootDb
+          .update(schema.cashShifts)
+          .set({ closeAttempts: attempts })
+          .where(eq(schema.cashShifts.id, id));
+        throw new BadRequestException(
+          `Count is out of balance — recount the drawer (attempt ${attempts}${max != null ? ` of ${max}` : ''})`,
+        );
+      }
+    }
+
     await this.db
       .update(schema.cashShifts)
       .set({
@@ -207,6 +282,7 @@ export class CashShiftsController {
         expectedCashCents,
         countedCashCents: body.countedCashCents,
         varianceCents,
+        approvedByUserId,
         notes: body.notes ?? shift.notes,
       })
       .where(eq(schema.cashShifts.id, id));
@@ -215,10 +291,32 @@ export class CashShiftsController {
       action: 'cash_shift.close',
       targetType: 'cash_shift',
       targetId: id,
-      after: { expectedCashCents, countedCashCents: body.countedCashCents, varianceCents },
+      after: {
+        expectedCashCents,
+        countedCashCents: body.countedCashCents,
+        varianceCents,
+        approvedByUserId,
+        closeAttempts: shift.closeAttempts,
+      },
     });
-    void tenant;
     return this.hydrate(id);
+  }
+
+  private async cashBalancingOps(
+    businessId: string,
+  ): Promise<{ toleranceCents?: number | null; maxAttempts?: number | null } | null> {
+    const [biz] = await this.db
+      .select({ opsSettingsJson: schema.businesses.opsSettingsJson })
+      .from(schema.businesses)
+      .where(eq(schema.businesses.id, businessId))
+      .limit(1);
+    return (
+      (
+        (biz?.opsSettingsJson ?? {}) as {
+          cashBalancing?: { toleranceCents?: number | null; maxAttempts?: number | null } | null;
+        }
+      ).cashBalancing ?? null
+    );
   }
 
   @Get()
@@ -253,6 +351,9 @@ export class CashShiftsController {
         expectedCashCents: schema.cashShifts.expectedCashCents,
         countedCashCents: schema.cashShifts.countedCashCents,
         varianceCents: schema.cashShifts.varianceCents,
+        closeAttempts: schema.cashShifts.closeAttempts,
+        suspendedAt: schema.cashShifts.suspendedAt,
+        approvedByUserId: schema.cashShifts.approvedByUserId,
         notes: schema.cashShifts.notes,
       })
       .from(schema.cashShifts)
@@ -288,6 +389,9 @@ export class CashShiftsController {
         expectedCashCents: schema.cashShifts.expectedCashCents,
         countedCashCents: schema.cashShifts.countedCashCents,
         varianceCents: schema.cashShifts.varianceCents,
+        closeAttempts: schema.cashShifts.closeAttempts,
+        suspendedAt: schema.cashShifts.suspendedAt,
+        approvedByUserId: schema.cashShifts.approvedByUserId,
         notes: schema.cashShifts.notes,
       })
       .from(schema.cashShifts)

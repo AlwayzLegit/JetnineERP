@@ -2903,3 +2903,49 @@ DESC, created_at` — fallback path (no warehouse) is what every
   business.int.spec +1 (type CRUD + validation). Legacy transfer suites
   run with the gate off via fixture ops, mirroring pre-Q3 behavior.
   Gates: typecheck 0 · lint 0 · test 0 · build 0 · format 0.
+
+## Checkpoint — 2026-08-28 (run-02 Q1: landed cost lean)
+
+- Migration `0067_po_freight`: `purchase_orders.freight_cents` (null =
+  none). One freight amount per PO, per the owner's "yes, lean".
+- Allocation at receipt: per-unit share = round(freight / total units
+  ORDERED) — the divisor is the ordered total so partial receipts layer
+  identically whenever they arrive; sub-cent remainders round away
+  (documented lean trade-off). Share is added to the PO line's unit
+  cost in BOTH `po_receive` layer paths (stock and direct-ship), so
+  FIFO consumption and margin pick up landed cost automatically.
+- Freight is frozen once any unit has been received (earlier layers
+  would disagree with a new amount) — un-receive first; validated
+  non-negative integer at create and PATCH.
+- Web: freight input on the new-PO page (dollars), display row on the
+  PO detail totals card.
+- purchasing.int.spec 43→45: two-line spread with partial receipt
+  (200¢/unit on both layers), create validation, frozen-after-receipt +
+  draft-edit pass.
+  Gates: typecheck 0 · lint 0 · test 0 · build 0 · format 0.
+
+## Checkpoint — 2026-08-28 (cash pack scope (a): blind-count balancing)
+
+- Migration `0068_cash_blind_count`: `cash_shifts.close_attempts` /
+  `suspended_at` / `approved_by_user_id`.
+- Ops block `cashBalancing` (SET-007 registered): `toleranceCents`
+  (AC-5/6; cash-only by construction — shift closes count cash only,
+  AC-7) + `maxAttempts` (AC-8). Null = discipline off (legacy close).
+  **Ops: the tolerance $ value is Accounting's to set** — flagged, ships
+  off by default.
+- Close flow: within tolerance closes normally; out of tolerance burns
+  a blind attempt (the 400 never reveals expected cash or variance,
+  AC-10); attempt exhaustion suspends the drawer + exception
+  `cash_drawer_suspended`; a suspended (or explicitly `approve`d) close
+  routes through SecurityOverrideService on new permission
+  `pos.cash.approve` (Owner/Manager) — manager credentials in the
+  standard override dialog force-balance and stamp `approvedByUserId`.
+- Trap found: the per-request RLS transaction rolls back on a thrown
+  4xx, so failed-attempt counters/suspension/exception rows are written
+  through ROOT_DRIZZLE to survive the throw (documented in the
+  controller).
+- Web: shifts/[id] shows attempt/suspension banners and opens the
+  security-override dialog on OVERRIDE_REQUIRED; blind count holds by
+  construction (expected cash renders only after close).
+- reports.int.spec 36→39 (AC-5, AC-6/8/10 chain, discipline-off).
+  Gates: typecheck 0 · lint 0 · test 0 · build 0 · format 0.

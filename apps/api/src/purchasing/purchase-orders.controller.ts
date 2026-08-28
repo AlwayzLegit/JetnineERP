@@ -54,6 +54,8 @@ interface CreatePoBody {
   vendorId?: string;
   locationId?: string;
   expectedAt?: string;
+  /** Landed cost lean (Q1): whole-PO freight, spread per unit at receipt. */
+  freightCents?: number | null;
   notes?: string | null;
   lines?: PoLineInput[];
   /**
@@ -77,6 +79,8 @@ interface ReceivePoBody {
  */
 interface UpdatePoBody {
   expectedAt?: string | null;
+  /** Q1: editable only while nothing has been received. */
+  freightCents?: number | null;
   notes?: string | null;
   lines?: {
     lineId?: string;
@@ -121,6 +125,8 @@ interface PoListRow {
   placedAt: Date | null;
   closedAt: Date | null;
   subtotalCents: number;
+  /** Q1 landed cost lean: whole-PO freight loaded into layer cost. */
+  freightCents: number | null;
   createdAt: Date;
 }
 
@@ -208,6 +214,7 @@ export class PurchaseOrdersController {
         placedAt: schema.purchaseOrders.placedAt,
         closedAt: schema.purchaseOrders.closedAt,
         subtotalCents: schema.purchaseOrders.subtotalCents,
+        freightCents: schema.purchaseOrders.freightCents,
         createdAt: schema.purchaseOrders.createdAt,
       })
       .from(schema.purchaseOrders)
@@ -310,6 +317,13 @@ export class PurchaseOrdersController {
       throw new NotFoundException('One or more variants not found');
     }
 
+    if (
+      body.freightCents != null &&
+      (!Number.isInteger(body.freightCents) || body.freightCents < 0)
+    ) {
+      throw new BadRequestException('freightCents must be a non-negative integer or null');
+    }
+
     const subtotalCents = body.lines.reduce((s, l) => s + l.quantity! * l.unitCostCents!, 0);
     const number = await this.generatePoNumber(tenant.businessId!);
     const place = body.place !== false;
@@ -326,6 +340,7 @@ export class PurchaseOrdersController {
         expectedAt,
         placedAt: place ? new Date() : null,
         subtotalCents,
+        freightCents: body.freightCents ?? null,
         notes: body.notes ?? null,
         createdByUserId: actor.id,
       })
@@ -571,6 +586,22 @@ export class PurchaseOrdersController {
     };
     if (body.expectedAt !== undefined) {
       patch.expectedAt = body.expectedAt === null ? null : parseDate(body.expectedAt);
+    }
+    if (body.freightCents !== undefined && body.freightCents !== po.freightCents) {
+      if (
+        body.freightCents !== null &&
+        (!Number.isInteger(body.freightCents) || body.freightCents < 0)
+      ) {
+        throw new BadRequestException('freightCents must be a non-negative integer or null');
+      }
+      // Q1: earlier receipts already layered their freight share — a new
+      // amount would make the layers inconsistent with the PO.
+      if (lines.some((l) => l.quantityReceived > 0)) {
+        throw new BadRequestException(
+          'Cannot change freight after units have been received — un-receive them first',
+        );
+      }
+      patch.freightCents = body.freightCents;
     }
     if (body.notes !== undefined) patch.notes = body.notes ?? null;
     await this.db.update(schema.purchaseOrders).set(patch).where(eq(schema.purchaseOrders.id, id));
@@ -956,6 +987,21 @@ export class PurchaseOrdersController {
   ): Promise<PoDetail> {
     let unitsReceived = 0;
     let unitsAccepted = 0;
+    // Q1 landed cost lean: every ordered unit carries the same freight
+    // share, fixed by the ordered total so partial receipts layer
+    // identically whenever they arrive (sub-cent remainders round away).
+    let freightPerUnitCents = 0;
+    if (po.freightCents != null && po.freightCents > 0) {
+      const [ordered] = await this.db
+        .select({
+          total: sql<number>`COALESCE(SUM(${schema.purchaseOrderLines.quantityOrdered}), 0)::int`,
+        })
+        .from(schema.purchaseOrderLines)
+        .where(eq(schema.purchaseOrderLines.purchaseOrderId, po.id));
+      if ((ordered?.total ?? 0) > 0) {
+        freightPerUnitCents = Math.round(po.freightCents / ordered!.total);
+      }
+    }
     for (const e of entries) {
       if (po.directShip && (e.rejected ?? 0) > 0) {
         // The goods are at the customer's door, not on our dock — a bad
@@ -976,7 +1022,7 @@ export class PurchaseOrdersController {
           sourceType: 'po_receive',
           referenceId: po.id,
           quantity: e.accepted,
-          unitCostCents: e.line.unitCostCents,
+          unitCostCents: e.line.unitCostCents + freightPerUnitCents,
         });
         await this.costing.consume(this.db, {
           businessId: tenant.businessId!,
@@ -1022,7 +1068,7 @@ export class PurchaseOrdersController {
           sourceType: 'po_receive',
           referenceId: po.id,
           quantity: e.accepted,
-          unitCostCents: e.line.unitCostCents,
+          unitCostCents: e.line.unitCostCents + freightPerUnitCents,
         });
       }
       const rejected = e.rejected ?? 0;
@@ -1300,6 +1346,7 @@ export class PurchaseOrdersController {
         placedAt: schema.purchaseOrders.placedAt,
         closedAt: schema.purchaseOrders.closedAt,
         subtotalCents: schema.purchaseOrders.subtotalCents,
+        freightCents: schema.purchaseOrders.freightCents,
         directShip: schema.purchaseOrders.directShip,
         shipToJson: schema.purchaseOrders.shipToJson,
         notes: schema.purchaseOrders.notes,
