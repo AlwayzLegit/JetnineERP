@@ -79,6 +79,9 @@ const bookkeeperPermissions: Permission[] = [
   'reports.inventory.view',
   'reports.financial.view',
   'reports.export',
+  'reports.builder.run',
+  'reports.builder.author',
+  'reports.cost.view',
   'sales.view',
   'audit.view',
   // Gap sprint §0.3: the books read the override/exception register.
