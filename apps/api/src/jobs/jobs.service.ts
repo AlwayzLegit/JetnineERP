@@ -577,7 +577,7 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
       detail: {
         posted: outcome.posted,
         skipped: outcome.skipped,
-        note: 'refunds/exchanges not yet derived — post manual batches until that slice lands',
+        note: 'exchanges settle through orders/returns; refunds derive with proportional tax',
       },
     };
   }

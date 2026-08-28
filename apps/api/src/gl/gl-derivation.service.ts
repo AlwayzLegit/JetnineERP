@@ -14,8 +14,9 @@ import { GlService, resolvePeriod } from './gl.service';
  *  - D8: imported records never derive;
  *  - defensive balance: a family whose legs do not balance is skipped
  *    and reported, never force-balanced.
- * Refunds/exchanges are NOT yet derived (visible gap, reported in the
- * outcome) — correct with manual batches until that slice lands.
+ * Refunds derive with a proportional tax split (family 9). Exchanges
+ * settle through their orders and the returns machinery — their money
+ * flows already surface in families 1-3.
  */
 
 interface Leg {
@@ -91,6 +92,7 @@ export class GlDerivationService {
       { family: 'vendor_bills', legs: () => this.vendorBills(db, businessId, from, to) },
       { family: 'cash_over_short', legs: () => this.overShort(db, businessId, from, to) },
       { family: 'inventory_adjustments', legs: () => this.adjustments(db, businessId, from, to) },
+      { family: 'refunds', legs: () => this.refunds(db, businessId, from, to) },
     ];
 
     for (const f of families) {
@@ -441,6 +443,52 @@ export class GlDerivationService {
         { key: 'cash_over_short', creditCents: t!.over, memo: 'Drawers over' },
       );
     }
+    return legs;
+  }
+
+  /**
+   * Family 9: POS refunds — tax split proportionally to the original
+   * sale (round-half-up per refund), tender back out of the drawer.
+   */
+  private async refunds(
+    db: PostgresJsDatabase,
+    businessId: string,
+    from: Date,
+    to: Date,
+  ): Promise<Leg[]> {
+    const rows = await db
+      .select({
+        amountCents: schema.refunds.amountCents,
+        saleTaxCents: schema.sales.taxCents,
+        saleTotalCents: schema.sales.totalCents,
+      })
+      .from(schema.refunds)
+      .innerJoin(schema.sales, eq(schema.sales.id, schema.refunds.saleId))
+      .where(
+        and(
+          eq(schema.refunds.businessId, businessId),
+          isNull(schema.sales.importedAt),
+          gte(schema.refunds.createdAt, from),
+          lt(schema.refunds.createdAt, to),
+        ),
+      );
+    let revenue = 0;
+    let tax = 0;
+    let total = 0;
+    for (const r of rows) {
+      const taxShare =
+        r.saleTotalCents > 0 ? Math.round((r.amountCents * r.saleTaxCents) / r.saleTotalCents) : 0;
+      revenue += r.amountCents - taxShare;
+      tax += taxShare;
+      total += r.amountCents;
+    }
+    if (total === 0) return [];
+    const legs: Leg[] = [];
+    if (revenue > 0)
+      legs.push({ key: 'sales_revenue', debitCents: revenue, memo: 'Refunded revenue' });
+    if (tax > 0)
+      legs.push({ key: 'sales_tax_payable', debitCents: tax, memo: 'Refunded sales tax' });
+    legs.push({ key: 'cash_drawer', creditCents: total, memo: 'Refunds paid from drawer' });
     return legs;
   }
 
