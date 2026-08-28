@@ -107,3 +107,13 @@ unmapped blocks) → daily summary + export file → QuickBooks/Xero
 format. Each with tests first; batches 1, 18, 24 supply the acceptance
 detail. 2-if-built follows batches 20–22; everything else stays
 reference.
+
+## §6 Decisions received (owner, 2026-08-28)
+
+- **Q1 GL strategy: (b) IN-HOUSE FULL GL** — chart of accounts,
+  double-entry postings, fiscal periods inside Jetnine. Owner chose
+  the full build over the recommended export layer; this is now a
+  locked multi-slice program. Batches 1/18/24 are the spec; the §5
+  journal-event derivation still comes first (it feeds the GL), and
+  AP payment operations (Q2) presumably follow in-house — confirm.
+- Q2–Q5 and the Ops audit-switch check remain open.

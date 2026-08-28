@@ -2853,3 +2853,27 @@ Still deferred: PDF output, viewer saved views, USER-DEFINED menus,
 WorkingDataSet sources, retention windows (owner said keep-everything
 stands unless Accounting answers cash Q3 differently).
 Gates: typecheck 0 · lint 0 · test 0 (704) · build 0 · format 0.
+
+## Checkpoint — 2026-08-28 (STORIS parity audit complete: runs 03–06 landed + 8 owner decisions)
+
+- Landed the remaining parity-audit packs under `docs/handoffs/` (canonical
+  copies from the complete-audit zip): `run03-sales-processing/` (18 files,
+  405-article Sales Processing dissection), `run04-logistics-delivery/` (13),
+  `run05-customer-service/` (4), `run06-getting-started/` (4), and
+  `AUDIT-CLOSEOUT.md`. All six runs (~1500 articles) are now in-repo.
+- Recorded the owner's 8 locked decisions (2026-08-28, AskUserQuestion
+  rounds 1+2) as "Decisions received" appendices in the five GAP-RECONCILE
+  docs: keep integer quantities · **in-house full GL** (run-01 batches
+  1/18/24 are the spec; journal-event derivation first) · manifests only,
+  no scanning · add store/warehouse location types · skip distributed
+  inventory · require print-before-ship on transfers · blind count +
+  cash-only $ tolerance (per-location) · landed cost lean.
+- Owner authorized build start ("go ahead and start"). Build queue order:
+  location_type migration → transfer print-before-ship gate → landed cost
+  lean → blind-count cash discipline → manifests (run-04 feeds this) →
+  in-house GL program (largest, phased).
+- Still-open owner questions carried in the GAP-RECONCILE docs (fiscal
+  calendar, cash tolerance $, PO types, OTB, discount-model parity,
+  financing providers/commission values, customer merge tooling, cutover
+  pilot-vs-full). None block the first slices; configurable settings +
+  recorded defaults where needed.

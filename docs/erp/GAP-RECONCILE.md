@@ -122,3 +122,8 @@ Screen-by-screen parity for the remaining 172-screen surface is **not**
 a goal: Jetnine replaces screens, not reproduces them (`PARITY-NOTES.md`
 already records this stance). `30`'s 131 tests are adopted selectively —
 each shipped slice ports the section that governs it, as house protocol.
+
+## §6 Decisions received (owner, 2026-08-28)
+
+- **Q1 Quantities: keep integers** — no `decimal(12,4)` conversion.
+- Remaining §4 questions (2–12) still open.

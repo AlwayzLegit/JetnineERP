@@ -150,3 +150,17 @@ lists, and the Product-Quantity-in-Excess inquiry (12 §64).
 
 Everything lands as vertical slices with the matching section of
 `13-acceptance-tests.md` ported first, per house protocol.
+
+## §6 Decisions received (owner, 2026-08-28)
+
+- **Q1 Manifests/RF**: build **manifests without scanning** — group
+  transfers onto truck/date manifests with load numbers; receiving
+  stays tap-based, no RF/barcode/phantom worker.
+- **Q2 Location type**: **yes** — add `store` / `warehouse` location
+  types (owner: "you already have the locations in inventory").
+- **Q3 Completion gate**: **yes** — require the transfer ticket to be
+  printed before ship (delivery-ticket-flags pattern).
+- **Q4 Distributed transfers**: **skip** — store-by-store creation
+  stays.
+- Q5 (security tables) and items 7–9 remain open; §10's stock-level
+  answer stands.

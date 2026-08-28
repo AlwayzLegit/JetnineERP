@@ -89,3 +89,11 @@ Genuinely yours to answer:
 Each chosen piece ships as a vertical slice with `08-acceptance-
 criteria.md`'s matching section ported first (Balancing §35–72 for the
 blind-count slice), per house protocol.
+
+## §5 Decisions received (owner, 2026-08-28)
+
+- **Scope: (a) blind count + tolerance** — counted-first entry, cash-
+  only $ tolerance, limited retries, suspension, manager approval on
+  the existing per-location shifts. Per-cashier drawers not chosen.
+- Q1 fiscal calendar / Q2 tolerance value / Q3 retention still open
+  (tolerance $ amount needed from Accounting before build).

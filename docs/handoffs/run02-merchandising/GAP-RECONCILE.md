@@ -83,3 +83,9 @@ unreliable (log-on-context access).
 
 Everything else in the run is either shipped, superseded, or cutover
 reference. No code changes follow from this reconcile until §3 lands.
+
+## §4 Decisions received (owner, 2026-08-28)
+
+- **Q1 Landed cost: yes, lean** — one freight amount per PO, spread
+  across units at receipt into the FIFO layer cost.
+- Q2 (PO types) and Q3 (Open To Buy) still open.
