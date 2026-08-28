@@ -77,6 +77,42 @@ export const reportDictionaries = pgTable(
  * jsonb document — the definition is authored and validated as a unit
  * (pack 02's five tabs), and its parts are meaningless separately.
  */
+/**
+ * A materialised run (pack 05 archive). Stores the structured result
+ * AND a definition snapshot, so an archive can be re-rendered later
+ * even if the definition changes or dies. Entitlements are re-checked
+ * at VIEW time (pack 07 checklist), never only at generation.
+ */
+export const reportArchives = pgTable(
+  'report_archives',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    businessId: uuid('business_id')
+      .notNull()
+      .references(() => businesses.id, { onDelete: 'cascade' }),
+    reportDefinitionId: uuid('report_definition_id'),
+    reportName: text('report_name').notNull(),
+    sourceId: text('source_id').notNull(),
+    access: text('access').notNull(),
+    ownerUserId: uuid('owner_user_id'),
+    /** 'regular' (on-demand) | 'eod' (scheduled) — pack 05 Source. */
+    runSource: text('run_source').notNull().default('regular'),
+    definitionSnapshotJson: jsonb('definition_snapshot_json').notNull(),
+    /** {columns, rows, groups, grandTotals, provenance, truncated}. */
+    resultJson: jsonb('result_json').notNull(),
+    rowCount: integer('row_count').notNull().default(0),
+    createdByUserId: uuid('created_by_user_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    businessIdx: index('report_archives_business_id_idx').on(t.businessId),
+    definitionIdx: index('report_archives_definition_idx').on(t.reportDefinitionId),
+    createdIdx: index('report_archives_created_idx').on(t.businessId, t.createdAt),
+  }),
+);
+
 export const reportDefinitions = pgTable(
   'report_definitions',
   {

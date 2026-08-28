@@ -14,7 +14,7 @@ import {
   Res,
 } from '@nestjs/common';
 import type { Response } from 'express';
-import { and, asc, eq, sql, type SQL } from 'drizzle-orm';
+import { asc, desc, eq } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { schema } from '@jetnine/db';
 import { AuditService } from '../audit/audit.service';
@@ -33,32 +33,16 @@ import {
   validateDefinition,
   validateFormulaDictionary,
   type ReportDefinitionDoc,
-  type ReportFilterDef,
   type UserDictionaryShape,
 } from './definition';
-import { evaluateFormula, FormulaError, parseFormula } from './formula';
+import { applyMasking, executeReportRun, toCsv, type RunResult } from './report-runner';
 import {
   getSource,
   getSystemDictionary,
   joinedExpr,
   REPORT_SOURCES,
   type ReportSource,
-  type SystemDictionary,
 } from './report-sources';
-
-/** Row cap (pack 12 rec #7): announced, never silent. */
-const ROW_CAP = 5000;
-
-type CellValue = string | number | boolean | null;
-
-interface RunColumn {
-  name: string;
-  heading: string;
-  width: number;
-  justification: string;
-  type: string;
-  masked: boolean;
-}
 
 interface DictionaryRow {
   id: string;
@@ -510,7 +494,7 @@ export class ReportBuilderController {
     body: {
       answers?: Record<string, unknown>;
       summaryOnly?: boolean;
-      format?: 'json' | 'csv';
+      format?: 'json' | 'csv' | 'archive';
     },
     @Query('format') formatQ?: string,
     @Res({ passthrough: true }) res?: Response,
@@ -521,212 +505,174 @@ export class ReportBuilderController {
     }
     const source = this.requireSource(tenant, row.sourceId);
     const userDicts = await this.userDicts(source.id);
-    const doc = row.definitionJson as unknown as ReportDefinitionDoc;
-    let validated;
-    try {
-      validated = validateDefinition(row.name, doc, source, userDicts.map(toShape), {
-        title: row.title,
-        subTitle: row.subTitle,
-        footer: row.footer,
-      });
-    } catch (err) {
-      if (err instanceof DefinitionValidationError) {
-        throw new BadRequestException(`Definition no longer valid: ${err.message}`);
-      }
-      throw err;
-    }
-    const summaryOnly = body.summaryOnly === true && validated.summaryOnlyAvailable;
-    const answers = body.answers ?? {};
-    const now = new Date();
-
-    // Resolve every dictionary the run needs into a select expression.
-    const userByName = new Map(userDicts.map((d) => [d.name, d]));
-    const formulaDicts = new Map<string, string>(); // name -> formula
-    const selectMap: Record<string, SQL | ReturnType<typeof sql>> = {};
-    const need = new Set<string>();
-    for (const c of doc.columns) need.add(c.dictionary);
-    for (const f of doc.filters ?? []) need.add(f.dictionary);
-    for (const s of doc.sorts ?? []) need.add(s.dictionary);
-    for (const p of doc.prompts ?? []) need.add(p.dictionary);
-    // Formula refs pull in their inputs.
-    for (const name of [...need]) {
-      const ud = userByName.get(name);
-      if (ud?.kind === 'formula' && ud.formula) {
-        for (const ref of parseFormula(ud.formula).refs) need.add(ref);
-      }
-    }
-    for (const name of need) {
-      const sys = getSystemDictionary(source, name);
-      if (sys) {
-        selectMap[name] = sql`${sys.expr}`;
-        continue;
-      }
-      const ud = userByName.get(name);
-      if (!ud) throw new BadRequestException(`Dictionary '${name}' no longer exists`);
-      if (ud.kind === 'joined') {
-        const resolved = joinedExpr(source, ud.joinSourceId!, ud.joinFieldName!);
-        if (!resolved) {
-          throw new BadRequestException(`Joined dictionary '${name}' no longer resolves`);
-        }
-        selectMap[name] = resolved.expr;
-      } else {
-        formulaDicts.set(name, ud.formula!);
-      }
-    }
-
-    // WHERE: static filters (AND-only, pack 12 rec #1) + prompts (AND).
-    const conds: (SQL | undefined)[] = [];
-    for (const f of doc.filters ?? []) {
-      conds.push(this.filterCond(source, userByName, f));
-    }
-    const promptEcho: Record<string, unknown> = {};
-    for (const p of doc.prompts ?? []) {
-      const raw = answers[p.dictionary];
-      if (raw == null || raw === '' || (Array.isArray(raw) && raw.length === 0)) {
-        if (p.required) {
-          throw new BadRequestException(`Prompt '${p.label}' is required`);
-        }
-        continue;
-      }
-      const expr = this.dictExpr(source, userByName, p.dictionary);
-      const resolved = p.dateCode ? resolveDateCode(raw, now) : null;
-      promptEcho[p.dictionary] = resolved ? `${raw} → ${resolved.echo}` : raw;
-      if (resolved) {
-        conds.push(sql`${expr} >= ${resolved.start}::date AND ${expr} <= ${resolved.end}::date`);
-      } else if (p.promptType === 'range') {
-        const [from, to] = Array.isArray(raw) ? raw : [raw, raw];
-        if (from != null && from !== '') conds.push(sql`${expr} >= ${from}`);
-        if (to != null && to !== '') conds.push(sql`${expr} <= ${to}`);
-      } else if (p.promptType === 'multi_select') {
-        const values = Array.isArray(raw) ? raw : [raw];
-        const list = sql.join(
-          values.map((v) => sql`${v}`),
-          sql`, `,
-        );
-        conds.push(
-          p.includeExclude === 'exclude'
-            ? sql`(${expr} IS NULL OR ${expr} NOT IN (${list}))`
-            : sql`${expr} IN (${list})`,
-        );
-      } else {
-        conds.push(sql`${expr} = ${raw}`);
-      }
-    }
-
-    // ORDER BY sorts + pk tiebreaker (pack 12 rec #5).
-    const orderBy: SQL[] = (doc.sorts ?? []).map(
-      (s) => sql`${this.dictExpr(source, userByName, s.dictionary)} ASC`,
-    );
-    orderBy.push(sql`${source.tiebreaker} ASC`);
-
-    let q = source.from(this.db.select(selectMap as never));
-    const where = and(...conds.filter((c): c is SQL => Boolean(c)));
-    if (where) q = q.where(where);
-    q = q.orderBy(...orderBy).limit(ROW_CAP + 1);
-    const raw: Record<string, CellValue>[] = await q;
-    const truncated = raw.length > ROW_CAP;
-    const fetched = truncated ? raw.slice(0, ROW_CAP) : raw;
-
-    // Post-fetch: formulas, then masking (pack 07: a rendering rule).
-    const rows = fetched.map((r) => {
-      const out: Record<string, CellValue> = { ...r };
-      for (const [name, formula] of formulaDicts) {
-        try {
-          out[name] = evaluateFormula(formula, out) as CellValue;
-        } catch (err) {
-          out[name] = err instanceof FormulaError ? null : null;
-        }
-      }
-      return out;
-    });
-    const columns: RunColumn[] = doc.columns.map((c) => {
-      const sys = getSystemDictionary(source, c.dictionary);
-      const ud = userByName.get(c.dictionary);
-      const maskPerm = sys?.maskPermission ?? ud?.maskPermission ?? null;
-      return {
-        name: c.dictionary,
-        heading: sys?.columnHeading ?? ud?.columnHeading ?? c.dictionary,
-        width: c.width ?? sys?.width ?? ud?.width ?? 12,
-        justification: sys?.justification ?? ud?.justification ?? 'left',
-        type: sys?.type ?? 'text',
-        masked: Boolean(maskPerm && !hasPermission(tenant, maskPerm)),
-      };
-    });
-    for (const col of columns) {
-      if (!col.masked) continue;
-      for (const r of rows) r[col.name] = null; // header stays, data goes
-    }
-
-    // Breaks + totals.
-    const breakCol = doc.columns.find((c) => c.break)?.dictionary ?? null;
-    const totalCols = doc.columns.filter((c) => c.total).map((c) => c.dictionary);
-    const grandTotals: Record<string, number> = {};
-    const groups: { key: CellValue; rows: number; totals: Record<string, number> }[] = [];
-    if (totalCols.length > 0) {
-      for (const t of totalCols) grandTotals[t] = 0;
-      let current: (typeof groups)[number] | null = null;
-      for (const r of rows) {
-        if (breakCol) {
-          const key = r[breakCol] ?? null;
-          if (!current || current.key !== key) {
-            current = { key, rows: 0, totals: Object.fromEntries(totalCols.map((t) => [t, 0])) };
-            groups.push(current);
-          }
-          current.rows += 1;
-        }
-        for (const t of totalCols) {
-          const v = r[t];
-          const n = typeof v === 'number' ? v : Number(v ?? 0);
-          if (!Number.isNaN(n)) {
-            grandTotals[t]! += n;
-            if (current) current.totals[t]! += n;
-          }
-        }
-      }
-    }
-
-    // Pack 04: run-time options are part of the output.
-    const provenance = {
-      report: row.name,
-      generatedAt: now.toISOString(),
+    const result = await executeReportRun(this.db, {
+      row,
+      source,
+      userDicts: userDicts.map(toShape),
+      answers: body.answers ?? {},
+      summaryOnly: body.summaryOnly,
       runBy: actor.email ?? actor.id,
-      answers: promptEcho,
-      summaryOnly,
-      truncated,
-      rowCap: ROW_CAP,
-    };
+    });
 
-    const header = renderTokens(row.title, promptEcho);
-    const subTitle = renderTokens(row.subTitle, promptEcho);
-    const footer = renderTokens(row.footer, promptEcho);
+    const format =
+      (body.format ?? formatQ) === 'csv'
+        ? 'csv'
+        : (body.format ?? formatQ) === 'archive'
+          ? 'archive'
+          : 'json';
 
-    const format = (body.format ?? formatQ) === 'csv' ? 'csv' : 'json';
+    if (format === 'archive') {
+      // Pack 05: no immediate render — one archive record, storing the
+      // UNMASKED result + a definition snapshot; masking re-applies per
+      // viewer at read time (pack 07: view-time entitlement checks).
+      const [archive] = await this.db
+        .insert(schema.reportArchives)
+        .values({
+          businessId: tenant.businessId!,
+          reportDefinitionId: row.id,
+          reportName: row.name,
+          sourceId: row.sourceId,
+          access: row.access,
+          ownerUserId: row.ownerUserId,
+          runSource: 'regular',
+          definitionSnapshotJson: row.definitionJson as never,
+          resultJson: result as never,
+          rowCount: result.rows.length,
+          createdByUserId: actor.id,
+        })
+        .returning({ id: schema.reportArchives.id });
+      await this.audit.log({
+        action: 'report_archive.create',
+        targetType: 'report_archive',
+        targetId: archive!.id,
+        after: { reportName: row.name, rowCount: result.rows.length, runSource: 'regular' },
+      });
+      return { archiveId: archive!.id, reportName: row.name, rowCount: result.rows.length };
+    }
+
+    applyMasking(result, (perm) => hasPermission(tenant, perm));
     if (format === 'csv') {
       if (!hasPermission(tenant, 'reports.export')) {
         throw new ForbiddenException('reports.export permission required for CSV download');
       }
-      const csv = toCsv(columns, summaryOnly ? [] : rows, groups, grandTotals, provenance);
+      const csv = toCsv(result);
       res?.setHeader('Content-Type', 'text/csv; charset=utf-8');
       res?.setHeader(
         'Content-Disposition',
-        `attachment; filename="${row.name.replace(/[^A-Za-z0-9_-]+/g, '-')}-${now.toISOString().slice(0, 10)}.csv"`,
+        `attachment; filename="${row.name.replace(/[^A-Za-z0-9_-]+/g, '-')}-${new Date()
+          .toISOString()
+          .slice(0, 10)}.csv"`,
       );
       return csv;
     }
-    return {
-      title: header,
-      subTitle,
-      footer,
-      runTimeInformation: row.runTimeInformation,
-      columns,
-      rows: summaryOnly ? [] : rows,
-      groups: breakCol ? groups : [],
-      grandTotals,
-      summaryOnly,
-      truncated,
-      warnings: validated.warnings,
-      provenance,
-    };
+    return result;
+  }
+
+  // ------------------------------------------------------------ archives
+
+  @Get('archives')
+  @RequirePermission('reports.builder.run')
+  async listArchives(
+    @CurrentTenant() tenant: RequestTenantContext,
+    @CurrentUser() actor: CurrentUserPayload,
+  ): Promise<{
+    archives: {
+      id: string;
+      reportName: string;
+      runSource: string;
+      rowCount: number;
+      createdAt: Date;
+    }[];
+  }> {
+    const rows = await this.db
+      .select({
+        id: schema.reportArchives.id,
+        reportName: schema.reportArchives.reportName,
+        sourceId: schema.reportArchives.sourceId,
+        access: schema.reportArchives.access,
+        ownerUserId: schema.reportArchives.ownerUserId,
+        runSource: schema.reportArchives.runSource,
+        rowCount: schema.reportArchives.rowCount,
+        createdAt: schema.reportArchives.createdAt,
+      })
+      .from(schema.reportArchives)
+      .orderBy(desc(schema.reportArchives.createdAt))
+      .limit(200);
+    const visible = [];
+    for (const r of rows) {
+      // View-time entitlement re-check (pack 07 checklist / test #61).
+      if (!(await this.canRun(tenant, actor, r))) continue;
+      visible.push({
+        id: r.id,
+        reportName: r.reportName,
+        runSource: r.runSource,
+        rowCount: r.rowCount,
+        createdAt: r.createdAt,
+      });
+    }
+    return { archives: visible };
+  }
+
+  @Get('archives/:id')
+  @RequirePermission('reports.builder.run')
+  async getArchive(
+    @CurrentTenant() tenant: RequestTenantContext,
+    @CurrentUser() actor: CurrentUserPayload,
+    @Param('id') id: string,
+    @Query('format') format?: string,
+    @Res({ passthrough: true }) res?: Response,
+  ): Promise<unknown> {
+    const [row] = await this.db
+      .select()
+      .from(schema.reportArchives)
+      .where(eq(schema.reportArchives.id, id))
+      .limit(1);
+    if (!row) throw new NotFoundException('Archive not found');
+    // Test #61: revoked access denies the archive even after generation.
+    if (!(await this.canRun(tenant, actor, row))) {
+      throw new ForbiddenException('You cannot view this archive');
+    }
+    const result = row.resultJson as unknown as RunResult;
+    applyMasking(result, (perm) => hasPermission(tenant, perm));
+    if (format === 'csv') {
+      if (!hasPermission(tenant, 'reports.export')) {
+        throw new ForbiddenException('reports.export permission required for CSV download');
+      }
+      const csv = toCsv(result);
+      res?.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res?.setHeader(
+        'Content-Disposition',
+        `attachment; filename="${row.reportName.replace(/[^A-Za-z0-9_-]+/g, '-')}-archive.csv"`,
+      );
+      return csv;
+    }
+    return { ...result, runSource: row.runSource, createdAt: row.createdAt };
+  }
+
+  @Delete('archives/:id')
+  @RequirePermission('reports.builder.author')
+  async deleteArchive(
+    @CurrentTenant() tenant: RequestTenantContext,
+    @CurrentUser() actor: CurrentUserPayload,
+    @Param('id') id: string,
+  ): Promise<{ deleted: true }> {
+    const [row] = await this.db
+      .select()
+      .from(schema.reportArchives)
+      .where(eq(schema.reportArchives.id, id))
+      .limit(1);
+    if (!row) throw new NotFoundException('Archive not found');
+    if (!(await this.canRun(tenant, actor, row))) {
+      throw new ForbiddenException('You cannot delete this archive');
+    }
+    await this.db.delete(schema.reportArchives).where(eq(schema.reportArchives.id, id));
+    await this.audit.log({
+      action: 'report_archive.delete',
+      targetType: 'report_archive',
+      targetId: id,
+      before: { reportName: row.reportName },
+    });
+    return { deleted: true };
   }
 
   // ------------------------------------------------------------- helpers
@@ -795,62 +741,6 @@ export class ReportBuilderController {
       .where(eq(schema.memberships.userId, ownerUserId))
       .limit(1);
     return m?.roleId ?? null;
-  }
-
-  private dictExpr(
-    source: ReportSource,
-    userByName: Map<
-      string,
-      { kind: string; joinSourceId: string | null; joinFieldName: string | null }
-    >,
-    name: string,
-  ): SQL {
-    const sys = getSystemDictionary(source, name);
-    if (sys) return sql`${sys.expr}`;
-    const ud = userByName.get(name);
-    if (ud?.kind === 'joined') {
-      const resolved = joinedExpr(source, ud.joinSourceId!, ud.joinFieldName!);
-      if (resolved) return resolved.expr;
-    }
-    throw new BadRequestException(`'${name}' cannot be used in filters/sorts/prompts`);
-  }
-
-  private filterCond(
-    source: ReportSource,
-    userByName: Map<
-      string,
-      { kind: string; joinSourceId: string | null; joinFieldName: string | null }
-    >,
-    f: ReportFilterDef,
-  ): SQL | undefined {
-    const expr = this.dictExpr(source, userByName, f.dictionary);
-    const sys = getSystemDictionary(source, f.dictionary);
-    // Pack 02 blank idiom: "" means the empty string.
-    const isBlankLiteral = f.value === '""';
-    switch (f.operator) {
-      case 'EQ':
-        return isBlankLiteral
-          ? sql`(${expr} IS NULL OR ${expr}::text = '')`
-          : sql`${expr} = ${coerce(sys, f.value)}`;
-      case 'NE':
-        return isBlankLiteral
-          ? sql`(${expr} IS NOT NULL AND ${expr}::text <> '')`
-          : sql`${expr} IS DISTINCT FROM ${coerce(sys, f.value)}`;
-      case 'LT':
-        return sql`${expr} < ${coerce(sys, f.value)}`;
-      case 'GT':
-        return sql`${expr} > ${coerce(sys, f.value)}`;
-      case 'LE':
-        return sql`${expr} <= ${coerce(sys, f.value)}`;
-      case 'GE':
-        return sql`${expr} >= ${coerce(sys, f.value)}`;
-      case 'TR':
-        return sql`${expr} = true`;
-      case 'FL':
-        return sql`${expr} = false`;
-      default:
-        return undefined;
-    }
   }
 
   private async parseDefinitionBody(
@@ -945,110 +835,4 @@ function toShape(d: {
     joinSourceId: d.joinSourceId,
     joinFieldName: d.joinFieldName,
   };
-}
-
-/**
- * Relative date codes (pack 02): stored as the code, resolved at
- * execution — a scheduled report follows the calendar. Periods are
- * calendar months (presumed fiscal calendar; flagged to the owner in
- * the cash-balancing reconcile).
- */
-function resolveDateCode(
-  raw: unknown,
-  now: Date,
-): { start: string; end: string; echo: string } | null {
-  const code = String(Array.isArray(raw) ? raw[0] : raw).toUpperCase();
-  const day = (d: Date) => d.toISOString().slice(0, 10);
-  const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-  switch (code) {
-    case 'TDAY':
-      return { start: day(today), end: day(today), echo: day(today) };
-    case 'YDAY': {
-      const y = new Date(today.getTime() - 86_400_000);
-      return { start: day(y), end: day(y), echo: day(y) };
-    }
-    case 'CPTD': {
-      const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-      return { start: day(start), end: day(today), echo: `${day(start)}–${day(today)}` };
-    }
-    case 'LPTD': {
-      const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1));
-      const end = new Date(
-        Math.min(
-          Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 0),
-          Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, now.getUTCDate()),
-        ),
-      );
-      return { start: day(start), end: day(end), echo: `${day(start)}–${day(end)}` };
-    }
-    default:
-      return null;
-  }
-}
-
-function coerce(sys: SystemDictionary | undefined, value: string | null | undefined): unknown {
-  if (value == null) return null;
-  if (sys && (sys.type === 'number' || sys.type === 'money')) {
-    const n = Number(value);
-    if (Number.isNaN(n)) throw new BadRequestException(`'${value}' is not a number`);
-    return n;
-  }
-  return value;
-}
-
-function renderTokens(text: string | null, answers: Record<string, unknown>): string | null {
-  if (!text) return text;
-  // Unresolved tokens render literally so authors notice (pack 02).
-  return text.replace(/\{([A-Z0-9_.]+)\}/gi, (whole, name: string) =>
-    name in answers ? String(answers[name]) : whole,
-  );
-}
-
-function csvCell(v: CellValue): string {
-  if (v == null) return '';
-  let s = String(v);
-  // CSV-injection guard (house convention since PR #48).
-  if (/^[=+\-@]/.test(s)) s = `'${s}`;
-  if (/[",\n]/.test(s)) s = `"${s.replace(/"/g, '""')}"`;
-  return s;
-}
-
-function toCsv(
-  columns: RunColumn[],
-  rows: Record<string, CellValue>[],
-  groups: { key: CellValue; rows: number; totals: Record<string, number> }[],
-  grandTotals: Record<string, number>,
-  provenance: Record<string, unknown>,
-): string {
-  const lines: string[] = [];
-  for (const [k, v] of Object.entries(provenance)) {
-    lines.push(`# ${k}=${typeof v === 'object' ? JSON.stringify(v) : String(v)}`);
-  }
-  lines.push(columns.map((c) => csvCell(c.heading)).join(','));
-  for (const r of rows) {
-    lines.push(columns.map((c) => csvCell(r[c.name] ?? null)).join(','));
-  }
-  for (const g of groups) {
-    lines.push(
-      columns
-        .map((c, i) =>
-          i === 0
-            ? csvCell(`TOTAL ${String(g.key ?? '')}`)
-            : c.name in g.totals
-              ? csvCell(g.totals[c.name]!)
-              : '',
-        )
-        .join(','),
-    );
-  }
-  if (Object.keys(grandTotals).length > 0) {
-    lines.push(
-      columns
-        .map((c, i) =>
-          i === 0 ? 'GRAND TOTAL' : c.name in grandTotals ? csvCell(grandTotals[c.name]!) : '',
-        )
-        .join(','),
-    );
-  }
-  return lines.join('\n');
 }

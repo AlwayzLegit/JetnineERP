@@ -118,4 +118,5 @@ export const TENANT_SCOPED_TABLES = [
   'delivery_runs',
   'report_dictionaries',
   'report_definitions',
+  'report_archives',
 ] as const;

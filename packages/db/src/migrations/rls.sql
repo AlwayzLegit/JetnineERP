@@ -157,7 +157,8 @@ DECLARE
     'order_sequences',
     'membership_permission_overrides',
     'report_dictionaries',
-    'report_definitions'
+    'report_definitions',
+    'report_archives'
   ];
 BEGIN
   FOREACH t IN ARRAY tenant_tables LOOP
