@@ -2970,3 +2970,33 @@ User Security` and `Review Settings Activity` extracts. "A morning's
   work worth more than another 500 articles."
 - PRs #69 (location types + print gate, deployed, 67/67 head=0066) and
   #70 (landed cost + blind count) merged; #70 deploy in flight.
+
+## Checkpoint — 2026-08-28 (Q1 manifests without scanning)
+
+- Migration `0069_stock_manifests`: new tenant table `stock_manifests`
+  (lane + truck date + free-text route, MAN-YYYY-NNNN numbering, open→
+  completed/canceled) + `stock_transfers.manifest_id`/`load_number`.
+  All three tenant-table wirings done (TENANT_SCOPED_TABLES, rls.sql).
+- **One ship path**: extracted `TransferShipService` — the `/ship`
+  endpoint, create-with-`ship:true`, and manifest Complete all move
+  inventory through it (Q3 print gate, negative-stock refusal, FIFO
+  consume, serial flagging can never diverge).
+- STORIS 08-manifests semantics kept lean: build against the same open
+  (to-location, route, date) key APPENDS; load numbers 0–99 (explicit
+  wins, else the manifest's last-used); per-transfer validation errors
+  name the transfer and reason; F177-lite — a manifested transfer can't
+  ship or cancel directly (remove first); F178 — removal from an
+  existing manifest records the reason in the audit register
+  (`stock_manifest.remove_transfer`).
+- Complete = the truck leaves: ships every draft in load order through
+  the one path (print gate enforced per transfer), marks the manifest
+  completed; receiving stays tap-based per transfer. Cancel detaches
+  drafts.
+- Web: /transfers/manifests (build UI on a lane with eligible-draft
+  picker), detail page (loads, ticket state, complete/cancel/remove),
+  and a printable truck load sheet at /print/manifests/:id. Transfers
+  list gains Manifests button; transfer detail shows its manifest.
+- transfers.int.spec 36→40 (build/append/load numbers, ship+cancel
+  blocks, audited removal, gate-blocked completion then full ship with
+  inventory assertion).
+  Gates: typecheck 0 · lint 0 · test 0 · build 0 · format 0.
