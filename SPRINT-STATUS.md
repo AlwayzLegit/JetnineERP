@@ -3145,3 +3145,14 @@ User Security` and `Review Settings Activity` extracts. "A morning's
   `Assign Specific Pieces At` value is live before the parallel run;
   extract STORIS service status-duration history (the one recoverable
   cycle-time record) and the live Problem Code list.
+
+## Checkpoint — 2026-08-28 (decision queue consolidated)
+
+- `docs/DECISION-QUEUE.md`: every open owner item in one sheet — A
+  critical path (exports kickoff, config photos + licence list,
+  gateway identity, terminals, commission rules, sample invoices) · B
+  quick enables (cash tolerance $, fiscal calendar, crew-sheet
+  prices) · C sales decisions · D service decisions · E odds and ends
+  (transfer security tables, PO types, OTB, AP ops, layaway, multi-leg,
+  UniData) · F Ops sessions. Defaults stated; silence keeps defaults.
+  Answers get recorded doc-first in the owning reconcile.
