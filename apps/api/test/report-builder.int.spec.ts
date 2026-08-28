@@ -569,3 +569,96 @@ describe('security (acceptance 54–58, 62)', () => {
       .expect(403);
   });
 });
+
+describe('archives and scheduling (acceptance 36–38, 42, 61, 63–64)', () => {
+  let archiveReportId = '';
+  let archiveId = '';
+
+  it('#36 archive destination produces no render and one archive record', async () => {
+    const report = await as(ownerCookie)
+      .post('/v1/report-builder/reports')
+      .send({
+        name: 'Archived orders',
+        sourceId: 'orders',
+        addToSchedule: true,
+        columns: [{ dictionary: 'ORDER_NUMBER' }, { dictionary: 'TOTAL' }],
+        sorts: [{ dictionary: 'ORDER_NUMBER' }],
+      });
+    expect(report.status).toBe(201);
+    archiveReportId = report.body.id;
+    const run = await as(ownerCookie)
+      .post(`/v1/report-builder/reports/${archiveReportId}/run`)
+      .send({ format: 'archive' });
+    expect(run.status).toBe(201);
+    expect(run.body.archiveId).toBeTruthy();
+    expect(run.body.rows).toBeUndefined(); // no immediate render
+    archiveId = run.body.archiveId;
+  });
+
+  it('#37 the archive stores structured data and re-renders later (JSON + CSV)', async () => {
+    const view = await as(ownerCookie).get(`/v1/report-builder/archives/${archiveId}`);
+    expect(view.status).toBe(200);
+    expect(view.body.rows.length).toBeGreaterThan(0);
+    expect(view.body.runSource).toBe('regular'); // #38 on-demand source
+    const csv = await as(ownerCookie).get(`/v1/report-builder/archives/${archiveId}?format=csv`);
+    expect(csv.status).toBe(200);
+    expect(csv.text).toContain('# report=Archived orders');
+  });
+
+  it('#63/#64/#38 the EOD job archives scheduled reports with runSource eod', async () => {
+    const businessDate = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
+    const run = await as(ownerCookie).post('/v1/jobs/run').send({ businessDate });
+    expect(run.status).toBe(201);
+    const step = (run.body.results as { jobId: string; status: string }[]).find(
+      (r) => r.jobId === 'report_builder_schedule',
+    );
+    expect(step?.status).toBe('succeeded');
+
+    const list = await as(ownerCookie).get('/v1/report-builder/archives');
+    const eod = (
+      list.body.archives as { reportName: string; runSource: string; id: string }[]
+    ).filter((a) => a.runSource === 'eod');
+    // Only 'Archived orders' carries addToSchedule (#63): every other
+    // report in this suite must NOT have been run by the scheduler.
+    expect(eod.length).toBe(1);
+    expect(eod[0]!.reportName).toBe('Archived orders');
+    const view = await as(ownerCookie).get(`/v1/report-builder/archives/${eod[0]!.id}`);
+    expect(view.body.runSource).toBe('eod');
+    expect(view.body.provenance.runBy).toBe('scheduler');
+  });
+
+  it('#61 archives re-check entitlements at view time', async () => {
+    // The bookkeeper lost products.view in #55 but keeps order access;
+    // deny the sales-report permission and the orders archive vanishes.
+    const sqlc = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    const db = drizzle(sqlc);
+    try {
+      const [m] = await db
+        .select({ id: schema.memberships.id })
+        .from(schema.memberships)
+        .innerJoin(schema.users, drizzleEq(schema.users.id, schema.memberships.userId))
+        .where(drizzleEq(schema.users.email, 'books@report-test.local'))
+        .limit(1);
+      await db.insert(schema.membershipPermissionOverrides).values({
+        businessId,
+        membershipId: m!.id,
+        permission: 'reports.sales.view',
+        allowed: false,
+      });
+    } finally {
+      await sqlc.end({ timeout: 5 });
+    }
+    await as(bookkeeperCookie).get(`/v1/report-builder/archives/${archiveId}`).expect(403);
+    const list = await as(bookkeeperCookie).get('/v1/report-builder/archives');
+    expect((list.body.archives as { id: string }[]).some((a) => a.id === archiveId)).toBe(false);
+  });
+
+  it('#42 deleting an archive removes exactly that archive', async () => {
+    const before = await as(ownerCookie).get('/v1/report-builder/archives');
+    const count = (before.body.archives as unknown[]).length;
+    await as(ownerCookie).delete(`/v1/report-builder/archives/${archiveId}`).expect(200);
+    const after = await as(ownerCookie).get('/v1/report-builder/archives');
+    expect((after.body.archives as unknown[]).length).toBe(count - 1);
+    await as(ownerCookie).get(`/v1/report-builder/archives/${archiveId}`).expect(404);
+  });
+});

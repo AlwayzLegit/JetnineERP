@@ -2820,3 +2820,36 @@ cutover runbook notes; **three owner questions**: landed cost into
 FIFO layers (lean freight field vs per-component vs no), PO types as
 policy bundles (answer with transfers Q4/Q6), and Open To Buy scope
 (default skip). No code changes until answers land.
+
+## Report builder — slice 2: archives + scheduling (2026-08-28)
+
+Task #28 slice 2 (pack 05 archive destination + pack 08 scheduling),
+acceptance #36–38, #42, #61, #63–64 ported:
+
+- The run pipeline extracted to `report-runner.ts` — the ONE execution
+  path now shared by the interactive endpoint, the archive
+  destination, and the EOD scheduler (same one-engine discipline as
+  replenishment). Masking became `applyMasking(result, can)`: archives
+  store the UNMASKED result + definition snapshot; masking re-applies
+  per viewer at read time, and entitlements are re-checked at view
+  time (#61) — a revoked user loses archives generated before the
+  revocation.
+- Migration `0065_report_archives`: `report_archives` (snapshot +
+  structured result + runSource regular|eod), tenant table.
+- Endpoints: run gains `format:'archive'` (no render, one record);
+  GET/DELETE `/v1/report-builder/archives[/:id]` with per-viewer
+  masking + CSV re-render (#37).
+- EOD job `report_builder_schedule` (order 60): every definition with
+  Add-to-Schedule runs inside `withDrizzleTenantContext` (RLS applied
+  on the root db) through the same pipeline; output is archive-only
+  with runSource 'eod' and runBy 'scheduler' (#63/#64); reports whose
+  required prompts lack answers are skipped with the error recorded.
+- Web: "Send to archive" on the runner + an Archived-runs card with
+  per-viewer CSV download.
+- report-builder.int.spec 17→22; purchasing jobs-list assertions
+  updated (5 steps).
+
+Still deferred: PDF output, viewer saved views, USER-DEFINED menus,
+WorkingDataSet sources, retention windows (owner said keep-everything
+stands unless Accounting answers cash Q3 differently).
+Gates: typecheck 0 · lint 0 · test 0 (704) · build 0 · format 0.
