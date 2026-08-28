@@ -470,6 +470,20 @@
       "when": 1787894323209,
       "tag": "0066_location_types_transfer_ticket",
       "breakpoints": true
+    },
+    {
+      "idx": 67,
+      "version": "7",
+      "when": 1787895172945,
+      "tag": "0067_po_freight",
+      "breakpoints": true
+    },
+    {
+      "idx": 68,
+      "version": "7",
+      "when": 1787895805863,
+      "tag": "0068_cash_blind_count",
+      "breakpoints": true
     }
   ]
 }

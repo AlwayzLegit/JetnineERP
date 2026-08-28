@@ -1143,6 +1143,138 @@ describe('FIFO costing — PO receipts create layers, un-receive backs them out'
   });
 });
 
+describe('Landed cost lean (run-02 Q1) — PO freight spreads into layer cost at receipt', () => {
+  let vendorId = '';
+  let poId = '';
+  let lineAId = '';
+  let lineBId = '';
+  let varAId = '';
+  let varBId = '';
+
+  async function withDb<T>(fn: (db: ReturnType<typeof drizzle>) => Promise<T>): Promise<T> {
+    const sql = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    try {
+      return await fn(drizzle(sql));
+    } finally {
+      await sql.end({ timeout: 5 });
+    }
+  }
+  function asClerk() {
+    return {
+      post: (url: string) =>
+        request(app.getHttpServer())
+          .post(url)
+          .set('Cookie', clerkCookie)
+          .set('X-Business-Id', businessId),
+      patch: (url: string) =>
+        request(app.getHttpServer())
+          .patch(url)
+          .set('Cookie', clerkCookie)
+          .set('X-Business-Id', businessId),
+    };
+  }
+
+  it('freight is validated at create; every ordered unit carries the same share', async () => {
+    [varAId, varBId] = await withDb(async (db) => {
+      const [p] = await db
+        .insert(schema.products)
+        .values({ businessId, sku: 'LCL-P', name: 'Landed Cost Fixture' })
+        .returning();
+      const rows = await db
+        .insert(schema.productVariants)
+        .values([
+          { businessId, productId: p!.id, sku: 'LCL-A', priceCents: 40000 },
+          { businessId, productId: p!.id, sku: 'LCL-B', priceCents: 60000 },
+        ])
+        .returning();
+      return rows.map((r) => r.id) as [string, string];
+    });
+    const vendor = await asClerk().post('/v1/vendors').send({ name: 'Landed Cost Vendor' });
+    vendorId = vendor.body.id;
+
+    const bad = await asClerk()
+      .post('/v1/purchase-orders')
+      .send({
+        vendorId,
+        locationId,
+        freightCents: -5,
+        lines: [{ variantId: varAId, quantity: 1, unitCostCents: 1000 }],
+      });
+    expect(bad.status).toBe(400);
+    expect(bad.body.message).toContain('freightCents');
+
+    // Freight $10.00 over 5 ordered units = 200¢ per unit on every line.
+    const po = await asClerk()
+      .post('/v1/purchase-orders')
+      .send({
+        vendorId,
+        locationId,
+        freightCents: 1000,
+        lines: [
+          { variantId: varAId, quantity: 2, unitCostCents: 1000 },
+          { variantId: varBId, quantity: 3, unitCostCents: 2000 },
+        ],
+      });
+    expect(po.status).toBe(201);
+    expect(po.body.freightCents).toBe(1000);
+    poId = po.body.id;
+    lineAId = po.body.lines.find((l: { variantId: string }) => l.variantId === varAId).id;
+    lineBId = po.body.lines.find((l: { variantId: string }) => l.variantId === varBId).id;
+
+    const recvA = await asClerk()
+      .post(`/v1/purchase-orders/${poId}/receive`)
+      .send({ lines: [{ lineId: lineAId, quantity: 2 }] });
+    expect(recvA.status).toBe(201);
+    // Partial receipt on B layers the identical share — the divisor is
+    // the ordered total, not what happens to arrive first.
+    const recvB = await asClerk()
+      .post(`/v1/purchase-orders/${poId}/receive`)
+      .send({ lines: [{ lineId: lineBId, quantity: 1 }] });
+    expect(recvB.status).toBe(201);
+
+    await withDb(async (db) => {
+      const layerA = await db
+        .select()
+        .from(schema.costLayers)
+        .where(eq(schema.costLayers.variantId, varAId));
+      expect(layerA).toHaveLength(1);
+      expect(layerA[0]!.unitCostCents).toBe(1200);
+      expect(layerA[0]!.quantityReceived).toBe(2);
+      const layerB = await db
+        .select()
+        .from(schema.costLayers)
+        .where(eq(schema.costLayers.variantId, varBId));
+      expect(layerB).toHaveLength(1);
+      expect(layerB[0]!.unitCostCents).toBe(2200);
+      expect(layerB[0]!.quantityReceived).toBe(1);
+    });
+  });
+
+  it('freight is frozen once anything has been received; free to edit before', async () => {
+    const blocked = await asClerk()
+      .patch(`/v1/purchase-orders/${poId}`)
+      .send({ freightCents: 2000 });
+    expect(blocked.status).toBe(400);
+    expect(blocked.body.message).toContain('Cannot change freight after units have been received');
+
+    const fresh = await asClerk()
+      .post('/v1/purchase-orders')
+      .send({
+        vendorId,
+        locationId,
+        freightCents: 500,
+        place: false,
+        lines: [{ variantId: varAId, quantity: 1, unitCostCents: 1000 }],
+      });
+    expect(fresh.status).toBe(201);
+    const edited = await asClerk()
+      .patch(`/v1/purchase-orders/${fresh.body.id}`)
+      .send({ freightCents: 700 });
+    expect(edited.status).toBe(200);
+    expect(edited.body.freightCents).toBe(700);
+  });
+});
+
 describe('Nightly batch runner (EOD-001 / JOB-002)', () => {
   let nightlyVendorId = '';
   let managedVariantId = '';

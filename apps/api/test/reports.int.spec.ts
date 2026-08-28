@@ -12,6 +12,7 @@ import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { hashPassword } from 'better-auth/crypto';
 import { drizzle } from 'drizzle-orm/postgres-js';
+import { eq } from 'drizzle-orm';
 import postgres from 'postgres';
 import request from 'supertest';
 import { Test } from '@nestjs/testing';
@@ -1116,5 +1117,130 @@ describe('Sales Views Phase 4 — customer summary + salesperson filters', () =>
       .set('X-Business-Id', businessId)
       .expect(200);
     expect(sales.body.data).toEqual([]);
+  });
+});
+
+describe('Blind-count cash balancing (cash pack AC-5..10, owner 2026-08-28)', () => {
+  let blindLocationId = '';
+
+  async function withDb<T>(fn: (db: ReturnType<typeof drizzle>) => Promise<T>): Promise<T> {
+    const sql = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    try {
+      return await fn(drizzle(sql));
+    } finally {
+      await sql.end({ timeout: 5 });
+    }
+  }
+  async function setCashOps(ops: Record<string, unknown> | null): Promise<void> {
+    await withDb((db) =>
+      db
+        .update(schema.businesses)
+        .set({ opsSettingsJson: ops === null ? {} : { cashBalancing: ops } })
+        .where(eq(schema.businesses.id, businessId)),
+    );
+  }
+  function asCashier() {
+    return {
+      post: (url: string) =>
+        request(app.getHttpServer())
+          .post(url)
+          .set('Cookie', cashierCookie)
+          .set('X-Business-Id', businessId),
+    };
+  }
+  async function openShift(): Promise<string> {
+    const res = await asCashier()
+      .post('/v1/cash-shifts')
+      .send({ locationId: blindLocationId, openingFloatCents: 10000 });
+    expect(res.status).toBe(201);
+    return res.body.id as string;
+  }
+
+  beforeAll(async () => {
+    blindLocationId = await withDb(async (db) => {
+      const [loc] = await db
+        .insert(schema.locations)
+        .values({ businessId, name: 'Blind Count Annex', timezone: 'America/Los_Angeles' })
+        .returning();
+      return loc!.id;
+    });
+    await setCashOps({ toleranceCents: 500, maxAttempts: 3 });
+  });
+
+  afterAll(async () => {
+    await setCashOps(null);
+  });
+
+  it('AC-5: a count within tolerance closes without approval', async () => {
+    const id = await openShift();
+    // No payments at this location: expected = the $100 float.
+    const res = await asCashier()
+      .post(`/v1/cash-shifts/${id}/close`)
+      .send({ countedCashCents: 9700 });
+    expect(res.status).toBe(201);
+    expect(res.body.varianceCents).toBe(-300);
+    expect(res.body.approvedByUserId).toBeNull();
+    expect(res.body.closedAt).toBeTruthy();
+  });
+
+  it('AC-6/8/10: out-of-tolerance counts burn attempts blindly, then suspend the drawer', async () => {
+    const id = await openShift();
+    const first = await asCashier()
+      .post(`/v1/cash-shifts/${id}/close`)
+      .send({ countedCashCents: 9000 });
+    expect(first.status).toBe(400);
+    expect(first.body.message).toContain('attempt 1 of 3');
+    // AC-10 blind count: neither expected cash nor the variance leaks.
+    expect(JSON.stringify(first.body)).not.toContain('10000');
+    expect(JSON.stringify(first.body)).not.toContain('1000');
+
+    const second = await asCashier()
+      .post(`/v1/cash-shifts/${id}/close`)
+      .send({ countedCashCents: 9100 });
+    expect(second.status).toBe(400);
+    expect(second.body.message).toContain('attempt 2 of 3');
+
+    const third = await asCashier()
+      .post(`/v1/cash-shifts/${id}/close`)
+      .send({ countedCashCents: 9050 });
+    expect(third.status).toBe(403);
+    expect(third.body.message).toContain('suspended');
+
+    // Suspended: a plain retry (even a correct count) demands approval.
+    const afterSuspend = await asCashier()
+      .post(`/v1/cash-shifts/${id}/close`)
+      .send({ countedCashCents: 10000 });
+    expect(afterSuspend.status).toBe(403);
+    expect(afterSuspend.body.code).toBe('OVERRIDE_REQUIRED');
+
+    // Manager (owner) credentials force-balance via the override dialog.
+    const approved = await asCashier()
+      .post(`/v1/cash-shifts/${id}/close`)
+      .send({
+        countedCashCents: 9050,
+        override: {
+          email: 'owner@reports-test.local',
+          password: PASSWORD,
+          reason: 'drawer recounted with the cashier',
+        },
+      });
+    expect(approved.status).toBe(201);
+    expect(approved.body.closedAt).toBeTruthy();
+    expect(approved.body.varianceCents).toBe(-950);
+    expect(approved.body.approvedByUserId).not.toBeNull();
+    expect(approved.body.suspendedAt).toBeTruthy();
+  });
+
+  it('discipline off (null ops) keeps the legacy any-variance close', async () => {
+    await setCashOps(null);
+    const id = await openShift();
+    const res = await asCashier()
+      .post(`/v1/cash-shifts/${id}/close`)
+      .send({ countedCashCents: 100 });
+    expect(res.status).toBe(201);
+    expect(res.body.varianceCents).toBe(-9900);
+    // Restore for any later suites.
+    await setCashOps({ toleranceCents: 500, maxAttempts: 3 });
+    await setCashOps(null);
   });
 });

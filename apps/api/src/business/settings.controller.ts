@@ -79,6 +79,16 @@ interface OpsSettings {
     includeStoreStockInAvailability?: boolean | null;
     layawayInNetPurchaseOrder?: boolean | null;
   } | null;
+  /** Blind-count cash balancing (cash pack, owner 2026-08-28).
+   * Null block or null tolerance = discipline off (close accepts any
+   * variance, the pre-blind-count behavior). Tolerance is CASH-only by
+   * construction — Jetnine shift closes only count cash (AC-7). */
+  cashBalancing?: {
+    /** AC-5/6: |variance| beyond this refuses the close. */
+    toleranceCents?: number | null;
+    /** AC-8: failed attempts before the drawer suspends. Null = no cap. */
+    maxAttempts?: number | null;
+  } | null;
   /** Transfers pack Q2/Q3 (owner 2026-08-28). Null field = default. */
   transfers?: {
     /** E20: store↔store transfers. Null/true = allowed; false rejects. */
@@ -237,6 +247,14 @@ const OPS_SETTINGS_REGISTRY = [
       'Defaults: written basis, calendar-day lead divisor, standard rounding on, store stock excluded, layaway excluded',
     classTags: [],
     readBy: 'Sales-rate replenishment runs (interactive + EOD)',
+  },
+  {
+    key: 'cashBalancing',
+    label: 'Blind-count cash balancing',
+    type: 'map',
+    nullMeans: 'Off — shift close accepts any variance (tolerance $ value is an Ops decision)',
+    classTags: [],
+    readBy: 'Cash-shift close endpoint',
   },
   {
     key: 'transfers',
@@ -456,6 +474,26 @@ function validateOps(input: OpsSettings): OpsSettings {
       }
     }
     out.transfers = v;
+  }
+  if (input.cashBalancing !== undefined) {
+    const v = input.cashBalancing;
+    if (v !== null) {
+      if (typeof v !== 'object' || Array.isArray(v)) {
+        throw new BadRequestException('ops.cashBalancing must be an object or null');
+      }
+      if (
+        v.toleranceCents != null &&
+        (!Number.isInteger(v.toleranceCents) || v.toleranceCents < 0)
+      ) {
+        throw new BadRequestException(
+          'ops.cashBalancing.toleranceCents must be a non-negative integer',
+        );
+      }
+      if (v.maxAttempts != null && (!Number.isInteger(v.maxAttempts) || v.maxAttempts < 1)) {
+        throw new BadRequestException('ops.cashBalancing.maxAttempts must be a positive integer');
+      }
+    }
+    out.cashBalancing = v;
   }
   if (input.autoReplenishmentEnabled !== undefined) {
     if (
