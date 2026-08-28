@@ -3124,3 +3124,24 @@ User Security` and `Review Settings Activity` extracts. "A morning's
   customer merge tool (recommended yes — cutover dedupe) · membership
   rewards run/convert/drop (mechanics now known via run-07 F568).
   Docs-only PR; no code changes until §4 lands.
+
+## Checkpoint — 2026-08-28 (runs 04–06 reconciled: audit reconcile set complete)
+
+- GAP-RECONCILE.md written for run04-logistics-delivery,
+  run05-customer-service, and run06-getting-started — every audit run
+  now carries a reconcile. Standout adjudications: the F316 security
+  override is **shipped parity** (SecurityOverrideService is the
+  in-line second signature verbatim); as-is-as-disposition-hub (F280)
+  and late piece binding (F218) are parity by construction; the F330
+  reprint-pollutes-exceptions defect cannot occur here; printing is
+  rendering + explicit recorded events, never a hidden transaction.
+- **[DECIDE] asks batched**: run-04 §4 (licence/3PL/EDI inventory ·
+  warehouse SOP walkthrough · crew-sheet prices) and run-05 §4
+  (service payer axis + problem codes — recommended yes · in-home/COG
+  service · call-reminder tickles + envelope-icon habit). Run 06 needs
+  no batch — its one item folds into the config-photos Ops ask.
+- Migration cautions adopted: resolve all open credit holds before
+  extract (no hold field to carry them); establish which
+  `Assign Specific Pieces At` value is live before the parallel run;
+  extract STORIS service status-duration history (the one recoverable
+  cycle-time record) and the live Problem Code list.
