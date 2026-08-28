@@ -155,7 +155,9 @@ DECLARE
     'customer_segments',
     'campaigns',
     'order_sequences',
-    'membership_permission_overrides'
+    'membership_permission_overrides',
+    'report_dictionaries',
+    'report_definitions'
   ];
 BEGIN
   FOREACH t IN ARRAY tenant_tables LOOP

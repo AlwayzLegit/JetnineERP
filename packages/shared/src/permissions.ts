@@ -119,6 +119,9 @@ export const PERMISSIONS = {
   'reports.inventory.view': 'View inventory reports',
   'reports.financial.view': 'View financial reports (incl. cost/margin)',
   'reports.export': 'Export reports',
+  'reports.builder.run': 'Run self-service report-builder reports',
+  'reports.builder.author': 'Create and edit report-builder reports and dictionaries',
+  'reports.cost.view': 'See cost/margin data in report-builder output (field masking)',
 
   'audit.view': 'View audit log',
 

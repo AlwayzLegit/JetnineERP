@@ -36,6 +36,7 @@ import { SpecialOrdersModule } from './special-orders/special-orders.module';
 import { PurchasingModule } from './purchasing/purchasing.module';
 import { RedisModule } from './redis/redis.module';
 import { ReportsModule } from './reports/reports.module';
+import { ReportBuilderModule } from './report-builder/report-builder.module';
 import { SalesModule } from './sales/sales.module';
 import { StripeModule } from './stripe/stripe.module';
 import { TenancyModule } from './tenancy/tenancy.module';
@@ -112,6 +113,7 @@ import { WebhooksModule } from './webhooks/webhooks.module';
     MarketingModule,
     CashModule,
     ReportsModule,
+    ReportBuilderModule,
     BillingModule,
     StripeModule,
     WebhooksModule,
