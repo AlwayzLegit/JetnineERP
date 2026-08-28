@@ -1,0 +1,1 @@
+ALTER TABLE "purchase_orders" ADD COLUMN "freight_cents" integer;

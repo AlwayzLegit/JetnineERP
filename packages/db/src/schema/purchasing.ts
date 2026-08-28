@@ -86,6 +86,12 @@ export const purchaseOrders = pgTable(
     closedAt: timestamp('closed_at', { withTimezone: true }),
     subtotalCents: integer('subtotal_cents').notNull().default(0),
     /**
+     * Landed cost lean (run-02 Q1, owner 2026-08-28): one freight amount
+     * for the whole PO, spread per ordered unit into the FIFO layer cost
+     * at receipt. Null = no freight. Editable only before any receipt.
+     */
+    freightCents: integer('freight_cents'),
+    /**
      * PO-060 (I7/B15): the vendor ships straight to the customer. The
      * goods never touch our inventory — receiving posts cost of sale and
      * fulfills the linked sales-order lines instead of raising stock.

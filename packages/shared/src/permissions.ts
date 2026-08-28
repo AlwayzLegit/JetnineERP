@@ -113,6 +113,7 @@ export const PERMISSIONS = {
   'exchanges.restocking_fee.override': 'Override the calculated restocking fee on an exchange',
   'pos.cash.open': 'Open cash drawer',
   'pos.cash.reconcile': 'Reconcile cash drawer',
+  'pos.cash.approve': 'Approve an out-of-tolerance or suspended drawer count',
   'sales.view': 'View completed sales and refund history',
 
   'reports.sales.view': 'View sales reports',
