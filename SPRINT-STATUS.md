@@ -2807,3 +2807,16 @@ findings over the purchasing/inventory domain. Queued as **task #30**
 (reconcile vs the already-shipped PO/costing/replenishment/transfers/
 physical-inventory stack).
 Gates: typecheck 0 · lint 0 · test 0 (694) · build 0 · format 0.
+
+## Run-02 merchandising reconciled (2026-08-28)
+
+Task #30: `docs/handoffs/run02-merchandising/GAP-RECONCILE.md` — the
+run's ten headline findings adjudicated against shipped code (eight
+are STORIS traps Jetnine avoided by construction: one cost, one
+availability definition, one PO lifecycle with guards, audited holds,
+membership-derived access, declared EOD, quantity-link PO↔SO parity,
+inventory_movements as the one Kardex); §G cautions adopted into the
+cutover runbook notes; **three owner questions**: landed cost into
+FIFO layers (lean freight field vs per-component vs no), PO types as
+policy bundles (answer with transfers Q4/Q6), and Open To Buy scope
+(default skip). No code changes until answers land.
