@@ -14,6 +14,7 @@ export * from './billing';
 export * from './stripe';
 export * from './purchasing';
 export * from './transfers';
+export * from './gl';
 export * from './taxes';
 export * from './discounts';
 export * from './webhooks';
@@ -61,6 +62,10 @@ export const TENANT_SCOPED_TABLES = [
   'refunds',
   'refund_lines',
   'cash_shifts',
+  'gl_accounts',
+  'gl_periods',
+  'gl_journal_batches',
+  'gl_journal_lines',
   'subscriptions',
   'merchant_stripe_accounts',
   'stripe_oauth_states',

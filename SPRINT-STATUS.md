@@ -3000,3 +3000,36 @@ User Security` and `Review Settings Activity` extracts. "A morning's
   blocks, audited removal, gate-blocked completion then full ship with
   inventory assertion).
   Gates: typecheck 0 · lint 0 · test 0 · build 0 · format 0.
+
+## Checkpoint — 2026-08-28 (in-house GL slice 1: chart, periods, journal)
+
+- Owner's locked (b) full-GL program begins. Migration
+  `0070_general_ledger`: four tenant tables — `gl_accounts` (code
+  immutable, per-business unique, `system_key` marks derivation
+  targets), `gl_periods` (1–12 calendar months + period 13, lazy
+  per-year materialization), `gl_journal_batches` (draft→posted,
+  GL-YYYY-NNNNNN, typed `source_type`/`source_id` MANDATORY on derived
+  batches — F17's conventional-reference flaw fixed structurally),
+  `gl_journal_lines` (DB CHECK: debit XOR credit, strictly positive).
+- STORIS semantics kept: cascade close (F4: closing N closes all
+  earlier open), cascade reopen (F5), period-13 year latch (F6: the
+  year closes only when 13 does, after 1–12). STORIS flaws NOT copied:
+  no silent default account (F1 — unmapped/inactive is refused), F9
+  hardened (drafts in the closing range BLOCK the close instead of a
+  notify), posted batches append-only (corrections are new batches).
+- Endpoints under /v1/gl: accounts CRUD + `seed-defaults` (20-account
+  retail chart with system keys for the coming derivation), periods
+  close/reopen, journal batches (draft/edit/post with balance + open-
+  period gates), trial balance. New permissions `gl.view`/`gl.post`/
+  `gl.manage` — Bookkeeper explicit, Owner/Manager inherited, Cashier
+  none.
+- Web: /gl (chart + period grid + trial balance) and /gl/journal
+  (multi-line entry with live balance indicator, draft/post).
+- New per-suite DB `jetnine_gl` wired in ci.yml; gl.int.spec.ts (6
+  tests: seed-once, account validation chain, lopsided-draft→balance→
+  post→append-only, cascade close with draft guard + year latch +
+  cascade reopen, trial balance, permission gate).
+- Slice 2 next: journal-event derivation (EOD job posting the day's
+  operational events through GlService via the system keys) + the
+  period-12 retained-earnings roll (F7).
+  Gates: typecheck 0 · lint 0 · test 0 · build 0 · format 0.

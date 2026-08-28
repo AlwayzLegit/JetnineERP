@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useState, type ReactNode } from 'react';
 import {
+  Landmark,
   BadgeDollarSign,
   AlertTriangle,
   ArrowLeftRight,
@@ -104,6 +105,7 @@ const NAV: NavGroup[] = [
     items: [
       { href: '/reports', label: 'Reports', icon: BadgePercent },
       { href: '/reports/builder', label: 'Report builder', icon: ScrollText },
+      { href: '/gl', label: 'General ledger', icon: Landmark },
       { href: '/commissions', label: 'Commissions', icon: CreditCard },
       { href: '/exceptions', label: 'Exceptions', icon: TriangleAlert },
       { href: '/jobs', label: 'Nightly jobs', icon: MoonStar },
