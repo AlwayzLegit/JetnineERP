@@ -2949,3 +2949,24 @@ DESC, created_at` — fallback path (no warehouse) is what every
   construction (expected cash renders only after close).
 - reports.int.spec 36→39 (AC-5, AC-6/8/10 chain, discipline-off).
   Gates: typecheck 0 · lint 0 · test 0 · build 0 · format 0.
+
+## Checkpoint — 2026-08-28 (Run 07 System Administration landed, batches 1–13)
+
+- New seventh audit run under `docs/handoffs/run07-sysadmin/` (15 files,
+  canonical from the partial zip): the System Administration section
+  (599 articles) that all six prior runs kept pointing at. Findings
+  337–460+: POS Control Settings enumerated (nine pages, ~250 fields),
+  the complete reservation model (three orthogonal axes), the
+  ~360-permission catalog across ten records, licensing = site counts,
+  costing = 3 methods + freight + four labelled add-on slots (our
+  "lean" freight-only build is the deliberate subset), blind-count's
+  cashier-mode interplay, manifest reason codes ×3, `Track Settings
+Activity`, PII-encryption categories, UniData platform.
+- **Ops action (owner)**: run-07 §F says the highest-value next step is
+  photographing the LIVE config screens — General System Control
+  Settings (4 tabs), Point of Sale Control Settings (9 pages),
+  Inventory Control Settings, Costing Control Settings, plus `Report on
+User Security` and `Review Settings Activity` extracts. "A morning's
+  work worth more than another 500 articles."
+- PRs #69 (location types + print gate, deployed, 67/67 head=0066) and
+  #70 (landed cost + blind count) merged; #70 deploy in flight.
