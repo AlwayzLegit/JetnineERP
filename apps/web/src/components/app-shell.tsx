@@ -103,6 +103,7 @@ const NAV: NavGroup[] = [
     label: 'Insights',
     items: [
       { href: '/reports', label: 'Reports', icon: BadgePercent },
+      { href: '/reports/builder', label: 'Report builder', icon: ScrollText },
       { href: '/commissions', label: 'Commissions', icon: CreditCard },
       { href: '/exceptions', label: 'Exceptions', icon: TriangleAlert },
       { href: '/jobs', label: 'Nightly jobs', icon: MoonStar },
