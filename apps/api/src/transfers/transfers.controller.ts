@@ -10,7 +10,7 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
-import { and, eq, inArray, lt, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNull, lt, sql } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
@@ -28,6 +28,7 @@ const fromLoc = alias(schema.locations, 'from_loc');
 const toLoc = alias(schema.locations, 'to_loc');
 import { AuditService } from '../audit/audit.service';
 import { CostingService } from '../costing/costing.service';
+import { TransferShipService } from './transfer-ship.service';
 import { ExceptionsService } from '../controls/exceptions.service';
 import {
   SecurityOverrideService,
@@ -87,6 +88,9 @@ interface ListRow {
   fromLocationName: string | null;
   toLocationId: string;
   toLocationName: string | null;
+  /** Q1: set when the transfer rides a truck/date manifest. */
+  manifestId: string | null;
+  loadNumber: number | null;
   shippedAt: Date | null;
   receivedAt: Date | null;
   canceledAt: Date | null;
@@ -112,18 +116,16 @@ interface Detail extends ListRow {
   /** Q3: last transfer-ticket print; ship is gated on this by default. */
   ticketPrintedAt: Date | null;
   ticketPrintCount: number;
+  /** Q1: the truck/date manifest this transfer rides on (null = none). */
+  manifestId: string | null;
+  manifestNumber: string | null;
+  loadNumber: number | null;
   createdByUserId: string | null;
   /** From/to store blocks + letterhead for the printed ticket (§11). */
   fromLocationAddressJson: unknown;
   toLocationAddressJson: unknown;
   businessName: string | null;
   lines: LineRow[];
-}
-
-/** Ops gates for transfers (Q2/Q3, owner 2026-08-28). Null = default. */
-interface TransferOps {
-  storeToStore?: boolean | null;
-  requireTicketBeforeShip?: boolean | null;
 }
 
 @TenantScoped()
@@ -136,6 +138,7 @@ export class TransfersController {
     @Inject(SecurityOverrideService) private readonly overrides: SecurityOverrideService,
     @Inject(ExceptionsService) private readonly exceptions: ExceptionsService,
     @Inject(CostingService) private readonly costing: CostingService,
+    @Inject(TransferShipService) private readonly shipSvc: TransferShipService,
   ) {}
 
   @Get()
@@ -143,12 +146,19 @@ export class TransfersController {
   async list(
     @CurrentTenant() _tenant: RequestTenantContext,
     @Query('status') status?: string,
+    @Query('fromLocationId') fromLocationId?: string,
+    @Query('toLocationId') toLocationId?: string,
+    @Query('unmanifested') unmanifested?: string,
     @Query('limit') limitStr?: string,
     @Query('cursor') cursorStr?: string,
   ): Promise<PageResponse<ListRow>> {
     const limit = clampLimit(limitStr);
     const conditions: SQL[] = [];
     if (status) conditions.push(eq(schema.stockTransfers.status, status));
+    if (fromLocationId) conditions.push(eq(schema.stockTransfers.fromLocationId, fromLocationId));
+    if (toLocationId) conditions.push(eq(schema.stockTransfers.toLocationId, toLocationId));
+    // Q1: the manifest-build picker asks for drafts not yet on a truck.
+    if (unmanifested === 'true') conditions.push(isNull(schema.stockTransfers.manifestId));
     const cursor = decodeCursor(cursorStr);
     if (cursor) {
       conditions.push(
@@ -168,6 +178,8 @@ export class TransfersController {
         fromLocationName: fromLoc.name,
         toLocationId: schema.stockTransfers.toLocationId,
         toLocationName: toLoc.name,
+        manifestId: schema.stockTransfers.manifestId,
+        loadNumber: schema.stockTransfers.loadNumber,
         shippedAt: schema.stockTransfers.shippedAt,
         receivedAt: schema.stockTransfers.receivedAt,
         canceledAt: schema.stockTransfers.canceledAt,
@@ -207,6 +219,8 @@ export class TransfersController {
         fromLocationName: fromLoc.name,
         toLocationId: schema.stockTransfers.toLocationId,
         toLocationName: toLoc.name,
+        manifestId: schema.stockTransfers.manifestId,
+        loadNumber: schema.stockTransfers.loadNumber,
         shippedAt: schema.stockTransfers.shippedAt,
         receivedAt: schema.stockTransfers.receivedAt,
         canceledAt: schema.stockTransfers.canceledAt,
@@ -326,7 +340,7 @@ export class TransfersController {
       .where(inArray(schema.locations.id, [body.fromLocationId, body.toLocationId]));
     if (locs.length !== 2) throw new NotFoundException('One or both locations not found');
 
-    const ops = await this.transferOps(tenant.businessId!);
+    const ops = await this.shipSvc.transferOps(tenant.businessId!);
     // E20: store→store is rejected when the gate is switched off.
     if (ops.storeToStore === false && locs.every((l) => l.locationType === 'store')) {
       throw new BadRequestException(
@@ -431,7 +445,7 @@ export class TransfersController {
     );
 
     if (ship) {
-      await this.deductOrigin(
+      await this.shipSvc.deductOrigin(
         tenant.businessId!,
         actor.id,
         transfer.id,
@@ -439,7 +453,7 @@ export class TransfersController {
         body.lines.map((l) => ({ variantId: l.variantId!, quantity: l.quantity! })),
         body.notes ?? null,
       );
-      await this.markSerialsInTransit(transfer.id);
+      await this.shipSvc.markSerialsInTransit(transfer.id);
     }
 
     await this.audit.log({
@@ -472,73 +486,7 @@ export class TransfersController {
     @Param('id') id: string,
     @Body() body: { notes?: string | null },
   ): Promise<Detail> {
-    const [transfer] = await this.db
-      .select()
-      .from(schema.stockTransfers)
-      .where(eq(schema.stockTransfers.id, id))
-      .limit(1);
-    if (!transfer) throw new NotFoundException('Transfer not found');
-    if (transfer.status !== 'draft') {
-      throw new ForbiddenException(`Cannot ship a ${transfer.status} transfer`);
-    }
-    const ops = await this.transferOps(tenant.businessId!);
-    if (ops.requireTicketBeforeShip !== false && transfer.ticketPrintedAt === null) {
-      throw new BadRequestException(
-        'Print the transfer ticket before shipping (ops.transfers.requireTicketBeforeShip).',
-      );
-    }
-
-    const lines = await this.db
-      .select()
-      .from(schema.stockTransferLines)
-      .where(eq(schema.stockTransferLines.transferId, id));
-
-    // Snapshot origin levels and refuse if any line would go negative.
-    const variantIds = lines.map((l) => l.variantId);
-    const originLevels = await this.db
-      .select({
-        variantId: schema.inventoryLevels.variantId,
-        onHand: schema.inventoryLevels.onHand,
-      })
-      .from(schema.inventoryLevels)
-      .where(
-        and(
-          eq(schema.inventoryLevels.locationId, transfer.fromLocationId),
-          inArray(schema.inventoryLevels.variantId, variantIds),
-        ),
-      );
-    const onHandByVariant = new Map(originLevels.map((r) => [r.variantId, r.onHand]));
-    for (const l of lines) {
-      const onHand = onHandByVariant.get(l.variantId) ?? 0;
-      if (onHand < l.quantityShipped) {
-        throw new BadRequestException(
-          `Insufficient stock for variant ${l.variantId} at origin: have ${onHand}, need ${l.quantityShipped}.`,
-        );
-      }
-    }
-
-    await this.deductOrigin(
-      tenant.businessId!,
-      actor.id,
-      transfer.id,
-      transfer.fromLocationId,
-      lines.map((l) => ({ variantId: l.variantId, quantity: l.quantityShipped })),
-      body.notes ?? transfer.notes,
-    );
-
-    await this.markSerialsInTransit(id);
-
-    await this.db
-      .update(schema.stockTransfers)
-      .set({ status: 'in_transit', shippedAt: new Date(), updatedAt: new Date() })
-      .where(eq(schema.stockTransfers.id, id));
-
-    await this.audit.log({
-      action: 'stock_transfer.ship',
-      targetType: 'stock_transfer',
-      targetId: id,
-      after: { lineCount: lines.length },
-    });
+    await this.shipSvc.ship(tenant.businessId!, actor.id, id, body.notes ?? null);
     return this.hydrate(id);
   }
 
@@ -890,6 +838,11 @@ export class TransfersController {
         `Only draft transfers can be canceled. In-transit transfers must be received at the destination — reverse the move with a new transfer if needed.`,
       );
     }
+    if (transfer.manifestId !== null) {
+      throw new BadRequestException(
+        'This transfer is on a manifest — remove it from the manifest before canceling.',
+      );
+    }
     await this.db
       .update(schema.stockTransfers)
       .set({ status: 'canceled', canceledAt: new Date(), updatedAt: new Date() })
@@ -945,73 +898,6 @@ export class TransfersController {
       after: { printCount: transfer.ticketPrintCount + 1 },
     });
     return { ticketPrintedAt: printedAt, ticketPrintCount: transfer.ticketPrintCount + 1 };
-  }
-
-  private async transferOps(businessId: string): Promise<TransferOps> {
-    const [biz] = await this.db
-      .select({ opsSettingsJson: schema.businesses.opsSettingsJson })
-      .from(schema.businesses)
-      .where(eq(schema.businesses.id, businessId))
-      .limit(1);
-    return ((biz?.opsSettingsJson ?? {}) as { transfers?: TransferOps | null }).transfers ?? {};
-  }
-
-  private async deductOrigin(
-    businessId: string,
-    actorId: string,
-    transferId: string,
-    fromLocationId: string,
-    lines: { variantId: string; quantity: number }[],
-    notes: string | null,
-  ): Promise<void> {
-    for (const l of lines) {
-      await this.db.insert(schema.inventoryMovements).values({
-        businessId,
-        variantId: l.variantId,
-        locationId: fromLocationId,
-        delta: -l.quantity,
-        reason: 'transfer_out',
-        referenceType: 'stock_transfer',
-        referenceId: transferId,
-        actorUserId: actorId,
-        notes,
-      });
-      // FIFO: shipping consumes origin layers; the weighted unit cost of
-      // what actually left rides on the line so receiving can layer the
-      // destination at the same cost.
-      const consumed = await this.costing.consume(this.db, {
-        businessId,
-        variantId: l.variantId,
-        locationId: fromLocationId,
-        quantity: l.quantity,
-        referenceType: 'transfer_out',
-        referenceId: transferId,
-      });
-      await this.db
-        .update(schema.stockTransferLines)
-        .set({ unitCostCents: Math.round(consumed.costCents / l.quantity) })
-        .where(
-          and(
-            eq(schema.stockTransferLines.transferId, transferId),
-            eq(schema.stockTransferLines.variantId, l.variantId),
-          ),
-        );
-      await this.db
-        .insert(schema.inventoryLevels)
-        .values({
-          businessId,
-          variantId: l.variantId,
-          locationId: fromLocationId,
-          onHand: 0,
-        })
-        .onConflictDoUpdate({
-          target: [schema.inventoryLevels.variantId, schema.inventoryLevels.locationId],
-          set: {
-            onHand: sql`GREATEST(0, ${schema.inventoryLevels.onHand} - ${l.quantity})`,
-            updatedAt: new Date(),
-          },
-        });
-    }
   }
 
   /**
@@ -1107,6 +993,9 @@ export class TransfersController {
         canceledAt: schema.stockTransfers.canceledAt,
         ticketPrintedAt: schema.stockTransfers.ticketPrintedAt,
         ticketPrintCount: schema.stockTransfers.ticketPrintCount,
+        manifestId: schema.stockTransfers.manifestId,
+        manifestNumber: schema.stockManifests.number,
+        loadNumber: schema.stockTransfers.loadNumber,
         notes: schema.stockTransfers.notes,
         createdByUserId: schema.stockTransfers.createdByUserId,
         createdAt: schema.stockTransfers.createdAt,
@@ -1115,6 +1004,10 @@ export class TransfersController {
       .leftJoin(fromLoc, eq(fromLoc.id, schema.stockTransfers.fromLocationId))
       .leftJoin(toLoc, eq(toLoc.id, schema.stockTransfers.toLocationId))
       .leftJoin(schema.businesses, eq(schema.businesses.id, schema.stockTransfers.businessId))
+      .leftJoin(
+        schema.stockManifests,
+        eq(schema.stockManifests.id, schema.stockTransfers.manifestId),
+      )
       .where(eq(schema.stockTransfers.id, id))
       .limit(1);
     if (!row) throw new NotFoundException('Transfer not found');
@@ -1146,20 +1039,6 @@ export class TransfersController {
         quantityHeld: Math.max(0, (l.quantityOrdered ?? l.quantityShipped) - l.quantityShipped),
       })),
     };
-  }
-
-  /** J3: flag every named piece on this transfer as riding the truck. */
-  private async markSerialsInTransit(transferId: string): Promise<void> {
-    const lines = await this.db
-      .select({ serialIdsJson: schema.stockTransferLines.serialIdsJson })
-      .from(schema.stockTransferLines)
-      .where(eq(schema.stockTransferLines.transferId, transferId));
-    const ids = lines.flatMap((l) => (l.serialIdsJson as string[] | null) ?? []);
-    if (ids.length === 0) return;
-    await this.db
-      .update(schema.serialUnits)
-      .set({ status: 'in_transit', updatedAt: new Date() })
-      .where(and(inArray(schema.serialUnits.id, ids), eq(schema.serialUnits.status, 'in_stock')));
   }
 
   private async generateNumber(businessId: string): Promise<string> {

@@ -1396,3 +1396,218 @@ describe('Transfers pack Q2/Q3 — location types + ship gates (owner 2026-08-28
     expect(res.body.message).toContain('canceled');
   });
 });
+
+describe('Q1 manifests — build, load numbers, complete ships the truck (owner 2026-08-28)', () => {
+  let laneFromId = ''; // warehouse
+  let laneToId = ''; // a store
+  let manifVariantId = '';
+  let manifestId = '';
+
+  function asClerk() {
+    return {
+      get: (url: string) =>
+        request(app.getHttpServer())
+          .get(url)
+          .set('Cookie', clerkCookie)
+          .set('X-Business-Id', businessId),
+      post: (url: string) =>
+        request(app.getHttpServer())
+          .post(url)
+          .set('Cookie', clerkCookie)
+          .set('X-Business-Id', businessId),
+    };
+  }
+  async function setTransferOps(ops: Record<string, unknown>): Promise<void> {
+    const sqlc = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    try {
+      await drizzle(sqlc)
+        .update(schema.businesses)
+        .set({ opsSettingsJson: { transfers: ops } })
+        .where(eq(schema.businesses.id, businessId));
+    } finally {
+      await sqlc.end({ timeout: 5 });
+    }
+  }
+  async function makeDraft(quantity: number): Promise<{ id: string; number: string }> {
+    const res = await asClerk()
+      .post('/v1/stock-transfers')
+      .send({
+        fromLocationId: laneFromId,
+        toLocationId: laneToId,
+        lines: [{ variantId: manifVariantId, quantity }],
+      });
+    expect(res.status).toBe(201);
+    return { id: res.body.id, number: res.body.number };
+  }
+
+  beforeAll(async () => {
+    laneFromId = warehouseLocationId;
+    await setTransferOps({ requireTicketBeforeShip: false });
+    const sqlc = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    try {
+      const db = drizzle(sqlc);
+      const [store] = await db
+        .insert(schema.locations)
+        .values({ businessId, name: 'Manifest Store', timezone: 'America/New_York' })
+        .returning();
+      laneToId = store!.id;
+      const [p] = await db
+        .insert(schema.products)
+        .values({ businessId, sku: 'MANIF-1', name: 'Manifest Widget' })
+        .returning();
+      const [v] = await db
+        .insert(schema.productVariants)
+        .values({
+          businessId,
+          productId: p!.id,
+          sku: 'MANIF-1-V',
+          priceCents: 2000,
+          costCents: 900,
+        })
+        .returning();
+      manifVariantId = v!.id;
+      await db
+        .insert(schema.inventoryLevels)
+        .values([{ businessId, locationId: laneFromId, variantId: manifVariantId, onHand: 60 }]);
+    } finally {
+      await sqlc.end({ timeout: 5 });
+    }
+  });
+
+  afterAll(async () => {
+    await setTransferOps({ requireTicketBeforeShip: false });
+  });
+
+  it('build creates on a new key, appends on the same open key, and hands out load numbers', async () => {
+    const a = await makeDraft(2);
+    const b = await makeDraft(3);
+    const built = await asClerk()
+      .post('/v1/stock-manifests')
+      .send({
+        fromLocationId: laneFromId,
+        toLocationId: laneToId,
+        manifestDate: '2026-09-01',
+        routeName: 'Truck 1',
+        transferIds: [a.id, b.id],
+      });
+    expect(built.status).toBe(201);
+    expect(built.body.number).toMatch(/^MAN-\d{4}-\d{4}$/);
+    expect(built.body.status).toBe('open');
+    expect(built.body.transferCount).toBe(2);
+    manifestId = built.body.id;
+
+    // Same open key appends with an explicit later load.
+    const c = await makeDraft(1);
+    const appended = await asClerk()
+      .post('/v1/stock-manifests')
+      .send({
+        fromLocationId: laneFromId,
+        toLocationId: laneToId,
+        manifestDate: '2026-09-01',
+        routeName: 'Truck 1',
+        transferIds: [c.id],
+        loadNumber: 2,
+      });
+    expect(appended.status).toBe(201);
+    expect(appended.body.id).toBe(manifestId);
+    expect(appended.body.transferCount).toBe(3);
+    const loads = (appended.body.transfers as { loadNumber: number | null }[]).map(
+      (t) => t.loadNumber,
+    );
+    expect(loads.sort()).toEqual([1, 1, 2]);
+
+    // A different date is a different truck run.
+    const d = await makeDraft(1);
+    const other = await asClerk()
+      .post('/v1/stock-manifests')
+      .send({
+        fromLocationId: laneFromId,
+        toLocationId: laneToId,
+        manifestDate: '2026-09-02',
+        routeName: 'Truck 1',
+        transferIds: [d.id],
+      });
+    expect(other.status).toBe(201);
+    expect(other.body.id).not.toBe(manifestId);
+    // Clean up the second manifest so the lane's drafts stay predictable.
+    await asClerk().post(`/v1/stock-manifests/${other.body.id}/cancel`).send({});
+  });
+
+  it('a manifested transfer cannot ship or cancel directly, and cannot join twice', async () => {
+    const detail = await asClerk().get(`/v1/stock-manifests/${manifestId}`);
+    const first = detail.body.transfers[0] as { id: string };
+
+    const ship = await asClerk().post(`/v1/stock-transfers/${first.id}/ship`).send({});
+    expect(ship.status).toBe(400);
+    expect(ship.body.message).toContain('on a manifest');
+
+    const cancel = await asClerk().post(`/v1/stock-transfers/${first.id}/cancel`).send({});
+    expect(cancel.status).toBe(400);
+    expect(cancel.body.message).toContain('remove it from the manifest');
+
+    const again = await asClerk()
+      .post('/v1/stock-manifests')
+      .send({
+        fromLocationId: laneFromId,
+        toLocationId: laneToId,
+        manifestDate: '2026-09-03',
+        transferIds: [first.id],
+      });
+    expect(again.status).toBe(400);
+    expect(again.body.message).toContain('already on a manifest');
+  });
+
+  it('remove-transfer frees the draft (F178: audited exception) and it ships normally again', async () => {
+    const detail = await asClerk().get(`/v1/stock-manifests/${manifestId}`);
+    const victim = (detail.body.transfers as { id: string; loadNumber: number | null }[]).find(
+      (t) => t.loadNumber === 2,
+    )!;
+    const removed = await asClerk()
+      .post(`/v1/stock-manifests/${manifestId}/remove-transfer`)
+      .send({ transferId: victim.id, reason: 'missed the truck' });
+    expect(removed.status).toBe(201);
+    expect(removed.body.transferCount).toBe(2);
+
+    const ship = await asClerk().post(`/v1/stock-transfers/${victim.id}/ship`).send({});
+    expect(ship.status).toBe(201);
+    expect(ship.body.status).toBe('in_transit');
+  });
+
+  it('complete respects the print gate, then ships every draft on the truck', async () => {
+    await setTransferOps({}); // Q3 gate ON
+    const blocked = await asClerk().post(`/v1/stock-manifests/${manifestId}/complete`).send({});
+    expect(blocked.status).toBe(400);
+    expect(blocked.body.message).toContain('Print the transfer ticket');
+
+    const detail = await asClerk().get(`/v1/stock-manifests/${manifestId}`);
+    for (const t of detail.body.transfers as { id: string }[]) {
+      await asClerk().post(`/v1/stock-transfers/${t.id}/ticket-printed`).send({}).expect(201);
+    }
+    const done = await asClerk().post(`/v1/stock-manifests/${manifestId}/complete`).send({});
+    expect(done.status).toBe(201);
+    expect(done.body.status).toBe('completed');
+    for (const t of done.body.transfers as { status: string }[]) {
+      expect(t.status).toBe('in_transit');
+    }
+    // 2 + 3 units left the warehouse on this truck (the removed transfer
+    // shipped separately, and the second manifest was canceled unshipped).
+    const sqlc = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    try {
+      const [lvl] = await drizzle(sqlc)
+        .select({ onHand: schema.inventoryLevels.onHand })
+        .from(schema.inventoryLevels)
+        .where(
+          and(
+            eq(schema.inventoryLevels.locationId, laneFromId),
+            eq(schema.inventoryLevels.variantId, manifVariantId),
+          ),
+        );
+      expect(lvl!.onHand).toBe(60 - 2 - 3 - 1);
+    } finally {
+      await sqlc.end({ timeout: 5 });
+    }
+
+    const reComplete = await asClerk().post(`/v1/stock-manifests/${manifestId}/complete`).send({});
+    expect(reComplete.status).toBe(403);
+  });
+});
