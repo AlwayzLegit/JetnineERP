@@ -3156,3 +3156,31 @@ User Security` and `Review Settings Activity` extracts. "A morning's
   (transfer security tables, PO types, OTB, AP ops, layaway, multi-leg,
   UniData) · F Ops sessions. Defaults stated; silence keeps defaults.
   Answers get recorded doc-first in the owning reconcile.
+
+## Checkpoint — 2026-08-28 (run-07 batches 18–26 filed; audit closeout v2 lands: 7 runs, 724 findings)
+
+- Filed BATCH-18…26 under docs/handoffs/run07-sysadmin/ and installed
+  **AUDIT-CLOSEOUT.md v2** (seven runs, 1,776 articles, 724 findings;
+  v1 preserved as AUDIT-CLOSEOUT-v1-six-runs.md). Run 07 produced 54%
+  of all findings from 34% of the articles — "the wiring lives in the
+  configuration."
+- Decision queue updated with the new critical-path asks: **A7 is TPA
+  active?** (changes the PO state machine + disables banking) · **A8
+  the four cheap captures** (three access reports, the STORIS data
+  dictionary, audit opt-in lists, six config answers) · **A9 alternate
+  tax calculation codes + twilight reason code + card platform**.
+- Cutover runbook adoptions from these batches: STOP ALL PHANTOMS
+  before any STORIS shutdown (F660); `REWARDS` is a hidden payment
+  type that will look orphaned in extracts (F588); imported gift cards
+  store numbers with alpha prefixes stripped (F703); regional zip
+  records carry MEANING-BEARING BLANKS — ETL must treat them tri-state
+  (F620); extract survey responses before EOM purge (F676); never
+  reproduce blank-means-purge-everything (F655).
+- Jetnine design validations from run-07: STORIS itself ships the
+  merge-then-erase model (F713/F714 pseudonymization with 9 financial
+  blockers — matches the C4 merge-tool recommendation and gives the
+  erasure spec); decryption auditing with requester+grantor incl.
+  denials (F710) ≈ our security_overrides/audit model; "select, then
+  review, then execute" as the destructive-op house rule = our
+  build-list patterns. D2's save-time re-evaluation (F700) is STORIS
+  discovering event-time hold release — Jetnine's default everywhere.
