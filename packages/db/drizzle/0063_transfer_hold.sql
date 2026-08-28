@@ -1,0 +1,1 @@
+ALTER TABLE "stock_transfer_lines" ADD COLUMN "quantity_ordered" integer;
