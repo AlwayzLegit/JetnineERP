@@ -150,3 +150,76 @@ export const SUPER_ADMIN_ONLY_PERMISSIONS = [
 export type Permission = keyof typeof PERMISSIONS;
 
 export const ALL_PERMISSIONS = Object.keys(PERMISSIONS) as Permission[];
+
+/**
+ * The permissions a business role or membership override may carry —
+ * everything except the platform super-admin surface. Grant validation
+ * (roles.controller, member overrides) and the web permission editors
+ * both read this list, so a super-admin permission can never be granted
+ * inside a business, whatever the request body says.
+ */
+export const BUSINESS_PERMISSIONS = ALL_PERMISSIONS.filter(
+  (p) => !(SUPER_ADMIN_ONLY_PERMISSIONS as readonly string[]).includes(p),
+);
+
+export interface PermissionGroup {
+  /** Stable key for React lists / collapse state. */
+  key: string;
+  /** Human heading shown in the permission editors. */
+  label: string;
+  permissions: Permission[];
+}
+
+/**
+ * Display grouping for the permission editors (Shopify-style access
+ * sections). Order here is presentation order. Membership is derived
+ * from the key prefix so a new permission lands in its group (or the
+ * trailing "Other" bucket) without touching this file — the unit test
+ * asserts full, duplicate-free coverage of BUSINESS_PERMISSIONS.
+ */
+const GROUP_DEFS: { key: string; label: string; prefixes: string[] }[] = [
+  { key: 'pos', label: 'Point of sale', prefixes: ['pos', 'returns', 'exchanges', 'sales'] },
+  { key: 'orders', label: 'Sales orders', prefixes: ['orders'] },
+  { key: 'deliveries', label: 'Deliveries', prefixes: ['deliveries'] },
+  { key: 'customers', label: 'Customers', prefixes: ['customers'] },
+  { key: 'crm', label: 'CRM & marketing', prefixes: ['crm'] },
+  { key: 'products', label: 'Products & catalog', prefixes: ['products', 'categories'] },
+  { key: 'inventory', label: 'Inventory', prefixes: ['inventory', 'as_is', 'serials'] },
+  { key: 'purchasing', label: 'Purchasing', prefixes: ['purchase_orders', 'special_orders'] },
+  { key: 'vendors', label: 'Vendors & payables', prefixes: ['vendors', 'vendor_invoices'] },
+  { key: 'pricing', label: 'Discounts & gift cards', prefixes: ['discounts', 'gift_cards'] },
+  { key: 'plans', label: 'Payment plans', prefixes: ['payment_plans'] },
+  { key: 'commissions', label: 'Commissions', prefixes: ['commissions'] },
+  { key: 'service', label: 'Service', prefixes: ['service_orders'] },
+  { key: 'reports', label: 'Reports', prefixes: ['reports'] },
+  { key: 'gl', label: 'General ledger', prefixes: ['gl'] },
+  { key: 'team', label: 'Team & roles', prefixes: ['users', 'roles'] },
+  { key: 'business', label: 'Business settings', prefixes: ['business', 'locations'] },
+  {
+    key: 'security',
+    label: 'Audit & security',
+    prefixes: ['audit', 'reason_codes', 'security_overrides'],
+  },
+  {
+    key: 'integrations',
+    label: 'Integrations & data',
+    prefixes: ['webhooks', 'api_keys', 'integrations', 'import'],
+  },
+];
+
+export const PERMISSION_GROUPS: PermissionGroup[] = (() => {
+  const groups = GROUP_DEFS.map((g) => ({
+    key: g.key,
+    label: g.label,
+    permissions: [] as Permission[],
+  }));
+  const other: Permission[] = [];
+  for (const p of BUSINESS_PERMISSIONS) {
+    const prefix = p.split('.')[0] ?? '';
+    const idx = GROUP_DEFS.findIndex((g) => g.prefixes.includes(prefix));
+    if (idx >= 0) groups[idx]!.permissions.push(p);
+    else other.push(p);
+  }
+  if (other.length > 0) groups.push({ key: 'other', label: 'Other', permissions: other });
+  return groups.filter((g) => g.permissions.length > 0);
+})();
