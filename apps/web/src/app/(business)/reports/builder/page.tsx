@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { api } from '@/lib/api';
+import { downloadFile } from '@/lib/download';
 import { Button, Card, EmptyState, Field, Input, PageHeader, Select } from '@/components/ui';
 
 interface DictionaryMeta {
@@ -67,6 +68,9 @@ const OPERATORS = ['EQ', 'NE', 'LT', 'GT', 'LE', 'GE', 'TR', 'FL'];
 export default function ReportBuilderPage() {
   const [sources, setSources] = useState<SourceMeta[] | null>(null);
   const [reports, setReports] = useState<ReportListRow[] | null>(null);
+  const [archives, setArchives] = useState<
+    { id: string; reportName: string; runSource: string; rowCount: number; createdAt: string }[]
+  >([]);
   const [error, setError] = useState<string | null>(null);
   const [mode, setMode] = useState<'list' | 'edit' | 'run'>('list');
 
@@ -106,12 +110,22 @@ export default function ReportBuilderPage() {
   async function load() {
     setError(null);
     try {
-      const [s, r] = await Promise.all([
+      const [s, r, a] = await Promise.all([
         api<{ sources: SourceMeta[] }>('/v1/report-builder/sources'),
         api<{ reports: ReportListRow[] }>('/v1/report-builder/reports'),
+        api<{
+          archives: {
+            id: string;
+            reportName: string;
+            runSource: string;
+            rowCount: number;
+            createdAt: string;
+          }[];
+        }>('/v1/report-builder/archives'),
       ]);
       setSources(s.sources);
       setReports(r.reports);
+      setArchives(a.archives);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -244,6 +258,31 @@ export default function ReportBuilderPage() {
     }
   }
 
+  async function archiveRun() {
+    if (!runReport) return;
+    setRunning(true);
+    try {
+      const body = {
+        answers: Object.fromEntries(
+          Object.entries(answers)
+            .filter(([, v]) => v !== '')
+            .map(([k, v]) => [k, v.includes(',') ? v.split(',').map((x) => x.trim()) : v]),
+        ),
+        format: 'archive',
+      };
+      const res = await api<{ archiveId: string; rowCount: number }>(
+        `/v1/report-builder/reports/${runReport.id}/run`,
+        { method: 'POST', body: JSON.stringify(body) },
+      );
+      toast.success(`Archived ${res.rowCount} row(s)`);
+      void load();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    } finally {
+      setRunning(false);
+    }
+  }
+
   async function clone(r: ReportListRow) {
     const newName = window.prompt(`Clone "${r.name}" as:`);
     if (!newName) return;
@@ -333,6 +372,47 @@ export default function ReportBuilderPage() {
             </table>
           </Card>
         )
+      ) : null}
+
+      {mode === 'list' && archives.length > 0 ? (
+        <Card title="Archived runs">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b text-left text-xs uppercase text-neutral-500">
+                <th className="py-2 pr-3">Report</th>
+                <th className="py-2 pr-3">Source</th>
+                <th className="py-2 pr-3 text-right">Rows</th>
+                <th className="py-2 pr-3">Archived</th>
+                <th className="py-2 pr-3" />
+              </tr>
+            </thead>
+            <tbody>
+              {archives.map((a) => (
+                <tr key={a.id} className="border-b last:border-0">
+                  <td className="py-2 pr-3">{a.reportName}</td>
+                  <td className="py-2 pr-3">{a.runSource === 'eod' ? 'Scheduled' : 'On demand'}</td>
+                  <td className="py-2 pr-3 text-right">{a.rowCount}</td>
+                  <td className="py-2 pr-3">{new Date(a.createdAt).toLocaleString()}</td>
+                  <td className="py-2 pr-3 text-right">
+                    <Button
+                      size="sm"
+                      onClick={() =>
+                        void downloadFile(
+                          `/v1/report-builder/archives/${a.id}?format=csv`,
+                          `${a.reportName.replace(/[^A-Za-z0-9_-]+/g, '-')}-archive.csv`,
+                        ).catch((err: unknown) =>
+                          toast.error(err instanceof Error ? err.message : String(err)),
+                        )
+                      }
+                    >
+                      CSV
+                    </Button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Card>
       ) : null}
 
       {mode === 'edit' ? (
@@ -706,9 +786,16 @@ export default function ReportBuilderPage() {
                 </Field>
               ) : null}
             </div>
-            <div className="mt-4">
+            <div className="mt-4 flex gap-2">
               <Button variant="primary" onClick={() => void execute()} disabled={running}>
                 {running ? 'Running…' : 'Run'}
+              </Button>
+              <Button
+                onClick={() => void archiveRun()}
+                disabled={running}
+                title="Run now and store the result in the archive instead of rendering it"
+              >
+                Send to archive
               </Button>
             </div>
           </Card>

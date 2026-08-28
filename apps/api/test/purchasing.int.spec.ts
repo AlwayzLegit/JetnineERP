@@ -1178,6 +1178,7 @@ describe('Nightly batch runner (EOD-001 / JOB-002)', () => {
       'auto_replenishment',
       'sales_rate_replenishment',
       'transfer_aging',
+      'report_builder_schedule',
     ]);
     expect(jobs.every((j) => j.destructive === false)).toBe(true);
   });
@@ -1262,7 +1263,7 @@ describe('Nightly batch runner (EOD-001 / JOB-002)', () => {
     // The run report shows every step with duration and records.
     const runs = await asOwner().get(`/v1/jobs/runs?date=${businessDate}`);
     expect(runs.status).toBe(200);
-    expect((runs.body as { jobId: string }[]).length).toBe(4);
+    expect((runs.body as { jobId: string }[]).length).toBe(5);
   });
 
   it('with the gate off, auto_replenishment succeeds as a no-op', async () => {
