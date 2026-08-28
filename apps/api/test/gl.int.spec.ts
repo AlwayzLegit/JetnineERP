@@ -10,6 +10,7 @@ import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { hashPassword } from 'better-auth/crypto';
 import { drizzle } from 'drizzle-orm/postgres-js';
+import { and, eq } from 'drizzle-orm';
 import postgres from 'postgres';
 import request from 'supertest';
 import { Test } from '@nestjs/testing';
@@ -29,6 +30,8 @@ let app: INestApplication;
 let businessId = '';
 let bookkeeperCookie = '';
 let cashierCookie = '';
+let ownerCookie = '';
+let ownerUserId = '';
 
 async function resetTestDb() {
   const env = { ...process.env, DATABASE_URL: TEST_DB_URL };
@@ -70,6 +73,7 @@ async function seed(): Promise<void> {
     for (const [email, role] of [
       ['books@gl-test.local', 'Bookkeeper'],
       ['cashier@gl-test.local', 'Cashier'],
+      ['owner@gl-test.local', 'Owner'],
     ] as const) {
       const [u] = await db
         .insert(schema.users)
@@ -88,6 +92,7 @@ async function seed(): Promise<void> {
         status: 'active',
         acceptedAt: new Date(),
       });
+      if (role === 'Owner') ownerUserId = u!.id;
     }
   } finally {
     await sql.end({ timeout: 5 });
@@ -122,6 +127,7 @@ beforeAll(async () => {
   await app.init();
   bookkeeperCookie = await captureCookie('books@gl-test.local');
   cashierCookie = await captureCookie('cashier@gl-test.local');
+  ownerCookie = await captureCookie('owner@gl-test.local');
 });
 
 afterAll(async () => {
@@ -349,5 +355,315 @@ describe('GL slice 1 — chart, periods, journal batches (run-01 batch 1)', () =
       .set('Cookie', cashierCookie)
       .set('X-Business-Id', businessId);
     expect(res.status).toBe(403);
+  });
+});
+
+describe('GL slice 2 — journal-event derivation (DERIVATION-SPEC families)', () => {
+  const D = '2026-08-20';
+  const ts = new Date(`${D}T12:00:00Z`);
+
+  function asOwner() {
+    const wrap = (m: 'get' | 'post' | 'patch') => (url: string) =>
+      request(app.getHttpServer())
+        [m](url)
+        .set('Cookie', ownerCookie)
+        .set('X-Business-Id', businessId);
+    return { get: wrap('get'), post: wrap('post'), patch: wrap('patch') };
+  }
+  async function withDb<T>(fn: (db: ReturnType<typeof drizzle>) => Promise<T>): Promise<T> {
+    const sql = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    try {
+      return await fn(drizzle(sql));
+    } finally {
+      await sql.end({ timeout: 5 });
+    }
+  }
+
+  let layerId = '';
+
+  beforeAll(async () => {
+    await withDb(async (db) => {
+      const [loc] = await db
+        .insert(schema.locations)
+        .values({ businessId, name: 'GL Main', timezone: 'America/Los_Angeles' })
+        .returning();
+      const [customer] = await db
+        .insert(schema.customers)
+        .values({ businessId, firstName: 'Gina', lastName: 'Ledger' })
+        .returning();
+      const [p] = await db
+        .insert(schema.products)
+        .values({ businessId, sku: 'GL-P', name: 'GL Fixture Mattress' })
+        .returning();
+      const [v] = await db
+        .insert(schema.productVariants)
+        .values({
+          businessId,
+          productId: p!.id,
+          sku: 'GL-P-V',
+          priceCents: 100000,
+          costCents: 3000,
+        })
+        .returning();
+
+      // Family 1: a completed POS sale, cash 500 + card 545 tender.
+      const [sale] = await db
+        .insert(schema.sales)
+        .values({
+          businessId,
+          locationId: loc!.id,
+          number: 'INV-GL-1',
+          status: 'completed',
+          subtotalCents: 100000,
+          discountCents: 5000,
+          taxCents: 9500,
+          totalCents: 104500,
+          completedAt: ts,
+        })
+        .returning();
+      await db.insert(schema.payments).values([
+        {
+          businessId,
+          saleId: sale!.id,
+          kind: 'sale',
+          method: 'cash',
+          amountCents: 50000,
+          status: 'succeeded',
+          createdAt: ts,
+        },
+        {
+          businessId,
+          saleId: sale!.id,
+          kind: 'sale',
+          method: 'card',
+          amountCents: 54500,
+          status: 'succeeded',
+          createdAt: ts,
+        },
+      ]);
+
+      // Family 2: a $200 cash deposit on an open order.
+      const [openOrder] = await db
+        .insert(schema.orders)
+        .values({
+          businessId,
+          locationId: loc!.id,
+          number: 'SO-GL-1',
+          status: 'open',
+          customerId: customer!.id,
+          subtotalCents: 50000,
+          taxCents: 4750,
+          totalCents: 54750,
+        })
+        .returning();
+      await db.insert(schema.payments).values({
+        businessId,
+        orderId: openOrder!.id,
+        kind: 'deposit',
+        method: 'cash',
+        amountCents: 20000,
+        status: 'succeeded',
+        createdAt: ts,
+      });
+
+      // Family 3: an order fully completed on D (charges ride untaxed).
+      await db.insert(schema.orders).values({
+        businessId,
+        locationId: loc!.id,
+        number: 'SO-GL-2',
+        status: 'completed',
+        customerId: customer!.id,
+        subtotalCents: 80000,
+        taxCents: 7600,
+        deliveryFeeCents: 5000,
+        otherFeeCents: 1000,
+        totalCents: 93600,
+        completedAt: ts,
+      });
+
+      // Families 4/5/8: a receipt layer, a COGS consumption, a shrink.
+      const [layer] = await db
+        .insert(schema.costLayers)
+        .values({
+          businessId,
+          variantId: v!.id,
+          locationId: loc!.id,
+          sourceType: 'po_receive',
+          unitCostCents: 3000,
+          quantityReceived: 10,
+          quantityRemaining: 5,
+          receivedAt: ts,
+        })
+        .returning();
+      layerId = layer!.id;
+      await db.insert(schema.costConsumptions).values([
+        {
+          businessId,
+          layerId,
+          quantity: 4,
+          unitCostCents: 3000,
+          referenceType: 'sale',
+          consumedAt: ts,
+        },
+        {
+          businessId,
+          layerId,
+          quantity: 1,
+          unitCostCents: 3000,
+          referenceType: 'inventory_adjust',
+          consumedAt: ts,
+        },
+      ]);
+
+      // Family 6: an approved vendor bill.
+      const [vendor] = await db
+        .insert(schema.vendors)
+        .values({ businessId, name: 'GL Vendor Co' })
+        .returning();
+      await db.insert(schema.vendorInvoices).values({
+        businessId,
+        vendorId: vendor!.id,
+        number: 'VI-GL-1',
+        totalCents: 25000,
+        status: 'approved',
+        approvedAt: ts,
+      });
+
+      // Family 7: a shift closed $3.00 short on D.
+      await db.insert(schema.cashShifts).values({
+        businessId,
+        locationId: loc!.id,
+        openedByUserId: ownerUserId,
+        openedAt: new Date(ts.getTime() - 8 * 3600 * 1000),
+        openingFloatCents: 10000,
+        closedByUserId: ownerUserId,
+        closedAt: ts,
+        expectedCashCents: 60000,
+        countedCashCents: 59700,
+        varianceCents: -300,
+      });
+    });
+  });
+
+  it('the EOD run derives eight balanced posted batches for the fixture day', async () => {
+    const run = await asOwner().post('/v1/jobs/run').send({ businessDate: D });
+    expect(run.status).toBe(201);
+    const step = (
+      run.body.results as { jobId: string; status: string; detail?: Record<string, unknown> }[]
+    ).find((r) => r.jobId === 'gl_derivation');
+    expect(step?.status).toBe('succeeded');
+
+    const batches = await asBooks().get('/v1/gl/journal-batches?year=2026');
+    const derived = (
+      batches.body.rows as { batchType: string; sourceType: string | null; status: string }[]
+    ).filter((b) => b.batchType === 'derived');
+    expect(derived).toHaveLength(8);
+    expect(new Set(derived.map((b) => b.sourceType))).toEqual(
+      new Set([
+        'eod_pos_sales',
+        'eod_order_money_in',
+        'eod_order_revenue',
+        'eod_cogs',
+        'eod_inventory_receipts',
+        'eod_vendor_bills',
+        'eod_cash_over_short',
+        'eod_inventory_adjustments',
+      ]),
+    );
+    for (const b of derived) expect(b.status).toBe('posted');
+
+    // Spot-check the POS batch: tender split debits vs revenue + tax.
+    const rows = batches.body.rows as { id: string; sourceType: string | null }[];
+    const posId = rows.find((b) => b.sourceType === 'eod_pos_sales')!.id;
+    const pos = await asBooks().get(`/v1/gl/journal-batches/${posId}`);
+    expect(pos.body.balanced).toBe(true);
+    expect(pos.body.debitCents).toBe(104500);
+    const byCode = new Map(
+      (pos.body.lines as { accountCode: string; debitCents: number; creditCents: number }[]).map(
+        (l) => [l.accountCode, l],
+      ),
+    );
+    expect(byCode.get('1050')?.debitCents).toBe(50000); // cash drawer
+    expect(byCode.get('1000')?.debitCents).toBe(54500); // bank (card)
+    expect(byCode.get('4000')?.creditCents).toBe(95000); // revenue net of discount
+    expect(byCode.get('2200')?.creditCents).toBe(9500); // sales tax payable
+
+    // A derived batch is posted and append-only.
+    const patch = await asBooks().patch(`/v1/gl/journal-batches/${posId}`).send({ memo: 'tamper' });
+    expect(patch.status).toBe(403);
+
+    // Trial balance still balances; inventory nets receipt − COGS − shrink.
+    const tb = await asBooks().get('/v1/gl/trial-balance?year=2026');
+    expect(tb.body.totals.debitCents).toBe(tb.body.totals.creditCents);
+    const inv = (tb.body.rows as { code: string; debitCents: number; creditCents: number }[]).find(
+      (r) => r.code === '1200',
+    );
+    expect(inv?.debitCents).toBe(30000);
+    expect(inv?.creditCents).toBe(15000);
+  });
+
+  it('re-running the same date derives nothing new (idempotent)', async () => {
+    await asOwner().post('/v1/jobs/run').send({ businessDate: D }).expect(201);
+    const batches = await asBooks().get('/v1/gl/journal-batches?year=2026');
+    const derived = (batches.body.rows as { batchType: string }[]).filter(
+      (b) => b.batchType === 'derived',
+    );
+    expect(derived).toHaveLength(8);
+  });
+
+  it('anti-F1: an unmapped system key skips its family with the reason reported', async () => {
+    // New activity on a later date, then unmap cogs.
+    const D2 = '2026-08-22';
+    const ts2 = new Date(`${D2}T12:00:00Z`);
+    await withDb((db) =>
+      db.insert(schema.costConsumptions).values({
+        businessId,
+        layerId,
+        quantity: 2,
+        unitCostCents: 3000,
+        referenceType: 'sale',
+        consumedAt: ts2,
+      }),
+    );
+    const accounts = await asBooks().get('/v1/gl/accounts');
+    const cogs = (accounts.body as { id: string; systemKey: string | null }[]).find(
+      (a) => a.systemKey === 'cogs',
+    )!;
+    await asBooks().patch(`/v1/gl/accounts/${cogs.id}`).send({ systemKey: null }).expect(200);
+
+    const run = await asOwner().post('/v1/jobs/run').send({ businessDate: D2 });
+    expect(run.status).toBe(201);
+    const step = (run.body.results as { jobId: string; status: string }[]).find(
+      (r) => r.jobId === 'gl_derivation',
+    );
+    expect(step?.status).toBe('succeeded');
+    // The skip reason lands in the job_runs morning report.
+    const detail = await withDb(async (db) => {
+      const [row] = await db
+        .select({ detailJson: schema.jobRuns.detailJson })
+        .from(schema.jobRuns)
+        .where(
+          and(
+            eq(schema.jobRuns.businessId, businessId),
+            eq(schema.jobRuns.jobId, 'gl_derivation'),
+            eq(schema.jobRuns.businessDate, D2),
+          ),
+        );
+      return JSON.parse((row?.detailJson as string) ?? '{}') as {
+        skipped?: { family: string; reason: string }[];
+      };
+    });
+    const cogsSkip = (detail.skipped ?? []).find((x) => x.family === 'cogs');
+    expect(cogsSkip?.reason).toContain('unmapped');
+
+    // Nothing posted to a fallback: no derived cogs batch exists for D2.
+    const batches = await asBooks().get('/v1/gl/journal-batches?year=2026');
+    const d2cogs = (
+      batches.body.rows as { sourceType: string | null; businessDate: string }[]
+    ).filter((b) => b.sourceType === 'eod_cogs' && b.businessDate === D2);
+    expect(d2cogs).toHaveLength(0);
+
+    // Restore the mapping for cleanliness.
+    await asBooks().patch(`/v1/gl/accounts/${cogs.id}`).send({ systemKey: 'cogs' }).expect(200);
   });
 });

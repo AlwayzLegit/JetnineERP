@@ -7,9 +7,11 @@ import {
 } from '@nestjs/common';
 import { and, eq, inArray, lt, sql } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
+import { randomUUID } from 'node:crypto';
 import { schema, withDrizzleTenantContext } from '@jetnine/db';
 import { AuditService } from '../audit/audit.service';
 import { ExceptionsService } from '../controls/exceptions.service';
+import { GlDerivationService } from '../gl/gl-derivation.service';
 import { ROOT_DRIZZLE } from '../database/database.module';
 import { computeReorderSuggestions } from '../purchasing/replenishment';
 import { vendorRunsToday } from '../purchasing/replenishment-engine';
@@ -76,6 +78,18 @@ export const JOB_REGISTRY: JobDefinition[] = [
     destructive: false,
   },
   {
+    id: 'gl_derivation',
+    name: 'GL journal-event derivation',
+    description:
+      'In-house GL slice 2 (docs/erp-gl/DERIVATION-SPEC.md): derives the business date into ' +
+      'posted journal batches, one per event family (POS sales, order money, order revenue, ' +
+      'COGS, receipts, vendor bills, over/short, adjustments). Idempotent per (family, date); ' +
+      'families with unmapped system keys are skipped and reported, never defaulted (anti-F1).',
+    order: 70,
+    dependsOn: [],
+    destructive: false,
+  },
+  {
     id: 'transfer_aging',
     name: 'Transfer aging',
     description:
@@ -114,6 +128,7 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
     @Inject(ROOT_DRIZZLE) private readonly rootDb: PostgresJsDatabase,
     @Inject(AuditService) private readonly audit: AuditService,
     @Inject(ExceptionsService) private readonly exceptions: ExceptionsService,
+    @Inject(GlDerivationService) private readonly glDerivation: GlDerivationService,
   ) {}
 
   onModuleInit() {
@@ -280,6 +295,8 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
         return this.salesRateReplenishment(businessId, businessDate);
       case 'report_builder_schedule':
         return this.reportBuilderSchedule(businessId);
+      case 'gl_derivation':
+        return this.glDerive(businessId, businessDate);
       case 'transfer_aging':
         return this.transferAging(businessId, businessDate);
       default:
@@ -549,6 +566,22 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
    * prompts have no answer are skipped with the error recorded —
    * scheduled runs carry no operator to ask.
    */
+  /** GL slice 2: run the derivation inside the tenant RLS context. */
+  private async glDerive(businessId: string, businessDate: string): Promise<JobOutcome> {
+    const runId = randomUUID();
+    const outcome = await withDrizzleTenantContext(this.rootDb, { businessId }, (tx) =>
+      this.glDerivation.derive(tx as never, businessId, businessDate, runId),
+    );
+    return {
+      recordsAffected: outcome.posted.length,
+      detail: {
+        posted: outcome.posted,
+        skipped: outcome.skipped,
+        note: 'refunds/exchanges not yet derived — post manual batches until that slice lands',
+      },
+    };
+  }
+
   private async reportBuilderSchedule(businessId: string): Promise<JobOutcome> {
     const defs = await this.rootDb
       .select()

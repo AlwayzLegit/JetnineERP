@@ -29,8 +29,9 @@ export class GlService {
   constructor(@Inject(DRIZZLE) private readonly db: PostgresJsDatabase) {}
 
   /** Lazily materialize the 13 period rows for a fiscal year. */
-  async ensureYear(businessId: string, fiscalYear: number): Promise<void> {
-    const existing = await this.db
+  async ensureYear(businessId: string, fiscalYear: number, db?: PostgresJsDatabase): Promise<void> {
+    const dbh = db ?? this.db;
+    const existing = await dbh
       .select({ period: schema.glPeriods.period })
       .from(schema.glPeriods)
       .where(
@@ -43,15 +44,21 @@ export class GlService {
     const have = new Set(existing.map((p) => p.period));
     const missing = Array.from({ length: 13 }, (_, i) => i + 1).filter((p) => !have.has(p));
     if (missing.length === 0) return;
-    await this.db
+    await dbh
       .insert(schema.glPeriods)
       .values(missing.map((period) => ({ businessId, fiscalYear, period })))
       .onConflictDoNothing();
   }
 
-  async periodStatus(businessId: string, fiscalYear: number, period: number): Promise<string> {
-    await this.ensureYear(businessId, fiscalYear);
-    const [row] = await this.db
+  async periodStatus(
+    businessId: string,
+    fiscalYear: number,
+    period: number,
+    db?: PostgresJsDatabase,
+  ): Promise<string> {
+    const dbh = db ?? this.db;
+    await this.ensureYear(businessId, fiscalYear, dbh);
+    const [row] = await dbh
       .select({ status: schema.glPeriods.status })
       .from(schema.glPeriods)
       .where(
@@ -66,8 +73,13 @@ export class GlService {
   }
 
   /** F4: posting into a closed period is a hard refusal, never a warning. */
-  async assertPeriodOpen(businessId: string, fiscalYear: number, period: number): Promise<void> {
-    const status = await this.periodStatus(businessId, fiscalYear, period);
+  async assertPeriodOpen(
+    businessId: string,
+    fiscalYear: number,
+    period: number,
+    db?: PostgresJsDatabase,
+  ): Promise<void> {
+    const status = await this.periodStatus(businessId, fiscalYear, period, db);
     if (status !== 'open') {
       throw new BadRequestException(
         `Fiscal period ${fiscalYear}-${String(period).padStart(2, '0')} is closed — reopen it before posting`,
@@ -126,9 +138,14 @@ export class GlService {
     return { debitCents, creditCents };
   }
 
-  async generateBatchNumber(businessId: string, fiscalYear: number): Promise<string> {
+  async generateBatchNumber(
+    businessId: string,
+    fiscalYear: number,
+    db?: PostgresJsDatabase,
+  ): Promise<string> {
+    const dbh = db ?? this.db;
     for (let attempt = 0; attempt < 5; attempt++) {
-      const rows = await this.db
+      const rows = await dbh
         .select({ count: sql<number>`COUNT(*)::int` })
         .from(schema.glJournalBatches)
         .where(
@@ -139,7 +156,7 @@ export class GlService {
         );
       const seq = (rows[0]?.count ?? 0) + 1 + attempt;
       const candidate = `GL-${fiscalYear}-${String(seq).padStart(6, '0')}`;
-      const [existing] = await this.db
+      const [existing] = await dbh
         .select({ id: schema.glJournalBatches.id })
         .from(schema.glJournalBatches)
         .where(
