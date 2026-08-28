@@ -3061,3 +3061,28 @@ User Security` and `Review Settings Activity` extracts. "A morning's
   job_runs report); purchasing jobs-list assertions updated (6 ids).
 - Production verified through slice 1: 71/71, head=0070_general_ledger.
   Gates: typecheck 0 · lint 0 · test 0 · build 0 · format 0.
+
+## Checkpoint — 2026-08-28 (GL slice 3: year-end roll, refunds, account inquiry)
+
+- **F7 retained-earnings roll**: closing period 13 now posts a
+  `year_end` batch zeroing every P&L account's net for the year into
+  `retained_earnings` (per-account closing legs + one RE leg), BEFORE
+  the latch closes so the roll lands in period 13 — adjustments
+  included (better than STORIS's 12th-close timing). Naturally
+  idempotent: a re-close after a reopen only rolls activity since the
+  last roll. Refuses when 'retained_earnings' is unmapped (anti-F1).
+- **Family 9 refunds** joins the derivation: proportional tax split
+  per refund (amount × saleTax/saleTotal, rounded), revenue + tax
+  debited, drawer credited. Exchanges settle through orders/returns —
+  their money already surfaces in families 1–3 (spec note updated).
+- **F277-lean account inquiry**: GET /v1/gl/accounts/:id/activity —
+  per-period totals for the year + the posted lines behind them with
+  batch drill-through.
+- Filed `docs/HANDOFF-sales-security.md` (owner upload): the 120-
+  permission STORIS Sales Security dissection. Note: its §2.3
+  tri-state recommendation (inherit/grant/deny) is ALREADY Jetnine's
+  model — `membership_permission_overrides.allowed` with no-row =
+  inherit; recorded as parity confirmation, not new work.
+- gl.int.spec 9→12 (roll balance + RE credit 50100 assertion, refund
+  batch line math 9500/950/10450, activity per-period totals).
+  Gates: typecheck 0 · lint 0 · test 0 · build 0 · format 0.

@@ -305,6 +305,14 @@ export class GlController {
         'All 12 periods must be closed before period 13 can close the year',
       );
     }
+    // F7 (year-end): closing period 13 rolls the year's P&L into
+    // retained earnings BEFORE the latch closes, so the roll itself
+    // posts into period 13. Idempotent — a re-close after a reopen only
+    // rolls activity posted since the last roll (net P&L of zero posts
+    // nothing).
+    if (period === 13) {
+      await this.rollRetainedEarnings(tenant.businessId!, fiscalYear);
+    }
     const toClose = rows.filter((r) => r.period <= period && r.status === 'open');
     if (toClose.length === 0) {
       throw new BadRequestException('Period is already closed');
@@ -603,7 +611,202 @@ export class GlController {
     return { fiscalYear: year, period, rows, totals };
   }
 
+  /**
+   * F277-lean account inquiry: one account, per-period totals for the
+   * year, and the posted lines behind them (batch drill-through via
+   * the batch id on every line).
+   */
+  @Get('accounts/:id/activity')
+  @RequirePermission('gl.view')
+  async accountActivity(
+    @CurrentTenant() tenant: RequestTenantContext,
+    @Param('id') id: string,
+    @Query('year') yearStr?: string,
+  ) {
+    const year = Number(yearStr) || new Date().getUTCFullYear();
+    const [account] = await this.db
+      .select()
+      .from(schema.glAccounts)
+      .where(
+        and(eq(schema.glAccounts.id, id), eq(schema.glAccounts.businessId, tenant.businessId!)),
+      )
+      .limit(1);
+    if (!account) throw new NotFoundException('Account not found');
+
+    const byPeriod = await this.db
+      .select({
+        period: schema.glJournalBatches.period,
+        debitCents: sql<number>`COALESCE(SUM(${schema.glJournalLines.debitCents}), 0)::int`,
+        creditCents: sql<number>`COALESCE(SUM(${schema.glJournalLines.creditCents}), 0)::int`,
+      })
+      .from(schema.glJournalLines)
+      .innerJoin(
+        schema.glJournalBatches,
+        eq(schema.glJournalBatches.id, schema.glJournalLines.batchId),
+      )
+      .where(
+        and(
+          eq(schema.glJournalBatches.businessId, tenant.businessId!),
+          eq(schema.glJournalBatches.status, 'posted'),
+          eq(schema.glJournalBatches.fiscalYear, year),
+          eq(schema.glJournalLines.accountId, id),
+        ),
+      )
+      .groupBy(schema.glJournalBatches.period)
+      .orderBy(asc(schema.glJournalBatches.period));
+
+    const lines = await this.db
+      .select({
+        batchId: schema.glJournalBatches.id,
+        batchNumber: schema.glJournalBatches.number,
+        batchType: schema.glJournalBatches.batchType,
+        sourceType: schema.glJournalBatches.sourceType,
+        businessDate: schema.glJournalBatches.businessDate,
+        period: schema.glJournalBatches.period,
+        memo: schema.glJournalLines.memo,
+        debitCents: schema.glJournalLines.debitCents,
+        creditCents: schema.glJournalLines.creditCents,
+      })
+      .from(schema.glJournalLines)
+      .innerJoin(
+        schema.glJournalBatches,
+        eq(schema.glJournalBatches.id, schema.glJournalLines.batchId),
+      )
+      .where(
+        and(
+          eq(schema.glJournalBatches.businessId, tenant.businessId!),
+          eq(schema.glJournalBatches.status, 'posted'),
+          eq(schema.glJournalBatches.fiscalYear, year),
+          eq(schema.glJournalLines.accountId, id),
+        ),
+      )
+      .orderBy(desc(schema.glJournalBatches.businessDate))
+      .limit(500);
+
+    return { account, fiscalYear: year, byPeriod, lines };
+  }
+
   // ------------------------------------------------------------ private
+
+  /**
+   * Zero every P&L account's net for the year into retained earnings
+   * (run-01 F7, adapted: our latch is period 13, so adjustments are
+   * included). Refuses when 'retained_earnings' is unmapped (anti-F1).
+   */
+  private async rollRetainedEarnings(businessId: string, fiscalYear: number): Promise<void> {
+    const rows = await this.db
+      .select({
+        accountId: schema.glAccounts.id,
+        code: schema.glAccounts.code,
+        accountType: schema.glAccounts.accountType,
+        debitCents: sql<number>`COALESCE(SUM(${schema.glJournalLines.debitCents}), 0)::int`,
+        creditCents: sql<number>`COALESCE(SUM(${schema.glJournalLines.creditCents}), 0)::int`,
+      })
+      .from(schema.glJournalLines)
+      .innerJoin(
+        schema.glJournalBatches,
+        eq(schema.glJournalBatches.id, schema.glJournalLines.batchId),
+      )
+      .innerJoin(schema.glAccounts, eq(schema.glAccounts.id, schema.glJournalLines.accountId))
+      .where(
+        and(
+          eq(schema.glJournalBatches.businessId, businessId),
+          eq(schema.glJournalBatches.status, 'posted'),
+          eq(schema.glJournalBatches.fiscalYear, fiscalYear),
+          sql`${schema.glAccounts.accountType} IN ('revenue', 'expense')`,
+        ),
+      )
+      .groupBy(schema.glAccounts.id, schema.glAccounts.code, schema.glAccounts.accountType);
+
+    const legs: { accountId: string; debitCents: number; creditCents: number; memo: string }[] = [];
+    let netIncomeCents = 0;
+    for (const r of rows) {
+      const net = r.creditCents - r.debitCents; // credit-positive
+      if (net === 0) continue;
+      if (net > 0) {
+        legs.push({
+          accountId: r.accountId,
+          debitCents: net,
+          creditCents: 0,
+          memo: `Close ${r.code}`,
+        });
+      } else {
+        legs.push({
+          accountId: r.accountId,
+          debitCents: 0,
+          creditCents: -net,
+          memo: `Close ${r.code}`,
+        });
+      }
+      netIncomeCents += net;
+    }
+    if (legs.length === 0) return; // nothing to roll (or already rolled)
+
+    const [re] = await this.db
+      .select({ id: schema.glAccounts.id })
+      .from(schema.glAccounts)
+      .where(
+        and(
+          eq(schema.glAccounts.businessId, businessId),
+          eq(schema.glAccounts.systemKey, 'retained_earnings'),
+          eq(schema.glAccounts.isActive, true),
+        ),
+      )
+      .limit(1);
+    if (!re) {
+      throw new BadRequestException(
+        "Map an active account to system key 'retained_earnings' before closing the year",
+      );
+    }
+    if (netIncomeCents > 0) {
+      legs.push({
+        accountId: re.id,
+        debitCents: 0,
+        creditCents: netIncomeCents,
+        memo: `Net income ${fiscalYear} to retained earnings`,
+      });
+    } else if (netIncomeCents < 0) {
+      legs.push({
+        accountId: re.id,
+        debitCents: -netIncomeCents,
+        creditCents: 0,
+        memo: `Net loss ${fiscalYear} to retained earnings`,
+      });
+    }
+
+    const number = await this.gl.generateBatchNumber(businessId, fiscalYear);
+    const [batch] = await this.db
+      .insert(schema.glJournalBatches)
+      .values({
+        businessId,
+        number,
+        status: 'posted',
+        batchType: 'year_end',
+        sourceType: 'year_end_roll',
+        businessDate: `${fiscalYear}-12-31`,
+        fiscalYear,
+        period: 13,
+        memo: `Year-end roll ${fiscalYear}: P&L into retained earnings`,
+        postedAt: new Date(),
+      })
+      .returning();
+    await this.db.insert(schema.glJournalLines).values(
+      legs.map((l) => ({
+        businessId,
+        batchId: batch!.id,
+        accountId: l.accountId,
+        memo: l.memo,
+        debitCents: l.debitCents,
+        creditCents: l.creditCents,
+      })),
+    );
+    await this.audit.log({
+      action: 'gl.year_end.roll',
+      targetType: 'gl_journal_batch',
+      targetId: batch!.id,
+      after: { fiscalYear, netIncomeCents, accountsClosed: legs.length - 1 },
+    });
+  }
 
   private validatePeriodRef(body: { fiscalYear?: number; period?: number }) {
     const { fiscalYear, period } = body;

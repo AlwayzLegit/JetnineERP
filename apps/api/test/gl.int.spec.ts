@@ -667,3 +667,90 @@ describe('GL slice 2 — journal-event derivation (DERIVATION-SPEC families)', (
     await asBooks().patch(`/v1/gl/accounts/${cogs.id}`).send({ systemKey: 'cogs' }).expect(200);
   });
 });
+
+describe('GL slice 3 — year-end roll, refunds derivation, account activity', () => {
+  function asOwner() {
+    const wrap = (m: 'get' | 'post' | 'patch') => (url: string) =>
+      request(app.getHttpServer())
+        [m](url)
+        .set('Cookie', ownerCookie)
+        .set('X-Business-Id', businessId);
+    return { get: wrap('get'), post: wrap('post'), patch: wrap('patch') };
+  }
+  async function withDb<T>(fn: (db: ReturnType<typeof drizzle>) => Promise<T>): Promise<T> {
+    const sql = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    try {
+      return await fn(drizzle(sql));
+    } finally {
+      await sql.end({ timeout: 5 });
+    }
+  }
+
+  it('F7: the period-13 close rolled P&L into retained earnings (from the earlier close)', async () => {
+    const batches = await asBooks().get('/v1/gl/journal-batches?year=2026');
+    const roll = (
+      batches.body.rows as { id: string; batchType: string; sourceType: string | null }[]
+    ).find((b) => b.batchType === 'year_end');
+    expect(roll).toBeTruthy();
+    const detail = await asBooks().get(`/v1/gl/journal-batches/${roll!.id}`);
+    expect(detail.body.balanced).toBe(true);
+    // At roll time the year's P&L was the two posted sales (50100¢).
+    const re = (detail.body.lines as { accountCode: string; creditCents: number }[]).find(
+      (l) => l.accountCode === '3900',
+    );
+    expect(re?.creditCents).toBe(50100);
+  });
+
+  it('family 9: refunds derive with a proportional tax split', async () => {
+    const D3 = '2026-08-23';
+    const ts3 = new Date(`${D3}T12:00:00Z`);
+    await withDb(async (db) => {
+      const [sale] = await db
+        .select({ id: schema.sales.id })
+        .from(schema.sales)
+        .where(eq(schema.sales.number, 'INV-GL-1'));
+      await db.insert(schema.refunds).values({
+        businessId,
+        saleId: sale!.id,
+        amountCents: 10450, // 10% of the 104500 sale → tax share 950
+        reason: 'partial return',
+        createdAt: ts3,
+      });
+    });
+    const run = await asOwner().post('/v1/jobs/run').send({ businessDate: D3 });
+    expect(run.status).toBe(201);
+
+    const batches = await asBooks().get('/v1/gl/journal-batches?year=2026');
+    const refundBatch = (
+      batches.body.rows as { id: string; sourceType: string | null; businessDate: string }[]
+    ).find((b) => b.sourceType === 'eod_refunds' && b.businessDate === D3);
+    expect(refundBatch).toBeTruthy();
+    const detail = await asBooks().get(`/v1/gl/journal-batches/${refundBatch!.id}`);
+    expect(detail.body.balanced).toBe(true);
+    const byCode = new Map(
+      (detail.body.lines as { accountCode: string; debitCents: number; creditCents: number }[]).map(
+        (l) => [l.accountCode, l],
+      ),
+    );
+    expect(byCode.get('4000')?.debitCents).toBe(9500); // revenue net of tax share
+    expect(byCode.get('2200')?.debitCents).toBe(950); // tax share
+    expect(byCode.get('1050')?.creditCents).toBe(10450); // drawer out
+  });
+
+  it('F277-lean: account activity shows per-period totals and drillable lines', async () => {
+    const accounts = await asBooks().get('/v1/gl/accounts');
+    const cash = (accounts.body as { id: string; code: string }[]).find((a) => a.code === '1050')!;
+    const res = await asBooks().get(`/v1/gl/accounts/${cash.id}/activity?year=2026`);
+    expect(res.status).toBe(200);
+    expect(res.body.account.code).toBe('1050');
+    const p8 = (
+      res.body.byPeriod as { period: number; debitCents: number; creditCents: number }[]
+    ).find((p) => p.period === 8);
+    // Aug: +50000 POS cash +20000 deposit; −300 short −10450 refund.
+    expect(p8?.debitCents).toBe(70000);
+    expect(p8?.creditCents).toBe(10750);
+    const lines = res.body.lines as { batchNumber: string }[];
+    expect(lines.length).toBeGreaterThanOrEqual(4);
+    expect(lines.every((l) => l.batchNumber.startsWith('GL-'))).toBe(true);
+  });
+});
