@@ -122,6 +122,9 @@ export const PERMISSIONS = {
   'reports.export': 'Export reports',
   'reports.builder.run': 'Run self-service report-builder reports',
   'reports.builder.author': 'Create and edit report-builder reports and dictionaries',
+  'gl.view': 'View the general ledger (accounts, periods, journal batches)',
+  'gl.post': 'Create and post journal entries',
+  'gl.manage': 'Manage the chart of accounts and fiscal periods',
   'reports.cost.view': 'See cost/margin data in report-builder output (field masking)',
 
   'audit.view': 'View audit log',

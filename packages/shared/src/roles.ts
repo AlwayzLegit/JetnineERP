@@ -75,6 +75,10 @@ const inventoryClerkPermissions: Permission[] = [
 ];
 
 const bookkeeperPermissions: Permission[] = [
+  // In-house GL (owner 2026-08-28): the books own the ledger.
+  'gl.view',
+  'gl.post',
+  'gl.manage',
   'reports.sales.view',
   'reports.inventory.view',
   'reports.financial.view',
