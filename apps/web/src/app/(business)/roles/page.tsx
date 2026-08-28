@@ -1,8 +1,12 @@
 'use client';
 
+import Link from 'next/link';
+import { Plus } from 'lucide-react';
 import { toast } from 'sonner';
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
-import { Button, Card, LoadingRows, PageHeader } from '@/components/ui';
+import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { BUSINESS_PERMISSIONS } from '@jetnine/shared';
+import { Button, Card, EmptyState, LinkButton, LoadingRows, PageHeader } from '@/components/ui';
 import { api } from '@/lib/api';
 
 interface Role {
@@ -13,27 +17,32 @@ interface Role {
   permissions: string[];
 }
 
-interface PermissionEntry {
-  key: string;
-  description: string;
+interface Member {
+  membershipId: string;
+  roleId: string;
 }
 
 export default function RolesPage() {
+  const router = useRouter();
   const [roles, setRoles] = useState<Role[] | null>(null);
-  const [catalog, setCatalog] = useState<PermissionEntry[]>([]);
+  const [memberCounts, setMemberCounts] = useState<Map<string, number> | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [editing, setEditing] = useState<string | null>(null);
 
   async function load() {
     try {
-      const [r, p] = await Promise.all([
-        api<Role[]>('/v1/business/roles'),
-        api<PermissionEntry[]>('/v1/permissions'),
-      ]);
-      setRoles(r);
-      setCatalog(p);
+      setRoles(await api<Role[]>('/v1/business/roles'));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+    }
+    // Member counts are garnish — the viewer may hold roles.view without
+    // users.view, so a failure here just hides the column.
+    try {
+      const members = await api<Member[]>('/v1/business/members');
+      const counts = new Map<string, number>();
+      for (const m of members) counts.set(m.roleId, (counts.get(m.roleId) ?? 0) + 1);
+      setMemberCounts(counts);
+    } catch {
+      setMemberCounts(null);
     }
   }
 
@@ -41,233 +50,132 @@ export default function RolesPage() {
     void load();
   }, []);
 
-  async function clone(role: Role) {
-    const name = prompt(
-      `Name for the cloned role (based on "${role.name}"):`,
-      `${role.name} (custom)`,
-    );
-    if (!name) return;
-    try {
-      await api('/v1/business/roles', {
-        method: 'POST',
-        body: JSON.stringify({ name, basedOnRoleId: role.id }),
-      });
-      await load();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err));
-    }
-  }
-
   async function remove(role: Role) {
-    if (!confirm(`Delete role "${role.name}"?`)) return;
+    if (!confirm(`Delete role "${role.name}"? Members must be reassigned first.`)) return;
     try {
       await api(`/v1/business/roles/${role.id}`, { method: 'DELETE' });
+      toast.success(`Role "${role.name}" deleted.`);
       await load();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err));
     }
   }
 
-  async function savePerms(role: Role, perms: string[]) {
-    try {
-      await api(`/v1/business/roles/${role.id}`, {
-        method: 'PATCH',
-        body: JSON.stringify({ permissions: perms }),
-      });
-      setEditing(null);
-      await load();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err));
-    }
-  }
+  const total = BUSINESS_PERMISSIONS.length;
 
   return (
     <div>
-      <PageHeader title="Roles" />
+      <PageHeader
+        title="Roles"
+        sub="Roles bundle permissions. Assign one per member, then fine-tune individuals from their member page."
+        actions={
+          <LinkButton href="/roles/new" variant="primary">
+            <Plus size={14} aria-hidden />
+            Create role
+          </LinkButton>
+        }
+      />
       {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
-      {!roles && !error && <LoadingRows />}
+      {!roles && !error && (
+        <Card>
+          <LoadingRows />
+        </Card>
+      )}
       {roles && (
-        <div style={{ display: 'grid', gap: 12 }}>
-          {roles.map((r) => (
-            <Card
-              key={r.id}
-              title={
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-                  {r.name}
-                  {r.isSystem && <span className="badge badge-neutral">System</span>}
-                </span>
-              }
-              actions={
-                <span style={{ display: 'flex', gap: 8 }}>
-                  <Button size="sm" variant="secondary" onClick={() => clone(r)}>
-                    Clone
-                  </Button>
-                  {!r.isSystem && (
-                    <>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => setEditing(editing === r.id ? null : r.id)}
-                      >
-                        {editing === r.id ? 'Cancel' : 'Edit perms'}
-                      </Button>
-                      <Button size="sm" variant="danger" onClick={() => remove(r)}>
-                        Delete
-                      </Button>
-                    </>
-                  )}
-                </span>
-              }
-              style={{ marginTop: 0 }}
-            >
-              {r.description && (
-                <p style={{ color: 'var(--text-secondary)', fontSize: 13, marginTop: 0 }}>
-                  {r.description}
-                </p>
+        <Card style={{ padding: 0, overflowX: 'auto' }}>
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Role</th>
+                <th>Permissions</th>
+                {memberCounts && <th className="num">Members</th>}
+                <th style={{ width: 1 }}>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {roles.length === 0 && (
+                <tr>
+                  <td colSpan={4}>
+                    <EmptyState>No roles yet.</EmptyState>
+                  </td>
+                </tr>
               )}
-              {editing === r.id ? (
-                <PermissionsEditor
-                  catalog={catalog}
-                  initial={r.permissions}
-                  onSave={(perms) => savePerms(r, perms)}
-                  onCancel={() => setEditing(null)}
-                />
-              ) : (
-                <PermissionList catalog={catalog} permissions={r.permissions} />
-              )}
-            </Card>
-          ))}
-        </div>
+              {roles.map((r) => (
+                <tr
+                  key={r.id}
+                  style={{ cursor: 'pointer' }}
+                  onClick={() => router.push(`/roles/${r.id}`)}
+                >
+                  <td>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                      <Link href={`/roles/${r.id}`} onClick={(e) => e.stopPropagation()}>
+                        <strong>{r.name}</strong>
+                      </Link>
+                      {r.isSystem ? (
+                        <span className="badge badge-neutral">System</span>
+                      ) : (
+                        <span className="badge badge-success">Custom</span>
+                      )}
+                    </span>
+                    {r.description && (
+                      <div style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 2 }}>
+                        {r.description}
+                      </div>
+                    )}
+                  </td>
+                  <td>
+                    <PermissionMeter granted={r.permissions.length} total={total} />
+                  </td>
+                  {memberCounts && <td className="num">{memberCounts.get(r.id) ?? 0}</td>}
+                  <td onClick={(e) => e.stopPropagation()}>
+                    <span style={{ display: 'inline-flex', gap: 6 }}>
+                      <LinkButton size="sm" variant="ghost" href={`/roles/new?basedOn=${r.id}`}>
+                        Duplicate
+                      </LinkButton>
+                      {!r.isSystem && (
+                        <Button size="sm" variant="danger" onClick={() => remove(r)}>
+                          Delete
+                        </Button>
+                      )}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Card>
       )}
     </div>
   );
 }
 
-function PermissionList({
-  catalog,
-  permissions,
-}: {
-  catalog: PermissionEntry[];
-  permissions: string[];
-}) {
-  const grouped = useMemo(
-    () => groupCatalog(catalog, new Set(permissions)),
-    [catalog, permissions],
-  );
+function PermissionMeter({ granted, total }: { granted: number; total: number }) {
+  const pct = total === 0 ? 0 : Math.round((granted / total) * 100);
   return (
-    <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-      {Array.from(grouped.entries()).map(([prefix, entries]) => (
-        <div key={prefix} style={groupBox}>
-          <div style={groupHeading}>{prefix}</div>
-          {entries.map(({ entry, present }) => (
-            <div
-              key={entry.key}
-              style={{
-                fontSize: 12,
-                color: present ? 'var(--success)' : 'var(--text-muted)',
-              }}
-            >
-              {present ? '✓' : '·'} {entry.key}
-            </div>
-          ))}
-        </div>
-      ))}
-    </div>
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+      <span
+        aria-hidden
+        style={{
+          width: 90,
+          height: 6,
+          borderRadius: 3,
+          background: 'var(--surface-muted)',
+          overflow: 'hidden',
+          display: 'inline-block',
+        }}
+      >
+        <span
+          style={{
+            display: 'block',
+            height: '100%',
+            width: `${pct}%`,
+            background: 'var(--brand)',
+          }}
+        />
+      </span>
+      <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+        {granted} of {total}
+      </span>
+    </span>
   );
 }
-
-function PermissionsEditor({
-  catalog,
-  initial,
-  onSave,
-  onCancel,
-}: {
-  catalog: PermissionEntry[];
-  initial: string[];
-  onSave: (perms: string[]) => void;
-  onCancel: () => void;
-}) {
-  const [selected, setSelected] = useState<Set<string>>(() => new Set(initial));
-
-  function toggle(key: string) {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
-  }
-
-  function handle(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    onSave([...selected]);
-  }
-
-  const grouped = useMemo(() => groupCatalog(catalog, selected), [catalog, selected]);
-  return (
-    <form onSubmit={handle} className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-      {Array.from(grouped.entries()).map(([prefix, entries]) => (
-        <div key={prefix} style={groupBox}>
-          <div style={groupHeading}>{prefix}</div>
-          {entries.map(({ entry, present }) => (
-            <label
-              key={entry.key}
-              style={{
-                display: 'block',
-                fontSize: 12,
-                cursor: 'pointer',
-                padding: '2px 0',
-              }}
-              title={entry.description}
-            >
-              <input
-                type="checkbox"
-                checked={present}
-                onChange={() => toggle(entry.key)}
-                style={{ marginRight: 6, accentColor: 'var(--brand)' }}
-              />
-              {entry.key}
-            </label>
-          ))}
-        </div>
-      ))}
-      <div style={{ gridColumn: '1 / -1', display: 'flex', gap: 8 }}>
-        <Button type="submit" variant="primary" size="sm">
-          Save
-        </Button>
-        <Button type="button" variant="ghost" size="sm" onClick={onCancel}>
-          Cancel
-        </Button>
-      </div>
-    </form>
-  );
-}
-
-function groupCatalog(
-  catalog: PermissionEntry[],
-  selected: Set<string>,
-): Map<string, { entry: PermissionEntry; present: boolean }[]> {
-  const map = new Map<string, { entry: PermissionEntry; present: boolean }[]>();
-  for (const entry of catalog) {
-    const prefix = entry.key.split('.')[0] ?? 'other';
-    const list = map.get(prefix) ?? [];
-    list.push({ entry, present: selected.has(entry.key) });
-    map.set(prefix, list);
-  }
-  return map;
-}
-
-const groupBox = {
-  background: 'var(--surface-muted)',
-  border: '1px solid var(--border)',
-  padding: 8,
-  borderRadius: 'var(--radius-sm)',
-} as const;
-const groupHeading = {
-  fontSize: 11,
-  fontWeight: 600,
-  textTransform: 'uppercase' as const,
-  letterSpacing: '0.05em',
-  color: 'var(--text-muted)',
-  marginBottom: 4,
-} as const;

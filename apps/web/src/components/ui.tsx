@@ -207,6 +207,87 @@ export function LoadingRows({ rows = 3 }: { rows?: number }) {
   );
 }
 
+/**
+ * Collapsible section for long grouped content (permission editors,
+ * settings sheets). Header carries a title on the left and an optional
+ * summary (counts, badges) next to the chevron; `leading` renders before
+ * the title and outside the toggle button so it can hold its own
+ * interactive control (e.g. a select-all checkbox).
+ */
+export function Accordion({
+  title,
+  summary,
+  leading,
+  open,
+  onToggle,
+  children,
+}: {
+  title: ReactNode;
+  summary?: ReactNode;
+  leading?: ReactNode;
+  open: boolean;
+  onToggle: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <div
+      style={{
+        border: '1px solid var(--border)',
+        borderRadius: 'var(--radius-sm)',
+        background: 'var(--surface)',
+      }}
+    >
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 10,
+          padding: '10px 12px',
+        }}
+      >
+        {leading}
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-expanded={open}
+          style={{
+            flex: 1,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10,
+            background: 'none',
+            border: 'none',
+            padding: 0,
+            cursor: 'pointer',
+            textAlign: 'left',
+            color: 'var(--text)',
+            font: 'inherit',
+          }}
+        >
+          <span style={{ fontWeight: 600, fontSize: 13 }}>{title}</span>
+          <span style={{ flex: 1 }} />
+          {summary && <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{summary}</span>}
+          <span
+            aria-hidden
+            style={{
+              display: 'inline-block',
+              transition: 'transform 0.15s',
+              transform: open ? 'rotate(90deg)' : 'none',
+              color: 'var(--text-muted)',
+              fontSize: 12,
+            }}
+          >
+            ▶
+          </span>
+        </button>
+      </div>
+      {open && (
+        <div style={{ borderTop: '1px solid var(--border)', padding: '10px 12px' }}>{children}</div>
+      )}
+    </div>
+  );
+}
+
 function cx(...parts: (string | false | undefined | null)[]): string {
   return parts.filter(Boolean).join(' ');
 }

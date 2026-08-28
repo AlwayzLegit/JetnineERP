@@ -594,6 +594,78 @@ describe('Epic 1.6 — Business admin console', () => {
     expect(deleteAttempt.status).toBe(403);
   });
 
+  it('Member access sheet: GET effective, PUT stores diffs only, guard honors them', async () => {
+    const server = app.getHttpServer();
+    const get = () =>
+      request(server)
+        .get(`/v1/business/members/${cashierMembershipId}/permissions`)
+        .set('Cookie', ownerCookie)
+        .set('X-Business-Id', businessId);
+    const put = (overrides: unknown) =>
+      request(server)
+        .put(`/v1/business/members/${cashierMembershipId}/permissions`)
+        .set('Cookie', ownerCookie)
+        .set('X-Business-Id', businessId)
+        .send({ overrides });
+    const probe = () =>
+      request(server)
+        .get('/v1/products')
+        .set('Cookie', cashierCookie)
+        .set('X-Business-Id', businessId);
+
+    // Clean slate: effective access is exactly the role's.
+    const initial = await get();
+    expect(initial.status).toBe(200);
+    expect(initial.body.roleName).toBe('Cashier');
+    expect(initial.body.overrides).toEqual([]);
+    expect(initial.body.effective).toEqual(initial.body.rolePermissions);
+    expect(initial.body.rolePermissions).toContain('products.view');
+
+    // Stage one revoke (role has it), one extra grant (role lacks it),
+    // and one no-op deny (role lacks it already) — the no-op must be
+    // normalized away so only real diffs are stored.
+    const saved = await put([
+      { permission: 'products.view', allowed: false },
+      { permission: 'products.update', allowed: true },
+      { permission: 'audit.view', allowed: false },
+    ]);
+    expect(saved.status).toBe(200);
+    expect(saved.body.overrides).toEqual([
+      { permission: 'products.update', allowed: true },
+      { permission: 'products.view', allowed: false },
+    ]);
+    expect(saved.body.effective).toContain('products.update');
+    expect(saved.body.effective).not.toContain('products.view');
+
+    // The guard enforces the revoke immediately.
+    expect((await probe()).status).toBe(403);
+
+    // Validation: unknown keys, the super-admin surface, and duplicates
+    // are all rejected outright.
+    expect((await put([{ permission: 'not.a.permission', allowed: true }])).status).toBe(400);
+    expect((await put([{ permission: 'platform.templates.manage', allowed: true }])).status).toBe(
+      400,
+    );
+    expect(
+      (
+        await put([
+          { permission: 'products.view', allowed: false },
+          { permission: 'products.view', allowed: true },
+        ])
+      ).status,
+    ).toBe(400);
+
+    // Failed PUTs must not have clobbered the stored overrides.
+    const still = await get();
+    expect(still.body.overrides).toHaveLength(2);
+
+    // Reset to role defaults: empty set clears everything.
+    const cleared = await put([]);
+    expect(cleared.status).toBe(200);
+    expect(cleared.body.overrides).toEqual([]);
+    expect((await probe()).status).toBe(200);
+  });
+
   it('Disabling a member sets status=disabled; audit captures it', async () => {
     const res = await request(app.getHttpServer())
       .post(`/v1/business/members/${cashierMembershipId}/disable`)

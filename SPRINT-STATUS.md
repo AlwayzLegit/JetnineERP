@@ -3184,3 +3184,31 @@ User Security` and `Review Settings Activity` extracts. "A morning's
   review, then execute" as the destructive-op house rule = our
   build-list patterns. D2's save-time re-evaluation (F700) is STORIS
   discovering event-time hold release — Jetnine's default everywhere.
+
+## Checkpoint — 2026-08-28 (members & roles UX rebuild + per-member access, owner request)
+
+- **Shared**: `PERMISSION_GROUPS` (19 friendly domain groups over the
+  105 business permissions) + `BUSINESS_PERMISSIONS`; unit tests assert
+  duplicate-free full coverage and that the super-admin platform
+  surface is excluded from business grants.
+- **API**: `GET/PUT /v1/business/members/:id/permissions` — the access
+  sheet (role perms, overrides, effective) and a replace-set writer
+  that stores only real diffs vs the role (no-ops normalized away),
+  validates against BUSINESS_PERMISSIONS, rejects duplicates, audits
+  before/after. Role grant validation hardened to BUSINESS_PERMISSIONS
+  (platform perms were previously grantable to custom roles by API).
+- **Web** (Shopify-style): /roles list (badges, permission meter,
+  member counts, duplicate/delete) → /roles/new + /roles/[id] full-page
+  editor with accordion permission groups, select-all-per-group
+  tri-state checkboxes, human descriptions; system roles read-only with
+  "Duplicate to customize". /members list decluttered (invite behind a
+  header button, row→detail) → /members/[id] with profile, role picker,
+  disable/reactivate/resend, store data scope, and the effective-access
+  editor: checkboxes stage overrides (extra-allow/revoked chips,
+  override counts, Save/Discard, Reset-to-role-defaults). Works for
+  invited members pre-acceptance. New `Accordion` ui primitive +
+  `PermissionGroupsEditor` shared component.
+- Gates: typecheck 0 · lint 0 · build 0 · format 0 · shared unit 0 ·
+  business int suite 26/26 (incl. new access-sheet tests). Full
+  `pnpm test` running locally at commit time; green confirmed before
+  merge (plus CI).

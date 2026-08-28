@@ -15,7 +15,12 @@ import {
 import { and, asc, eq } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { schema } from '@jetnine/db';
-import { ALL_PERMISSIONS, type Permission, PERMISSIONS } from '@jetnine/shared';
+import {
+  ALL_PERMISSIONS,
+  BUSINESS_PERMISSIONS,
+  type Permission,
+  PERMISSIONS,
+} from '@jetnine/shared';
 import { AuditService } from '../audit/audit.service';
 import { CurrentTenant } from '../auth/current-user.decorator';
 import { DRIZZLE } from '../database/database.module';
@@ -275,6 +280,8 @@ export class PermissionsCatalogController {
 }
 
 function filterValidPermissions(input: Permission[]): Permission[] {
-  const valid = new Set(ALL_PERMISSIONS);
+  // Business roles can never carry the platform super-admin surface,
+  // whatever the request body says.
+  const valid = new Set(BUSINESS_PERMISSIONS);
   return input.filter((p) => valid.has(p));
 }

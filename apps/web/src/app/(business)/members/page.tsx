@@ -1,14 +1,17 @@
 'use client';
 
+import Link from 'next/link';
 import { Copy, UserPlus } from 'lucide-react';
 import { toast } from 'sonner';
 import { useEffect, useState, type FormEvent } from 'react';
+import { useRouter } from 'next/navigation';
 import {
   Button,
   Card,
   EmptyState,
   Field,
   Input,
+  LinkButton,
   LoadingRows,
   PageHeader,
   Select,
@@ -31,11 +34,6 @@ interface Member {
   acceptedAt: string | null;
 }
 
-interface LocationRow {
-  id: string;
-  name: string;
-}
-
 interface Role {
   id: string;
   name: string;
@@ -43,10 +41,11 @@ interface Role {
 }
 
 export default function MembersPage() {
+  const router = useRouter();
   const [members, setMembers] = useState<Member[] | null>(null);
   const [roles, setRoles] = useState<Role[]>([]);
-  const [locations, setLocations] = useState<LocationRow[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [showInvite, setShowInvite] = useState(false);
   const [success, setSuccess] = useState<string | null>(null);
   // Set when the API tells us the invitation mail was captured rather than
   // sent (no mail transport configured). The invite is real either way, so
@@ -55,14 +54,12 @@ export default function MembersPage() {
 
   async function load() {
     try {
-      const [m, r, locs] = await Promise.all([
+      const [m, r] = await Promise.all([
         api<Member[]>('/v1/business/members'),
         api<Role[]>('/v1/business/roles'),
-        api<LocationRow[]>('/v1/business/locations'),
       ]);
       setMembers(m);
       setRoles(r);
-      setLocations(locs);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -105,55 +102,6 @@ export default function MembersPage() {
     }
   }
 
-  async function disable(membershipId: string) {
-    if (!confirm('Disable this member?')) return;
-    try {
-      await api(`/v1/business/members/${membershipId}/disable`, { method: 'POST' });
-      await load();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err));
-    }
-  }
-
-  async function changeRole(membershipId: string, roleId: string) {
-    try {
-      await api(`/v1/business/members/${membershipId}`, {
-        method: 'PATCH',
-        body: JSON.stringify({ roleId }),
-      });
-      await load();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err));
-    }
-  }
-
-  async function changeScope(member: Member, dataScope: 'all' | 'store') {
-    try {
-      await api(`/v1/business/members/${member.membershipId}`, {
-        method: 'PATCH',
-        body: JSON.stringify({ dataScope }),
-      });
-      await load();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err));
-    }
-  }
-
-  async function toggleScopeLocation(member: Member, locationId: string, checked: boolean) {
-    const next = checked
-      ? [...member.scopeLocationIds, locationId]
-      : member.scopeLocationIds.filter((id) => id !== locationId);
-    try {
-      await api(`/v1/business/members/${member.membershipId}`, {
-        method: 'PATCH',
-        body: JSON.stringify({ scopeLocationIds: next }),
-      });
-      await load();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err));
-    }
-  }
-
   async function resend(membershipId: string) {
     setError(null);
     try {
@@ -167,6 +115,8 @@ export default function MembersPage() {
           ? 'Invitation refreshed. Email is not configured, so send this link yourself:'
           : 'Invitation re-sent.',
       );
+      if (result.inviteLink) setShowInvite(true);
+      else toast.success('Invitation re-sent.');
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err));
     }
@@ -174,86 +124,104 @@ export default function MembersPage() {
 
   return (
     <div>
-      <PageHeader title="Members" />
-      <Card title="Invite member">
-        <form onSubmit={invite}>
-          <div className="grid items-end gap-3 sm:grid-cols-2 lg:grid-cols-[repeat(3,1fr)_auto]">
-            <Field label="Email">
-              <Input name="email" type="email" required style={{ width: '100%' }} />
-            </Field>
-            <Field label="Name (optional)">
-              <Input name="name" style={{ width: '100%' }} />
-            </Field>
-            <Field label="Role">
-              <Select name="roleId" required style={{ width: '100%' }}>
-                <option value="">Select role…</option>
-                {roles.map((r) => (
-                  <option key={r.id} value={r.id}>
-                    {r.name}
-                    {r.isSystem ? '' : ' (custom)'}
-                  </option>
-                ))}
-              </Select>
-            </Field>
-            <Button type="submit" variant="primary" className="w-fit">
-              <UserPlus size={14} aria-hidden />
-              Invite
-            </Button>
-          </div>
-          {error && (
-            <p style={{ color: 'var(--danger)', marginTop: 8, marginBottom: 0, fontSize: 13 }}>
-              {error}
-            </p>
-          )}
-          {success && (
-            <p
-              data-testid="invite-success"
-              style={{ color: 'var(--success)', marginTop: 8, marginBottom: 0, fontSize: 13 }}
-            >
-              {success}
-            </p>
-          )}
-          {inviteLink && (
-            <div
-              data-testid="invite-link"
-              style={{
-                marginTop: 8,
-                padding: 10,
-                borderRadius: 6,
-                border: '1px solid var(--border)',
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8,
-              }}
-            >
-              <code
-                style={{
-                  flex: 1,
-                  fontSize: 12,
-                  overflowWrap: 'anywhere',
-                  color: 'var(--text-secondary)',
-                }}
-              >
-                {inviteLink}
-              </code>
-              <Button
-                type="button"
-                size="sm"
-                variant="ghost"
-                onClick={() => {
-                  void navigator.clipboard
-                    ?.writeText(inviteLink)
-                    .then(() => toast.success('Invite link copied.'))
-                    .catch(() => toast.error('Could not copy — select the link and copy it.'));
-                }}
-              >
-                <Copy size={14} aria-hidden />
-                Copy
+      <PageHeader
+        title="Members"
+        sub="Everyone with access to this business. Open a member to change their role, store scope, or individual permissions."
+        actions={
+          <Button variant="primary" onClick={() => setShowInvite((v) => !v)}>
+            <UserPlus size={14} aria-hidden />
+            {showInvite ? 'Close' : 'Invite member'}
+          </Button>
+        }
+      />
+
+      {showInvite && (
+        <Card title="Invite member" style={{ marginBottom: 16 }}>
+          <form onSubmit={invite}>
+            <div className="grid items-end gap-3 sm:grid-cols-2 lg:grid-cols-[repeat(3,1fr)_auto]">
+              <Field label="Email">
+                <Input name="email" type="email" required style={{ width: '100%' }} />
+              </Field>
+              <Field label="Name (optional)">
+                <Input name="name" style={{ width: '100%' }} />
+              </Field>
+              <Field label="Role">
+                <Select name="roleId" required style={{ width: '100%' }}>
+                  <option value="">Select role…</option>
+                  {roles.map((r) => (
+                    <option key={r.id} value={r.id}>
+                      {r.name}
+                      {r.isSystem ? '' : ' (custom)'}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <Button type="submit" variant="primary" className="w-fit">
+                <UserPlus size={14} aria-hidden />
+                Invite
               </Button>
             </div>
-          )}
-        </form>
-      </Card>
+            <p style={{ marginTop: 8, marginBottom: 0, fontSize: 12, color: 'var(--text-muted)' }}>
+              The invitee starts with the selected role’s access. You can fine-tune their individual
+              permissions from their member page — even before they accept.
+            </p>
+          </form>
+        </Card>
+      )}
+
+      {error && (
+        <p style={{ color: 'var(--danger)', marginTop: 0, marginBottom: 12, fontSize: 13 }}>
+          {error}
+        </p>
+      )}
+      {success && (
+        <p
+          data-testid="invite-success"
+          style={{ color: 'var(--success)', marginTop: 0, marginBottom: 12, fontSize: 13 }}
+        >
+          {success}
+        </p>
+      )}
+      {inviteLink && (
+        <div
+          data-testid="invite-link"
+          style={{
+            marginBottom: 12,
+            padding: 10,
+            borderRadius: 6,
+            border: '1px solid var(--border)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+          }}
+        >
+          <code
+            style={{
+              flex: 1,
+              fontSize: 12,
+              overflowWrap: 'anywhere',
+              color: 'var(--text-secondary)',
+            }}
+          >
+            {inviteLink}
+          </code>
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            onClick={() => {
+              void navigator.clipboard
+                ?.writeText(inviteLink)
+                .then(() => toast.success('Invite link copied.'))
+                .catch(() => toast.error('Could not copy — select the link and copy it.'));
+            }}
+          >
+            <Copy size={14} aria-hidden />
+            Copy
+          </Button>
+        </div>
+      )}
+
       {!members && !error && (
         <Card>
           <LoadingRows />
@@ -264,11 +232,11 @@ export default function MembersPage() {
           <table className="table">
             <thead>
               <tr>
-                <th>Email</th>
+                <th>Member</th>
                 <th>Role</th>
-                <th>Sales data</th>
+                <th>Store access</th>
                 <th>Status</th>
-                <th>Actions</th>
+                <th style={{ width: 1 }}>Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -280,78 +248,40 @@ export default function MembersPage() {
                 </tr>
               )}
               {members.map((m) => (
-                <tr key={m.membershipId}>
+                <tr
+                  key={m.membershipId}
+                  style={{ cursor: 'pointer' }}
+                  onClick={() => router.push(`/members/${m.membershipId}`)}
+                >
                   <td>
-                    <strong>{m.email}</strong>
-                    {m.name && (
-                      <div style={{ color: 'var(--text-muted)', fontSize: 12 }}>{m.name}</div>
-                    )}
+                    <Link href={`/members/${m.membershipId}`} onClick={(e) => e.stopPropagation()}>
+                      <strong>{m.name || m.email}</strong>
+                    </Link>
+                    <div style={{ color: 'var(--text-muted)', fontSize: 12 }}>{m.email}</div>
                   </td>
-                  <td>
-                    <Select
-                      value={m.roleId}
-                      onChange={(e) => changeRole(m.membershipId, e.target.value)}
-                    >
-                      {roles.map((r) => (
-                        <option key={r.id} value={r.id}>
-                          {r.name}
-                        </option>
-                      ))}
-                    </Select>
-                  </td>
-                  <td>
-                    <Select
-                      value={m.dataScope}
-                      data-testid={`data-scope-${m.membershipId}`}
-                      onChange={(e) => changeScope(m, e.target.value as 'all' | 'store')}
-                    >
-                      <option value="all">All locations</option>
-                      <option value="store">Their store only</option>
-                    </Select>
-                    {m.dataScope === 'store' && (
-                      <div style={{ marginTop: 6, display: 'grid', gap: 2 }}>
-                        {locations.map((loc) => (
-                          <label
-                            key={loc.id}
-                            style={{
-                              display: 'flex',
-                              gap: 6,
-                              alignItems: 'center',
-                              fontSize: 12,
-                              color: 'var(--text-secondary)',
-                            }}
-                          >
-                            <input
-                              type="checkbox"
-                              checked={m.scopeLocationIds.includes(loc.id)}
-                              onChange={(e) => toggleScopeLocation(m, loc.id, e.target.checked)}
-                            />
-                            {loc.name}
-                          </label>
-                        ))}
-                        {m.scopeLocationIds.length === 0 && (
-                          <span style={{ fontSize: 12, color: 'var(--danger)' }}>
-                            No store selected — this member sees no sales data.
-                          </span>
-                        )}
-                      </div>
+                  <td>{m.roleName}</td>
+                  <td style={{ fontSize: 13 }}>
+                    {m.dataScope === 'all' ? (
+                      'All locations'
+                    ) : m.scopeLocationIds.length > 0 ? (
+                      `${m.scopeLocationIds.length} location${m.scopeLocationIds.length === 1 ? '' : 's'}`
+                    ) : (
+                      <span style={{ color: 'var(--danger)' }}>No store selected</span>
                     )}
                   </td>
                   <td>
                     <StatusBadge status={m.status} />
                   </td>
-                  <td>
+                  <td onClick={(e) => e.stopPropagation()}>
                     <span style={{ display: 'inline-flex', gap: 6 }}>
                       {m.status === 'invited' && (
                         <Button size="sm" variant="ghost" onClick={() => resend(m.membershipId)}>
                           Resend invite
                         </Button>
                       )}
-                      {m.status !== 'disabled' && (
-                        <Button size="sm" variant="danger" onClick={() => disable(m.membershipId)}>
-                          Disable
-                        </Button>
-                      )}
+                      <LinkButton size="sm" variant="secondary" href={`/members/${m.membershipId}`}>
+                        Manage
+                      </LinkButton>
                     </span>
                   </td>
                 </tr>
