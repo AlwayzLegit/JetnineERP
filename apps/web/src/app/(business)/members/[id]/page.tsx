@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams } from 'next/navigation';
 import type { Permission } from '@jetnine/shared';
 import { Button, Card, Field, LoadingRows, PageHeader, Select, StatusBadge } from '@/components/ui';
+import { NAV } from '@/components/app-shell';
 import { PermissionGroupsEditor } from '@/components/permission-groups';
 import { api } from '@/lib/api';
 
@@ -19,7 +20,9 @@ interface Member {
   roleId: string;
   roleName: string;
   dataScope: 'all' | 'store';
+  sellingScope: 'all' | 'approved';
   scopeLocationIds: string[];
+  hiddenNav: string[];
   invitedAt: string | null;
   acceptedAt: string | null;
 }
@@ -256,8 +259,21 @@ export default function MemberDetailPage() {
           </p>
         </Card>
 
-        <Card title="Sales data scope">
-          <Field label="Which stores’ sales data can they see?">
+        <Card title="Store access">
+          <Field label="Where can they sell?">
+            <Select
+              value={member.sellingScope}
+              data-testid={`selling-scope-${member.membershipId}`}
+              onChange={(e) =>
+                void patchMember({ sellingScope: e.target.value }, 'Selling access updated.')
+              }
+              style={{ width: '100%' }}
+            >
+              <option value="all">Any store</option>
+              <option value="approved">Approved stores only (picked at login)</option>
+            </Select>
+          </Field>
+          <Field label="Whose sales data can they see?">
             <Select
               value={member.dataScope}
               data-testid={`data-scope-${member.membershipId}`}
@@ -266,12 +282,15 @@ export default function MemberDetailPage() {
               }
               style={{ width: '100%' }}
             >
-              <option value="all">All locations</option>
-              <option value="store">Selected stores only</option>
+              <option value="all">All stores</option>
+              <option value="store">Approved stores only</option>
             </Select>
           </Field>
-          {member.dataScope === 'store' && (
+          {(member.sellingScope === 'approved' || member.dataScope === 'store') && (
             <div style={{ display: 'grid', gap: 4 }}>
+              <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-secondary)' }}>
+                Approved stores
+              </div>
               {locations.map((loc) => (
                 <label
                   key={loc.id}
@@ -299,13 +318,90 @@ export default function MemberDetailPage() {
               ))}
               {member.scopeLocationIds.length === 0 && (
                 <span style={{ fontSize: 12, color: 'var(--danger)' }}>
-                  No store selected — this member sees no sales data.
+                  No store approved —{' '}
+                  {member.sellingScope === 'approved' ? 'this member cannot sell anywhere' : ''}
+                  {member.sellingScope === 'approved' && member.dataScope === 'store'
+                    ? ' and '
+                    : ''}
+                  {member.dataScope === 'store' ? 'they see no sales data' : ''}.
                 </span>
               )}
+              <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                With approved-only selling, the member picks one of these stores at login and
+                everything they ring — including the money tendered — counts toward that store.
+              </span>
             </div>
           )}
         </Card>
       </div>
+
+      <Card title="Navigation" style={{ marginTop: 16 }}>
+        <p style={{ fontSize: 13, marginTop: 0, color: 'var(--text-secondary)' }}>
+          Untick a tab to remove it from this member&apos;s sidebar entirely. This is visibility
+          only — what they can actually do is still governed by their permissions below.
+        </p>
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {NAV.map((group) => (
+            <div key={group.label}>
+              <div
+                style={{
+                  fontSize: 11.5,
+                  fontWeight: 700,
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.06em',
+                  color: 'var(--text-muted)',
+                  marginBottom: 4,
+                }}
+              >
+                {group.label}
+              </div>
+              <div style={{ display: 'grid', gap: 3 }}>
+                {group.items.map((item) => {
+                  const hidden = member.hiddenNav.includes(item.href);
+                  return (
+                    <label
+                      key={item.href}
+                      style={{
+                        display: 'flex',
+                        gap: 8,
+                        alignItems: 'center',
+                        fontSize: 13,
+                        color: hidden ? 'var(--text-muted)' : 'var(--text-secondary)',
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={!hidden}
+                        style={{ accentColor: 'var(--brand)' }}
+                        data-testid={`nav-visible-${item.href.replace(/\//g, '_')}`}
+                        onChange={(e) => {
+                          const next = e.target.checked
+                            ? member.hiddenNav.filter((h) => h !== item.href)
+                            : [...member.hiddenNav, item.href];
+                          void patchMember({ hiddenNav: next }, 'Navigation updated.');
+                        }}
+                      />
+                      {item.label}
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+        {member.hiddenNav.length > 0 && (
+          <p style={{ fontSize: 12.5, color: 'var(--text-secondary)', margin: '10px 0 0' }}>
+            {member.hiddenNav.length} tab{member.hiddenNav.length === 1 ? '' : 's'} hidden.{' '}
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => void patchMember({ hiddenNav: [] }, 'All tabs restored.')}
+            >
+              Show all
+            </Button>
+          </p>
+        )}
+      </Card>
 
       <Card
         title={

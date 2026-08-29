@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import {
   Landmark,
   BadgeDollarSign,
@@ -40,6 +40,7 @@ import {
   Undo2,
 } from 'lucide-react';
 import { ActiveBusinessBadge } from '@/components/active-business-badge';
+import { api } from '@/lib/api';
 import { useBusinessBranding, useBusinessName } from '@/lib/business-settings';
 
 /**
@@ -59,7 +60,8 @@ interface NavGroup {
   items: NavItem[];
 }
 
-const NAV: NavGroup[] = [
+/** Exported for the member editor: the owner picks which of these tabs a member sees. */
+export const NAV: NavGroup[] = [
   {
     label: 'Sell',
     items: [
@@ -124,6 +126,49 @@ const NAV: NavGroup[] = [
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname() ?? '';
   const [open, setOpen] = useState(false);
+  // Per-member nav visibility: tabs the owner hid for this member are
+  // simply not rendered (the API stays gated by permissions regardless).
+  const [hiddenNav, setHiddenNav] = useState<Set<string>>(new Set());
+  // Selling-restricted members pick THE store they are working at for
+  // this login (browser session); New Sale rings at it, so the money
+  // tendered counts toward that store's drawer and closeout.
+  const [sellingStore, setSellingStore] = useState<{ id: string; name: string } | null>(null);
+  const [storeChoices, setStoreChoices] = useState<{ id: string; name: string }[]>([]);
+  const [pickStore, setPickStore] = useState(false);
+  const chooseStore = (loc: { id: string; name: string }) => {
+    try {
+      sessionStorage.setItem('jetnine.sellingStore', JSON.stringify(loc));
+    } catch {
+      // Session storage unavailable — the choice just won't stick.
+    }
+    setSellingStore(loc);
+    setPickStore(false);
+  };
+  useEffect(() => {
+    api<{
+      hiddenNav: string[];
+      sellingScope: 'all' | 'approved';
+      scopeLocations: { id: string; name: string }[];
+    }>('/v1/business/members/me')
+      .then((me) => {
+        setHiddenNav(new Set(me.hiddenNav ?? []));
+        if (me.sellingScope !== 'approved') return;
+        const stores = me.scopeLocations ?? [];
+        setStoreChoices(stores);
+        let saved: { id: string; name: string } | null = null;
+        try {
+          const raw = sessionStorage.getItem('jetnine.sellingStore');
+          if (raw) saved = JSON.parse(raw) as { id: string; name: string };
+        } catch {
+          saved = null;
+        }
+        const valid = saved ? stores.find((l) => l.id === saved!.id) : undefined;
+        if (valid) setSellingStore(valid);
+        else if (stores.length === 1) chooseStore(stores[0]!);
+        else if (stores.length > 1) setPickStore(true);
+      })
+      .catch(() => setHiddenNav(new Set()));
+  }, []);
 
   const isActive = (href: string) =>
     href === '/dashboard'
@@ -147,32 +192,36 @@ export function AppShell({ children }: { children: ReactNode }) {
         } md:translate-x-0`}
       >
         <BrandHeader />
-        {NAV.map((group) => (
-          <div key={group.label} className="mb-3.5">
-            <p className="mb-1 px-2.5 text-[10.5px] font-bold uppercase tracking-[0.08em] text-white/60">
-              {group.label}
-            </p>
-            {group.items.map((item) => {
-              const active = isActive(item.href);
-              const Icon = item.icon;
-              return (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  onClick={() => setOpen(false)}
-                  className={`mb-px flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-[13px] no-underline transition-colors ${
-                    active
-                      ? 'bg-white/10 font-semibold text-white'
-                      : 'font-normal text-[var(--sidebar-text)] hover:bg-white/5 hover:text-white'
-                  }`}
-                >
-                  <Icon size={15} strokeWidth={active ? 2.2 : 1.8} aria-hidden />
-                  {item.label}
-                </Link>
-              );
-            })}
-          </div>
-        ))}
+        {NAV.map((group) => {
+          const items = group.items.filter((i) => !hiddenNav.has(i.href));
+          if (items.length === 0) return null;
+          return (
+            <div key={group.label} className="mb-3.5">
+              <p className="mb-1 px-2.5 text-[10.5px] font-bold uppercase tracking-[0.08em] text-white/60">
+                {group.label}
+              </p>
+              {items.map((item) => {
+                const active = isActive(item.href);
+                const Icon = item.icon;
+                return (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    onClick={() => setOpen(false)}
+                    className={`mb-px flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-[13px] no-underline transition-colors ${
+                      active
+                        ? 'bg-white/10 font-semibold text-white'
+                        : 'font-normal text-[var(--sidebar-text)] hover:bg-white/5 hover:text-white'
+                    }`}
+                  >
+                    <Icon size={15} strokeWidth={active ? 2.2 : 1.8} aria-hidden />
+                    {item.label}
+                  </Link>
+                );
+              })}
+            </div>
+          );
+        })}
       </aside>
 
       <div className="app-main md:ml-[var(--sidebar-width)]">
@@ -187,6 +236,23 @@ export function AppShell({ children }: { children: ReactNode }) {
           </button>
           <ActiveBusinessBadge />
           <div className="ml-auto flex items-center gap-2">
+            {sellingStore && (
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                title={
+                  storeChoices.length > 1
+                    ? 'Change the store you are selling at'
+                    : 'The store you are selling at'
+                }
+                onClick={() => storeChoices.length > 1 && setPickStore(true)}
+                data-testid="selling-store-chip"
+              >
+                <MapPin size={13} aria-hidden />
+                <span className="hidden sm:inline">Selling at&nbsp;</span>
+                {sellingStore.name}
+              </button>
+            )}
             <Link href="/pos" className="btn btn-primary btn-sm no-underline">
               <Monitor size={14} aria-hidden />
               <span className="hidden sm:inline">Open register</span>
@@ -194,6 +260,51 @@ export function AppShell({ children }: { children: ReactNode }) {
             </Link>
           </div>
         </header>
+        {pickStore && storeChoices.length > 0 && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+            data-testid="store-picker"
+          >
+            <div
+              className="card"
+              style={{ maxWidth: 420, width: '100%', padding: 20, background: 'var(--surface)' }}
+            >
+              <h3 style={{ margin: '0 0 4px', fontSize: 16 }}>
+                Which store are you selling at today?
+              </h3>
+              <p style={{ margin: '0 0 12px', fontSize: 13, color: 'var(--text-secondary)' }}>
+                Everything you ring this session — including the money tendered — counts toward the
+                store you pick.
+              </p>
+              <div style={{ display: 'grid', gap: 8 }}>
+                {storeChoices.map((loc) => (
+                  <button
+                    key={loc.id}
+                    type="button"
+                    className="btn btn-secondary"
+                    style={{ justifyContent: 'flex-start' }}
+                    onClick={() => chooseStore(loc)}
+                    data-testid={`pick-store-${loc.id}`}
+                  >
+                    <MapPin size={14} aria-hidden />
+                    {loc.name}
+                  </button>
+                ))}
+              </div>
+              {sellingStore && (
+                <div style={{ marginTop: 10, textAlign: 'right' }}>
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm"
+                    onClick={() => setPickStore(false)}
+                  >
+                    Keep {sellingStore.name}
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
         <main className="mx-auto max-w-[1200px] px-4 pb-12 pt-5 md:px-6 md:pt-6">{children}</main>
       </div>
     </div>

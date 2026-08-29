@@ -3406,3 +3406,70 @@ pass reasonCodeId` writing an exchange in production: the New Exchange
   what the server charges.
 - Tests: taxes suite 13→14 (a location with no rate of its own reports
   the business default through pos/locations).
+
+## Checkpoint — 2026-08-29 (order page payments: New Sale parity)
+
+- Owner (SO-2026-000016): taking a payment on the order's full page now
+  mirrors the New Sale register — the same labeled tender list (Credit
+  card / Cash / Check / PayPal / Venmo / Zelle / Synchrony / Acima /
+  Store credit), a "Reference / last 4 / approval #" input on non-cash
+  tenders (sent as `processorRef` — the API already stored it), an
+  "Exact balance" quick-fill, and the payments table shows the tender
+  label plus a Reference column.
+
+## Checkpoint — 2026-08-29 (order page: confirm a draft into a live sale)
+
+- Owner: a saved draft (SO-2026-000016) had no way to become a real
+  sale from the order page. New primary button **"Confirm order — make
+  it a live sale"** on draft orders (`data-testid="confirm-draft"`),
+  calling `PATCH /orders/:id {status:'open'}` — the sanctioned path that
+  reserves stock AND re-runs the G6 price-variance gate for parked
+  drafts (the bare /reserve does not). Also hid "Release reserved
+  stock" on drafts (nothing is reserved yet). API path was already
+  fully tested (draft → open + qtyReserved), so this is web-only.
+
+## Checkpoint — 2026-08-29 (per-member nav visibility + selling-store scope)
+
+- Owner: (1) any left-nav tab can be hidden per member; (2) the owner
+  picks which stores each member can sell out of.
+- **Nav**: migration **0074_member_hidden_nav**
+  (`memberships.hidden_nav_json`), `hiddenNav` on members list/PATCH
+  (validated hrefs, deduped, audited), new `GET /v1/business/members/me`
+  (the caller's own hiddenNav/dataScope/scopeLocationIds — no permission
+  needed). The app shell fetches /me and drops hidden tabs (empty groups
+  vanish); the member page gains a **Navigation** card — grouped
+  checkboxes mirroring the sidebar, immediate save, "Show all" reset.
+  Visibility only: the API stays permission-gated.
+- **Selling stores**: rides the existing data-scope +
+  membership_location_scopes rows (the member page's scope card,
+  retitled "Store access"). NEW enforcement: `assertSellingScope` 403s
+  order/sale creation at out-of-scope locations ("You are not set up to
+  sell at this location…"), and `pos/locations` filters a store-scoped
+  member's list to their stores (warehouses always pass — they are
+  inventory sources, not selling locations).
+- Tests: orders suite 77→80 (scoped cashier blocked off-scope + allowed
+  in-scope + filtered pos/locations + owner unrestricted; hiddenNav
+  dedupe/roundtrip via /me; malformed hrefs 400; cleanup restores).
+
+## Amendment — 2026-08-29 (selling scope decoupled from data scope)
+
+- Owner amendment (supersedes the morning's coupling): members should
+  **see all stores' data** but **sell only at approved stores**, pick
+  the store at login, and have the money tendered count toward that
+  store. Migration **0075_member_selling_scope**
+  (`memberships.selling_scope` 'all'|'approved'); tenant context carries
+  `sellingScope` (scope rows load when either scope is restricted);
+  `assertSellingScope` + the pos/locations filter now key off
+  sellingScope, leaving dataScope purely about visibility. Member page
+  "Store access": two switches (Where can they sell? / Whose data can
+  they see?) over one Approved-stores list.
+- **Login store choice**: `/members/me` returns sellingScope + the
+  approved stores WITH names; the app shell shows a "Which store are
+  you selling at today?" picker on first load of a login session
+  (auto-picks a single store), stores the choice in sessionStorage, and
+  shows a topbar "Selling at X" chip (click to change). New Sale opens
+  at the session store, so sales/orders — and every tender on them —
+  post to that store's drawer, shift, and closeout.
+- Tests reworked: approved-only cashier blocked off-scope, allowed
+  in-scope, pos/locations filtered, **data still visible everywhere**
+  (owner's off-scope order listed), /me carries the picker payload.

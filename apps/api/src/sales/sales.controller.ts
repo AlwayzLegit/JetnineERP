@@ -11,7 +11,7 @@ import {
   Query,
 } from '@nestjs/common';
 import { and, desc, eq, ilike, inArray, or, sql } from 'drizzle-orm';
-import { salesScopeCond } from '../common/sales-scope';
+import { assertSellingScope, salesScopeCond } from '../common/sales-scope';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { schema } from '@jetnine/db';
 import { AuditService } from '../audit/audit.service';
@@ -389,10 +389,17 @@ export class SalesController {
       .from(schema.locations)
       .where(eq(schema.locations.isActive, true))
       .orderBy(schema.locations.name);
-    return rows.map((r) => ({
-      ...r,
-      taxRateBps: r.taxRateBps ?? biz?.defaultTaxRateBps ?? 0,
-    }));
+    // A selling-restricted member sells only at their approved stores.
+    // Warehouses always pass: they are inventory sources, not selling
+    // locations, and the register needs them for fulfill-from.
+    const scopeIds =
+      tenant.sellingScope === 'approved' ? new Set(tenant.scopeLocationIds ?? []) : null;
+    return rows
+      .filter((r) => !scopeIds || r.locationType === 'warehouse' || scopeIds.has(r.id))
+      .map((r) => ({
+        ...r,
+        taxRateBps: r.taxRateBps ?? biz?.defaultTaxRateBps ?? 0,
+      }));
   }
 
   /**
@@ -548,6 +555,7 @@ export class SalesController {
     @Body() body: CreateSaleBody,
   ): Promise<SaleDetail> {
     if (!body.locationId) throw new BadRequestException('locationId is required');
+    assertSellingScope(tenant, body.locationId);
     if (!body.lines || body.lines.length === 0) {
       throw new BadRequestException('lines must contain at least one entry');
     }

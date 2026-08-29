@@ -41,6 +41,7 @@ interface OrderPayment {
   method: string;
   amountCents: number;
   status: string;
+  processorRef: string | null;
   createdAt: string;
 }
 interface OrderDetail {
@@ -142,14 +143,17 @@ function auditChanges(row: AuditRow): { field: string; from: string; to: string 
   }));
 }
 
-const PAYMENT_METHODS = [
-  'cash',
-  'card',
-  'external_card',
-  'check',
-  'financing',
-  'store_credit',
-  'gift_card',
+/** Same tender list (and labels) as the New Sale register. */
+const TENDERS = [
+  { value: 'card', label: 'Credit card' },
+  { value: 'cash', label: 'Cash' },
+  { value: 'check', label: 'Check' },
+  { value: 'paypal', label: 'PayPal' },
+  { value: 'venmo', label: 'Venmo' },
+  { value: 'zelle', label: 'Zelle' },
+  { value: 'synchrony', label: 'Synchrony' },
+  { value: 'acima', label: 'Acima' },
+  { value: 'store_credit', label: 'Store credit' },
 ] as const;
 
 export default function OrderDetailPage() {
@@ -167,7 +171,8 @@ export default function OrderDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [payAmount, setPayAmount] = useState('');
-  const [payMethod, setPayMethod] = useState<(typeof PAYMENT_METHODS)[number]>('cash');
+  const [payMethod, setPayMethod] = useState<(typeof TENDERS)[number]['value']>('card');
+  const [payRef, setPayRef] = useState('');
   const [deliveries, setDeliveries] = useState<DeliveryRow[]>([]);
   const [deliveryDate, setDeliveryDate] = useState('');
   const [dayCapacity, setDayCapacity] = useState<{ booked: number; cap: number } | null>(null);
@@ -240,6 +245,24 @@ export default function OrderDetailPage() {
     }
   }
 
+  // A parked draft becomes a live sale: the PATCH reserves stock and
+  // re-runs the price-variance gate (G6), unlike the bare /reserve.
+  async function confirmDraft() {
+    setBusy(true);
+    setError(null);
+    try {
+      await api(`/v1/orders/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status: 'open' }),
+      });
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function addLine(row: SearchRow) {
     setShowAddProduct(false);
     setBusy(true);
@@ -290,8 +313,13 @@ export default function OrderDetailPage() {
       setError('Enter a payment amount.');
       return;
     }
-    await act('/payments', { method: payMethod, amountCents: cents });
+    await act('/payments', {
+      method: payMethod,
+      amountCents: cents,
+      ...(payRef.trim() ? { processorRef: payRef.trim() } : {}),
+    });
     setPayAmount('');
+    setPayRef('');
   }
 
   if (error && !order) {
@@ -619,6 +647,7 @@ export default function OrderDetailPage() {
                       <th>When</th>
                       <th>Kind</th>
                       <th>Method</th>
+                      <th>Reference</th>
                       <th>Status</th>
                       <th className="num">Amount</th>
                     </tr>
@@ -628,7 +657,10 @@ export default function OrderDetailPage() {
                       <tr key={p.id}>
                         <td>{new Date(p.createdAt).toLocaleString()}</td>
                         <td>{p.kind}</td>
-                        <td>{p.method}</td>
+                        <td>{TENDERS.find((t) => t.value === p.method)?.label ?? p.method}</td>
+                        <td className="muted" style={{ fontSize: 12.5 }}>
+                          {p.processorRef ?? '—'}
+                        </td>
                         <td>
                           <StatusBadge status={p.status} />
                         </td>
@@ -642,54 +674,83 @@ export default function OrderDetailPage() {
               </div>
             )}
             {live && (
-              <div
-                style={{
-                  display: 'flex',
-                  gap: 8,
-                  marginTop: 12,
-                  alignItems: 'center',
-                  flexWrap: 'wrap',
-                }}
-              >
-                <Input
-                  type="number"
-                  step="0.01"
-                  min={0}
-                  value={payAmount}
-                  onChange={(e) => setPayAmount(e.target.value)}
-                  placeholder={
-                    depositOutstanding > 0
-                      ? (depositOutstanding / 100).toFixed(2)
-                      : (order.balanceDueCents / 100).toFixed(2)
-                  }
-                  style={{ width: 100 }}
-                  data-testid="payment-amount"
-                />
-                <Select
-                  value={payMethod}
-                  onChange={(e) => setPayMethod(e.target.value as typeof payMethod)}
-                  style={{ width: 130 }}
+              <div style={{ marginTop: 12, display: 'grid', gap: 8 }}>
+                <div
+                  style={{
+                    display: 'flex',
+                    gap: 8,
+                    alignItems: 'center',
+                    flexWrap: 'wrap',
+                  }}
                 >
-                  {PAYMENT_METHODS.map((m) => (
-                    <option key={m} value={m}>
-                      {m.replace('_', ' ')}
-                    </option>
-                  ))}
-                </Select>
-                <Button
-                  variant="primary"
-                  onClick={() => void takePayment()}
-                  disabled={busy}
-                  data-testid="take-payment"
-                >
-                  <CreditCard size={14} aria-hidden />
-                  {order.paidCents === 0 ? 'Take deposit' : 'Take payment'}
-                </Button>
-                {depositOutstanding > 0 && (
-                  <span style={{ fontSize: 12, color: 'var(--warning)' }}>
-                    Deposit outstanding: {formatMoney(depositOutstanding)}
-                  </span>
+                  <Select
+                    value={payMethod}
+                    onChange={(e) => setPayMethod(e.target.value as typeof payMethod)}
+                    style={{ width: 150 }}
+                    data-testid="order-pay-method"
+                  >
+                    {TENDERS.map((t) => (
+                      <option key={t.value} value={t.value}>
+                        {t.label}
+                      </option>
+                    ))}
+                  </Select>
+                  <Input
+                    type="number"
+                    step="0.01"
+                    min={0}
+                    value={payAmount}
+                    onChange={(e) => setPayAmount(e.target.value)}
+                    placeholder={
+                      depositOutstanding > 0
+                        ? (depositOutstanding / 100).toFixed(2)
+                        : (order.balanceDueCents / 100).toFixed(2)
+                    }
+                    style={{ width: 110 }}
+                    data-testid="payment-amount"
+                  />
+                  {order.balanceDueCents > 0 && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => setPayAmount((order.balanceDueCents / 100).toFixed(2))}
+                    >
+                      Exact balance
+                    </Button>
+                  )}
+                </div>
+                {payMethod !== 'cash' && (
+                  <Input
+                    placeholder="Reference / last 4 / approval #"
+                    value={payRef}
+                    onChange={(e) => setPayRef(e.target.value)}
+                    style={{ maxWidth: 420 }}
+                    data-testid="payment-ref"
+                  />
                 )}
+                <div
+                  style={{
+                    display: 'flex',
+                    gap: 8,
+                    alignItems: 'center',
+                    flexWrap: 'wrap',
+                  }}
+                >
+                  <Button
+                    variant="primary"
+                    onClick={() => void takePayment()}
+                    disabled={busy}
+                    data-testid="take-payment"
+                  >
+                    <CreditCard size={14} aria-hidden />
+                    {order.paidCents === 0 ? 'Take deposit' : 'Take payment'}
+                  </Button>
+                  {depositOutstanding > 0 && (
+                    <span style={{ fontSize: 12, color: 'var(--warning)' }}>
+                      Deposit outstanding: {formatMoney(depositOutstanding)}
+                    </span>
+                  )}
+                </div>
               </div>
             )}
           </Card>
@@ -970,6 +1031,17 @@ export default function OrderDetailPage() {
           {live && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               {error && <p style={{ color: 'var(--danger)', margin: 0, fontSize: 13 }}>{error}</p>}
+              {order.status === 'draft' && (
+                <Button
+                  variant="primary"
+                  onClick={() => void confirmDraft()}
+                  disabled={busy}
+                  data-testid="confirm-draft"
+                >
+                  <CheckCircle2 size={14} aria-hidden />
+                  Confirm order — make it a live sale
+                </Button>
+              )}
               {order.status === 'quote' && (
                 <Button
                   variant="primary"
@@ -1005,7 +1077,7 @@ export default function OrderDetailPage() {
                   Complete with balance due (AR)
                 </Button>
               )}
-              {order.status !== 'quote' && order.status !== 'fulfilled' && (
+              {!['quote', 'fulfilled', 'draft'].includes(order.status) && (
                 <Button onClick={() => void act('/release')} disabled={busy}>
                   Release reserved stock
                 </Button>
