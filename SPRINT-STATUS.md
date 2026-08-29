@@ -3360,3 +3360,16 @@ pass reasonCodeId` writing an exchange in production: the New Exchange
   "Sales receipts" card shown only when present.
 - Tests: orders suite 76→77 (fresh customer, two orders: newest-first
   ordering, paid/balance math, line description/price/state fields).
+
+## Checkpoint — 2026-08-29 (purchase history: legacy receipts included)
+
+- Owner report (PAT WEAVER): 2 lifetime documents / $932.93 but
+  Purchase history said "No orders yet" — the documents are imported
+  STORIS sales receipts, which live in `sales`, not `orders`.
+  `/order-history` now merges both: orders and sales newest-first with
+  a `docType` marker, sale lines from `sale_lines` (settled: paid in
+  full, goods handed over). The customer page shows receipts in the
+  same Purchase history blocks (linked to /sales/:id, "receipt" chip)
+  and the separate Sales receipts card is gone.
+- Tests: the history test now also inserts a 2024 STORIS receipt and
+  asserts merged ordering, docType, and receipt line detail (77/77).

@@ -3179,14 +3179,50 @@ describe('Customer purchase history — orders with line detail in one call', ()
       });
     expect(second.status).toBe(201);
 
+    // A legacy STORIS receipt — imported sales are documents too, and
+    // the customer file must show what was bought on them.
+    const sql = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    try {
+      const db = drizzle(sql);
+      const [sale] = await db
+        .insert(schema.sales)
+        .values({
+          businessId,
+          locationId,
+          number: 'STORIS-HIST-1',
+          status: 'completed',
+          customerId: custId,
+          subtotalCents: 87_190,
+          taxCents: 6_103,
+          totalCents: 93_293,
+          importedAt: new Date('2024-05-01T12:00:00Z'),
+          completedAt: new Date('2024-05-01T12:00:00Z'),
+          createdAt: new Date('2024-05-01T12:00:00Z'),
+        })
+        .returning();
+      await db.insert(schema.saleLines).values({
+        businessId,
+        saleId: sale!.id,
+        description: 'SEALY POSTUREPEDIC QUEEN',
+        quantity: 1,
+        unitPriceCents: 87_190,
+        taxCents: 6_103,
+        totalCents: 87_190,
+      });
+    } finally {
+      await sql.end({ timeout: 5 });
+    }
+
     const res = await asOwner().get(`/v1/customers/${custId}/order-history`);
     expect(res.status).toBe(200);
-    expect(res.body).toHaveLength(2);
-    // Newest first.
+    expect(res.body).toHaveLength(3);
+    // Newest first; the 2024 receipt sorts last.
     expect(res.body[0].id).toBe(second.body.id);
     expect(res.body[1].id).toBe(first.body.id);
+    expect(res.body[2].docType).toBe('sale');
 
     const older = res.body[1];
+    expect(older.docType).toBe('order');
     expect(older.number).toBe(first.body.number);
     expect(older.paidCents).toBe(50_000);
     expect(older.balanceDueCents).toBe(older.totalCents - 50_000);
@@ -3201,5 +3237,16 @@ describe('Customer purchase history — orders with line detail in one call', ()
     expect(newer.paidCents).toBe(0);
     expect(newer.balanceDueCents).toBe(newer.totalCents);
     expect(newer.lines[0].description).toContain('Chair');
+
+    // The receipt carries its items and reads as settled.
+    const receipt = res.body[2];
+    expect(receipt.number).toBe('STORIS-HIST-1');
+    expect(receipt.importedAt).toBeTruthy();
+    expect(receipt.totalCents).toBe(93_293);
+    expect(receipt.paidCents).toBe(93_293);
+    expect(receipt.balanceDueCents).toBe(0);
+    expect(receipt.lines).toHaveLength(1);
+    expect(receipt.lines[0].description).toBe('SEALY POSTUREPEDIC QUEEN');
+    expect(receipt.lines[0].qtyFulfilled).toBe(1);
   });
 });
