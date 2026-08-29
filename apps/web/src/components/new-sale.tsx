@@ -131,7 +131,26 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
   const [custMore, setCustMore] = useState(false);
   const [custOpen, setCustOpen] = useState(false);
   const [creatingCustomer, setCreatingCustomer] = useState(false);
-  const [newCust, setNewCust] = useState({ firstName: '', lastName: '', phone: '', email: '' });
+  const [newCust, setNewCust] = useState({
+    firstName: '',
+    lastName: '',
+    phone: '',
+    email: '',
+    referralSource: '',
+    line1: '',
+    line2: '',
+    city: '',
+    region: '',
+    postalCode: '',
+  });
+  const [billDiffers, setBillDiffers] = useState(false);
+  const [newBill, setNewBill] = useState({
+    line1: '',
+    line2: '',
+    city: '',
+    region: '',
+    postalCode: '',
+  });
   const custTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // --- ship to ---
@@ -266,6 +285,11 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
         if (locs[0]) {
           setLocationId(locs[0].id);
           setTaxRateBps(locs[0].taxRateBps ?? 0);
+          // Goods come off the truck from the warehouse by default —
+          // product search (and each added line's source) starts there;
+          // the cashier flips "From" to the store for floor stock.
+          const wh = locs.find((l) => l.locationType === 'warehouse');
+          if (wh && wh.id !== locs[0].id) setSearchSourceId(wh.id);
         }
       })
       .catch((err) => setError(err instanceof Error ? err.message : String(err)));
@@ -657,7 +681,10 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
     setDeliveryInstructions('');
     setRequestedDate('');
     setShipDiffers(false);
-    setSearchSourceId('');
+    {
+      const wh = locations.find((l) => l.locationType === 'warehouse');
+      setSearchSourceId(wh && wh.id !== locationId ? wh.id : '');
+    }
     setResumedDraftId(null);
     setOrderType('sales_order');
     setDone(null);
@@ -821,37 +848,167 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
                   // narrow column the overflowing Create button lands
                   // *under* the totals rail, which then swallows its
                   // clicks (caught by the checkpoint-8 e2e run).
-                  <div className="grid gap-2 sm:grid-cols-4">
-                    <Input
-                      placeholder="First name"
-                      value={newCust.firstName}
-                      onChange={(e) => setNewCust({ ...newCust, firstName: e.target.value })}
-                      style={{ minWidth: 0 }}
-                    />
-                    <Input
-                      placeholder="Last name"
-                      value={newCust.lastName}
-                      onChange={(e) => setNewCust({ ...newCust, lastName: e.target.value })}
-                      style={{ minWidth: 0 }}
-                    />
-                    <Input
-                      placeholder="Phone"
-                      value={newCust.phone}
-                      onChange={(e) => setNewCust({ ...newCust, phone: e.target.value })}
-                      style={{ minWidth: 0 }}
-                    />
-                    <div className="flex min-w-0 gap-2">
+                  <div style={{ display: 'grid', gap: 8 }}>
+                    <div className="grid gap-2 sm:grid-cols-4">
+                      <Input
+                        placeholder="First name"
+                        value={newCust.firstName}
+                        onChange={(e) => setNewCust({ ...newCust, firstName: e.target.value })}
+                        style={{ minWidth: 0 }}
+                      />
+                      <Input
+                        placeholder="Last name"
+                        value={newCust.lastName}
+                        onChange={(e) => setNewCust({ ...newCust, lastName: e.target.value })}
+                        style={{ minWidth: 0 }}
+                      />
+                      <Input
+                        placeholder="Phone"
+                        value={newCust.phone}
+                        onChange={(e) => setNewCust({ ...newCust, phone: e.target.value })}
+                        style={{ minWidth: 0 }}
+                      />
                       <Input
                         placeholder="Email"
                         value={newCust.email}
                         onChange={(e) => setNewCust({ ...newCust, email: e.target.value })}
-                        style={{ flex: 1, minWidth: 0 }}
+                        style={{ minWidth: 0 }}
                       />
+                    </div>
+                    <div className="grid gap-2 sm:grid-cols-5">
+                      <Input
+                        placeholder="Delivery address"
+                        value={newCust.line1}
+                        onChange={(e) => setNewCust({ ...newCust, line1: e.target.value })}
+                        style={{ minWidth: 0, gridColumn: 'span 2' }}
+                        data-testid="new-customer-address"
+                      />
+                      <Input
+                        placeholder="Apt / unit"
+                        value={newCust.line2}
+                        onChange={(e) => setNewCust({ ...newCust, line2: e.target.value })}
+                        style={{ minWidth: 0 }}
+                      />
+                      <Input
+                        placeholder="City"
+                        value={newCust.city}
+                        onChange={(e) => setNewCust({ ...newCust, city: e.target.value })}
+                        style={{ minWidth: 0 }}
+                      />
+                      <div className="flex min-w-0 gap-2">
+                        <Input
+                          placeholder="State"
+                          value={newCust.region}
+                          onChange={(e) => setNewCust({ ...newCust, region: e.target.value })}
+                          style={{ width: 64, minWidth: 0 }}
+                        />
+                        <Input
+                          placeholder="ZIP"
+                          value={newCust.postalCode}
+                          onChange={(e) => setNewCust({ ...newCust, postalCode: e.target.value })}
+                          style={{ flex: 1, minWidth: 0 }}
+                        />
+                      </div>
+                    </div>
+                    <label
+                      className="flex items-center gap-2"
+                      style={{ fontSize: 13, color: 'var(--text-secondary)' }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={billDiffers}
+                        onChange={(e) => setBillDiffers(e.target.checked)}
+                      />
+                      Billing address is different
+                    </label>
+                    {billDiffers && (
+                      <div className="grid gap-2 sm:grid-cols-5">
+                        <Input
+                          placeholder="Billing address"
+                          value={newBill.line1}
+                          onChange={(e) => setNewBill({ ...newBill, line1: e.target.value })}
+                          style={{ minWidth: 0, gridColumn: 'span 2' }}
+                          data-testid="new-customer-billing"
+                        />
+                        <Input
+                          placeholder="Apt / unit"
+                          value={newBill.line2}
+                          onChange={(e) => setNewBill({ ...newBill, line2: e.target.value })}
+                          style={{ minWidth: 0 }}
+                        />
+                        <Input
+                          placeholder="City"
+                          value={newBill.city}
+                          onChange={(e) => setNewBill({ ...newBill, city: e.target.value })}
+                          style={{ minWidth: 0 }}
+                        />
+                        <div className="flex min-w-0 gap-2">
+                          <Input
+                            placeholder="State"
+                            value={newBill.region}
+                            onChange={(e) => setNewBill({ ...newBill, region: e.target.value })}
+                            style={{ width: 64, minWidth: 0 }}
+                          />
+                          <Input
+                            placeholder="ZIP"
+                            value={newBill.postalCode}
+                            onChange={(e) => setNewBill({ ...newBill, postalCode: e.target.value })}
+                            style={{ flex: 1, minWidth: 0 }}
+                          />
+                        </div>
+                      </div>
+                    )}
+                    <div className="flex min-w-0 flex-wrap gap-2">
+                      <Input
+                        placeholder="How did they hear about us?"
+                        value={newCust.referralSource}
+                        onChange={(e) => setNewCust({ ...newCust, referralSource: e.target.value })}
+                        style={{ flex: 1, minWidth: 180 }}
+                        list="referral-sources"
+                        data-testid="new-customer-referral"
+                      />
+                      <datalist id="referral-sources">
+                        {[
+                          'Walk-in / drive-by',
+                          'Google search',
+                          'Yelp',
+                          'Facebook / Instagram',
+                          'TV / radio',
+                          'Referred by friend or family',
+                          'Repeat customer',
+                          'Billboard',
+                        ].map((s) => (
+                          <option key={s} value={s} />
+                        ))}
+                      </datalist>
                       <Button
                         variant="primary"
                         size="sm"
                         data-testid="create-customer"
                         onClick={() => {
+                          const addr = (a: {
+                            line1: string;
+                            line2: string;
+                            city: string;
+                            region: string;
+                            postalCode: string;
+                          }) => ({
+                            line1: a.line1.trim() || null,
+                            line2: a.line2.trim() || null,
+                            city: a.city.trim() || null,
+                            region: a.region.trim() || null,
+                            postalCode: a.postalCode.trim() || null,
+                          });
+                          const hasAddr = (a: { line1: string; city: string }) =>
+                            Boolean(a.line1.trim() || a.city.trim());
+                          // Entry 0 is the delivery address (the delivery
+                          // flow reads it); billing rides second.
+                          const addresses = [
+                            ...(hasAddr(newCust) ? [{ label: 'delivery', ...addr(newCust) }] : []),
+                            ...(billDiffers && hasAddr(newBill)
+                              ? [{ label: 'billing', ...addr(newBill) }]
+                              : []),
+                          ];
                           void api<CustomerHit>('/v1/customers', {
                             method: 'POST',
                             body: JSON.stringify({
@@ -859,6 +1016,8 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
                               lastName: newCust.lastName || null,
                               phone: newCust.phone || null,
                               email: newCust.email || null,
+                              referralSource: newCust.referralSource || null,
+                              ...(addresses.length > 0 ? { addressesJson: addresses } : {}),
                             }),
                           })
                             .then((c) => {

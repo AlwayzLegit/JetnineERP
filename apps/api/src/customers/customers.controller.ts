@@ -37,6 +37,7 @@ interface CustomerRow {
   lastName: string | null;
   notes: string | null;
   addressesJson: unknown;
+  referralSource: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -48,6 +49,7 @@ interface CreateBody {
   lastName?: string | null;
   notes?: string | null;
   addressesJson?: unknown;
+  referralSource?: string | null;
 }
 
 type UpdateBody = CreateBody;
@@ -271,6 +273,7 @@ export class CustomersController {
         lastName: normalize(body.lastName),
         notes: normalize(body.notes),
         addressesJson: (body.addressesJson ?? null) as never,
+        referralSource: normalize(body.referralSource),
       })
       .returning(SELECT_COLS);
     if (!row) throw new BadRequestException('failed to create customer');
@@ -317,7 +320,14 @@ export class CustomersController {
     const before: Record<string, unknown> = {};
     const after: Record<string, unknown> = {};
 
-    for (const key of ['email', 'phone', 'firstName', 'lastName', 'notes'] as const) {
+    for (const key of [
+      'email',
+      'phone',
+      'firstName',
+      'lastName',
+      'notes',
+      'referralSource',
+    ] as const) {
       const v = body[key as keyof UpdateBody];
       if (v !== undefined) {
         const next = normalize(v as string | null | undefined);
@@ -408,6 +418,7 @@ const SELECT_COLS = {
   lastName: schema.customers.lastName,
   notes: schema.customers.notes,
   addressesJson: schema.customers.addressesJson,
+  referralSource: schema.customers.referralSource,
   createdAt: schema.customers.createdAt,
   updatedAt: schema.customers.updatedAt,
 } as const;

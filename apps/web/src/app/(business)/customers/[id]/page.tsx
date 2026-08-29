@@ -32,6 +32,14 @@ interface SaleSummary {
   completedAt: string | null;
   createdAt: string;
 }
+interface CustomerAddress {
+  label?: string | null;
+  line1?: string | null;
+  line2?: string | null;
+  city?: string | null;
+  region?: string | null;
+  postalCode?: string | null;
+}
 interface Customer {
   id: string;
   email: string | null;
@@ -39,9 +47,22 @@ interface Customer {
   firstName: string | null;
   lastName: string | null;
   notes: string | null;
+  addressesJson: CustomerAddress[] | null;
+  referralSource: string | null;
   createdAt: string;
   updatedAt: string;
   recentSales: SaleSummary[];
+}
+
+/** Entry labeled `delivery` (or the first) / labeled `billing` (or the second). */
+function pickAddress(
+  list: CustomerAddress[] | null,
+  kind: 'delivery' | 'billing',
+): CustomerAddress {
+  const arr = Array.isArray(list) ? list : [];
+  const labeled = arr.find((a) => a?.label === kind);
+  if (labeled) return labeled;
+  return (kind === 'delivery' ? arr.find((a) => a?.label !== 'billing') : arr[1]) ?? {};
 }
 interface HistoryLine {
   id: string;
@@ -133,6 +154,20 @@ export default function CustomerDetailPage() {
     setSaved(false);
     try {
       const data = new FormData(e.currentTarget);
+      const addrFrom = (prefix: string, label: string) => {
+        const entry = {
+          label,
+          line1: blankToNull(data.get(`${prefix}_line1`)),
+          line2: blankToNull(data.get(`${prefix}_line2`)),
+          city: blankToNull(data.get(`${prefix}_city`)),
+          region: blankToNull(data.get(`${prefix}_region`)),
+          postalCode: blankToNull(data.get(`${prefix}_postalCode`)),
+        };
+        return entry.line1 || entry.city ? entry : null;
+      };
+      const delivery = addrFrom('d', 'delivery');
+      const billing = addrFrom('b', 'billing');
+      const addresses = [...(delivery ? [delivery] : []), ...(billing ? [billing] : [])];
       await api(`/v1/customers/${id}`, {
         method: 'PATCH',
         body: JSON.stringify({
@@ -141,6 +176,8 @@ export default function CustomerDetailPage() {
           email: blankToNull(data.get('email')),
           phone: blankToNull(data.get('phone')),
           notes: blankToNull(data.get('notes')),
+          referralSource: blankToNull(data.get('referralSource')),
+          addressesJson: addresses.length > 0 ? addresses : null,
         }),
       });
       setSaved(true);
@@ -200,6 +237,58 @@ export default function CustomerDetailPage() {
           <Field label="Phone">
             <Input name="phone" defaultValue={c.phone ?? ''} style={{ width: '100%' }} />
           </Field>
+          <Field label="How did they hear about us?">
+            <Input
+              name="referralSource"
+              defaultValue={c.referralSource ?? ''}
+              style={{ width: '100%' }}
+            />
+          </Field>
+          {(['d', 'b'] as const).map((prefix) => {
+            const kind = prefix === 'd' ? 'delivery' : 'billing';
+            const a = pickAddress(c.addressesJson, kind);
+            return (
+              <div key={prefix} style={{ display: 'grid', gap: 8 }}>
+                <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-secondary)' }}>
+                  {kind === 'delivery' ? 'Delivery address' : 'Billing address (if different)'}
+                </div>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <Input
+                    name={`${prefix}_line1`}
+                    placeholder="Street address"
+                    defaultValue={a.line1 ?? ''}
+                    style={{ width: '100%' }}
+                  />
+                  <Input
+                    name={`${prefix}_line2`}
+                    placeholder="Apt / unit"
+                    defaultValue={a.line2 ?? ''}
+                    style={{ width: '100%' }}
+                  />
+                </div>
+                <div className="grid gap-2 sm:grid-cols-3">
+                  <Input
+                    name={`${prefix}_city`}
+                    placeholder="City"
+                    defaultValue={a.city ?? ''}
+                    style={{ width: '100%' }}
+                  />
+                  <Input
+                    name={`${prefix}_region`}
+                    placeholder="State"
+                    defaultValue={a.region ?? ''}
+                    style={{ width: '100%' }}
+                  />
+                  <Input
+                    name={`${prefix}_postalCode`}
+                    placeholder="ZIP"
+                    defaultValue={a.postalCode ?? ''}
+                    style={{ width: '100%' }}
+                  />
+                </div>
+              </div>
+            );
+          })}
           <Field label="Notes">
             <textarea
               name="notes"
