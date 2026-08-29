@@ -5,7 +5,16 @@ import { Suspense, useEffect, useState } from 'react';
 import { Repeat, Search } from 'lucide-react';
 import { api } from '@/lib/api';
 import { Money } from '@/components/money';
-import { Button, Card, EmptyState, Field, Input, LoadingRows, PageHeader } from '@/components/ui';
+import {
+  Button,
+  Card,
+  EmptyState,
+  Field,
+  Input,
+  LoadingRows,
+  PageHeader,
+  Select,
+} from '@/components/ui';
 
 interface OrderLine {
   id: string;
@@ -37,6 +46,11 @@ interface SaleLine {
   description: string;
   quantity: number;
 }
+interface ReasonCode {
+  id: string;
+  code: string;
+  description: string | null;
+}
 
 /**
  * Enter an Exchange (docs/erp-exchange): pick what comes back from the
@@ -61,6 +75,16 @@ function NewExchangeInner() {
   const [goodsInHand, setGoodsInHand] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  // Return-class reason codes: once the registry has any, the server
+  // refuses uncoded returns, so the picker becomes required.
+  const [reasonCodes, setReasonCodes] = useState<ReasonCode[]>([]);
+  const [reasonCodeId, setReasonCodeId] = useState('');
+  const [reasonText, setReasonText] = useState('');
+  useEffect(() => {
+    api<ReasonCode[]>('/v1/reason-codes?usageClass=return')
+      .then(setReasonCodes)
+      .catch(() => setReasonCodes([]));
+  }, []);
 
   async function loadOriginal(id: string) {
     try {
@@ -146,6 +170,8 @@ function NewExchangeInner() {
     if (!original) return;
     if (pickedReturns.length === 0) return setError('Pick at least one item to return.');
     if (saleLines.length === 0) return setError('Add at least one replacement item.');
+    if (reasonCodes.length > 0 && !reasonCodeId)
+      return setError('Pick a return reason before writing the exchange.');
     setSaving(true);
     setError(null);
     let saleOrderId = createdLegs.saleOrderId;
@@ -176,7 +202,12 @@ function NewExchangeInner() {
           body: JSON.stringify({
             fulfillment: 'pickup',
             refundMethod: 'store_credit',
-            lines: pickedReturns.map((p) => ({ lineId: p.line.id, quantity: p.quantity })),
+            ...(reasonText.trim() ? { reason: reasonText.trim() } : {}),
+            lines: pickedReturns.map((p) => ({
+              lineId: p.line.id,
+              quantity: p.quantity,
+              ...(reasonCodeId ? { reasonCodeId } : {}),
+            })),
           }),
         });
         const returns = await api<{ data: { id: string }[] }>(
@@ -302,7 +333,7 @@ function NewExchangeInner() {
                             />
                           </td>
                           <td className="num">
-                            <Money cents={l.unitPriceCents} />
+                            <Money cents={perUnitCredit(l)} />
                           </td>
                         </tr>
                       ))}
@@ -310,6 +341,35 @@ function NewExchangeInner() {
                 </table>
               </div>
             )}
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              {reasonCodes.length > 0 ? (
+                <Field label="Return reason (required)">
+                  <Select
+                    value={reasonCodeId}
+                    onChange={(e) => setReasonCodeId(e.target.value)}
+                    style={{ width: '100%' }}
+                    data-testid="return-reason-code"
+                  >
+                    <option value="">Pick a reason…</option>
+                    {reasonCodes.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.code}
+                        {c.description ? ` — ${c.description}` : ''}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+              ) : (
+                <Field label="Return reason (optional note)">
+                  <Input
+                    value={reasonText}
+                    onChange={(e) => setReasonText(e.target.value)}
+                    placeholder="Why is it coming back?"
+                    style={{ width: '100%' }}
+                  />
+                </Field>
+              )}
+            </div>
           </Card>
 
           <Card title="Replacement">
