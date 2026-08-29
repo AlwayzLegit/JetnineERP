@@ -512,4 +512,18 @@ describe('Phase 2.5 — Tax classes', () => {
       .send({ rateBps: 500 });
     expect(missing.status).toBe(404);
   });
+
+  it('pos/locations reports the EFFECTIVE tax rate — a location with no rate of its own inherits the business default', async () => {
+    // "Main" is seeded with no taxRateBps: the written order taxes at the
+    // business default (10%), so the register must display that too —
+    // the raw null rendered as 0.00% on New Sale while the server
+    // charged 9.75% (owner bug report).
+    const locs = await request(app.getHttpServer())
+      .get('/v1/pos/locations')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId);
+    expect(locs.status).toBe(200);
+    const main = locs.body.find((l: { name: string }) => l.name === 'Main');
+    expect(main.taxRateBps).toBe(1000);
+  });
 });
