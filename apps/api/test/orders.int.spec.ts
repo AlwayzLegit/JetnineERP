@@ -2686,3 +2686,185 @@ describe('FIFO COGS — fulfillment consumes layers, pre-costing stock synthesiz
     });
   });
 });
+
+describe('Fulfill-from stock location + my-orders filter', () => {
+  let warehouseId = '';
+  let wVariantId = '';
+
+  beforeAll(async () => {
+    const sql = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    const db = drizzle(sql);
+    try {
+      const [wh] = await db
+        .insert(schema.locations)
+        .values({
+          businessId,
+          name: 'Central Warehouse',
+          timezone: 'America/New_York',
+          taxRateBps: 0,
+          locationType: 'warehouse',
+        })
+        .returning();
+      warehouseId = wh!.id;
+      const [p] = await db
+        .insert(schema.products)
+        .values({ businessId, sku: 'WH-ONLY', name: 'Warehouse-only King' })
+        .returning();
+      const [v] = await db
+        .insert(schema.productVariants)
+        .values({ businessId, productId: p!.id, sku: 'WH-ONLY-1', priceCents: 50_000 })
+        .returning();
+      wVariantId = v!.id;
+      // Stock ONLY at the warehouse — the showroom has none.
+      await db.insert(schema.inventoryLevels).values({
+        businessId,
+        variantId: wVariantId,
+        locationId: warehouseId,
+        onHand: 5,
+        reserved: 0,
+      });
+    } finally {
+      await sql.end({ timeout: 5 });
+    }
+  });
+
+  async function levelAt(variantId: string, locId: string) {
+    const sql = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    const db = drizzle(sql);
+    try {
+      const [row] = await db
+        .select()
+        .from(schema.inventoryLevels)
+        .where(
+          and(
+            eq(schema.inventoryLevels.variantId, variantId),
+            eq(schema.inventoryLevels.locationId, locId),
+          ),
+        );
+      return { onHand: row?.onHand ?? 0, reserved: row?.reserved ?? 0 };
+    } finally {
+      await sql.end({ timeout: 5 });
+    }
+  }
+
+  let whOrderId = '';
+
+  it('order sold at the showroom reserves at the warehouse when stockLocationId says so', async () => {
+    const res = await request(app.getHttpServer())
+      .post('/v1/orders')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({
+        locationId,
+        stockLocationId: warehouseId,
+        customerId,
+        fulfillmentType: 'delivery',
+        confirm: true,
+        lines: [{ variantId: wVariantId, quantity: 2 }],
+      });
+    expect(res.status).toBe(201);
+    whOrderId = res.body.id;
+    expect(res.body.stockLocationId).toBe(warehouseId);
+
+    const wh = await levelAt(wVariantId, warehouseId);
+    expect(wh.reserved).toBe(2);
+    const store = await levelAt(wVariantId, locationId);
+    expect(store.reserved).toBe(0);
+  });
+
+  it('stockLocationId cannot move while units are reserved; release frees it', async () => {
+    const blocked = await request(app.getHttpServer())
+      .patch(`/v1/orders/${whOrderId}`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ stockLocationId: null });
+    expect(blocked.status).toBe(400);
+    expect(blocked.body.message).toMatch(/release/i);
+
+    await request(app.getHttpServer())
+      .post(`/v1/orders/${whOrderId}/release`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .expect(201);
+    expect((await levelAt(wVariantId, warehouseId)).reserved).toBe(0);
+
+    const moved = await request(app.getHttpServer())
+      .patch(`/v1/orders/${whOrderId}`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ stockLocationId: null });
+    expect(moved.status).toBe(200);
+
+    // Re-point back at the warehouse and re-reserve for the fulfill test.
+    await request(app.getHttpServer())
+      .patch(`/v1/orders/${whOrderId}`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ stockLocationId: warehouseId })
+      .expect(200);
+    await request(app.getHttpServer())
+      .post(`/v1/orders/${whOrderId}/reserve`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .expect(201);
+    expect((await levelAt(wVariantId, warehouseId)).reserved).toBe(2);
+  });
+
+  it('fulfillment consumes warehouse stock, never the showroom', async () => {
+    const res = await request(app.getHttpServer())
+      .post(`/v1/orders/${whOrderId}/fulfill`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({});
+    expect(res.status).toBe(201);
+
+    const wh = await levelAt(wVariantId, warehouseId);
+    expect(wh.onHand).toBe(3);
+    expect(wh.reserved).toBe(0);
+    const store = await levelAt(wVariantId, locationId);
+    expect(store.onHand).toBe(0);
+    expect(store.reserved).toBe(0);
+  });
+
+  it('mine=1 returns only orders credited to the caller, on both list endpoints', async () => {
+    // Cashier writes an order — salesperson defaults to their membership.
+    const mineRes = await request(app.getHttpServer())
+      .post('/v1/orders')
+      .set('Cookie', cashierCookie)
+      .set('X-Business-Id', businessId)
+      .send({
+        locationId,
+        customerId,
+        fulfillmentType: 'take_with',
+        lines: [{ variantId: sofaVariantId, quantity: 1 }],
+      });
+    expect(mineRes.status).toBe(201);
+    const cashierOrderId = mineRes.body.id as string;
+
+    const cashierMine = await request(app.getHttpServer())
+      .get('/v1/orders?mine=1&limit=50')
+      .set('Cookie', cashierCookie)
+      .set('X-Business-Id', businessId);
+    expect(cashierMine.status).toBe(200);
+    const cashierIds = cashierMine.body.data.map((o: { id: string }) => o.id);
+    expect(cashierIds).toContain(cashierOrderId);
+    expect(cashierIds).not.toContain(whOrderId);
+
+    const ownerMine = await request(app.getHttpServer())
+      .get('/v1/orders?mine=1&limit=50')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId);
+    const ownerIds = ownerMine.body.data.map((o: { id: string }) => o.id);
+    expect(ownerIds).toContain(whOrderId);
+    expect(ownerIds).not.toContain(cashierOrderId);
+
+    const listView = await request(app.getHttpServer())
+      .get('/v1/orders/list-view?mine=1&limit=50')
+      .set('Cookie', cashierCookie)
+      .set('X-Business-Id', businessId);
+    expect(listView.status).toBe(200);
+    const lvIds = listView.body.data.map((o: { id: string }) => o.id);
+    expect(lvIds).toContain(cashierOrderId);
+    expect(lvIds).not.toContain(whOrderId);
+  });
+});

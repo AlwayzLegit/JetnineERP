@@ -367,12 +367,13 @@ export class SalesController {
   @RequirePermission('pos.access')
   async posLocations(
     @CurrentTenant() _tenant: RequestTenantContext,
-  ): Promise<{ id: string; name: string; taxRateBps: number | null }[]> {
+  ): Promise<{ id: string; name: string; taxRateBps: number | null; locationType: string }[]> {
     return this.db
       .select({
         id: schema.locations.id,
         name: schema.locations.name,
         taxRateBps: schema.locations.taxRateBps,
+        locationType: schema.locations.locationType,
       })
       .from(schema.locations)
       .where(eq(schema.locations.isActive, true))

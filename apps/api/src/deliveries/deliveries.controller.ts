@@ -652,10 +652,17 @@ export class DeliveriesController {
     );
     if (plan.errors.length > 0) throw new BadRequestException(plan.errors.join('; '));
 
+    // Consume from the order's fulfill-from location — the delivery row
+    // itself lives on the selling store's calendar.
+    const [stockOwner] = await this.db
+      .select({ stockLocationId: schema.orders.stockLocationId })
+      .from(schema.orders)
+      .where(eq(schema.orders.id, row.orderId))
+      .limit(1);
     await this.orders.applyFulfillment(this.db, {
       businessId: tenant.businessId!,
       orderId: row.orderId,
-      locationId: row.locationId,
+      locationId: stockOwner?.stockLocationId ?? row.locationId,
       actorUserId: actor?.id ?? null,
       steps: plan.steps,
       referenceType: 'delivery',
