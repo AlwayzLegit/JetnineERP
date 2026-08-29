@@ -56,6 +56,7 @@ interface HistoryLine {
 }
 interface HistoryOrder {
   id: string;
+  docType: 'order' | 'sale';
   number: string;
   status: string;
   orderKind: string;
@@ -332,7 +333,7 @@ export default function CustomerDetailPage() {
           Export purchase history CSV
         </Button>
         {!history || history.length === 0 ? (
-          <EmptyState>No orders yet.</EmptyState>
+          <EmptyState>No purchases yet.</EmptyState>
         ) : (
           <div style={{ display: 'grid', gap: 12 }}>
             {history.map((o) => (
@@ -350,10 +351,18 @@ export default function CustomerDetailPage() {
                   style={{ justifyContent: 'space-between' }}
                 >
                   <div className="flex flex-wrap items-center gap-2">
-                    <Link href={`/orders/${o.id}`} style={{ fontWeight: 600 }}>
+                    <Link
+                      href={o.docType === 'sale' ? `/sales/${o.id}` : `/orders/${o.id}`}
+                      style={{ fontWeight: 600 }}
+                    >
                       {o.number}
                     </Link>
                     <StatusBadge status={o.status} />
+                    {o.docType === 'sale' && (
+                      <span className="muted" style={{ fontSize: 12 }}>
+                        receipt
+                      </span>
+                    )}
                     {o.orderKind === 'exchange' && (
                       <span className="muted" style={{ fontSize: 12 }}>
                         exchange
@@ -417,39 +426,6 @@ export default function CustomerDetailPage() {
           </div>
         )}
       </Card>
-
-      {c.recentSales.length > 0 && (
-        <Card title="Sales receipts" style={{ marginTop: 16 }}>
-          <div style={{ overflowX: 'auto' }}>
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Sale</th>
-                  <th>Status</th>
-                  <th className="num">Total</th>
-                  <th>Date</th>
-                </tr>
-              </thead>
-              <tbody>
-                {c.recentSales.map((s) => (
-                  <tr key={s.id}>
-                    <td>
-                      <code>{s.number}</code>
-                    </td>
-                    <td>
-                      <StatusBadge status={s.status} />
-                    </td>
-                    <td className="num">
-                      <Money cents={s.totalCents} />
-                    </td>
-                    <td>{new Date(s.completedAt ?? s.createdAt).toLocaleDateString()}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </Card>
-      )}
     </div>
   );
 }
