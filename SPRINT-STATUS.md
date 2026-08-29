@@ -3406,3 +3406,13 @@ pass reasonCodeId` writing an exchange in production: the New Exchange
   what the server charges.
 - Tests: taxes suite 13→14 (a location with no rate of its own reports
   the business default through pos/locations).
+
+## Checkpoint — 2026-08-29 (order page payments: New Sale parity)
+
+- Owner (SO-2026-000016): taking a payment on the order's full page now
+  mirrors the New Sale register — the same labeled tender list (Credit
+  card / Cash / Check / PayPal / Venmo / Zelle / Synchrony / Acima /
+  Store credit), a "Reference / last 4 / approval #" input on non-cash
+  tenders (sent as `processorRef` — the API already stored it), an
+  "Exact balance" quick-fill, and the payments table shows the tender
+  label plus a Reference column.
