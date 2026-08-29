@@ -3416,3 +3416,14 @@ pass reasonCodeId` writing an exchange in production: the New Exchange
   tenders (sent as `processorRef` — the API already stored it), an
   "Exact balance" quick-fill, and the payments table shows the tender
   label plus a Reference column.
+
+## Checkpoint — 2026-08-29 (order page: confirm a draft into a live sale)
+
+- Owner: a saved draft (SO-2026-000016) had no way to become a real
+  sale from the order page. New primary button **"Confirm order — make
+  it a live sale"** on draft orders (`data-testid="confirm-draft"`),
+  calling `PATCH /orders/:id {status:'open'}` — the sanctioned path that
+  reserves stock AND re-runs the G6 price-variance gate for parked
+  drafts (the bare /reserve does not). Also hid "Release reserved
+  stock" on drafts (nothing is reserved yet). API path was already
+  fully tested (draft → open + qtyReserved), so this is web-only.
