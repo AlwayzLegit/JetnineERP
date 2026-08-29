@@ -4,7 +4,7 @@ import { and, desc, eq, gte, inArray, isNull, lt, or, sql } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { schema } from '@jetnine/db';
 import { CurrentTenant } from '../auth/current-user.decorator';
-import { salesScopeCond } from '../common/sales-scope';
+import { salesScopeCond, sellingScopeCond } from '../common/sales-scope';
 import { CostingService } from '../costing/costing.service';
 import { DRIZZLE } from '../database/database.module';
 import { RequirePermission, TenantScoped } from '../tenancy/decorators';
@@ -150,6 +150,8 @@ interface JeopardyRow {
   sku: string | null;
   shortfall: number;
   deliveryDate: string;
+  salespersonMembershipId: string | null;
+  salespersonName: string | null;
   /** 'no_supply' — nothing inbound covers the shortfall;
    *  'late' — earliest inbound supply lands after the promised date. */
   risk: 'no_supply' | 'late';
@@ -1370,6 +1372,7 @@ export class ReportsController {
         customerId: schema.orders.customerId,
         locationId: schema.orders.locationId,
         requestedDate: schema.orders.requestedDate,
+        salespersonMembershipId: schema.orders.salespersonMembershipId,
         lineId: schema.orderLines.id,
         variantId: schema.orderLines.variantId,
         shortfall: sql<number>`(${schema.orderLines.quantity} - ${schema.orderLines.qtyReserved} - ${schema.orderLines.qtyFulfilled})::int`,
@@ -1383,6 +1386,9 @@ export class ReportsController {
           isNull(schema.orders.importedAt),
           sql`(${schema.orderLines.quantity} - ${schema.orderLines.qtyReserved} - ${schema.orderLines.qtyFulfilled}) > 0`,
           salesScopeCond(tenant, schema.orders.locationId),
+          // Owner ask 2026-08-29: an approved-only seller works only the
+          // at-risk orders of the stores they are approved for.
+          sellingScopeCond(tenant, schema.orders.locationId),
         ),
       );
     if (lines.length === 0) {
@@ -1477,7 +1483,10 @@ export class ReportsController {
     }
 
     // Labels.
-    const [customers, variants, locs] = await Promise.all([
+    const spIds = [
+      ...new Set(lines.map((l) => l.salespersonMembershipId).filter(Boolean)),
+    ] as string[];
+    const [customers, variants, locs, salespeople] = await Promise.all([
       this.db
         .select({
           id: schema.customers.id,
@@ -1505,12 +1514,24 @@ export class ReportsController {
         .select({ id: schema.locations.id, name: schema.locations.name })
         .from(schema.locations)
         .where(inArray(schema.locations.id, [...new Set(lines.map((l) => l.locationId))])),
+      spIds.length
+        ? this.db
+            .select({
+              membershipId: schema.memberships.id,
+              name: schema.users.name,
+              email: schema.users.email,
+            })
+            .from(schema.memberships)
+            .innerJoin(schema.users, eq(schema.users.id, schema.memberships.userId))
+            .where(inArray(schema.memberships.id, spIds))
+        : Promise.resolve([]),
     ]);
     const customerBy = new Map(
       customers.map((c) => [c.id, [c.firstName, c.lastName].filter(Boolean).join(' ') || null]),
     );
     const variantBy = new Map(variants.map((v) => [v.id, v]));
     const locBy = new Map(locs.map((l) => [l.id, l.name]));
+    const spBy = new Map(salespeople.map((m) => [m.membershipId, m.name || m.email]));
 
     const rows: JeopardyRow[] = [];
     for (const l of lines) {
@@ -1542,6 +1563,10 @@ export class ReportsController {
         sku: v?.sku ?? null,
         shortfall: l.shortfall,
         deliveryDate: promised,
+        salespersonMembershipId: l.salespersonMembershipId,
+        salespersonName: l.salespersonMembershipId
+          ? (spBy.get(l.salespersonMembershipId) ?? null)
+          : null,
         risk,
         daysLate,
         supplySource: supply?.source ?? null,
@@ -1567,6 +1592,7 @@ export class ReportsController {
             [
               'order',
               'customer',
+              'salesperson',
               'location',
               'product',
               'sku',
@@ -1581,6 +1607,7 @@ export class ReportsController {
             rows.map((r) => [
               r.orderNumber,
               r.customerName,
+              r.salespersonName,
               r.locationName,
               r.productName,
               r.sku,
