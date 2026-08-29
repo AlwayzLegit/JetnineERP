@@ -14,6 +14,8 @@ export const customers = pgTable(
     firstName: text('first_name'),
     lastName: text('last_name'),
     addressesJson: jsonb('addresses_json'),
+    /** Where they heard about us (lead source), captured at the counter. */
+    referralSource: text('referral_source'),
     notes: text('notes'),
     // GENERATED ALWAYS AS — see migration. Kept here so SQL queries can
     // reference the column by Drizzle alias.

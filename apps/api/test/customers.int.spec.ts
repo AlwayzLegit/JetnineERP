@@ -292,3 +292,60 @@ describe('Epic 1.9 — Customer records', () => {
     expect(after.status).toBe(404);
   });
 });
+
+describe('Counter capture — addresses and referral source in one create', () => {
+  it('creates with delivery + billing addresses and a referral source; patch updates them', async () => {
+    const res = await request(app.getHttpServer())
+      .post('/v1/customers')
+      .set('Cookie', cashierCookie)
+      .set('X-Business-Id', businessId)
+      .send({
+        firstName: 'Dana',
+        lastName: 'Doorstep',
+        phone: '+15559876543',
+        referralSource: 'Google search',
+        addressesJson: [
+          {
+            label: 'delivery',
+            line1: '123 Mattress Ln',
+            line2: null,
+            city: 'Los Angeles',
+            region: 'CA',
+            postalCode: '90001',
+          },
+          {
+            label: 'billing',
+            line1: 'PO Box 99',
+            line2: null,
+            city: 'Los Angeles',
+            region: 'CA',
+            postalCode: '90002',
+          },
+        ],
+      });
+    expect(res.status).toBe(201);
+    expect(res.body.referralSource).toBe('Google search');
+    expect(res.body.addressesJson).toHaveLength(2);
+    expect(res.body.addressesJson[0].label).toBe('delivery');
+    expect(res.body.addressesJson[0].line1).toBe('123 Mattress Ln');
+    expect(res.body.addressesJson[1].label).toBe('billing');
+
+    const detail = await request(app.getHttpServer())
+      .get(`/v1/customers/${res.body.id}`)
+      .set('Cookie', cashierCookie)
+      .set('X-Business-Id', businessId);
+    expect(detail.status).toBe(200);
+    expect(detail.body.referralSource).toBe('Google search');
+    expect(detail.body.addressesJson[1].postalCode).toBe('90002');
+
+    const patched = await request(app.getHttpServer())
+      .patch(`/v1/customers/${res.body.id}`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ referralSource: 'Repeat customer' });
+    expect(patched.status).toBe(200);
+    expect(patched.body.referralSource).toBe('Repeat customer');
+    // Addresses untouched by a patch that does not name them.
+    expect(patched.body.addressesJson).toHaveLength(2);
+  });
+});
