@@ -32,13 +32,29 @@ export class OrderReturnsService {
     @Inject(WebhookDispatcher) private readonly webhooks: WebhookDispatcher,
   ) {}
 
-  async receiveGoods(returnId: string, actorUserId: string | null): Promise<void> {
+  async receiveGoods(
+    returnId: string,
+    actorUserId: string | null,
+    opts: { receiveLocationId?: string | null } = {},
+  ): Promise<void> {
     const [ret] = await this.db
       .select()
       .from(schema.orderReturns)
       .where(eq(schema.orderReturns.id, returnId))
       .limit(1);
     if (!ret) throw new NotFoundException('Return not found');
+    // Where the goods physically land (As-Is staging). Defaults to the
+    // original order's location; a warehouse receive names itself here.
+    if (opts.receiveLocationId) {
+      const [loc] = await this.db
+        .select({ id: schema.locations.id, businessId: schema.locations.businessId })
+        .from(schema.locations)
+        .where(eq(schema.locations.id, opts.receiveLocationId))
+        .limit(1);
+      if (!loc || loc.businessId !== ret.businessId) {
+        throw new BadRequestException('receive locationId must name a location of this business');
+      }
+    }
     if (ret.status !== 'authorized') {
       throw new ConflictException(`Return ${ret.rmaNumber} is already ${ret.status}`);
     }
@@ -119,7 +135,7 @@ export class OrderReturnsService {
             Array.from({ length: rl.quantity }, () => ({
               businessId: ret.businessId,
               variantId: line.variantId!,
-              locationId: order.locationId,
+              locationId: opts.receiveLocationId ?? order.locationId,
               quantity: 1,
               source: 'return',
               // Reference the order (matching the P8 contract the As-Is
@@ -301,6 +317,7 @@ export class OrderReturnsService {
         fulfillment: ret.fulfillment,
         unitCount: returnLines.reduce((s, l) => s + l.quantity, 0),
         reason: ret.reason ?? null,
+        receiveLocationId: opts.receiveLocationId ?? order.locationId,
       },
     });
   }

@@ -40,17 +40,35 @@ interface VariantHit {
   productName: string;
   variantName: string | null;
   sku: string | null;
+  priceCents: number;
 }
 interface SaleLine {
   variantId: string;
   description: string;
   quantity: number;
+  /** List price for the on-screen estimate; the order prices server-side. */
+  priceCents: number;
+  /** '' = the order's location; anything else ships as sourceLocationId. */
+  sourceLocationId: string;
 }
 interface ReasonCode {
   id: string;
   code: string;
   description: string | null;
 }
+interface LocationRow {
+  id: string;
+  name: string;
+  locationType?: string;
+}
+const TENDERS = [
+  { value: 'card', label: 'Credit card' },
+  { value: 'cash', label: 'Cash' },
+  { value: 'check', label: 'Check' },
+  { value: 'paypal', label: 'PayPal' },
+  { value: 'venmo', label: 'Venmo' },
+  { value: 'zelle', label: 'Zelle' },
+] as const;
 
 /**
  * Enter an Exchange (docs/erp-exchange): pick what comes back from the
@@ -80,11 +98,22 @@ function NewExchangeInner() {
   const [reasonCodes, setReasonCodes] = useState<ReasonCode[]>([]);
   const [reasonCodeId, setReasonCodeId] = useState('');
   const [reasonText, setReasonText] = useState('');
+  // Locations for "return goods to" and per-line "inventory from".
+  const [locations, setLocations] = useState<LocationRow[]>([]);
+  const [returnToId, setReturnToId] = useState(''); // '' = the order's location
+  // Collect the remaining balance (server-computed, exact) right after
+  // the settlement applies the return credit.
+  const [collectNow, setCollectNow] = useState(true);
+  const [payMethod, setPayMethod] = useState<(typeof TENDERS)[number]['value']>('card');
   useEffect(() => {
     api<ReasonCode[]>('/v1/reason-codes?usageClass=return')
       .then(setReasonCodes)
       .catch(() => setReasonCodes([]));
+    api<LocationRow[]>('/v1/business/locations')
+      .then(setLocations)
+      .catch(() => setLocations([]));
   }, []);
+  const locationName = (id: string) => locations.find((l) => l.id === id)?.name ?? 'this store';
 
   async function loadOriginal(id: string) {
     try {
@@ -143,9 +172,17 @@ function NewExchangeInner() {
           variantId: p.line.variantId!,
           description: p.line.description,
           quantity: p.quantity,
+          priceCents: p.line.unitPriceCents,
+          sourceLocationId: '',
         })),
     );
   }
+
+  // On-screen estimate only — the replacement order prices at list
+  // server-side and the collected balance is read back exactly.
+  const replacementEstCents = saleLines.reduce((s, l) => s + l.priceCents * l.quantity, 0);
+  const feeEstCents = feeOverride.trim() !== '' ? Math.round(Number(feeOverride) * 100) : 0;
+  const estNetCents = replacementEstCents - Math.max(0, returnCreditCents - feeEstCents);
 
   async function searchVariants() {
     if (!search.trim()) return setResults([]);
@@ -185,7 +222,13 @@ function NewExchangeInner() {
           body: JSON.stringify({
             locationId: original.locationId,
             confirm: true,
-            lines: saleLines.map((l) => ({ variantId: l.variantId, quantity: l.quantity })),
+            lines: saleLines.map((l) => ({
+              variantId: l.variantId,
+              quantity: l.quantity,
+              ...(l.sourceLocationId && l.sourceLocationId !== original.locationId
+                ? { sourceLocationId: l.sourceLocationId }
+                : {}),
+            })),
           }),
         });
         saleOrderId = replacement.id;
@@ -235,10 +278,29 @@ function NewExchangeInner() {
         try {
           await api(`/v1/order-returns/${returnId}/receive`, {
             method: 'POST',
-            body: JSON.stringify({}),
+            body: JSON.stringify(
+              returnToId && returnToId !== original.locationId ? { locationId: returnToId } : {},
+            ),
           });
+          // 5. Customer owes the difference → take it now, for the exact
+          // balance the server computed (credit and tax included). A
+          // payment hiccup must not strand the exchange — the
+          // replacement order's page collects too.
+          if (collectNow) {
+            const settled = await api<{
+              settlement: { saleBalanceDueCents: number };
+            }>(`/v1/exchanges/${exchange.id}`);
+            const due = settled.settlement.saleBalanceDueCents;
+            if (due > 0) {
+              await api(`/v1/orders/${saleOrderId}/payments`, {
+                method: 'POST',
+                body: JSON.stringify({ method: payMethod, amountCents: due, kind: 'balance' }),
+              });
+            }
+          }
         } catch {
-          // Settle from the exchange page once whatever blocked it clears.
+          // Settle (and collect) from the exchange page once whatever
+          // blocked it clears.
         }
       }
       router.push(`/exchanges/${exchange.id}`);
@@ -369,6 +431,24 @@ function NewExchangeInner() {
                   />
                 </Field>
               )}
+              <Field label="Return goods to">
+                <Select
+                  value={returnToId}
+                  onChange={(e) => setReturnToId(e.target.value)}
+                  style={{ width: '100%' }}
+                  data-testid="return-to-location"
+                >
+                  <option value="">{locationName(original.locationId)} — this store</option>
+                  {locations
+                    .filter((l) => l.id !== original.locationId)
+                    .map((l) => (
+                      <option key={l.id} value={l.id}>
+                        {l.name}
+                        {l.locationType === 'warehouse' ? ' (warehouse)' : ''}
+                      </option>
+                    ))}
+                </Select>
+              </Field>
             </div>
           </Card>
 
@@ -430,6 +510,8 @@ function NewExchangeInner() {
                                   .filter(Boolean)
                                   .join(' — '),
                                 quantity: 1,
+                                priceCents: r.priceCents,
+                                sourceLocationId: '',
                               },
                             ],
                       );
@@ -463,6 +545,8 @@ function NewExchangeInner() {
                   <tr>
                     <th>Item</th>
                     <th className="num">Qty</th>
+                    <th className="num">Unit price (est.)</th>
+                    <th>Inventory from</th>
                     <th>&nbsp;</th>
                   </tr>
                 </thead>
@@ -488,6 +572,36 @@ function NewExchangeInner() {
                           aria-label={`Quantity for ${l.description}`}
                         />
                       </td>
+                      <td className="num">
+                        <Money cents={l.priceCents} />
+                      </td>
+                      <td>
+                        <Select
+                          value={l.sourceLocationId}
+                          onChange={(e) =>
+                            setSaleLines((prev) =>
+                              prev.map((x, j) =>
+                                j === i ? { ...x, sourceLocationId: e.target.value } : x,
+                              ),
+                            )
+                          }
+                          data-testid="exchange-line-source"
+                          aria-label={`Inventory source for ${l.description}`}
+                        >
+                          <option value="">
+                            {original ? locationName(original.locationId) : 'This store'} — this
+                            store
+                          </option>
+                          {locations
+                            .filter((loc) => loc.id !== original?.locationId)
+                            .map((loc) => (
+                              <option key={loc.id} value={loc.id}>
+                                {loc.name}
+                                {loc.locationType === 'warehouse' ? ' (warehouse)' : ''}
+                              </option>
+                            ))}
+                        </Select>
+                      </td>
                       <td style={{ textAlign: 'right' }}>
                         <Button
                           type="button"
@@ -506,11 +620,35 @@ function NewExchangeInner() {
           </Card>
 
           <Card title="Settlement">
-            <p style={{ fontSize: 13, margin: '0 0 8px' }}>
-              Return credit (before tax adjustments): <Money cents={returnCreditCents} /> — the
-              exact credit is computed from what the customer actually paid, and nets against the
-              replacement when the goods are received.
-            </p>
+            <div style={{ fontSize: 13, margin: '0 0 10px', display: 'grid', gap: 2 }}>
+              <div>
+                Replacement (est., before tax): <Money cents={replacementEstCents} />
+              </div>
+              <div>
+                Return credit: <Money cents={returnCreditCents} />
+                {feeEstCents > 0 && (
+                  <>
+                    {' '}
+                    − restocking fee <Money cents={feeEstCents} />
+                  </>
+                )}
+              </div>
+              <div style={{ fontWeight: 600 }} data-testid="exchange-est-due">
+                {estNetCents > 0 ? (
+                  <>
+                    Estimated balance the customer owes: <Money cents={estNetCents} />
+                  </>
+                ) : (
+                  <>
+                    Estimated store credit the customer keeps: <Money cents={-estNetCents} />
+                  </>
+                )}
+              </div>
+              <p style={{ color: 'var(--text-secondary)', margin: '4px 0 0' }}>
+                Estimates exclude tax and any configured restocking percent — the exact numbers come
+                from the written orders, and the collected payment uses the exact balance.
+              </p>
+            </div>
             <div className="grid gap-3 sm:grid-cols-2">
               <Field label="Restocking fee override ($; blank = calculated from settings)">
                 <Input
@@ -531,6 +669,38 @@ function NewExchangeInner() {
                 Goods are in hand — settle immediately (uncheck if the truck picks the return up)
               </label>
             </div>
+            {goodsInHand && (
+              <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
+                  <input
+                    type="checkbox"
+                    checked={collectNow}
+                    onChange={(e) => setCollectNow(e.target.checked)}
+                    data-testid="collect-balance-now"
+                  />
+                  Collect the remaining balance now (charged for the exact amount due after the
+                  credit applies)
+                </label>
+                {collectNow && (
+                  <Field label="Payment method">
+                    <Select
+                      value={payMethod}
+                      onChange={(e) =>
+                        setPayMethod(e.target.value as (typeof TENDERS)[number]['value'])
+                      }
+                      style={{ width: '100%' }}
+                      data-testid="exchange-pay-method"
+                    >
+                      {TENDERS.map((t) => (
+                        <option key={t.value} value={t.value}>
+                          {t.label}
+                        </option>
+                      ))}
+                    </Select>
+                  </Field>
+                )}
+              </div>
+            )}
           </Card>
 
           {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
