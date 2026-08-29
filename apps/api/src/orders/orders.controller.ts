@@ -968,6 +968,112 @@ export class OrdersController {
     }));
   }
 
+  /**
+   * The customer file's purchase history: every order newest-first with
+   * its full line detail (what they bought, at what price, how much of
+   * it was delivered or came back) and the money picture, in one call —
+   * the customer page renders it without a fetch per order.
+   */
+  @Get('customers/:customerId/order-history')
+  @RequirePermission('orders.view')
+  async orderHistoryFor(
+    @CurrentTenant() _tenant: RequestTenantContext,
+    @Param('customerId') customerId: string,
+    @Query('limit') limitStr?: string,
+  ): Promise<
+    {
+      id: string;
+      number: string;
+      status: string;
+      orderKind: string;
+      fulfillmentType: string;
+      requestedDate: string | null;
+      importedAt: Date | null;
+      createdAt: Date;
+      totalCents: number;
+      paidCents: number;
+      balanceDueCents: number;
+      lines: {
+        id: string;
+        description: string;
+        quantity: number;
+        unitPriceCents: number;
+        totalCents: number;
+        taxCents: number;
+        qtyFulfilled: number;
+        qtyReturned: number;
+        fulfillmentMethod: string | null;
+      }[];
+    }[]
+  > {
+    const limit = clampLimit(limitStr, 25);
+    const orders = await this.db
+      .select({
+        id: schema.orders.id,
+        number: schema.orders.number,
+        status: schema.orders.status,
+        orderKind: schema.orders.orderKind,
+        fulfillmentType: schema.orders.fulfillmentType,
+        requestedDate: schema.orders.requestedDate,
+        importedAt: schema.orders.importedAt,
+        createdAt: schema.orders.createdAt,
+        totalCents: schema.orders.totalCents,
+      })
+      .from(schema.orders)
+      .where(eq(schema.orders.customerId, customerId))
+      .orderBy(desc(schema.orders.createdAt), desc(schema.orders.id))
+      .limit(limit);
+    if (orders.length === 0) return [];
+    const orderIds = orders.map((o) => o.id);
+    const lines = await this.db
+      .select({
+        id: schema.orderLines.id,
+        orderId: schema.orderLines.orderId,
+        description: schema.orderLines.description,
+        quantity: schema.orderLines.quantity,
+        unitPriceCents: schema.orderLines.unitPriceCents,
+        totalCents: schema.orderLines.totalCents,
+        taxCents: schema.orderLines.taxCents,
+        qtyFulfilled: schema.orderLines.qtyFulfilled,
+        qtyReturned: schema.orderLines.qtyReturned,
+        fulfillmentMethod: schema.orderLines.fulfillmentMethod,
+        lineCreatedAt: schema.orderLines.createdAt,
+      })
+      .from(schema.orderLines)
+      .where(inArray(schema.orderLines.orderId, orderIds))
+      .orderBy(schema.orderLines.createdAt);
+    const payments = await this.db
+      .select({
+        orderId: schema.payments.orderId,
+        amountCents: schema.payments.amountCents,
+        status: schema.payments.status,
+      })
+      .from(schema.payments)
+      .where(inArray(schema.payments.orderId, orderIds));
+    const paidByOrder = new Map<string, number>();
+    for (const p of payments) {
+      if (p.status !== 'succeeded' || !p.orderId) continue;
+      paidByOrder.set(p.orderId, (paidByOrder.get(p.orderId) ?? 0) + p.amountCents);
+    }
+    const linesByOrder = new Map<string, typeof lines>();
+    for (const l of lines) {
+      const bucket = linesByOrder.get(l.orderId) ?? [];
+      bucket.push(l);
+      linesByOrder.set(l.orderId, bucket);
+    }
+    return orders.map((o) => {
+      const paid = paidByOrder.get(o.id) ?? 0;
+      return {
+        ...o,
+        paidCents: paid,
+        balanceDueCents: Math.max(0, o.totalCents - paid),
+        lines: (linesByOrder.get(o.id) ?? []).map(
+          ({ orderId: _orderId, lineCreatedAt: _lineCreatedAt, ...rest }) => rest,
+        ),
+      };
+    });
+  }
+
   @Get('orders/:id')
   @RequirePermission('orders.view')
   async get(
