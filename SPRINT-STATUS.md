@@ -3262,3 +3262,20 @@ User Security` and `Review Settings Activity` extracts. "A morning's
 - Tests: orders suite 72→75 (mixed schedule/hand-over split,
   all-counter refusal message, per-line reserve/consume at two
   locations with normalization).
+
+## Checkpoint — 2026-08-29 (order-page line editing: the phone-call model swap)
+
+- Order detail (owner Q: customer calls to change their mattress
+  model): the Lines card gains **Add product** (the shared
+  ProductSearchDialog, now extracted to
+  components/product-search-dialog.tsx and reused by New Sale — same
+  testids; "From" selector sets the new line's inventory source) and a
+  per-line **remove ✕** on unfulfilled lines with a confirm that
+  explains the stock release. Both hidden while the order is locked
+  (ticket printed) or closed; guard errors (lock, open run) surface as
+  toasts. Add posts at list price so no discount gate fires; remove
+  releases at the LINE's source and recomputes totals; both audited
+  and in the order-changes feed.
+- Tests: orders suite 75→76 (model swap end to end: warehouse-sourced
+  line removed → warehouse reservation freed; replacement line
+  reserves at the order default).

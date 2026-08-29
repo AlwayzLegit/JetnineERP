@@ -10,6 +10,7 @@ import { api, ApiError } from '@/lib/api';
 import { Money } from '@/components/money';
 import { Button, Card, Input, LinkButton, LoadingRows, Select, StatusBadge } from '@/components/ui';
 import { SecurityOverrideDialog } from '@/components/security-override-dialog';
+import { ProductSearchDialog, type SearchRow } from '@/components/product-search-dialog';
 
 /**
  * Order detail (STORIS cutover Day 2): the working view of one sales
@@ -48,6 +49,7 @@ interface OrderDetail {
   status: string;
   customerId: string;
   locationId: string;
+  stockLocationId: string | null;
   fulfillmentType: string;
   requestedDate: string | null;
   subtotalCents: number;
@@ -156,6 +158,11 @@ export default function OrderDetailPage() {
   const [order, setOrder] = useState<OrderDetail | null>(null);
   const [customer, setCustomer] = useState<CustomerRow | null>(null);
   const [locationNames, setLocationNames] = useState<Map<string, string>>(new Map());
+  const [locations, setLocations] = useState<{ id: string; name: string; locationType?: string }[]>(
+    [],
+  );
+  const [showAddProduct, setShowAddProduct] = useState(false);
+  const [addSourceId, setAddSourceId] = useState('');
   const [timeline, setTimeline] = useState<AuditRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -189,8 +196,11 @@ export default function OrderDetailPage() {
     try {
       const o = await api<OrderDetail>(`/v1/orders/${id}`);
       setOrder(o);
-      void api<{ id: string; name: string }[]>('/v1/business/locations')
-        .then((locs) => setLocationNames(new Map(locs.map((l) => [l.id, l.name]))))
+      void api<{ id: string; name: string; locationType?: string }[]>('/v1/business/locations')
+        .then((locs) => {
+          setLocations(locs);
+          setLocationNames(new Map(locs.map((l) => [l.id, l.name])));
+        })
         .catch(() => undefined);
       void api<CustomerRow>(`/v1/customers/${o.customerId}`)
         .then(setCustomer)
@@ -225,6 +235,50 @@ export default function OrderDetailPage() {
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function addLine(row: SearchRow) {
+    setShowAddProduct(false);
+    setBusy(true);
+    setError(null);
+    try {
+      const defaultSource = order?.stockLocationId ?? order?.locationId;
+      await api(`/v1/orders/${id}/lines`, {
+        method: 'POST',
+        body: JSON.stringify({
+          variantId: row.variantId,
+          quantity: 1,
+          sourceLocationId: addSourceId && addSourceId !== defaultSource ? addSourceId : undefined,
+        }),
+      });
+      toast.success(`Added ${row.productName} — totals and stock updated.`);
+      await load();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function removeLine(l: OrderLine) {
+    if (
+      !confirm(
+        `Remove "${l.description}" from this order? Its reserved stock goes back to the shelf and the balance recalculates.`,
+      )
+    ) {
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      await api(`/v1/orders/${id}/lines/${l.id}`, { method: 'DELETE' });
+      toast.success('Line removed — totals and stock updated.');
+      await load();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
     } finally {
       setBusy(false);
     }
@@ -405,9 +459,42 @@ export default function OrderDetailPage() {
         onSuccess={() => void load()}
       />
 
+      {showAddProduct && (
+        <ProductSearchDialog
+          locationId={addSourceId || (order.stockLocationId ?? order.locationId)}
+          locationName={
+            locationNames.get(addSourceId || (order.stockLocationId ?? order.locationId)) ?? null
+          }
+          locations={locations}
+          storeId={order.locationId}
+          onChangeLocation={(locId) => setAddSourceId(locId)}
+          onAdd={(row) => void addLine(row)}
+          onClose={() => setShowAddProduct(false)}
+        />
+      )}
+
       <div className="grid gap-4 lg:grid-cols-[2fr_1fr]">
         <div className="min-w-0">
-          <Card title="Lines" style={{ marginBottom: 16 }}>
+          <Card
+            title="Lines"
+            style={{ marginBottom: 16 }}
+            actions={
+              live && !order.lockedAt ? (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  disabled={busy}
+                  onClick={() => {
+                    setAddSourceId(order.stockLocationId ?? order.locationId);
+                    setShowAddProduct(true);
+                  }}
+                  data-testid="order-add-product"
+                >
+                  Add product
+                </Button>
+              ) : undefined
+            }
+          >
             <div className="overflow-x-auto">
               <table className="table">
                 <thead>
@@ -418,6 +505,7 @@ export default function OrderDetailPage() {
                     <th>Reserved</th>
                     <th>Fulfilled</th>
                     <th className="num">Total</th>
+                    <th />
                   </tr>
                 </thead>
                 <tbody>
@@ -491,6 +579,25 @@ export default function OrderDetailPage() {
                       <td>{l.qtyFulfilled}</td>
                       <td className="num">
                         <Money cents={l.totalCents} />
+                      </td>
+                      <td>
+                        {live && !order.lockedAt && l.qtyFulfilled === 0 && (
+                          <button
+                            onClick={() => void removeLine(l)}
+                            disabled={busy}
+                            style={{
+                              border: 'none',
+                              background: 'none',
+                              cursor: 'pointer',
+                              color: 'var(--text-muted)',
+                            }}
+                            aria-label={`Remove ${l.description}`}
+                            title="Remove line (releases its reserved stock)"
+                            data-testid="order-remove-line"
+                          >
+                            ✕
+                          </button>
+                        )}
                       </td>
                     </tr>
                   ))}
