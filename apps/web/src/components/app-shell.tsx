@@ -129,9 +129,44 @@ export function AppShell({ children }: { children: ReactNode }) {
   // Per-member nav visibility: tabs the owner hid for this member are
   // simply not rendered (the API stays gated by permissions regardless).
   const [hiddenNav, setHiddenNav] = useState<Set<string>>(new Set());
+  // Selling-restricted members pick THE store they are working at for
+  // this login (browser session); New Sale rings at it, so the money
+  // tendered counts toward that store's drawer and closeout.
+  const [sellingStore, setSellingStore] = useState<{ id: string; name: string } | null>(null);
+  const [storeChoices, setStoreChoices] = useState<{ id: string; name: string }[]>([]);
+  const [pickStore, setPickStore] = useState(false);
+  const chooseStore = (loc: { id: string; name: string }) => {
+    try {
+      sessionStorage.setItem('jetnine.sellingStore', JSON.stringify(loc));
+    } catch {
+      // Session storage unavailable — the choice just won't stick.
+    }
+    setSellingStore(loc);
+    setPickStore(false);
+  };
   useEffect(() => {
-    api<{ hiddenNav: string[] }>('/v1/business/members/me')
-      .then((me) => setHiddenNav(new Set(me.hiddenNav ?? [])))
+    api<{
+      hiddenNav: string[];
+      sellingScope: 'all' | 'approved';
+      scopeLocations: { id: string; name: string }[];
+    }>('/v1/business/members/me')
+      .then((me) => {
+        setHiddenNav(new Set(me.hiddenNav ?? []));
+        if (me.sellingScope !== 'approved') return;
+        const stores = me.scopeLocations ?? [];
+        setStoreChoices(stores);
+        let saved: { id: string; name: string } | null = null;
+        try {
+          const raw = sessionStorage.getItem('jetnine.sellingStore');
+          if (raw) saved = JSON.parse(raw) as { id: string; name: string };
+        } catch {
+          saved = null;
+        }
+        const valid = saved ? stores.find((l) => l.id === saved!.id) : undefined;
+        if (valid) setSellingStore(valid);
+        else if (stores.length === 1) chooseStore(stores[0]!);
+        else if (stores.length > 1) setPickStore(true);
+      })
       .catch(() => setHiddenNav(new Set()));
   }, []);
 
@@ -201,6 +236,23 @@ export function AppShell({ children }: { children: ReactNode }) {
           </button>
           <ActiveBusinessBadge />
           <div className="ml-auto flex items-center gap-2">
+            {sellingStore && (
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                title={
+                  storeChoices.length > 1
+                    ? 'Change the store you are selling at'
+                    : 'The store you are selling at'
+                }
+                onClick={() => storeChoices.length > 1 && setPickStore(true)}
+                data-testid="selling-store-chip"
+              >
+                <MapPin size={13} aria-hidden />
+                <span className="hidden sm:inline">Selling at&nbsp;</span>
+                {sellingStore.name}
+              </button>
+            )}
             <Link href="/pos" className="btn btn-primary btn-sm no-underline">
               <Monitor size={14} aria-hidden />
               <span className="hidden sm:inline">Open register</span>
@@ -208,6 +260,51 @@ export function AppShell({ children }: { children: ReactNode }) {
             </Link>
           </div>
         </header>
+        {pickStore && storeChoices.length > 0 && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+            data-testid="store-picker"
+          >
+            <div
+              className="card"
+              style={{ maxWidth: 420, width: '100%', padding: 20, background: 'var(--surface)' }}
+            >
+              <h3 style={{ margin: '0 0 4px', fontSize: 16 }}>
+                Which store are you selling at today?
+              </h3>
+              <p style={{ margin: '0 0 12px', fontSize: 13, color: 'var(--text-secondary)' }}>
+                Everything you ring this session — including the money tendered — counts toward the
+                store you pick.
+              </p>
+              <div style={{ display: 'grid', gap: 8 }}>
+                {storeChoices.map((loc) => (
+                  <button
+                    key={loc.id}
+                    type="button"
+                    className="btn btn-secondary"
+                    style={{ justifyContent: 'flex-start' }}
+                    onClick={() => chooseStore(loc)}
+                    data-testid={`pick-store-${loc.id}`}
+                  >
+                    <MapPin size={14} aria-hidden />
+                    {loc.name}
+                  </button>
+                ))}
+              </div>
+              {sellingStore && (
+                <div style={{ marginTop: 10, textAlign: 'right' }}>
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm"
+                    onClick={() => setPickStore(false)}
+                  >
+                    Keep {sellingStore.name}
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
         <main className="mx-auto max-w-[1200px] px-4 pb-12 pt-5 md:px-6 md:pt-6">{children}</main>
       </div>
     </div>

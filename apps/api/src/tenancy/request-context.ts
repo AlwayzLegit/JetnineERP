@@ -25,9 +25,17 @@ export interface RequestTenantContext {
    */
   dataScope: 'all' | 'store';
   /**
-   * The location ids a 'store'-scoped member may see, from
-   * membership_location_scopes. Null when dataScope is 'all'. An empty
-   * array means the member sees no sales data (fail closed).
+   * Where the member may WRITE sales documents (ring sales, take
+   * orders): 'approved' limits selling to `scopeLocationIds`; 'all' is
+   * unrestricted. Independent of dataScope — a member can see every
+   * store's numbers yet sell only at their own store.
+   */
+  sellingScope: 'all' | 'approved';
+  /**
+   * The location ids from membership_location_scopes. Loaded whenever
+   * either scope is restricted; null when both are 'all'. An empty
+   * array fails closed (no data / nowhere to sell, per the restricted
+   * scope in question).
    */
   scopeLocationIds: string[] | null;
   // Populated from the request when the interceptor opens the tx; useful

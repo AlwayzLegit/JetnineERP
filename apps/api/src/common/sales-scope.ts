@@ -35,12 +35,14 @@ function isSql(x: PgColumn | SQL): x is SQL {
 }
 
 /**
- * Write-side counterpart of `salesScopeCond`: a store-scoped member may
- * only WRITE sales documents at locations inside their scope. Throws
- * 403 otherwise; a no-op for unrestricted members.
+ * Selling-side gate (owner amendment 2026-08-29): a member with
+ * `selling_scope = 'approved'` may only WRITE sales documents at their
+ * approved stores — independent of dataScope, so they can see every
+ * store's numbers yet ring sales only at their own. Throws 403
+ * otherwise; a no-op for unrestricted members.
  */
 export function assertSellingScope(tenant: RequestTenantContext, locationId: string): void {
-  if (tenant.dataScope !== 'store') return;
+  if (tenant.sellingScope !== 'approved') return;
   const ids = tenant.scopeLocationIds ?? [];
   if (!ids.includes(locationId)) {
     throw new ForbiddenException(

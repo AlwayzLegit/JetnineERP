@@ -3450,3 +3450,26 @@ pass reasonCodeId` writing an exchange in production: the New Exchange
 - Tests: orders suite 77→80 (scoped cashier blocked off-scope + allowed
   in-scope + filtered pos/locations + owner unrestricted; hiddenNav
   dedupe/roundtrip via /me; malformed hrefs 400; cleanup restores).
+
+## Amendment — 2026-08-29 (selling scope decoupled from data scope)
+
+- Owner amendment (supersedes the morning's coupling): members should
+  **see all stores' data** but **sell only at approved stores**, pick
+  the store at login, and have the money tendered count toward that
+  store. Migration **0075_member_selling_scope**
+  (`memberships.selling_scope` 'all'|'approved'); tenant context carries
+  `sellingScope` (scope rows load when either scope is restricted);
+  `assertSellingScope` + the pos/locations filter now key off
+  sellingScope, leaving dataScope purely about visibility. Member page
+  "Store access": two switches (Where can they sell? / Whose data can
+  they see?) over one Approved-stores list.
+- **Login store choice**: `/members/me` returns sellingScope + the
+  approved stores WITH names; the app shell shows a "Which store are
+  you selling at today?" picker on first load of a login session
+  (auto-picks a single store), stores the choice in sessionStorage, and
+  shows a topbar "Selling at X" chip (click to change). New Sale opens
+  at the session store, so sales/orders — and every tender on them —
+  post to that store's drawer, shift, and closeout.
+- Tests reworked: approved-only cashier blocked off-scope, allowed
+  in-scope, pos/locations filtered, **data still visible everywhere**
+  (owner's off-scope order listed), /me carries the picker payload.

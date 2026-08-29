@@ -20,6 +20,7 @@ interface Member {
   roleId: string;
   roleName: string;
   dataScope: 'all' | 'store';
+  sellingScope: 'all' | 'approved';
   scopeLocationIds: string[];
   hiddenNav: string[];
   invitedAt: string | null;
@@ -259,7 +260,20 @@ export default function MemberDetailPage() {
         </Card>
 
         <Card title="Store access">
-          <Field label="Which stores can they sell out of (and see sales data for)?">
+          <Field label="Where can they sell?">
+            <Select
+              value={member.sellingScope}
+              data-testid={`selling-scope-${member.membershipId}`}
+              onChange={(e) =>
+                void patchMember({ sellingScope: e.target.value }, 'Selling access updated.')
+              }
+              style={{ width: '100%' }}
+            >
+              <option value="all">Any store</option>
+              <option value="approved">Approved stores only (picked at login)</option>
+            </Select>
+          </Field>
+          <Field label="Whose sales data can they see?">
             <Select
               value={member.dataScope}
               data-testid={`data-scope-${member.membershipId}`}
@@ -268,12 +282,15 @@ export default function MemberDetailPage() {
               }
               style={{ width: '100%' }}
             >
-              <option value="all">All locations</option>
-              <option value="store">Selected stores only</option>
+              <option value="all">All stores</option>
+              <option value="store">Approved stores only</option>
             </Select>
           </Field>
-          {member.dataScope === 'store' && (
+          {(member.sellingScope === 'approved' || member.dataScope === 'store') && (
             <div style={{ display: 'grid', gap: 4 }}>
+              <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-secondary)' }}>
+                Approved stores
+              </div>
               {locations.map((loc) => (
                 <label
                   key={loc.id}
@@ -301,9 +318,18 @@ export default function MemberDetailPage() {
               ))}
               {member.scopeLocationIds.length === 0 && (
                 <span style={{ fontSize: 12, color: 'var(--danger)' }}>
-                  No store selected — this member cannot sell anywhere and sees no sales data.
+                  No store approved —{' '}
+                  {member.sellingScope === 'approved' ? 'this member cannot sell anywhere' : ''}
+                  {member.sellingScope === 'approved' && member.dataScope === 'store'
+                    ? ' and '
+                    : ''}
+                  {member.dataScope === 'store' ? 'they see no sales data' : ''}.
                 </span>
               )}
+              <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                With approved-only selling, the member picks one of these stores at login and
+                everything they ring — including the money tendered — counts toward that store.
+              </span>
             </div>
           )}
         </Card>

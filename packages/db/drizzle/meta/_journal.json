@@ -526,6 +526,13 @@
       "when": 1788044779887,
       "tag": "0074_member_hidden_nav",
       "breakpoints": true
+    },
+    {
+      "idx": 75,
+      "version": "7",
+      "when": 1788045629060,
+      "tag": "0075_member_selling_scope",
+      "breakpoints": true
     }
   ]
 }

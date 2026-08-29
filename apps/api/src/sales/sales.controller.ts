@@ -389,10 +389,11 @@ export class SalesController {
       .from(schema.locations)
       .where(eq(schema.locations.isActive, true))
       .orderBy(schema.locations.name);
-    // A store-scoped member sells only at their scoped locations.
+    // A selling-restricted member sells only at their approved stores.
     // Warehouses always pass: they are inventory sources, not selling
     // locations, and the register needs them for fulfill-from.
-    const scopeIds = tenant.dataScope === 'store' ? new Set(tenant.scopeLocationIds ?? []) : null;
+    const scopeIds =
+      tenant.sellingScope === 'approved' ? new Set(tenant.scopeLocationIds ?? []) : null;
     return rows
       .filter((r) => !scopeIds || r.locationType === 'warehouse' || scopeIds.has(r.id))
       .map((r) => ({

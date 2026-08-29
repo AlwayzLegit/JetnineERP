@@ -34,6 +34,7 @@ interface MemberRow {
   roleId: string;
   roleName: string;
   dataScope: string;
+  sellingScope: string;
   scopeLocationIds: string[];
   hiddenNav: string[];
   invitedAt: Date | null;
@@ -52,6 +53,8 @@ interface UpdateMemberBody {
   status?: 'active' | 'disabled';
   /** Sales-data visibility: 'store' limits sales surfaces to scopeLocationIds. */
   dataScope?: 'all' | 'store';
+  /** Selling rights: 'approved' limits ringing sales to scopeLocationIds. */
+  sellingScope?: 'all' | 'approved';
   /** Replaces the member's location scope set (only meaningful with 'store'). */
   scopeLocationIds?: string[];
   /** Left-nav hrefs hidden for this member (visibility only; permissions still gate the API). */
@@ -94,6 +97,7 @@ export class MembersController {
         invitedAt: schema.memberships.invitedAt,
         acceptedAt: schema.memberships.acceptedAt,
         dataScope: schema.memberships.dataScope,
+        sellingScope: schema.memberships.sellingScope,
         hiddenNavJson: schema.memberships.hiddenNavJson,
         // Lets the commissions page show who is currently on a plan.
         commissionPlanId: schema.memberships.commissionPlanId,
@@ -132,10 +136,14 @@ export class MembersController {
   async me(@CurrentTenant() tenant: RequestTenantContext): Promise<{
     membershipId: string | null;
     dataScope: 'all' | 'store';
+    sellingScope: 'all' | 'approved';
     scopeLocationIds: string[] | null;
+    /** The approved stores WITH names — the login store picker renders these. */
+    scopeLocations: { id: string; name: string }[];
     hiddenNav: string[];
   }> {
     let hiddenNav: string[] = [];
+    let scopeLocations: { id: string; name: string }[] = [];
     if (tenant.membershipId) {
       const [row] = await this.db
         .select({ hiddenNavJson: schema.memberships.hiddenNavJson })
@@ -143,11 +151,22 @@ export class MembersController {
         .where(eq(schema.memberships.id, tenant.membershipId))
         .limit(1);
       if (row && Array.isArray(row.hiddenNavJson)) hiddenNav = row.hiddenNavJson as string[];
+      scopeLocations = await this.db
+        .select({ id: schema.locations.id, name: schema.locations.name })
+        .from(schema.membershipLocationScopes)
+        .innerJoin(
+          schema.locations,
+          eq(schema.locations.id, schema.membershipLocationScopes.locationId),
+        )
+        .where(eq(schema.membershipLocationScopes.membershipId, tenant.membershipId))
+        .orderBy(schema.locations.name);
     }
     return {
       membershipId: tenant.membershipId,
       dataScope: tenant.dataScope,
+      sellingScope: tenant.sellingScope,
       scopeLocationIds: tenant.scopeLocationIds,
+      scopeLocations,
       hiddenNav,
     };
   }
@@ -304,6 +323,15 @@ export class MembersController {
       update.dataScope = body.dataScope;
       before.dataScope = existing.dataScope;
       after.dataScope = body.dataScope;
+    }
+
+    if (body.sellingScope && body.sellingScope !== existing.sellingScope) {
+      if (body.sellingScope !== 'all' && body.sellingScope !== 'approved') {
+        throw new BadRequestException('sellingScope must be all or approved');
+      }
+      update.sellingScope = body.sellingScope;
+      before.sellingScope = existing.sellingScope;
+      after.sellingScope = body.sellingScope;
     }
 
     if (body.hiddenNav !== undefined) {

@@ -282,14 +282,27 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
     void api<LocationRow[]>('/v1/pos/locations')
       .then((locs) => {
         setLocations(locs);
-        if (locs[0]) {
-          setLocationId(locs[0].id);
-          setTaxRateBps(locs[0].taxRateBps ?? 0);
+        // The store chosen at login (session store) wins: everything
+        // rung this session — money included — counts toward it.
+        let sessionStore: (typeof locs)[number] | undefined;
+        try {
+          const raw = sessionStorage.getItem('jetnine.sellingStore');
+          if (raw) {
+            const saved = JSON.parse(raw) as { id: string };
+            sessionStore = locs.find((l) => l.id === saved.id);
+          }
+        } catch {
+          sessionStore = undefined;
+        }
+        const selling = sessionStore ?? locs.find((l) => l.locationType !== 'warehouse') ?? locs[0];
+        if (selling) {
+          setLocationId(selling.id);
+          setTaxRateBps(selling.taxRateBps ?? 0);
           // Goods come off the truck from the warehouse by default —
           // product search (and each added line's source) starts there;
           // the cashier flips "From" to the store for floor stock.
           const wh = locs.find((l) => l.locationType === 'warehouse');
-          if (wh && wh.id !== locs[0].id) setSearchSourceId(wh.id);
+          if (wh && wh.id !== selling.id) setSearchSourceId(wh.id);
         }
       })
       .catch((err) => setError(err instanceof Error ? err.message : String(err)));
