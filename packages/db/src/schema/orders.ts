@@ -47,6 +47,15 @@ export const orders = pgTable(
     locationId: uuid('location_id')
       .notNull()
       .references(() => locations.id, { onDelete: 'restrict' }),
+    /**
+     * Fulfill-from: which location's stock this order reserves and
+     * consumes. Null = the selling location. Set at write time (New Sale
+     * "Inventory from"); immutable once any line holds a reservation —
+     * release first, then move it.
+     */
+    stockLocationId: uuid('stock_location_id').references(() => locations.id, {
+      onDelete: 'restrict',
+    }),
     // Human-friendly: "SO-2026-000123", unique per business.
     number: text('number').notNull(),
     /**

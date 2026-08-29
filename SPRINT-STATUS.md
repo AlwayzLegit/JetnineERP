@@ -3212,3 +3212,28 @@ User Security` and `Review Settings Activity` extracts. "A morning's
   business int suite 26/26 (incl. new access-sheet tests). Full
   `pnpm test` running locally at commit time; green confirmed before
   merge (plus CI).
+
+## Checkpoint — 2026-08-28 (New Sale UX + fulfill-from stock location + My orders)
+
+- **Fulfill-from (owner ask: "select where the inventory is coming
+  from")**: `orders.stock_location_id` (migration 0071, null = selling
+  store) threaded through every reservation, release, fulfillment,
+  auto-transfer, quote-expiry sweep, pending-allocation backfill, and
+  delivery-completion consumption path — one coalesce, eleven call
+  sites. Immovable while units are reserved (release first, by
+  design); create/PATCH validated; exposed on list + detail.
+- **New Sale**: "Inventory from" select (warehouse-first, "Same as
+  store" default) with the product search, availability column, and
+  out-of-stock banner all reading the SOURCE location; take-with fast
+  path stays a register sale only when stock comes from the register's
+  own store; step-numbered cards (1 Customer · 2 Items · 3 Details);
+  "Exact balance" quick-fill on payments. All e2e testids preserved.
+- **My orders (owner ask: every member sees their orders)**: `mine=1`
+  on both list endpoints (salesperson OR second salesperson = caller;
+  salesperson already defaults to the writer at create); dashboard "My
+  orders" card (8 latest, status/promised/total, links to the order,
+  New Sale button) for every role with orders.view; /orders gains a
+  "My orders" chip + ?mine=1 deep link.
+- Tests: orders suite 68→72 (warehouse-only reservation, blocked move
+  while reserved + release/re-point, warehouse consumption on fulfill,
+  mine on both endpoints). pos/locations now returns locationType.

@@ -4,7 +4,15 @@ import Link from 'next/link';
 import { LogOut } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
-import { Button, Card, EmptyState, LoadingRows, Skeleton } from '@/components/ui';
+import {
+  Button,
+  Card,
+  EmptyState,
+  LinkButton,
+  LoadingRows,
+  Skeleton,
+  StatusBadge,
+} from '@/components/ui';
 import { api } from '@/lib/api';
 import { signOut, useSession } from '@/lib/auth-client';
 import { Money } from '@/components/money';
@@ -102,6 +110,16 @@ interface NotificationRow {
  * loads independently and hides itself when the caller's role can't
  * see that data (reports are permission-gated per card, not per page).
  */
+interface MyOrderRow {
+  id: string;
+  number: string;
+  status: string;
+  fulfillmentType: string | null;
+  requestedDate: string | null;
+  totalCents: number;
+  createdAt: string;
+}
+
 export default function DashboardClient() {
   const session = useSession();
   const router = useRouter();
@@ -116,6 +134,7 @@ export default function DashboardClient() {
   const [salesDenied, setSalesDenied] = useState(false);
   const [notifications, setNotifications] = useState<NotificationRow[] | null>(null);
   const [morning, setMorning] = useState<MorningBrief | null>(null);
+  const [myOrders, setMyOrders] = useState<MyOrderRow[] | null>(null);
 
   useEffect(() => {
     if (!session.data) return;
@@ -175,6 +194,11 @@ export default function DashboardClient() {
     void api<MorningBrief>('/v1/dashboard/morning')
       .then(setMorning)
       .catch(() => setMorning(null));
+    // My book: orders carrying the signed-in member as salesperson.
+    // Every associate gets this card — it needs only orders.view.
+    void api<{ data: MyOrderRow[] }>('/v1/orders?mine=1&limit=8')
+      .then((r) => setMyOrders(r.data))
+      .catch(() => setMyOrders(null));
     // Open orders for the active business, via the membership overview.
     void api<AgencyOverview>('/v1/agency/overview')
       .then((res) => {
@@ -263,6 +287,8 @@ export default function DashboardClient() {
           />
         </div>
       )}
+
+      {businessActive && myOrders != null && <MyOrdersCard orders={myOrders} />}
 
       {businessActive && morning != null && <MorningBriefCard brief={morning} />}
 
@@ -371,6 +397,65 @@ export default function DashboardClient() {
  * and associate, today's truck load, refunds/cancellations with names,
  * the modification log, and the open exception count.
  */
+function MyOrdersCard({ orders }: { orders: MyOrderRow[] }) {
+  return (
+    <Card
+      title="My orders"
+      actions={
+        <span style={{ display: 'inline-flex', gap: 8, alignItems: 'center' }}>
+          <LinkButton size="sm" variant="primary" href="/orders/new">
+            New Sale
+          </LinkButton>
+          <Link href="/orders?mine=1" style={{ fontSize: 12.5 }}>
+            View all →
+          </Link>
+        </span>
+      }
+      style={{ marginBottom: 16, padding: orders.length > 0 ? 0 : undefined }}
+      data-testid="my-orders-card"
+    >
+      {orders.length === 0 ? (
+        <EmptyState>
+          Orders you write (or are credited on) appear here for quick follow-up.
+        </EmptyState>
+      ) : (
+        <div style={{ overflowX: 'auto' }}>
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Order</th>
+                <th>Status</th>
+                <th>Fulfillment</th>
+                <th>Promised</th>
+                <th className="num">Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              {orders.map((o) => (
+                <tr key={o.id}>
+                  <td>
+                    <Link href={`/orders/${o.id}`}>
+                      <strong>{o.number}</strong>
+                    </Link>
+                  </td>
+                  <td>
+                    <StatusBadge status={o.status} />
+                  </td>
+                  <td style={{ fontSize: 13 }}>{o.fulfillmentType?.replace(/_/g, ' ') ?? '—'}</td>
+                  <td style={{ fontSize: 13 }}>{o.requestedDate ?? '—'}</td>
+                  <td className="num">
+                    <Money cents={o.totalCents} />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Card>
+  );
+}
+
 function MorningBriefCard({ brief }: { brief: MorningBrief }) {
   const usd = (c: number) =>
     `$${(c / 100).toLocaleString(undefined, { minimumFractionDigits: 2 })}`;

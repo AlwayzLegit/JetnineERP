@@ -91,6 +91,7 @@ interface LocationRow {
   id: string;
   name: string;
   taxRateBps: number | null;
+  locationType?: string;
 }
 interface MemberRow {
   membershipId: string;
@@ -119,6 +120,9 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
   // --- reference data ---
   const [locations, setLocations] = useState<LocationRow[]>([]);
   const [locationId, setLocationId] = useState('');
+  // Fulfill-from: which location's stock this order reserves/consumes.
+  // '' = same as the selling store.
+  const [stockLocationId, setStockLocationId] = useState('');
   const [taxRateBps, setTaxRateBps] = useState(0);
   const [members, setMembers] = useState<MemberRow[]>([]);
   const [recyclingFeeCents, setRecyclingFeeCents] = useState(1050);
@@ -315,6 +319,9 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
     }, 250);
   }, [custQuery]);
 
+  const sourceLocationId = stockLocationId || locationId;
+  const sourceLocation = locations.find((l) => l.id === sourceLocationId);
+
   const totals = useMemo(() => {
     let merchandise = 0;
     let recycling = 0;
@@ -419,6 +426,7 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
         id: string;
         customerId: string;
         locationId: string;
+        stockLocationId: string | null;
         fulfillmentType: string;
         requestedDate: string | null;
         deliveryInstructions: string | null;
@@ -440,6 +448,7 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
       const cust = await api<CustomerHit>(`/v1/customers/${o.customerId}`);
       setCustomer(cust);
       setLocationId(o.locationId);
+      setStockLocationId(o.stockLocationId ?? '');
       setFulfillment((o.fulfillmentType as Fulfillment) ?? 'delivery');
       setRequestedDate(o.requestedDate ?? '');
       setDeliveryInstructions(o.deliveryInstructions ?? '');
@@ -543,6 +552,7 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
         mode === 'complete' &&
         orderType === 'sales_order' &&
         fulfillment === 'take_with' &&
+        (!stockLocationId || stockLocationId === locationId) &&
         allSellable &&
         totals.paidCents >= totals.totalCents &&
         totals.totalCents > 0
@@ -585,6 +595,8 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
         method: 'POST',
         body: JSON.stringify({
           locationId,
+          stockLocationId:
+            stockLocationId && stockLocationId !== locationId ? stockLocationId : undefined,
           customerId: customer.id,
           orderKind: orderType === 'layaway' ? 'layaway' : 'sales_order',
           fulfillmentType: fulfillment,
@@ -659,6 +671,7 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
     setDeliveryInstructions('');
     setRequestedDate('');
     setShipDiffers(false);
+    setStockLocationId('');
     setResumedDraftId(null);
     setOrderType('sales_order');
     setDone(null);
@@ -753,7 +766,7 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
           </div>
         )}
 
-        <Card title="Customer" style={{ marginBottom: 14 }}>
+        <Card title={<StepTitle n={1} label="Customer" />} style={{ marginBottom: 14 }}>
           {customer ? (
             <div className="flex items-center gap-3">
               <div>
@@ -935,7 +948,7 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
         </Card>
 
         <Card
-          title="Items"
+          title={<StepTitle n={2} label="Items" />}
           style={{ marginBottom: 14 }}
           actions={
             <div className="flex gap-2">
@@ -1005,7 +1018,7 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
           )}
         </Card>
 
-        <Card title="Order details">
+        <Card title={<StepTitle n={3} label="Order details" />}>
           <div className="grid gap-2 sm:grid-cols-3 lg:grid-cols-4">
             <Field label="Order type">
               <Select
@@ -1035,6 +1048,42 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
                   </option>
                 ))}
               </Select>
+            </Field>
+            <Field label="Inventory from">
+              <Select
+                value={stockLocationId}
+                onChange={(e) => setStockLocationId(e.target.value)}
+                style={{ width: '100%' }}
+                data-testid="stock-source"
+              >
+                <option value="">Same as store</option>
+                {[...locations]
+                  .sort((a, b) =>
+                    a.locationType === b.locationType
+                      ? a.name.localeCompare(b.name)
+                      : a.locationType === 'warehouse'
+                        ? -1
+                        : 1,
+                  )
+                  .map((l) => (
+                    <option key={l.id} value={l.id}>
+                      {l.name}
+                      {l.locationType === 'warehouse' ? ' (warehouse)' : ''}
+                    </option>
+                  ))}
+              </Select>
+              {stockLocationId && stockLocationId !== locationId && (
+                <span
+                  style={{
+                    display: 'block',
+                    marginTop: 3,
+                    fontSize: 11.5,
+                    color: 'var(--text-muted)',
+                  }}
+                >
+                  Stock reserves and ships from {sourceLocation?.name ?? 'the selected location'}.
+                </span>
+              )}
             </Field>
             <Field label="Fulfillment">
               <Select
@@ -1256,15 +1305,20 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
                 style={{ width: '100%', marginTop: 6 }}
               />
             )}
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={addPayment}
-              style={{ marginTop: 8 }}
-              data-testid="add-payment"
-            >
-              Add payment
-            </Button>
+            <div className="flex gap-2" style={{ marginTop: 8 }}>
+              <Button size="sm" variant="secondary" onClick={addPayment} data-testid="add-payment">
+                Add payment
+              </Button>
+              {totals.balanceCents > 0 && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setPayAmount((totals.balanceCents / 100).toFixed(2))}
+                >
+                  Exact balance
+                </Button>
+              )}
+            </div>
           </Card>
 
           {error && (
@@ -1299,7 +1353,8 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
 
       {showProductSearch && (
         <ProductSearchDialog
-          locationId={locationId}
+          locationId={sourceLocationId}
+          locationName={sourceLocation?.name ?? null}
           onAdd={addProduct}
           onClose={() => setShowProductSearch(false)}
         />
@@ -1407,7 +1462,7 @@ function LineRow({
               }}
               data-testid="atp-banner"
             >
-              Not in stock at this store.
+              Not in stock at the selected source location.
               {l.atpDate
                 ? ` Available ~${new Date(l.atpDate).toLocaleDateString('en-US', {
                     month: 'short',
@@ -1424,10 +1479,12 @@ function LineRow({
 
 function ProductSearchDialog({
   locationId,
+  locationName,
   onAdd,
   onClose,
 }: {
   locationId: string;
+  locationName: string | null;
   onAdd: (row: SearchRow) => void;
   onClose: () => void;
 }) {
@@ -1521,7 +1578,9 @@ function ProductSearchDialog({
                   <th>SKU</th>
                   <th>Vendor</th>
                   <th className="num">Price</th>
-                  <th className="num">Here</th>
+                  <th className="num" title={locationName ?? undefined}>
+                    {locationName ? `At ${locationName}` : 'Here'}
+                  </th>
                   <th className="num">All</th>
                   <th>ATP</th>
                 </tr>
@@ -1577,6 +1636,31 @@ function ProductSearchDialog({
         </Card>
       </div>
     </div>
+  );
+}
+
+function StepTitle({ n, label }: { n: number; label: string }) {
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+      <span
+        aria-hidden
+        style={{
+          width: 20,
+          height: 20,
+          borderRadius: '50%',
+          background: 'var(--brand)',
+          color: '#fff',
+          fontSize: 11.5,
+          fontWeight: 700,
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}
+      >
+        {n}
+      </span>
+      {label}
+    </span>
   );
 }
 
