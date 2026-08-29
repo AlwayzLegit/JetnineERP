@@ -3373,3 +3373,23 @@ pass reasonCodeId` writing an exchange in production: the New Exchange
   and the separate Sales receipts card is gone.
 - Tests: the history test now also inserts a 2024 STORIS receipt and
   asserts merged ordering, docType, and receipt line detail (77/77).
+
+## Checkpoint — 2026-08-29 (POS customer capture + warehouse default source)
+
+- Owner (New Sale): the inline new-customer form now captures the
+  delivery address, a billing address when "Billing address is
+  different" is checked, and "How did they hear about us?" (datalist
+  suggestions) in the SAME Create — no create-then-edit round trip.
+  Addresses write the established `addressesJson` array convention
+  (entry 0 labeled `delivery` — the delivery flow reads it — billing
+  second); the lead source is a real column — migration
+  **0073_customer_referral_source** (`customers.referral_source`) —
+  carried through create/patch/list/detail and editable on the customer
+  page's Details form (which also gained delivery/billing address
+  fields).
+- Add Product default: the search dialog's "From" location — and
+  therefore each added line's inventory source — now defaults to the
+  warehouse when one exists (also after "next sale" reset); the cashier
+  flips From to the store for floor stock.
+- Tests: customers suite 10→11 (create with both addresses + referral,
+  detail echo, patch updates the source without clobbering addresses).
