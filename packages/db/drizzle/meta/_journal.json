@@ -498,6 +498,13 @@
       "when": 1787897867039,
       "tag": "0070_general_ledger",
       "breakpoints": true
+    },
+    {
+      "idx": 71,
+      "version": "7",
+      "when": 1787966988329,
+      "tag": "0071_order_stock_location",
+      "breakpoints": true
     }
   ]
 }

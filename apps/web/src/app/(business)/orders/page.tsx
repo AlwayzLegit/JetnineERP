@@ -102,16 +102,29 @@ export default function OrdersPage() {
   const [q, setQ] = useState('');
   const [status, setStatus] = useState('');
   const [view, setView] = useState('');
+  // Deep-linkable from the dashboard's "My orders" card (?mine=1).
+  const [mine, setMine] = useState(
+    () =>
+      typeof window !== 'undefined' &&
+      new URLSearchParams(window.location.search).get('mine') === '1',
+  );
   const [loadingMore, setLoadingMore] = useState(false);
   const [selected, setSelected] = useState<ListRow | null>(null);
   const searchSeq = useRef(0);
 
   const fetchPage = useCallback(
-    async (query: string, statusFilter: string, viewFilter: string, cursor: string | null) => {
+    async (
+      query: string,
+      statusFilter: string,
+      viewFilter: string,
+      onlyMine: boolean,
+      cursor: string | null,
+    ) => {
       const params = new URLSearchParams({ limit: '50' });
       if (query.trim()) params.set('q', query.trim());
       if (statusFilter) params.set('status', statusFilter);
       if (viewFilter) params.set('view', viewFilter);
+      if (onlyMine) params.set('mine', '1');
       if (cursor) params.set('cursor', cursor);
       return api<{ data: ListRow[]; nextCursor: string | null }>(
         `/v1/orders/list-view?${params.toString()}`,
@@ -126,7 +139,7 @@ export default function OrdersPage() {
     const seq = ++searchSeq.current;
     const t = setTimeout(
       () => {
-        fetchPage(q, status, view, null)
+        fetchPage(q, status, view, mine, null)
           .then((page) => {
             if (searchSeq.current !== seq) return;
             setRows(page.data);
@@ -142,13 +155,13 @@ export default function OrdersPage() {
     );
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [q, status, view, fetchPage]);
+  }, [q, status, view, mine, fetchPage]);
 
   async function loadMore() {
     if (!nextCursor) return;
     setLoadingMore(true);
     try {
-      const page = await fetchPage(q, status, view, nextCursor);
+      const page = await fetchPage(q, status, view, mine, nextCursor);
       setRows((prev) => [...(prev ?? []), ...page.data]);
       setNextCursor(page.nextCursor);
     } catch (err) {
@@ -196,6 +209,13 @@ export default function OrdersPage() {
           onClick={() => setView((v) => (v === 'past_due' ? '' : 'past_due'))}
         >
           Past due
+        </button>
+        <button
+          className={`btn btn-sm ${mine ? 'btn-primary' : 'btn-secondary'}`}
+          data-testid="mine-chip"
+          onClick={() => setMine((v) => !v)}
+        >
+          My orders
         </button>
       </div>
 

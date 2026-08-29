@@ -127,6 +127,8 @@ interface CreateOrderBody extends StepThreeFees {
   deliveryStatus?: (typeof DELIVERY_STATUSES)[number] | null;
   deliveryInstructions?: string | null;
   pickupLocationId?: string | null;
+  /** Fulfill-from location; null/omitted = the selling location. */
+  stockLocationId?: string | null;
   billingAddress?: AddressInput | null;
   marketingCode?: string | null;
   requestedDate?: string | null;
@@ -160,6 +162,8 @@ interface UpdateOrderBody extends StepThreeFees {
   deliveryStatus?: (typeof DELIVERY_STATUSES)[number] | null;
   deliveryInstructions?: string | null;
   pickupLocationId?: string | null;
+  /** Fulfill-from location; null/omitted = the selling location. */
+  stockLocationId?: string | null;
   billingAddress?: AddressInput | null;
   marketingCode?: string | null;
   requestedDate?: string | null;
@@ -199,6 +203,7 @@ interface OrderListRow {
   status: string;
   customerId: string;
   locationId: string;
+  stockLocationId?: string | null;
   totalCents: number;
   depositRequiredCents: number;
   fulfillmentType: string;
@@ -375,6 +380,7 @@ export class OrdersController {
     @Query('customerId') customerId?: string,
     @Query('number') number?: string,
     @Query('salespersonMembershipId') salespersonMembershipId?: string,
+    @Query('mine') mine?: string,
   ): Promise<PageResponse<OrderListRow>> {
     const limit = clampLimit(limitStr);
     const cursor = decodeCursor(cursorStr);
@@ -388,6 +394,19 @@ export class OrdersController {
     if (number) filters.push(eq(schema.orders.number, number.trim()));
     if (salespersonMembershipId)
       filters.push(eq(schema.orders.salespersonMembershipId, salespersonMembershipId));
+    // "My orders": carrying me as either salesperson — the dashboard card
+    // every associate works their book from.
+    if (mine === '1' || mine === 'true') {
+      const me = tenant.membershipId;
+      if (me) {
+        filters.push(
+          or(
+            eq(schema.orders.salespersonMembershipId, me),
+            eq(schema.orders.secondSalespersonMembershipId, me),
+          )!,
+        );
+      }
+    }
     if (cursor) {
       filters.push(
         or(
@@ -407,6 +426,7 @@ export class OrdersController {
         status: schema.orders.status,
         customerId: schema.orders.customerId,
         locationId: schema.orders.locationId,
+        stockLocationId: schema.orders.stockLocationId,
         totalCents: schema.orders.totalCents,
         depositRequiredCents: schema.orders.depositRequiredCents,
         fulfillmentType: schema.orders.fulfillmentType,
@@ -431,12 +451,13 @@ export class OrdersController {
   @Get('orders/list-view')
   @RequirePermission('orders.view')
   async listView(
-    @CurrentTenant() _tenant: RequestTenantContext,
+    @CurrentTenant() tenant: RequestTenantContext,
     @Query('limit') limitStr?: string,
     @Query('cursor') cursorStr?: string,
     @Query('status') status?: string,
     @Query('q') q?: string,
     @Query('view') view?: string,
+    @Query('mine') mine?: string,
   ): Promise<
     PageResponse<{
       id: string;
@@ -474,6 +495,15 @@ export class OrdersController {
       const like = `%${q.trim()}%`;
       filters.push(
         sql`(${schema.orders.number} ILIKE ${like} OR ${schema.customers.firstName} ILIKE ${like} OR ${schema.customers.lastName} ILIKE ${like})`,
+      );
+    }
+    // "My orders" — same semantics as the plain list endpoint.
+    if ((mine === '1' || mine === 'true') && tenant.membershipId) {
+      filters.push(
+        or(
+          eq(schema.orders.salespersonMembershipId, tenant.membershipId),
+          eq(schema.orders.secondSalespersonMembershipId, tenant.membershipId),
+        )!,
       );
     }
     const cursorWhere = timestampCursorWhere(schema.orders.createdAt, schema.orders.id, cursor);
@@ -768,6 +798,7 @@ export class OrdersController {
         id: schema.orders.id,
         number: schema.orders.number,
         locationId: schema.orders.locationId,
+        stockLocationId: schema.orders.stockLocationId,
       })
       .from(schema.orders)
       .where(
@@ -805,7 +836,7 @@ export class OrdersController {
         await this.orders.releaseOrder(this.db, {
           businessId: tenant.businessId!,
           orderId: o.id,
-          locationId: o.locationId,
+          locationId: o.stockLocationId ?? o.locationId,
           actorUserId: actor?.id ?? null,
           updateLines: true,
         });
@@ -1013,6 +1044,14 @@ export class OrdersController {
         .limit(1);
       if (!pickup) throw new NotFoundException('Pickup location not found');
     }
+    if (body.stockLocationId) {
+      const [src] = await this.db
+        .select({ id: schema.locations.id })
+        .from(schema.locations)
+        .where(eq(schema.locations.id, body.stockLocationId))
+        .limit(1);
+      if (!src) throw new NotFoundException('Stock location not found');
+    }
 
     const priced = await this.priceLines(tenant, body.locationId, body.lines);
     // Drafts skip the variance gate; it re-runs when the draft is
@@ -1034,6 +1073,10 @@ export class OrdersController {
       .values({
         businessId: tenant.businessId!,
         locationId: body.locationId,
+        stockLocationId:
+          body.stockLocationId && body.stockLocationId !== body.locationId
+            ? body.stockLocationId
+            : null,
         number,
         status: body.draft ? 'draft' : 'quote',
         customerId: body.customerId,
@@ -1103,7 +1146,7 @@ export class OrdersController {
       const plan = await this.orders.reserveOrder(this.db, {
         businessId: tenant.businessId!,
         orderId: order.id,
-        locationId: body.locationId,
+        locationId: body.stockLocationId ?? body.locationId,
         actorUserId: actor?.id ?? null,
       });
       await this.db
@@ -1116,7 +1159,7 @@ export class OrdersController {
         businessId: tenant.businessId!,
         orderId: order.id,
         orderNumber: order.number,
-        locationId: body.locationId,
+        locationId: body.stockLocationId ?? body.locationId,
         shortfalls: plan.shortfalls,
         actorUserId: actor?.id ?? null,
       });
@@ -1225,6 +1268,35 @@ export class OrdersController {
       }
       patch.pickupLocationId = body.pickupLocationId;
     }
+    if (body.stockLocationId !== undefined) {
+      if (body.stockLocationId) {
+        const [src] = await this.db
+          .select({ id: schema.locations.id })
+          .from(schema.locations)
+          .where(eq(schema.locations.id, body.stockLocationId))
+          .limit(1);
+        if (!src) throw new NotFoundException('Stock location not found');
+      }
+      const effective =
+        body.stockLocationId && body.stockLocationId !== order.locationId
+          ? body.stockLocationId
+          : null;
+      if (effective !== (order.stockLocationId ?? null)) {
+        // Reservations live at the old location — moving the source under
+        // them would strand the holds. Release first, then move.
+        const [holding] = await this.db
+          .select({ id: schema.orderLines.id })
+          .from(schema.orderLines)
+          .where(and(eq(schema.orderLines.orderId, id), sql`${schema.orderLines.qtyReserved} > 0`))
+          .limit(1);
+        if (holding) {
+          throw new BadRequestException(
+            'This order holds reserved stock — release the reservation before changing where inventory comes from',
+          );
+        }
+        patch.stockLocationId = effective;
+      }
+    }
     if (body.requestedDate !== undefined) patch.requestedDate = body.requestedDate;
     if (body.notes !== undefined) patch.notes = body.notes;
     if (body.internalNotes !== undefined) patch.internalNotes = body.internalNotes;
@@ -1306,7 +1378,7 @@ export class OrdersController {
       await this.orders.reserveOrder(this.db, {
         businessId: tenant.businessId!,
         orderId: id,
-        locationId: order.locationId,
+        locationId: order.stockLocationId ?? order.locationId,
         actorUserId: actor?.id ?? null,
       });
       await this.db
@@ -1375,7 +1447,7 @@ export class OrdersController {
       await this.orders.reserveOrder(this.db, {
         businessId: tenant.businessId!,
         orderId: id,
-        locationId: order.locationId,
+        locationId: order.stockLocationId ?? order.locationId,
         actorUserId: actor?.id ?? null,
       });
     }
@@ -1421,7 +1493,7 @@ export class OrdersController {
       await this.orders.applyReleases(this.db, {
         businessId: tenant.businessId!,
         orderId: id,
-        locationId: order.locationId,
+        locationId: order.stockLocationId ?? order.locationId,
         actorUserId: actor?.id ?? null,
         releases: [{ orderLineId: line.id, variantId: line.variantId, quantity: line.qtyReserved }],
         // The row is about to be deleted; skipping its update avoids a
@@ -1501,7 +1573,7 @@ export class OrdersController {
       await this.orders.applyReleases(this.db, {
         businessId: tenant.businessId!,
         orderId: id,
-        locationId: order.locationId,
+        locationId: order.stockLocationId ?? order.locationId,
         actorUserId: actor?.id ?? null,
         releases: [{ orderLineId: line.id, variantId: line.variantId, quantity: line.qtyReserved }],
       });
@@ -1514,7 +1586,7 @@ export class OrdersController {
       await this.orders.reserveOrder(this.db, {
         businessId: tenant.businessId!,
         orderId: id,
-        locationId: order.locationId,
+        locationId: order.stockLocationId ?? order.locationId,
         actorUserId: actor?.id ?? null,
       });
     }
@@ -1548,7 +1620,7 @@ export class OrdersController {
     const plan = await this.orders.reserveOrder(this.db, {
       businessId: tenant.businessId!,
       orderId: id,
-      locationId: order.locationId,
+      locationId: order.stockLocationId ?? order.locationId,
       actorUserId: actor?.id ?? null,
     });
 
@@ -1576,7 +1648,7 @@ export class OrdersController {
       businessId: tenant.businessId!,
       orderId: id,
       orderNumber: order.number,
-      locationId: order.locationId,
+      locationId: order.stockLocationId ?? order.locationId,
       shortfalls: plan.shortfalls,
       actorUserId: actor?.id ?? null,
     });
@@ -1602,7 +1674,7 @@ export class OrdersController {
     const released = await this.orders.releaseOrder(this.db, {
       businessId: tenant.businessId!,
       orderId: id,
-      locationId: order.locationId,
+      locationId: order.stockLocationId ?? order.locationId,
       actorUserId: actor?.id ?? null,
     });
 
@@ -1692,7 +1764,7 @@ export class OrdersController {
       await this.orders.reserveOrder(this.db, {
         businessId: tenant.businessId!,
         orderId: id,
-        locationId: order.locationId,
+        locationId: order.stockLocationId ?? order.locationId,
         actorUserId: actor?.id ?? null,
       });
       await this.db
@@ -1824,7 +1896,7 @@ export class OrdersController {
     await this.orders.applyFulfillment(this.db, {
       businessId: tenant.businessId!,
       orderId: id,
-      locationId: order.locationId,
+      locationId: order.stockLocationId ?? order.locationId,
       actorUserId: actor?.id ?? null,
       steps: plan.steps,
     });
@@ -1897,7 +1969,7 @@ export class OrdersController {
     await this.orders.releaseOrder(this.db, {
       businessId: tenant.businessId!,
       orderId: id,
-      locationId: order.locationId,
+      locationId: order.stockLocationId ?? order.locationId,
       actorUserId: actor?.id ?? null,
     });
     await this.db
@@ -2002,7 +2074,7 @@ export class OrdersController {
     await this.orders.releaseOrder(this.db, {
       businessId: tenant.businessId!,
       orderId: id,
-      locationId: order.locationId,
+      locationId: order.stockLocationId ?? order.locationId,
       actorUserId: actor?.id ?? null,
     });
     await this.db
@@ -3096,6 +3168,7 @@ export class OrdersController {
       status: order.status,
       customerId: order.customerId,
       locationId: order.locationId,
+      stockLocationId: order.stockLocationId ?? null,
       subtotalCents: order.subtotalCents,
       orderDiscountCents: order.orderDiscountCents,
       discountCents: order.discountCents,

@@ -86,7 +86,7 @@ export class OrdersService {
       .select({
         orderId: schema.orders.id,
         number: schema.orders.number,
-        locationId: schema.orders.locationId,
+        locationId: sql<string>`coalesce(${schema.orders.stockLocationId}, ${schema.orders.locationId})`,
         orderLineId: schema.orderLines.id,
         variantId: schema.orderLines.variantId,
         need: sql<number>`${need}`,
