@@ -97,6 +97,8 @@ interface OrderLineInput {
   lineType?: (typeof LINE_TYPES)[number];
   /** Split-ticket override of the order's fulfillment method. */
   fulfillmentMethod?: (typeof FULFILLMENT_TYPES)[number] | null;
+  /** Per-line fulfill-from location; null/omitted = the order's default. */
+  sourceLocationId?: string | null;
   /** Per-line promised date (YYYY-MM-DD) when items arrive separately. */
   deliveryDate?: string | null;
 }
@@ -227,6 +229,7 @@ interface OrderLineRow {
   totalCents: number;
   taxRateBps: number;
   fulfillmentMethod: string | null;
+  sourceLocationId: string | null;
   deliveryDate: string | null;
 }
 
@@ -1052,6 +1055,22 @@ export class OrdersController {
         .limit(1);
       if (!src) throw new NotFoundException('Stock location not found');
     }
+    {
+      const lineSources = [
+        ...new Set(
+          (body.lines ?? []).map((l) => l.sourceLocationId).filter((v): v is string => Boolean(v)),
+        ),
+      ];
+      if (lineSources.length > 0) {
+        const found = await this.db
+          .select({ id: schema.locations.id })
+          .from(schema.locations)
+          .where(inArray(schema.locations.id, lineSources));
+        if (found.length !== lineSources.length) {
+          throw new NotFoundException('One or more line source locations not found');
+        }
+      }
+    }
 
     const priced = await this.priceLines(tenant, body.locationId, body.lines);
     // Drafts skip the variance gate; it re-runs when the draft is
@@ -1108,6 +1127,7 @@ export class OrdersController {
       .returning();
     if (!order) throw new BadRequestException('failed to create order');
 
+    const orderDefaultSource = order.stockLocationId ?? order.locationId;
     await this.db.insert(schema.orderLines).values(
       priced.map((l, i) => ({
         businessId: tenant.businessId!,
@@ -1121,6 +1141,13 @@ export class OrdersController {
         taxRateBps: l.taxRateBps,
         taxClassId: l.taxClassId,
         fulfillmentMethod: lineFulfillment(body.lines![i]),
+        // Stored only when it actually differs from the order's default,
+        // so changing the default later re-inherits cleanly.
+        sourceLocationId:
+          body.lines![i]?.sourceLocationId &&
+          body.lines![i]!.sourceLocationId !== orderDefaultSource
+            ? body.lines![i]!.sourceLocationId!
+            : null,
         deliveryDate: body.lines![i]?.deliveryDate ?? null,
         // Placeholders — recomputeTotals prices every line against the
         // whole cart (the order discount is allocated pro-rata) and
@@ -1424,6 +1451,14 @@ export class OrdersController {
       });
     }
 
+    if (body.sourceLocationId) {
+      const [src] = await this.db
+        .select({ id: schema.locations.id })
+        .from(schema.locations)
+        .where(eq(schema.locations.id, body.sourceLocationId))
+        .limit(1);
+      if (!src) throw new NotFoundException('Line source location not found');
+    }
     const [line] = await this.db
       .insert(schema.orderLines)
       .values({
@@ -1437,6 +1472,11 @@ export class OrdersController {
         discountCents: priced!.lineDiscountCents,
         taxRateBps: priced!.taxRateBps,
         taxClassId: priced!.taxClassId,
+        sourceLocationId:
+          body.sourceLocationId &&
+          body.sourceLocationId !== (order.stockLocationId ?? order.locationId)
+            ? body.sourceLocationId
+            : null,
         taxCents: 0,
         totalCents: 0,
       })
@@ -1493,7 +1533,7 @@ export class OrdersController {
       await this.orders.applyReleases(this.db, {
         businessId: tenant.businessId!,
         orderId: id,
-        locationId: order.stockLocationId ?? order.locationId,
+        locationId: line.sourceLocationId ?? order.stockLocationId ?? order.locationId,
         actorUserId: actor?.id ?? null,
         releases: [{ orderLineId: line.id, variantId: line.variantId, quantity: line.qtyReserved }],
         // The row is about to be deleted; skipping its update avoids a
@@ -1573,7 +1613,7 @@ export class OrdersController {
       await this.orders.applyReleases(this.db, {
         businessId: tenant.businessId!,
         orderId: id,
-        locationId: order.stockLocationId ?? order.locationId,
+        locationId: line.sourceLocationId ?? order.stockLocationId ?? order.locationId,
         actorUserId: actor?.id ?? null,
         releases: [{ orderLineId: line.id, variantId: line.variantId, quantity: line.qtyReserved }],
       });
@@ -3224,6 +3264,7 @@ export class OrdersController {
         totalCents: l.totalCents,
         taxRateBps: l.taxRateBps,
         fulfillmentMethod: l.fulfillmentMethod,
+        sourceLocationId: l.sourceLocationId,
         deliveryDate: l.deliveryDate,
       })),
       payments: payments.map((p) => ({

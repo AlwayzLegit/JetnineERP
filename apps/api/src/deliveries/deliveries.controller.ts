@@ -338,6 +338,7 @@ export class DeliveriesController {
         qtyReserved: schema.orderLines.qtyReserved,
         qtyFulfilled: schema.orderLines.qtyFulfilled,
         lineType: schema.orderLines.lineType,
+        fulfillmentMethod: schema.orderLines.fulfillmentMethod,
       })
       .from(schema.orderLines)
       .where(eq(schema.orderLines.orderId, orderId));
@@ -355,15 +356,30 @@ export class DeliveriesController {
         qtyFulfilled: l.qtyFulfilled + (pending.get(l.id) ?? 0),
       }));
 
+    // Mixed fulfillment: lines EXPLICITLY marked take-with or pickup are
+    // handed over at the counter (order fulfill), never scheduled by
+    // default. Lines with no override follow the human's explicit act of
+    // scheduling — booking a delivery on a pickup-typed order is a
+    // deliberate change of plan, not a mistake to refuse. An explicit
+    // body.lines still schedules exactly what it names.
+    const counterMarked = (m: string | null) => m === 'take_with' || m === 'pickup';
+    const truckBound = schedulable.filter((l) => !counterMarked(l.fulfillmentMethod));
     const requests: FulfillmentRequest[] =
       body.lines && body.lines.length > 0
         ? body.lines.map((l) => ({
             orderLineId: String(l.orderLineId ?? ''),
             quantity: Number(l.quantity ?? 0),
           }))
-        : remainingFulfillment(schedulable);
+        : remainingFulfillment(truckBound);
     if (requests.length === 0) {
-      throw new BadRequestException('Nothing left to schedule on this order');
+      const counterRemaining = schedulable.some(
+        (l) => counterMarked(l.fulfillmentMethod) && l.quantity - l.qtyFulfilled > 0,
+      );
+      throw new BadRequestException(
+        counterRemaining
+          ? 'Nothing to schedule — the remaining units are marked take-with/pickup. Hand them over from the order page instead.'
+          : 'Nothing left to schedule on this order',
+      );
     }
     const plan = planFulfillment(schedulable, requests);
     if (plan.errors.length > 0) throw new BadRequestException(plan.errors.join('; '));

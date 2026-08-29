@@ -2868,3 +2868,218 @@ describe('Fulfill-from stock location + my-orders filter', () => {
     expect(lvIds).not.toContain(whOrderId);
   });
 });
+
+describe('Mixed fulfillment — take-with lines stay off the truck', () => {
+  let bedVariantId = '';
+  let pillowVariantId = '';
+
+  beforeAll(async () => {
+    const sql = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    const db = drizzle(sql);
+    try {
+      async function mk(sku: string, name: string, priceCents: number, onHand: number) {
+        const [p] = await db.insert(schema.products).values({ businessId, sku, name }).returning();
+        const [v] = await db
+          .insert(schema.productVariants)
+          .values({ businessId, productId: p!.id, sku: `${sku}-1`, priceCents })
+          .returning();
+        await db
+          .insert(schema.inventoryLevels)
+          .values({ businessId, variantId: v!.id, locationId, onHand, reserved: 0 });
+        return v!.id;
+      }
+      bedVariantId = await mk('MIX-BED', 'Mixed Bed', 80_000, 4);
+      pillowVariantId = await mk('MIX-PILLOW', 'Mixed Pillow', 5_000, 10);
+    } finally {
+      await sql.end({ timeout: 5 });
+    }
+  });
+
+  it('scheduling books only delivery-bound lines; the counter line hands over separately', async () => {
+    const create = await request(app.getHttpServer())
+      .post('/v1/orders')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({
+        locationId,
+        customerId,
+        fulfillmentType: 'delivery',
+        confirm: true,
+        lines: [
+          { variantId: bedVariantId, quantity: 2 },
+          { variantId: pillowVariantId, quantity: 1, fulfillmentMethod: 'take_with' },
+        ],
+      });
+    expect(create.status).toBe(201);
+    const orderId = create.body.id as string;
+
+    const detail = await request(app.getHttpServer())
+      .get(`/v1/orders/${orderId}`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId);
+    const bedLine = detail.body.lines.find(
+      (l: { variantId: string }) => l.variantId === bedVariantId,
+    );
+    const pillowLine = detail.body.lines.find(
+      (l: { variantId: string }) => l.variantId === pillowVariantId,
+    );
+    expect(pillowLine.fulfillmentMethod).toBe('take_with');
+
+    // Default schedule: only the bed rides — 2 units, no pillow line.
+    const tomorrow = new Date(Date.now() + 86400_000).toISOString().slice(0, 10);
+    const dv = await request(app.getHttpServer())
+      .post(`/v1/orders/${orderId}/deliveries`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ scheduledDate: tomorrow });
+    expect(dv.status).toBe(201);
+    const dvLineIds = dv.body.lines.map((l: { orderLineId: string }) => l.orderLineId);
+    expect(dvLineIds).toContain(bedLine.id);
+    expect(dvLineIds).not.toContain(pillowLine.id);
+    expect(dv.body.lines.reduce((s: number, l: { quantity: number }) => s + l.quantity, 0)).toBe(2);
+
+    // Counter hand-over of the take-with pillow: explicit line fulfill.
+    const handover = await request(app.getHttpServer())
+      .post(`/v1/orders/${orderId}/fulfill`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ lines: [{ orderLineId: pillowLine.id, quantity: 1 }] });
+    expect(handover.status).toBe(201);
+    const afterLine = handover.body.lines.find((l: { id: string }) => l.id === pillowLine.id);
+    expect(afterLine.qtyFulfilled).toBe(1);
+    expect(handover.body.status).toBe('partially_fulfilled');
+  });
+
+  it('an order whose remaining units are all counter-marked refuses to schedule, with directions', async () => {
+    const create = await request(app.getHttpServer())
+      .post('/v1/orders')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({
+        locationId,
+        customerId,
+        fulfillmentType: 'delivery',
+        confirm: true,
+        lines: [{ variantId: pillowVariantId, quantity: 2, fulfillmentMethod: 'take_with' }],
+      });
+    expect(create.status).toBe(201);
+
+    const tomorrow = new Date(Date.now() + 86400_000).toISOString().slice(0, 10);
+    const dv = await request(app.getHttpServer())
+      .post(`/v1/orders/${create.body.id}/deliveries`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ scheduledDate: tomorrow });
+    expect(dv.status).toBe(400);
+    expect(dv.body.message).toMatch(/take-with/i);
+  });
+});
+
+describe('Per-line inventory source (fulfill-from on the line)', () => {
+  let storeVariantId = '';
+  let whVariantId = '';
+  let warehouseId = '';
+
+  beforeAll(async () => {
+    const sql = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    const db = drizzle(sql);
+    try {
+      const [wh] = await db
+        .select({ id: schema.locations.id })
+        .from(schema.locations)
+        .where(eq(schema.locations.name, 'Central Warehouse'))
+        .limit(1);
+      warehouseId = wh!.id;
+      async function mk(sku: string, name: string, onHand: number, locId: string) {
+        const [p] = await db.insert(schema.products).values({ businessId, sku, name }).returning();
+        const [v] = await db
+          .insert(schema.productVariants)
+          .values({ businessId, productId: p!.id, sku: `${sku}-1`, priceCents: 10_000 })
+          .returning();
+        await db
+          .insert(schema.inventoryLevels)
+          .values({ businessId, variantId: v!.id, locationId: locId, onHand, reserved: 0 });
+        return v!.id;
+      }
+      storeVariantId = await mk('SRC-STORE', 'Store-stocked Frame', 3, locationId);
+      whVariantId = await mk('SRC-WH', 'Warehouse-stocked Base', 3, warehouseId);
+    } finally {
+      await sql.end({ timeout: 5 });
+    }
+  });
+
+  async function levelAt(variantId: string, locId: string) {
+    const sql = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    const db = drizzle(sql);
+    try {
+      const [row] = await db
+        .select()
+        .from(schema.inventoryLevels)
+        .where(
+          and(
+            eq(schema.inventoryLevels.variantId, variantId),
+            eq(schema.inventoryLevels.locationId, locId),
+          ),
+        );
+      return { onHand: row?.onHand ?? 0, reserved: row?.reserved ?? 0 };
+    } finally {
+      await sql.end({ timeout: 5 });
+    }
+  }
+
+  it('each line reserves and consumes at its own source; store-equal source normalizes to null', async () => {
+    const create = await request(app.getHttpServer())
+      .post('/v1/orders')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({
+        locationId,
+        customerId,
+        fulfillmentType: 'delivery',
+        confirm: true,
+        lines: [
+          // Explicit source equal to the selling store → stored as null.
+          { variantId: storeVariantId, quantity: 1, sourceLocationId: locationId },
+          { variantId: whVariantId, quantity: 2, sourceLocationId: warehouseId },
+        ],
+      });
+    expect(create.status).toBe(201);
+    const orderId = create.body.id as string;
+
+    const detail = await request(app.getHttpServer())
+      .get(`/v1/orders/${orderId}`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId);
+    const storeLine = detail.body.lines.find(
+      (l: { variantId: string }) => l.variantId === storeVariantId,
+    );
+    const whLine = detail.body.lines.find(
+      (l: { variantId: string }) => l.variantId === whVariantId,
+    );
+    expect(storeLine.sourceLocationId).toBeNull();
+    expect(whLine.sourceLocationId).toBe(warehouseId);
+
+    // Reserved where each line points, nowhere else.
+    expect((await levelAt(storeVariantId, locationId)).reserved).toBe(1);
+    expect((await levelAt(whVariantId, warehouseId)).reserved).toBe(2);
+    expect((await levelAt(whVariantId, locationId)).reserved).toBe(0);
+
+    // Fulfill everything: consumption follows each line's source.
+    const fulfill = await request(app.getHttpServer())
+      .post(`/v1/orders/${orderId}/fulfill`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({});
+    expect(fulfill.status).toBe(201);
+    const store = await levelAt(storeVariantId, locationId);
+    expect(store.onHand).toBe(2);
+    expect(store.reserved).toBe(0);
+    const wh = await levelAt(whVariantId, warehouseId);
+    expect(wh.onHand).toBe(1);
+    expect(wh.reserved).toBe(0);
+
+    // Cancel-path safety net is covered by release grouping: nothing
+    // remains reserved anywhere.
+    expect((await levelAt(whVariantId, locationId)).reserved).toBe(0);
+  });
+});

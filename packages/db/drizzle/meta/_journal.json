@@ -505,6 +505,13 @@
       "when": 1787966988329,
       "tag": "0071_order_stock_location",
       "breakpoints": true
+    },
+    {
+      "idx": 72,
+      "version": "7",
+      "when": 1787970838807,
+      "tag": "0072_line_source_location",
+      "breakpoints": true
     }
   ]
 }
