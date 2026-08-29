@@ -134,6 +134,21 @@ export const memberships = pgTable(
      * A 'store' member with no scope rows sees no sales data.
      */
     dataScope: text('data_scope').notNull().default('all'),
+    /**
+     * Where this member may WRITE sales documents (owner amendment
+     * 2026-08-29, supersedes the data-scope coupling): 'all' sells
+     * anywhere; 'approved' limits selling to the stores listed in
+     * membership_location_scopes while data visibility stays governed
+     * by data_scope — a member can see every store's numbers yet ring
+     * sales only at their own store.
+     */
+    sellingScope: text('selling_scope').notNull().default('all'),
+    /**
+     * Left-nav items hidden for this member (array of nav hrefs, e.g.
+     * ["/gl", "/audit"]). Pure visibility — the API stays gated by
+     * permissions; this only removes tabs from the member's sidebar.
+     */
+    hiddenNavJson: jsonb('hidden_nav_json'),
     // 'active' | 'invited' | 'disabled'
     status: text('status').notNull(),
     invitedByUserId: uuid('invited_by').references(() => users.id, { onDelete: 'set null' }),

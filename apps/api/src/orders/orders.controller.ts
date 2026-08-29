@@ -18,7 +18,7 @@ import { and, desc, eq, inArray, isNull, lt, or, sql } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { schema } from '@jetnine/db';
 import { AuditService } from '../audit/audit.service';
-import { salesScopeCond } from '../common/sales-scope';
+import { assertSellingScope, salesScopeCond } from '../common/sales-scope';
 import { TicketFlagsService } from '../deliveries/ticket-flags.service';
 import { CurrentTenant, CurrentUser } from '../auth/current-user.decorator';
 import type { CurrentUserPayload } from '../auth/current-user.decorator';
@@ -1167,6 +1167,7 @@ export class OrdersController {
     @Body() body: CreateOrderBody,
   ): Promise<OrderDetail> {
     if (!body.locationId) throw new BadRequestException('locationId is required');
+    assertSellingScope(tenant, body.locationId);
     if (!body.customerId) throw new BadRequestException('customerId is required');
     if (!body.lines || body.lines.length === 0) {
       throw new BadRequestException('lines must contain at least one entry');

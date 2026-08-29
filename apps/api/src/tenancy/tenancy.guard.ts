@@ -77,6 +77,7 @@ export class TenancyGuard implements CanActivate {
         impersonatorUserId: null,
         apiKeyId: req.apiKey.id,
         dataScope: 'all',
+        sellingScope: 'all',
         scopeLocationIds: null,
         auditLogged: false,
       };
@@ -135,6 +136,7 @@ export class TenancyGuard implements CanActivate {
           impersonatorUserId,
           apiKeyId: null,
           dataScope: 'all',
+          sellingScope: 'all',
           scopeLocationIds: null,
           auditLogged: false,
         };
@@ -161,7 +163,7 @@ export class TenancyGuard implements CanActivate {
     // visible locations come from membership_location_scopes. Loaded here
     // once per request so query-layer helpers never re-fetch.
     let scopeLocationIds: string[] | null = null;
-    if (membership.dataScope === 'store') {
+    if (membership.dataScope === 'store' || membership.sellingScope === 'approved') {
       const scopeRows = await this.db
         .select({ locationId: schema.membershipLocationScopes.locationId })
         .from(schema.membershipLocationScopes)
@@ -181,6 +183,7 @@ export class TenancyGuard implements CanActivate {
       impersonatorUserId,
       apiKeyId: null,
       dataScope: membership.dataScope,
+      sellingScope: membership.sellingScope,
       scopeLocationIds,
       auditLogged: false,
     };
@@ -195,6 +198,7 @@ export class TenancyGuard implements CanActivate {
     roleId: string;
     roleName: string;
     dataScope: 'all' | 'store';
+    sellingScope: 'all' | 'approved';
   } | null> {
     const rows = await this.db
       .select({
@@ -203,6 +207,7 @@ export class TenancyGuard implements CanActivate {
         roleName: schema.roles.name,
         status: schema.memberships.status,
         dataScope: schema.memberships.dataScope,
+        sellingScope: schema.memberships.sellingScope,
       })
       .from(schema.memberships)
       .innerJoin(schema.roles, eq(schema.roles.id, schema.memberships.roleId))
@@ -218,6 +223,7 @@ export class TenancyGuard implements CanActivate {
       roleId: found.roleId,
       roleName: found.roleName,
       dataScope: found.dataScope === 'store' ? 'store' : 'all',
+      sellingScope: found.sellingScope === 'approved' ? 'approved' : 'all',
     };
   }
 
@@ -270,6 +276,7 @@ function emptyTenantContext(
     impersonatorUserId,
     apiKeyId: null,
     dataScope: 'all',
+    sellingScope: 'all',
     scopeLocationIds: null,
     auditLogged: false,
   };
