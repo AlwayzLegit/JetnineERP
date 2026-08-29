@@ -3279,3 +3279,54 @@ User Security` and `Review Settings Activity` extracts. "A morning's
 - Tests: orders suite 75→76 (model swap end to end: warehouse-sourced
   line removed → warehouse reservation freed; replacement line
   reserves at the order default).
+
+## Checkpoint — 2026-08-29 (New Exchange stress test + reason-code fix)
+
+- Owner hit the raw error `A coded reason (class "return") is required —
+pass reasonCodeId` writing an exchange in production: the New Exchange
+  page never collected a reason code even though the return endpoint
+  requires one the moment any active class-`return` code exists. Fixed:
+  the page now loads `/v1/reason-codes?usageClass=return`, renders a
+  required **Return reason** select in the Return card when codes exist
+  (`data-testid="return-reason-code"`, optional free-text note when the
+  registry is empty), validates before submit, and sends `reasonCodeId`
+  on every return line. Second bug in the same card: **Unit credit**
+  showed the list price (`unitPriceCents`) instead of what the customer
+  actually paid (`perUnitCredit` = (total + tax) / qty) — the number the
+  server refunds; now consistent.
+- Stress test: exchanges suite 10→22 — twelve scenarios (S1–S12): the
+  production repro incl. the retry-binds-the-same-documents promise (no
+  duplicate order/RMA), the picker's code list, wrong-class code
+  rejected, over-quantity and unfulfilled-original guards, cancelled
+  original refused, the owner's 1-cent fee override netting to the
+  penny, fee > return amount refused, downgrade leaves store credit,
+  multi-qty partial return keeps the rest returnable, goods-not-in-hand
+  deferred settle, double receive cannot double the credit. All pass.
+
+## Checkpoint — 2026-08-29 (exchange: pay the difference + goods routing)
+
+- Owner: exchanges where the customer owes more must collect that money
+  in the flow, and the cashier must choose where the return goes back
+  into stock and where the replacement comes from. Built three ways:
+  - **Pay the difference**: Settlement card shows a live estimate
+    (replacement total, return credit, fee, estimated balance due or
+    credit kept) and a **Collect the remaining balance now** checkbox +
+    tender select (`collect-balance-now`, `exchange-pay-method`). After
+    settlement the page reads the exchange's exact
+    `saleBalanceDueCents` and posts that payment on the replacement —
+    never a client-computed number, so tax and fee are always right. A
+    payment hiccup doesn't strand the flow (the order page collects).
+  - **Return goods to**: `receiveGoods` gains a validated
+    `receiveLocationId` (As-Is pieces stage there instead of the
+    order's location; audited); exposed on
+    `POST /v1/order-returns/:id/receive` body `{locationId}` and as
+    `returnToLocationId` on the drop-off return path. Page select
+    `return-to-location` (warehouse-marked).
+  - **Replacement inventory from**: per-line source select on the
+    replacement table (`exchange-line-source`) riding the existing
+    per-line `sourceLocationId` — reservation and consumption land at
+    the chosen location.
+- Tests: exchanges suite 22→27 (exact-balance collection, warehouse
+  receive staging, bogus receive location 400 + return stays
+  authorized, warehouse-sourced replacement reserves there, drop-off
+  returnToLocationId).

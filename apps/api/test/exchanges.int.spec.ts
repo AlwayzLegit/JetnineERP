@@ -31,6 +31,7 @@ const PASSWORD = 'Exchange!2026x';
 let app: INestApplication;
 let businessId = '';
 let locationId = '';
+let warehouseId = '';
 let customerId = '';
 let otherCustomerId = '';
 let v1Id = ''; // original product
@@ -105,6 +106,17 @@ async function seed() {
       .values({ businessId, name: 'Store', timezone: 'America/Los_Angeles', taxRateBps: 0 })
       .returning();
     locationId = loc!.id;
+    const [wh] = await db
+      .insert(schema.locations)
+      .values({
+        businessId,
+        name: 'Warehouse',
+        timezone: 'America/Los_Angeles',
+        taxRateBps: 0,
+        locationType: 'warehouse',
+      })
+      .returning();
+    warehouseId = wh!.id;
 
     const [cust] = await db
       .insert(schema.customers)
@@ -151,6 +163,8 @@ async function seed() {
     await db.insert(schema.inventoryLevels).values([
       { businessId, variantId: v1Id, locationId, onHand: 20, reserved: 0 },
       { businessId, variantId: v2Id, locationId, onHand: 20, reserved: 0 },
+      { businessId, variantId: v1Id, locationId: warehouseId, onHand: 10, reserved: 0 },
+      { businessId, variantId: v2Id, locationId: warehouseId, onHand: 10, reserved: 0 },
     ]);
   });
 }
@@ -594,5 +608,404 @@ describe('Hardening — review findings', () => {
       .send({ saleOrderId, returnId: returns.body.data[0].id });
     expect(rebound.status).toBe(201);
     expect(rebound.body.id).not.toBe(first.body.id);
+  });
+});
+
+/**
+ * New Exchange stress test — twelve scenarios walking the writer's flow
+ * (replacement order → return authorization → bind → settle) through
+ * its failure modes: the coded-reason gate the owner hit in production,
+ * the retry-binds-the-same-documents promise, quantity and status
+ * guards, fee-override edges (including the 1-cent override from the
+ * bug report), downgrade credit, deferred settlement, and double
+ * receive.
+ */
+describe('New Exchange stress test', () => {
+  /** Activate a reason code for the scenario, hand it to fn, then deactivate. */
+  async function withReasonCode<T>(
+    usageClass: string,
+    code: string,
+    fn: (id: string) => Promise<T>,
+  ): Promise<T> {
+    const id = await withDb(async (db) => {
+      const [row] = await db
+        .insert(schema.reasonCodes)
+        .values({ businessId, code, description: `${code} (stress)`, usageClass, active: true })
+        .returning();
+      return row!.id;
+    });
+    try {
+      return await fn(id);
+    } finally {
+      await withDb(async (db) => {
+        await db
+          .update(schema.reasonCodes)
+          .set({ active: false })
+          .where(eq(schema.reasonCodes.id, id));
+      });
+    }
+  }
+
+  it('S1 — the production bug: uncoded return 400s once a return code exists; retry with the code binds the SAME documents (no duplicates)', async () => {
+    await withReasonCode('return', 'DEFECT', async (codeId) => {
+      const orig = await soldOriginal(v1Id, 50_000);
+      // Step 1 of the writer: the replacement order lands.
+      const replacement = await owner()
+        .post(`/v1/orders/${orig.orderId}/exchange`)
+        .send({ locationId, confirm: true, lines: [{ variantId: v2Id, quantity: 1 }] });
+      expect(replacement.status).toBe(201);
+      // Step 2 without a reasonCodeId — exactly the screenshot failure.
+      const uncoded = await owner()
+        .post(`/v1/orders/${orig.orderId}/return`)
+        .send({
+          fulfillment: 'pickup',
+          refundMethod: 'store_credit',
+          lines: [{ lineId: orig.lineId, quantity: 1 }],
+        });
+      expect(uncoded.status).toBe(400);
+      expect(uncoded.body.message).toMatch(/coded reason.*return.*reasonCodeId/i);
+      // Nothing half-written: no RMA exists yet.
+      const none = await owner().get(`/v1/order-returns?orderId=${orig.orderId}`);
+      expect(none.body.data).toHaveLength(0);
+      // The retry the error message promises: same replacement order,
+      // return now carrying the code.
+      await owner()
+        .post(`/v1/orders/${orig.orderId}/return`)
+        .send({
+          fulfillment: 'pickup',
+          refundMethod: 'store_credit',
+          lines: [{ lineId: orig.lineId, quantity: 1, reasonCodeId: codeId }],
+        })
+        .expect(201);
+      const rets = await owner().get(`/v1/order-returns?orderId=${orig.orderId}&status=authorized`);
+      expect(rets.body.data).toHaveLength(1);
+      const bound = await owner()
+        .post('/v1/exchanges')
+        .send({ saleOrderId: replacement.body.id, returnId: rets.body.data[0].id });
+      expect(bound.status).toBe(201);
+      // One exchange, one RMA, and the return line remembers the code.
+      await withDb(async (db) => {
+        const rows = await db
+          .select()
+          .from(schema.orderReturnLines)
+          .where(eq(schema.orderReturnLines.returnId, rets.body.data[0].id));
+        expect(rows).toHaveLength(1);
+        expect(rows[0]!.reasonCodeId).toBe(codeId);
+      });
+    });
+  });
+
+  it('S2 — the reason-code list the page renders: active return codes only, with id/code/description', async () => {
+    await withReasonCode('return', 'COMFORT', async (codeId) => {
+      const list = await owner().get('/v1/reason-codes?usageClass=return');
+      expect(list.status).toBe(200);
+      const hit = list.body.find((c: { id: string }) => c.id === codeId);
+      expect(hit).toBeTruthy();
+      expect(hit.code).toBe('COMFORT');
+      expect(hit.active).toBe(true);
+    });
+    // Deactivated → gone from the picker, and the gate lifts again.
+    const after = await owner().get('/v1/reason-codes?usageClass=return');
+    expect(after.body.every((c: { code: string }) => c.code !== 'COMFORT')).toBe(true);
+  });
+
+  it('S3 — a code of the wrong class is rejected by the return', async () => {
+    await withReasonCode('adjustment', 'PRICE-ADJ', async (wrongClassId) => {
+      const orig = await soldOriginal(v1Id, 50_000);
+      const res = await owner()
+        .post(`/v1/orders/${orig.orderId}/return`)
+        .send({
+          fulfillment: 'pickup',
+          refundMethod: 'store_credit',
+          lines: [{ lineId: orig.lineId, quantity: 1, reasonCodeId: wrongClassId }],
+        });
+      expect(res.status).toBe(400);
+      expect(res.body.message).toMatch(/class "return"/);
+    });
+  });
+
+  it('S4 — return quantity above what was delivered is refused', async () => {
+    const orig = await soldOriginal(v1Id, 50_000);
+    const res = await owner()
+      .post(`/v1/orders/${orig.orderId}/return`)
+      .send({ fulfillment: 'pickup', lines: [{ lineId: orig.lineId, quantity: 2 }] });
+    expect(res.status).toBe(400);
+  });
+
+  it('S5 — an unfulfilled original has nothing returnable', async () => {
+    const created = await owner()
+      .post('/v1/orders')
+      .send({ locationId, customerId, confirm: true, lines: [{ variantId: v1Id, quantity: 1 }] });
+    expect(created.status).toBe(201);
+    const res = await owner()
+      .post(`/v1/orders/${created.body.id}/return`)
+      .send({ fulfillment: 'pickup', lines: [{ lineId: created.body.lines[0].id, quantity: 1 }] });
+    expect(res.status).toBe(400);
+  });
+
+  it('S6 — a cancelled original refuses an exchange order outright', async () => {
+    const created = await owner()
+      .post('/v1/orders')
+      .send({ locationId, customerId, confirm: true, lines: [{ variantId: v1Id, quantity: 1 }] });
+    expect(created.status).toBe(201);
+    await owner().post(`/v1/orders/${created.body.id}/cancel`).send({}).expect(201);
+    const res = await owner()
+      .post(`/v1/orders/${created.body.id}/exchange`)
+      .send({ locationId, confirm: true, lines: [{ variantId: v2Id, quantity: 1 }] });
+    expect(res.status).toBe(400);
+    expect(res.body.message).toMatch(/cancelled/);
+  });
+
+  it('S7 — the 1-cent fee override from the bug report binds and nets to the penny', async () => {
+    const orig = await soldOriginal(v1Id, 50_000);
+    const { saleOrderId, returnId } = await legsFor(orig.orderId, orig.lineId, v2Id);
+    const bound = await owner()
+      .post('/v1/exchanges')
+      .send({ saleOrderId, returnId, restockingFeeCents: 1 });
+    expect(bound.status).toBe(201);
+    expect(bound.body.restockingFeeCents).toBe(1);
+    expect(bound.body.settlement.creditCents).toBe(49_999);
+    await owner().post(`/v1/order-returns/${returnId}/receive`).send({}).expect(201);
+    const detail = await owner().get(`/v1/exchanges/${bound.body.id}`);
+    expect(detail.body.settlement.salePaidCents).toBe(49_999);
+    expect(detail.body.settlement.saleBalanceDueCents).toBe(10_001);
+    expect(await ledgerBalance(customerId)).toBe(0);
+  });
+
+  it('S8 — a fee override above the return amount is refused', async () => {
+    const orig = await soldOriginal(v1Id, 50_000);
+    const { saleOrderId, returnId } = await legsFor(orig.orderId, orig.lineId, v2Id);
+    const res = await owner()
+      .post('/v1/exchanges')
+      .send({ saleOrderId, returnId, restockingFeeCents: 50_001 });
+    expect(res.status).toBe(400);
+    expect(res.body.message).toMatch(/between 0 and the return amount/);
+  });
+
+  it('S9 — downgrade: the replacement costs less, the customer keeps the difference as store credit', async () => {
+    const orig = await soldOriginal(v2Id, 60_000); // $600 original
+    const { saleOrderId, returnId } = await legsFor(orig.orderId, orig.lineId, v1Id); // $500 replacement
+    const bound = await owner().post('/v1/exchanges').send({ saleOrderId, returnId });
+    expect(bound.status).toBe(201);
+    await owner().post(`/v1/order-returns/${returnId}/receive`).send({}).expect(201);
+    const detail = await owner().get(`/v1/exchanges/${bound.body.id}`);
+    expect(detail.body.settlement.salePaidCents).toBe(50_000);
+    expect(detail.body.settlement.saleBalanceDueCents).toBe(0);
+    expect(await ledgerBalance(customerId)).toBe(10_000);
+    // Burn the residual so later ledger assertions stay clean.
+    await withDb(async (db) => {
+      await db.insert(schema.storeCreditEntries).values({
+        businessId,
+        customerId,
+        deltaCents: -10_000,
+        reason: 'stress-test cleanup',
+      });
+    });
+  });
+
+  it('S10 — multi-quantity original: a partial return credits only what came back and leaves the rest returnable', async () => {
+    const created = await owner()
+      .post('/v1/orders')
+      .send({ locationId, customerId, confirm: true, lines: [{ variantId: v1Id, quantity: 2 }] });
+    expect(created.status).toBe(201);
+    await owner()
+      .post(`/v1/orders/${created.body.id}/payments`)
+      .send({ method: 'cash', amountCents: 100_000, kind: 'deposit' })
+      .expect(201);
+    await owner().post(`/v1/orders/${created.body.id}/fulfill`).send({}).expect(201);
+    const lineId = created.body.lines[0].id as string;
+
+    const { saleOrderId, returnId } = await (async () => {
+      const replacement = await owner()
+        .post(`/v1/orders/${created.body.id}/exchange`)
+        .send({ locationId, confirm: true, lines: [{ variantId: v2Id, quantity: 1 }] });
+      expect(replacement.status).toBe(201);
+      await owner()
+        .post(`/v1/orders/${created.body.id}/return`)
+        .send({
+          fulfillment: 'pickup',
+          refundMethod: 'store_credit',
+          lines: [{ lineId, quantity: 1 }],
+        })
+        .expect(201);
+      const rets = await owner().get(
+        `/v1/order-returns?orderId=${created.body.id}&status=authorized`,
+      );
+      return {
+        saleOrderId: replacement.body.id as string,
+        returnId: rets.body.data[0].id as string,
+      };
+    })();
+
+    const bound = await owner().post('/v1/exchanges').send({ saleOrderId, returnId });
+    expect(bound.status).toBe(201);
+    expect(bound.body.settlement.returnCents).toBe(50_000); // one unit, not two
+    await owner().post(`/v1/order-returns/${returnId}/receive`).send({}).expect(201);
+    const detail = await owner().get(`/v1/orders/${created.body.id}`);
+    expect(detail.body.lines[0].qtyReturned).toBe(1);
+    // The second unit can still come back later.
+    const again = await owner()
+      .post(`/v1/orders/${created.body.id}/return`)
+      .send({ fulfillment: 'pickup', lines: [{ lineId, quantity: 1 }] });
+    expect(again.status).toBe(201);
+  });
+
+  it('S11 — goods not in hand: the bound exchange waits, then settles on receive', async () => {
+    const orig = await soldOriginal(v1Id, 50_000);
+    const { saleOrderId, returnId } = await legsFor(orig.orderId, orig.lineId, v2Id);
+    const bound = await owner().post('/v1/exchanges').send({ saleOrderId, returnId });
+    expect(bound.status).toBe(201);
+    // No receive yet — nothing has moved.
+    const waiting = await owner().get(`/v1/exchanges/${bound.body.id}`);
+    expect(waiting.body.settlement.salePaidCents).toBe(0);
+    expect(await ledgerBalance(customerId)).toBe(0);
+    // The truck brings it back → settlement fires.
+    await owner().post(`/v1/order-returns/${returnId}/receive`).send({}).expect(201);
+    const settled = await owner().get(`/v1/exchanges/${bound.body.id}`);
+    expect(settled.body.settlement.salePaidCents).toBe(50_000);
+    expect(await ledgerBalance(customerId)).toBe(0);
+  });
+
+  it('S12 — receiving the return twice cannot double the credit', async () => {
+    const orig = await soldOriginal(v1Id, 50_000);
+    const { saleOrderId, returnId } = await legsFor(orig.orderId, orig.lineId, v2Id);
+    await owner().post('/v1/exchanges').send({ saleOrderId, returnId }).expect(201);
+    await owner().post(`/v1/order-returns/${returnId}/receive`).send({}).expect(201);
+    const second = await owner().post(`/v1/order-returns/${returnId}/receive`).send({});
+    expect(second.status).toBeGreaterThanOrEqual(400);
+    await withDb(async (db) => {
+      const salePayments = await db
+        .select()
+        .from(schema.payments)
+        .where(eq(schema.payments.orderId, saleOrderId));
+      expect(salePayments).toHaveLength(1);
+      expect(salePayments[0]!.amountCents).toBe(50_000);
+    });
+    expect(await ledgerBalance(customerId)).toBe(0);
+  });
+});
+
+/**
+ * Exchange money-and-goods routing: collecting the balance the customer
+ * owes after the credit applies, receiving the returned goods at a
+ * chosen location (warehouse vs. store), and pulling the replacement's
+ * inventory from a chosen source location.
+ */
+describe('Exchange — pay the difference and route the goods', () => {
+  it('collects the exact remaining balance on the replacement after settlement', async () => {
+    const orig = await soldOriginal(v1Id, 50_000);
+    const { saleOrderId, returnId } = await legsFor(orig.orderId, orig.lineId, v2Id);
+    const bound = await owner().post('/v1/exchanges').send({ saleOrderId, returnId });
+    expect(bound.status).toBe(201);
+    await owner().post(`/v1/order-returns/${returnId}/receive`).send({}).expect(201);
+
+    // The page reads the settled balance and charges exactly that.
+    const settled = await owner().get(`/v1/exchanges/${bound.body.id}`);
+    const due = settled.body.settlement.saleBalanceDueCents as number;
+    expect(due).toBe(10_000);
+    await owner()
+      .post(`/v1/orders/${saleOrderId}/payments`)
+      .send({ method: 'card', amountCents: due, kind: 'balance' })
+      .expect(201);
+
+    const after = await owner().get(`/v1/exchanges/${bound.body.id}`);
+    expect(after.body.settlement.saleBalanceDueCents).toBe(0);
+    expect(after.body.settlement.salePaidCents).toBe(60_000);
+  });
+
+  it('receives the returned goods at a chosen location — As-Is pieces land at the warehouse', async () => {
+    const orig = await soldOriginal(v1Id, 50_000);
+    const { saleOrderId, returnId } = await legsFor(orig.orderId, orig.lineId, v2Id);
+    await owner().post('/v1/exchanges').send({ saleOrderId, returnId }).expect(201);
+    await owner()
+      .post(`/v1/order-returns/${returnId}/receive`)
+      .send({ locationId: warehouseId })
+      .expect(201);
+    await withDb(async (db) => {
+      const pieces = await db
+        .select()
+        .from(schema.asIsItems)
+        .where(
+          and(
+            eq(schema.asIsItems.referenceType, 'order'),
+            eq(schema.asIsItems.referenceId, orig.orderId),
+          ),
+        );
+      expect(pieces).toHaveLength(1);
+      expect(pieces[0]!.locationId).toBe(warehouseId);
+    });
+  });
+
+  it('a bogus receive location is refused and the return stays authorized', async () => {
+    const orig = await soldOriginal(v1Id, 50_000);
+    const { saleOrderId, returnId } = await legsFor(orig.orderId, orig.lineId, v2Id);
+    await owner().post('/v1/exchanges').send({ saleOrderId, returnId }).expect(201);
+    const bad = await owner()
+      .post(`/v1/order-returns/${returnId}/receive`)
+      .send({ locationId: '00000000-0000-4000-8000-000000000000' });
+    expect(bad.status).toBe(400);
+    expect(bad.body.message).toMatch(/location/i);
+    // Untouched: the correct receive still works.
+    await owner().post(`/v1/order-returns/${returnId}/receive`).send({}).expect(201);
+  });
+
+  it('replacement lines can pull from the warehouse — reservation and consumption land there', async () => {
+    const orig = await soldOriginal(v1Id, 50_000);
+    const replacement = await owner()
+      .post(`/v1/orders/${orig.orderId}/exchange`)
+      .send({
+        locationId,
+        confirm: true,
+        lines: [{ variantId: v2Id, quantity: 1, sourceLocationId: warehouseId }],
+      });
+    expect(replacement.status).toBe(201);
+    expect(replacement.body.lines[0].sourceLocationId).toBe(warehouseId);
+    await withDb(async (db) => {
+      const [wh] = await db
+        .select()
+        .from(schema.inventoryLevels)
+        .where(
+          and(
+            eq(schema.inventoryLevels.variantId, v2Id),
+            eq(schema.inventoryLevels.locationId, warehouseId),
+          ),
+        );
+      expect(wh!.reserved).toBe(1);
+    });
+  });
+
+  it('drop-off returns route the goods too — returnToLocationId on the plain return', async () => {
+    const orig = await soldOriginal(v1Id, 50_000);
+    await owner()
+      .post(`/v1/orders/${orig.orderId}/return`)
+      .send({
+        fulfillment: 'drop_off',
+        refundMethod: 'store_credit',
+        returnToLocationId: warehouseId,
+        lines: [{ lineId: orig.lineId, quantity: 1 }],
+      })
+      .expect(201);
+    await withDb(async (db) => {
+      const pieces = await db
+        .select()
+        .from(schema.asIsItems)
+        .where(
+          and(
+            eq(schema.asIsItems.referenceType, 'order'),
+            eq(schema.asIsItems.referenceId, orig.orderId),
+          ),
+        );
+      expect(pieces).toHaveLength(1);
+      expect(pieces[0]!.locationId).toBe(warehouseId);
+    });
+    // Burn the plain-return store credit so later ledger checks stay clean.
+    await withDb(async (db) => {
+      await db.insert(schema.storeCreditEntries).values({
+        businessId,
+        customerId,
+        deltaCents: -50_000,
+        reason: 'routing-test cleanup',
+      });
+    });
   });
 });

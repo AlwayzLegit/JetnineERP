@@ -2409,6 +2409,8 @@ export class OrdersController {
       lines?: { lineId?: string; quantity?: number; reasonCodeId?: string; reason?: string }[];
       refundMethod?: 'original' | 'store_credit';
       fulfillment?: 'drop_off' | 'pickup';
+      /** Where the goods land (As-Is staging) on drop-off; defaults to the order's location. */
+      returnToLocationId?: string | null;
       reason?: string | null;
       override?: OverrideCredentials;
     },
@@ -2583,7 +2585,9 @@ export class OrdersController {
 
     // Drop-off: the goods are in hand — receive (and refund) now.
     if (fulfillment === 'drop_off') {
-      await this.orderReturns.receiveGoods(ret!.id, actor?.id ?? null);
+      await this.orderReturns.receiveGoods(ret!.id, actor?.id ?? null, {
+        receiveLocationId: body.returnToLocationId ?? null,
+      });
     }
     return this.loadDetail(id);
   }
