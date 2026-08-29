@@ -3279,3 +3279,26 @@ User Security` and `Review Settings Activity` extracts. "A morning's
 - Tests: orders suite 75→76 (model swap end to end: warehouse-sourced
   line removed → warehouse reservation freed; replacement line
   reserves at the order default).
+
+## Checkpoint — 2026-08-29 (New Exchange stress test + reason-code fix)
+
+- Owner hit the raw error `A coded reason (class "return") is required —
+pass reasonCodeId` writing an exchange in production: the New Exchange
+  page never collected a reason code even though the return endpoint
+  requires one the moment any active class-`return` code exists. Fixed:
+  the page now loads `/v1/reason-codes?usageClass=return`, renders a
+  required **Return reason** select in the Return card when codes exist
+  (`data-testid="return-reason-code"`, optional free-text note when the
+  registry is empty), validates before submit, and sends `reasonCodeId`
+  on every return line. Second bug in the same card: **Unit credit**
+  showed the list price (`unitPriceCents`) instead of what the customer
+  actually paid (`perUnitCredit` = (total + tax) / qty) — the number the
+  server refunds; now consistent.
+- Stress test: exchanges suite 10→22 — twelve scenarios (S1–S12): the
+  production repro incl. the retry-binds-the-same-documents promise (no
+  duplicate order/RMA), the picker's code list, wrong-class code
+  rejected, over-quantity and unfulfilled-original guards, cancelled
+  original refused, the owner's 1-cent fee override netting to the
+  penny, fee > return amount refused, downgrade leaves store credit,
+  multi-qty partial return keeps the rest returnable, goods-not-in-hand
+  deferred settle, double receive cannot double the credit. All pass.
