@@ -362,13 +362,24 @@ export class SalesController {
    * `pos.access` can see active locations + their tax rates without
    * needing `locations.view` (which is reserved for the back-office
    * locations admin page).
+   *
+   * `taxRateBps` is the EFFECTIVE rate — a location with no rate of its
+   * own inherits `businesses.default_tax_rate_bps` (levels 3→4 of the
+   * tax-resolution ladder in schema/taxes.ts), matching what the server
+   * charges when the order is written. Returning the raw null here made
+   * New Sale display 0.00% while the written order taxed correctly.
    */
   @Get('pos/locations')
   @RequirePermission('pos.access')
   async posLocations(
-    @CurrentTenant() _tenant: RequestTenantContext,
-  ): Promise<{ id: string; name: string; taxRateBps: number | null; locationType: string }[]> {
-    return this.db
+    @CurrentTenant() tenant: RequestTenantContext,
+  ): Promise<{ id: string; name: string; taxRateBps: number; locationType: string }[]> {
+    const [biz] = await this.db
+      .select({ defaultTaxRateBps: schema.businesses.defaultTaxRateBps })
+      .from(schema.businesses)
+      .where(eq(schema.businesses.id, tenant.businessId!))
+      .limit(1);
+    const rows = await this.db
       .select({
         id: schema.locations.id,
         name: schema.locations.name,
@@ -378,6 +389,10 @@ export class SalesController {
       .from(schema.locations)
       .where(eq(schema.locations.isActive, true))
       .orderBy(schema.locations.name);
+    return rows.map((r) => ({
+      ...r,
+      taxRateBps: r.taxRateBps ?? biz?.defaultTaxRateBps ?? 0,
+    }));
   }
 
   /**

@@ -3393,3 +3393,16 @@ pass reasonCodeId` writing an exchange in production: the New Exchange
   flips From to the store for floor stock.
 - Tests: customers suite 10→11 (create with both addresses + referral,
   detail echo, patch updates the source without clobbering addresses).
+
+## Checkpoint — 2026-08-29 (New Sale tax: effective rate wiring)
+
+- Owner: business default tax set to 9.75% but New Sale showed 0.00%.
+  The written order was always taxed correctly (4-level resolution ends
+  at `businesses.default_tax_rate_bps`), but `/v1/pos/locations`
+  returned the location's RAW `taxRateBps` — null when the location
+  inherits the default — and the register rendered that as 0.00% with
+  wrong on-screen totals. The endpoint now returns the effective rate
+  (`location.taxRateBps ?? business default`), so the screen matches
+  what the server charges.
+- Tests: taxes suite 13→14 (a location with no rate of its own reports
+  the business default through pos/locations).
