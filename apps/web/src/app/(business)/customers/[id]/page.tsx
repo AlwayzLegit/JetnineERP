@@ -43,6 +43,42 @@ interface Customer {
   updatedAt: string;
   recentSales: SaleSummary[];
 }
+interface HistoryLine {
+  id: string;
+  description: string;
+  quantity: number;
+  unitPriceCents: number;
+  totalCents: number;
+  taxCents: number;
+  qtyFulfilled: number;
+  qtyReturned: number;
+  fulfillmentMethod: string | null;
+}
+interface HistoryOrder {
+  id: string;
+  number: string;
+  status: string;
+  orderKind: string;
+  fulfillmentType: string;
+  requestedDate: string | null;
+  importedAt: string | null;
+  createdAt: string;
+  totalCents: number;
+  paidCents: number;
+  balanceDueCents: number;
+  lines: HistoryLine[];
+}
+
+function lineStateLabel(l: HistoryLine): string {
+  const parts: string[] = [];
+  if (l.qtyFulfilled >= l.quantity) parts.push('delivered');
+  else if (l.qtyFulfilled > 0) parts.push(`delivered ${l.qtyFulfilled}/${l.quantity}`);
+  else parts.push('pending');
+  if (l.qtyReturned > 0) parts.push(`returned ${l.qtyReturned}`);
+  if (l.fulfillmentMethod === 'take_with' || l.fulfillmentMethod === 'pickup')
+    parts.push('take-with');
+  return parts.join(' · ');
+}
 
 export default function CustomerDetailPage() {
   const params = useParams<{ id: string }>();
@@ -57,6 +93,7 @@ export default function CustomerDetailPage() {
     balanceCents: number;
     entries: { id: string; deltaCents: number; reason: string | null; createdAt: string }[];
   } | null>(null);
+  const [history, setHistory] = useState<HistoryOrder[] | null>(null);
 
   async function load() {
     setError(null);
@@ -68,6 +105,9 @@ export default function CustomerDetailPage() {
       }>(`/v1/customers/${id}/store-credit`)
         .then(setCredit)
         .catch(() => setCredit(null));
+      void api<HistoryOrder[]>(`/v1/customers/${id}/order-history?limit=25`)
+        .then(setHistory)
+        .catch(() => setHistory(null));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -273,7 +313,7 @@ export default function CustomerDetailPage() {
           </div>
         </Card>
       )}
-      <Card title="Recent purchases">
+      <Card title="Purchase history" style={{ marginTop: 16 }} data-testid="purchase-history">
         <Button
           size="sm"
           variant="secondary"
@@ -291,9 +331,95 @@ export default function CustomerDetailPage() {
         >
           Export purchase history CSV
         </Button>
-        {c.recentSales.length === 0 ? (
-          <EmptyState>No purchases yet.</EmptyState>
+        {!history || history.length === 0 ? (
+          <EmptyState>No orders yet.</EmptyState>
         ) : (
+          <div style={{ display: 'grid', gap: 12 }}>
+            {history.map((o) => (
+              <div
+                key={o.id}
+                style={{
+                  border: '1px solid var(--border)',
+                  borderRadius: 'var(--radius-sm)',
+                  padding: '10px 12px',
+                }}
+                data-testid="history-order"
+              >
+                <div
+                  className="flex flex-wrap items-center gap-2"
+                  style={{ justifyContent: 'space-between' }}
+                >
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Link href={`/orders/${o.id}`} style={{ fontWeight: 600 }}>
+                      {o.number}
+                    </Link>
+                    <StatusBadge status={o.status} />
+                    {o.orderKind === 'exchange' && (
+                      <span className="muted" style={{ fontSize: 12 }}>
+                        exchange
+                      </span>
+                    )}
+                    {o.importedAt && (
+                      <span className="muted" style={{ fontSize: 12 }}>
+                        imported from STORIS
+                      </span>
+                    )}
+                    <span className="muted" style={{ fontSize: 12.5 }}>
+                      {new Date(o.createdAt).toLocaleDateString()}
+                      {o.requestedDate ? ` · promised ${o.requestedDate}` : ''}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: 13 }}>
+                    <Money cents={o.totalCents} />
+                    {o.balanceDueCents > 0 ? (
+                      <span style={{ color: 'var(--danger)', marginLeft: 8 }}>
+                        owes <Money cents={o.balanceDueCents} />
+                      </span>
+                    ) : (
+                      <span style={{ color: 'var(--success)', marginLeft: 8 }}>paid</span>
+                    )}
+                  </div>
+                </div>
+                {o.lines.length > 0 && (
+                  <div style={{ overflowX: 'auto', marginTop: 6 }}>
+                    <table className="table" style={{ fontSize: 13 }}>
+                      <thead>
+                        <tr>
+                          <th>Item</th>
+                          <th className="num">Qty</th>
+                          <th className="num">Unit price</th>
+                          <th className="num">Line total</th>
+                          <th>State</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {o.lines.map((l) => (
+                          <tr key={l.id}>
+                            <td>{l.description}</td>
+                            <td className="num">{l.quantity}</td>
+                            <td className="num">
+                              <Money cents={l.unitPriceCents} />
+                            </td>
+                            <td className="num">
+                              <Money cents={l.totalCents + l.taxCents} />
+                            </td>
+                            <td className="muted" style={{ fontSize: 12 }}>
+                              {lineStateLabel(l)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+
+      {c.recentSales.length > 0 && (
+        <Card title="Sales receipts" style={{ marginTop: 16 }}>
           <div style={{ overflowX: 'auto' }}>
             <table className="table">
               <thead>
@@ -322,8 +448,8 @@ export default function CustomerDetailPage() {
               </tbody>
             </table>
           </div>
-        )}
-      </Card>
+        </Card>
+      )}
     </div>
   );
 }

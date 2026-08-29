@@ -3131,3 +3131,75 @@ describe('Per-line inventory source (fulfill-from on the line)', () => {
     expect(detail.lines.some((l: { id: string }) => l.id === oldLineId)).toBe(false);
   });
 });
+
+describe('Customer purchase history — orders with line detail in one call', () => {
+  function asOwner() {
+    return {
+      get: (url: string) =>
+        request(app.getHttpServer())
+          .get(url)
+          .set('Cookie', ownerCookie)
+          .set('X-Business-Id', businessId),
+      post: (url: string) =>
+        request(app.getHttpServer())
+          .post(url)
+          .set('Cookie', ownerCookie)
+          .set('X-Business-Id', businessId),
+    };
+  }
+
+  it('returns the customer file view: newest-first orders, money picture, and every line', async () => {
+    // A fresh customer so the ledger is exactly what this test writes.
+    const cust = await asOwner()
+      .post('/v1/customers')
+      .send({ firstName: 'History', lastName: 'Buyer' });
+    expect(cust.status).toBe(201);
+    const custId = cust.body.id as string;
+
+    const first = await asOwner()
+      .post('/v1/orders')
+      .send({
+        locationId,
+        customerId: custId,
+        confirm: true,
+        lines: [{ variantId: sofaVariantId, quantity: 1 }],
+      });
+    expect(first.status).toBe(201);
+    await asOwner()
+      .post(`/v1/orders/${first.body.id}/payments`)
+      .send({ method: 'cash', amountCents: 50_000, kind: 'deposit' })
+      .expect(201);
+    const second = await asOwner()
+      .post('/v1/orders')
+      .send({
+        locationId,
+        customerId: custId,
+        confirm: true,
+        lines: [{ variantId: chairVariantId, quantity: 1 }],
+      });
+    expect(second.status).toBe(201);
+
+    const res = await asOwner().get(`/v1/customers/${custId}/order-history`);
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveLength(2);
+    // Newest first.
+    expect(res.body[0].id).toBe(second.body.id);
+    expect(res.body[1].id).toBe(first.body.id);
+
+    const older = res.body[1];
+    expect(older.number).toBe(first.body.number);
+    expect(older.paidCents).toBe(50_000);
+    expect(older.balanceDueCents).toBe(older.totalCents - 50_000);
+    expect(older.lines).toHaveLength(1);
+    expect(older.lines[0].description).toContain('Sofa');
+    expect(older.lines[0].quantity).toBe(1);
+    expect(older.lines[0].unitPriceCents).toBe(129_999);
+    expect(older.lines[0].qtyFulfilled).toBe(0);
+    expect(older.lines[0].qtyReturned).toBe(0);
+
+    const newer = res.body[0];
+    expect(newer.paidCents).toBe(0);
+    expect(newer.balanceDueCents).toBe(newer.totalCents);
+    expect(newer.lines[0].description).toContain('Chair');
+  });
+});

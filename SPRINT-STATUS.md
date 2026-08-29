@@ -3345,3 +3345,18 @@ pass reasonCodeId` writing an exchange in production: the New Exchange
 - Tests: exchanges suite 27→28 ($650 edited price on a $600-list
   replacement → order bills 65,000¢, $500 credit nets, $150 collected,
   balance 0).
+
+## Checkpoint — 2026-08-29 (customer file: detailed purchase history)
+
+- Owner ask: the customer page must show what they bought in detail.
+  New `GET /v1/customers/:customerId/order-history` — the customer's
+  orders newest-first with per-order paid/balance and full line detail
+  (description, qty, unit price, line total incl. tax, delivered /
+  returned counts, take-with marker) in one call. The customer page's
+  "Recent purchases" card became **Purchase history**: one block per
+  order (number link, status, exchange/imported markers, date, promised
+  date, total + owes/paid) with the items table visible beneath — no
+  click-through needed; CSV export kept; legacy POS receipts moved to a
+  "Sales receipts" card shown only when present.
+- Tests: orders suite 76→77 (fresh customer, two orders: newest-first
+  ordering, paid/balance math, line description/price/state fields).
