@@ -969,10 +969,12 @@ export class OrdersController {
   }
 
   /**
-   * The customer file's purchase history: every order newest-first with
-   * its full line detail (what they bought, at what price, how much of
-   * it was delivered or came back) and the money picture, in one call —
-   * the customer page renders it without a fetch per order.
+   * The customer file's purchase history: every purchase document —
+   * orders AND point-of-sale receipts (the STORIS import landed as
+   * sales) — newest-first with full line detail (what they bought, at
+   * what price, how much of it was delivered or came back) and the
+   * money picture, in one call — the customer page renders it without
+   * a fetch per document.
    */
   @Get('customers/:customerId/order-history')
   @RequirePermission('orders.view')
@@ -983,10 +985,11 @@ export class OrdersController {
   ): Promise<
     {
       id: string;
+      docType: 'order' | 'sale';
       number: string;
       status: string;
       orderKind: string;
-      fulfillmentType: string;
+      fulfillmentType: string | null;
       requestedDate: string | null;
       importedAt: Date | null;
       createdAt: Date;
@@ -1023,33 +1026,69 @@ export class OrdersController {
       .where(eq(schema.orders.customerId, customerId))
       .orderBy(desc(schema.orders.createdAt), desc(schema.orders.id))
       .limit(limit);
-    if (orders.length === 0) return [];
+    const sales = await this.db
+      .select({
+        id: schema.sales.id,
+        number: schema.sales.number,
+        status: schema.sales.status,
+        importedAt: schema.sales.importedAt,
+        completedAt: schema.sales.completedAt,
+        createdAt: schema.sales.createdAt,
+        totalCents: schema.sales.totalCents,
+      })
+      .from(schema.sales)
+      .where(eq(schema.sales.customerId, customerId))
+      .orderBy(desc(schema.sales.createdAt), desc(schema.sales.id))
+      .limit(limit);
+
     const orderIds = orders.map((o) => o.id);
-    const lines = await this.db
-      .select({
-        id: schema.orderLines.id,
-        orderId: schema.orderLines.orderId,
-        description: schema.orderLines.description,
-        quantity: schema.orderLines.quantity,
-        unitPriceCents: schema.orderLines.unitPriceCents,
-        totalCents: schema.orderLines.totalCents,
-        taxCents: schema.orderLines.taxCents,
-        qtyFulfilled: schema.orderLines.qtyFulfilled,
-        qtyReturned: schema.orderLines.qtyReturned,
-        fulfillmentMethod: schema.orderLines.fulfillmentMethod,
-        lineCreatedAt: schema.orderLines.createdAt,
-      })
-      .from(schema.orderLines)
-      .where(inArray(schema.orderLines.orderId, orderIds))
-      .orderBy(schema.orderLines.createdAt);
-    const payments = await this.db
-      .select({
-        orderId: schema.payments.orderId,
-        amountCents: schema.payments.amountCents,
-        status: schema.payments.status,
-      })
-      .from(schema.payments)
-      .where(inArray(schema.payments.orderId, orderIds));
+    const lines =
+      orderIds.length === 0
+        ? []
+        : await this.db
+            .select({
+              id: schema.orderLines.id,
+              orderId: schema.orderLines.orderId,
+              description: schema.orderLines.description,
+              quantity: schema.orderLines.quantity,
+              unitPriceCents: schema.orderLines.unitPriceCents,
+              totalCents: schema.orderLines.totalCents,
+              taxCents: schema.orderLines.taxCents,
+              qtyFulfilled: schema.orderLines.qtyFulfilled,
+              qtyReturned: schema.orderLines.qtyReturned,
+              fulfillmentMethod: schema.orderLines.fulfillmentMethod,
+            })
+            .from(schema.orderLines)
+            .where(inArray(schema.orderLines.orderId, orderIds))
+            .orderBy(schema.orderLines.createdAt);
+    const payments =
+      orderIds.length === 0
+        ? []
+        : await this.db
+            .select({
+              orderId: schema.payments.orderId,
+              amountCents: schema.payments.amountCents,
+              status: schema.payments.status,
+            })
+            .from(schema.payments)
+            .where(inArray(schema.payments.orderId, orderIds));
+    const saleIds = sales.map((s) => s.id);
+    const saleLines =
+      saleIds.length === 0
+        ? []
+        : await this.db
+            .select({
+              id: schema.saleLines.id,
+              saleId: schema.saleLines.saleId,
+              description: schema.saleLines.description,
+              quantity: schema.saleLines.quantity,
+              unitPriceCents: schema.saleLines.unitPriceCents,
+              totalCents: schema.saleLines.totalCents,
+              taxCents: schema.saleLines.taxCents,
+            })
+            .from(schema.saleLines)
+            .where(inArray(schema.saleLines.saleId, saleIds));
+
     const paidByOrder = new Map<string, number>();
     for (const p of payments) {
       if (p.status !== 'succeeded' || !p.orderId) continue;
@@ -1061,17 +1100,48 @@ export class OrdersController {
       bucket.push(l);
       linesByOrder.set(l.orderId, bucket);
     }
-    return orders.map((o) => {
+    const linesBySale = new Map<string, typeof saleLines>();
+    for (const l of saleLines) {
+      const bucket = linesBySale.get(l.saleId) ?? [];
+      bucket.push(l);
+      linesBySale.set(l.saleId, bucket);
+    }
+
+    const orderDocs = orders.map((o) => {
       const paid = paidByOrder.get(o.id) ?? 0;
       return {
         ...o,
+        docType: 'order' as const,
         paidCents: paid,
         balanceDueCents: Math.max(0, o.totalCents - paid),
-        lines: (linesByOrder.get(o.id) ?? []).map(
-          ({ orderId: _orderId, lineCreatedAt: _lineCreatedAt, ...rest }) => rest,
-        ),
+        lines: (linesByOrder.get(o.id) ?? []).map(({ orderId: _orderId, ...rest }) => rest),
       };
     });
+    // Receipts are settled documents: money collected at the counter,
+    // goods handed over — the line state mirrors that.
+    const saleDocs = sales.map((s) => ({
+      id: s.id,
+      docType: 'sale' as const,
+      number: s.number,
+      status: s.status,
+      orderKind: 'sale',
+      fulfillmentType: null,
+      requestedDate: null,
+      importedAt: s.importedAt,
+      createdAt: s.completedAt ?? s.createdAt,
+      totalCents: s.totalCents,
+      paidCents: s.totalCents,
+      balanceDueCents: 0,
+      lines: (linesBySale.get(s.id) ?? []).map(({ saleId: _saleId, ...rest }) => ({
+        ...rest,
+        qtyFulfilled: rest.quantity,
+        qtyReturned: 0,
+        fulfillmentMethod: null,
+      })),
+    }));
+    return [...orderDocs, ...saleDocs]
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+      .slice(0, limit);
   }
 
   @Get('orders/:id')
