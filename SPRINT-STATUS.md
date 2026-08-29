@@ -3330,3 +3330,18 @@ pass reasonCodeId` writing an exchange in production: the New Exchange
   receive staging, bogus receive location 400 + return stays
   authorized, warehouse-sourced replacement reserves there, drop-off
   returnToLocationId).
+
+## Checkpoint — 2026-08-29 (exchange replacement lines: editable unit price)
+
+- Owner report: a replacement line showed a $0.00 unit price (an
+  even-exchange copy inherits the original line's charged price, which
+  can be zero) with no way to fix it. The Unit price column on New
+  Exchange is now an editable input (`exchange-line-price`, New Sale's
+  line-price pattern), and the exchange create sends each line's
+  `unitPriceCents` — the price on screen IS the price billed, so the
+  settlement's balance-due (and the in-flow collection) charge the
+  difference off the edited price. Below-list edits hit the same
+  discount gates as New Sale.
+- Tests: exchanges suite 27→28 ($650 edited price on a $600-list
+  replacement → order bills 65,000¢, $500 credit nets, $150 collected,
+  balance 0).

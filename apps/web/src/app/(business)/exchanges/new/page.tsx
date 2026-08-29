@@ -225,6 +225,10 @@ function NewExchangeInner() {
             lines: saleLines.map((l) => ({
               variantId: l.variantId,
               quantity: l.quantity,
+              // The price on screen is the price charged — an edited
+              // price below list hits the same discount gates as New
+              // Sale when the order is written.
+              unitPriceCents: l.priceCents,
               ...(l.sourceLocationId && l.sourceLocationId !== original.locationId
                 ? { sourceLocationId: l.sourceLocationId }
                 : {}),
@@ -545,7 +549,7 @@ function NewExchangeInner() {
                   <tr>
                     <th>Item</th>
                     <th className="num">Qty</th>
-                    <th className="num">Unit price (est.)</th>
+                    <th className="num">Unit price</th>
                     <th>Inventory from</th>
                     <th>&nbsp;</th>
                   </tr>
@@ -573,7 +577,25 @@ function NewExchangeInner() {
                         />
                       </td>
                       <td className="num">
-                        <Money cents={l.priceCents} />
+                        {/* Editable — this is what the replacement bills at,
+                            so a wrong or $0 list price is fixed right here. */}
+                        <Input
+                          type="number"
+                          step="0.01"
+                          min={0}
+                          key={`${l.variantId}-price`}
+                          defaultValue={(l.priceCents / 100).toFixed(2)}
+                          onBlur={(e) => {
+                            const n = Number(String(e.target.value).replace(/[$,\s]/g, ''));
+                            const cents = Number.isFinite(n) && n > 0 ? Math.round(n * 100) : 0;
+                            setSaleLines((prev) =>
+                              prev.map((x, j) => (j === i ? { ...x, priceCents: cents } : x)),
+                            );
+                          }}
+                          style={{ width: 90, padding: '4px 8px' }}
+                          data-testid="exchange-line-price"
+                          aria-label={`Unit price for ${l.description}`}
+                        />
                       </td>
                       <td>
                         <Select
@@ -622,7 +644,7 @@ function NewExchangeInner() {
           <Card title="Settlement">
             <div style={{ fontSize: 13, margin: '0 0 10px', display: 'grid', gap: 2 }}>
               <div>
-                Replacement (est., before tax): <Money cents={replacementEstCents} />
+                Replacement (before tax): <Money cents={replacementEstCents} />
               </div>
               <div>
                 Return credit: <Money cents={returnCreditCents} />
