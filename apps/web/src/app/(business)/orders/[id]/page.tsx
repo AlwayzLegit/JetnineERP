@@ -27,6 +27,8 @@ interface OrderLine {
   qtyFulfilled: number;
   qtyReturned: number;
   lineType: string;
+  fulfillmentMethod: string | null;
+  sourceLocationId: string | null;
   unitPriceCents: number;
   discountCents: number;
   taxCents: number;
@@ -153,6 +155,7 @@ export default function OrderDetailPage() {
   const id = (params?.id ?? '') as string;
   const [order, setOrder] = useState<OrderDetail | null>(null);
   const [customer, setCustomer] = useState<CustomerRow | null>(null);
+  const [locationNames, setLocationNames] = useState<Map<string, string>>(new Map());
   const [timeline, setTimeline] = useState<AuditRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -186,6 +189,9 @@ export default function OrderDetailPage() {
     try {
       const o = await api<OrderDetail>(`/v1/orders/${id}`);
       setOrder(o);
+      void api<{ id: string; name: string }[]>('/v1/business/locations')
+        .then((locs) => setLocationNames(new Map(locs.map((l) => [l.id, l.name]))))
+        .catch(() => undefined);
       void api<CustomerRow>(`/v1/customers/${o.customerId}`)
         .then(setCustomer)
         .catch(() => setCustomer(null));
@@ -417,7 +423,26 @@ export default function OrderDetailPage() {
                 <tbody>
                   {order.lines.map((l) => (
                     <tr key={l.id}>
-                      <td>{l.description}</td>
+                      <td>
+                        {l.description}
+                        {l.fulfillmentMethod && l.fulfillmentMethod !== order.fulfillmentType && (
+                          <span
+                            className="badge badge-info"
+                            style={{ marginLeft: 8, fontSize: 10.5 }}
+                          >
+                            {l.fulfillmentMethod.replace(/_/g, ' ')}
+                          </span>
+                        )}
+                        {l.sourceLocationId && (
+                          <span
+                            className="badge badge-neutral"
+                            style={{ marginLeft: 8, fontSize: 10.5 }}
+                            title="This line's stock reserves and ships from here"
+                          >
+                            from {locationNames.get(l.sourceLocationId) ?? 'other location'}
+                          </span>
+                        )}
+                      </td>
                       <td>
                         {l.lineType === 'custom' ? (
                           'custom'
@@ -570,121 +595,168 @@ export default function OrderDetailPage() {
             />
           )}
 
-          <Card title="Deliveries & fulfillment" style={{ marginBottom: 16 }}>
-            {deliveries.length === 0 ? (
-              <p className="muted" style={{ fontSize: 13, margin: 0 }}>
-                {order.fulfillmentType === 'pickup'
-                  ? 'Pickup order — hand over the goods below when the customer arrives.'
-                  : 'Nothing scheduled yet.'}
-              </p>
-            ) : (
-              <ul style={{ margin: 0, paddingLeft: 16, fontSize: 13 }}>
-                {deliveries.map((dv) => (
-                  <li key={dv.id} style={{ marginBottom: 4 }}>
-                    <Link href={`/deliveries/${dv.id}`}>
-                      {dv.scheduledDate}
-                      {dv.windowStart ? ` ${dv.windowStart.slice(0, 5)}` : ''}
-                    </Link>{' '}
-                    — {dv.status.replace(/_/g, ' ')} ·{' '}
-                    {dv.lines.reduce((s, l) => s + l.quantity, 0)} unit(s)
-                  </li>
-                ))}
-              </ul>
-            )}
-            {live && order.status !== 'quote' && (
-              <div
-                style={{
-                  display: 'flex',
-                  gap: 8,
-                  marginTop: 12,
-                  alignItems: 'center',
-                  flexWrap: 'wrap',
-                }}
-              >
-                {order.fulfillmentType === 'delivery' ? (
-                  <>
-                    <Input
-                      type="date"
-                      value={deliveryDate}
-                      onChange={(e) => setDeliveryDate(e.target.value)}
-                      style={{ width: 150 }}
-                      data-testid="delivery-date"
-                    />
-                    <Button
-                      variant="primary"
-                      onClick={async () => {
-                        if (!deliveryDate) {
-                          setError('Pick a delivery date first.');
-                          return;
-                        }
-                        // Over-cap booking is allowed but deliberate:
-                        // the 409 becomes a confirm, and the retry
-                        // carries the override flag (logged to the
-                        // owner feed server-side).
-                        setBusy(true);
-                        setError(null);
-                        try {
-                          await api(`/v1/orders/${id}/deliveries`, {
-                            method: 'POST',
-                            body: JSON.stringify({ scheduledDate: deliveryDate }),
-                          });
-                          await load();
-                        } catch (err) {
-                          const msg = err instanceof Error ? err.message : String(err);
-                          if (
-                            err instanceof ApiError &&
-                            err.code === 'OVER_CAPACITY' &&
-                            window.confirm(`${msg}\n\nBook beyond the cap anyway?`)
-                          ) {
+          {(() => {
+            // Mixed fulfillment: a line's effective method is its own
+            // override, else the order's type. Counter lines hand over
+            // here; only delivery-bound lines ride the truck (the server
+            // enforces the same split when scheduling).
+            const effective = (l: OrderLine) => l.fulfillmentMethod ?? order.fulfillmentType;
+            const counterLines = order.lines.filter(
+              (l) =>
+                l.lineType !== 'custom' &&
+                l.lineType !== 'direct_ship' &&
+                (effective(l) === 'take_with' || effective(l) === 'pickup') &&
+                l.quantity - l.qtyFulfilled > 0,
+            );
+            const counterUnits = counterLines.reduce(
+              (n, l) => n + (l.quantity - l.qtyFulfilled),
+              0,
+            );
+            return (
+              <Card title="Deliveries & fulfillment" style={{ marginBottom: 16 }}>
+                {deliveries.length === 0 ? (
+                  <p className="muted" style={{ fontSize: 13, margin: 0 }}>
+                    {order.fulfillmentType === 'pickup'
+                      ? 'Pickup order — hand over the goods below when the customer arrives.'
+                      : 'Nothing scheduled yet.'}
+                  </p>
+                ) : (
+                  <ul style={{ margin: 0, paddingLeft: 16, fontSize: 13 }}>
+                    {deliveries.map((dv) => (
+                      <li key={dv.id} style={{ marginBottom: 4 }}>
+                        <Link href={`/deliveries/${dv.id}`}>
+                          {dv.scheduledDate}
+                          {dv.windowStart ? ` ${dv.windowStart.slice(0, 5)}` : ''}
+                        </Link>{' '}
+                        — {dv.status.replace(/_/g, ' ')} ·{' '}
+                        {dv.lines.reduce((s, l) => s + l.quantity, 0)} unit(s)
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {live && order.status !== 'quote' && (
+                  <div
+                    style={{
+                      display: 'flex',
+                      gap: 8,
+                      marginTop: 12,
+                      alignItems: 'center',
+                      flexWrap: 'wrap',
+                    }}
+                  >
+                    {order.fulfillmentType === 'delivery' ? (
+                      <>
+                        <Input
+                          type="date"
+                          value={deliveryDate}
+                          onChange={(e) => setDeliveryDate(e.target.value)}
+                          style={{ width: 150 }}
+                          data-testid="delivery-date"
+                        />
+                        <Button
+                          variant="primary"
+                          onClick={async () => {
+                            if (!deliveryDate) {
+                              setError('Pick a delivery date first.');
+                              return;
+                            }
+                            // Over-cap booking is allowed but deliberate:
+                            // the 409 becomes a confirm, and the retry
+                            // carries the override flag (logged to the
+                            // owner feed server-side).
+                            setBusy(true);
+                            setError(null);
                             try {
                               await api(`/v1/orders/${id}/deliveries`, {
                                 method: 'POST',
-                                body: JSON.stringify({
-                                  scheduledDate: deliveryDate,
-                                  confirmOverCapacity: true,
-                                }),
+                                body: JSON.stringify({ scheduledDate: deliveryDate }),
                               });
                               await load();
-                            } catch (err2) {
-                              setError(err2 instanceof Error ? err2.message : String(err2));
+                            } catch (err) {
+                              const msg = err instanceof Error ? err.message : String(err);
+                              if (
+                                err instanceof ApiError &&
+                                err.code === 'OVER_CAPACITY' &&
+                                window.confirm(`${msg}\n\nBook beyond the cap anyway?`)
+                              ) {
+                                try {
+                                  await api(`/v1/orders/${id}/deliveries`, {
+                                    method: 'POST',
+                                    body: JSON.stringify({
+                                      scheduledDate: deliveryDate,
+                                      confirmOverCapacity: true,
+                                    }),
+                                  });
+                                  await load();
+                                } catch (err2) {
+                                  setError(err2 instanceof Error ? err2.message : String(err2));
+                                }
+                              } else {
+                                setError(msg);
+                              }
+                            } finally {
+                              setBusy(false);
                             }
-                          } else {
-                            setError(msg);
-                          }
-                        } finally {
-                          setBusy(false);
-                        }
-                      }}
-                      disabled={busy}
-                      data-testid="schedule-delivery"
-                    >
-                      <Truck size={14} aria-hidden />
-                      Schedule delivery
-                    </Button>
-                    {dayCapacity && (
-                      <span
-                        className={`badge badge-${
-                          dayCapacity.booked >= dayCapacity.cap ? 'danger' : 'info'
-                        }`}
-                        data-testid="capacity-hint"
+                          }}
+                          disabled={busy}
+                          data-testid="schedule-delivery"
+                        >
+                          <Truck size={14} aria-hidden />
+                          Schedule delivery
+                        </Button>
+                        {dayCapacity && (
+                          <span
+                            className={`badge badge-${
+                              dayCapacity.booked >= dayCapacity.cap ? 'danger' : 'info'
+                            }`}
+                            data-testid="capacity-hint"
+                          >
+                            {dayCapacity.booked}/{dayCapacity.cap} stops booked
+                          </span>
+                        )}
+                        {counterUnits > 0 && (
+                          <>
+                            <span
+                              className="muted"
+                              style={{ fontSize: 12.5, flexBasis: '100%' }}
+                              data-testid="counter-lines-hint"
+                            >
+                              {counterUnits} unit{counterUnits === 1 ? '' : 's'} marked
+                              take-with/pickup stay off the truck — hand them over here.
+                            </span>
+                            <Button
+                              variant="secondary"
+                              onClick={() =>
+                                void act('/fulfill', {
+                                  lines: counterLines.map((l) => ({
+                                    orderLineId: l.id,
+                                    quantity: l.quantity - l.qtyFulfilled,
+                                  })),
+                                })
+                              }
+                              disabled={busy}
+                              data-testid="fulfill-counter"
+                            >
+                              Hand over counter item{counterUnits === 1 ? '' : 's'} ({counterUnits})
+                            </Button>
+                          </>
+                        )}
+                      </>
+                    ) : (
+                      <Button
+                        variant="primary"
+                        onClick={() => void act('/fulfill', {})}
+                        disabled={busy}
+                        data-testid="fulfill-pickup"
                       >
-                        {dayCapacity.booked}/{dayCapacity.cap} stops booked
-                      </span>
+                        Hand over the goods (pickup)
+                      </Button>
                     )}
-                  </>
-                ) : (
-                  <Button
-                    variant="primary"
-                    onClick={() => void act('/fulfill', {})}
-                    disabled={busy}
-                    data-testid="fulfill-pickup"
-                  >
-                    Hand over the goods (pickup)
-                  </Button>
+                  </div>
                 )}
-              </div>
-            )}
-          </Card>
+              </Card>
+            );
+          })()}
 
           <ReturnsCard order={order} busy={busy} onChanged={load} />
 
