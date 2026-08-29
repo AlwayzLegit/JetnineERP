@@ -245,6 +245,24 @@ export default function OrderDetailPage() {
     }
   }
 
+  // A parked draft becomes a live sale: the PATCH reserves stock and
+  // re-runs the price-variance gate (G6), unlike the bare /reserve.
+  async function confirmDraft() {
+    setBusy(true);
+    setError(null);
+    try {
+      await api(`/v1/orders/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status: 'open' }),
+      });
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function addLine(row: SearchRow) {
     setShowAddProduct(false);
     setBusy(true);
@@ -1013,6 +1031,17 @@ export default function OrderDetailPage() {
           {live && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               {error && <p style={{ color: 'var(--danger)', margin: 0, fontSize: 13 }}>{error}</p>}
+              {order.status === 'draft' && (
+                <Button
+                  variant="primary"
+                  onClick={() => void confirmDraft()}
+                  disabled={busy}
+                  data-testid="confirm-draft"
+                >
+                  <CheckCircle2 size={14} aria-hidden />
+                  Confirm order — make it a live sale
+                </Button>
+              )}
               {order.status === 'quote' && (
                 <Button
                   variant="primary"
@@ -1048,7 +1077,7 @@ export default function OrderDetailPage() {
                   Complete with balance due (AR)
                 </Button>
               )}
-              {order.status !== 'quote' && order.status !== 'fulfilled' && (
+              {!['quote', 'fulfilled', 'draft'].includes(order.status) && (
                 <Button onClick={() => void act('/release')} disabled={busy}>
                   Release reserved stock
                 </Button>
