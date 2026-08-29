@@ -77,6 +77,8 @@ interface Line {
   lineDiscountCents: number;
   lineType: 'stock' | 'special_order' | 'custom';
   fulfillmentMethod: '' | Fulfillment;
+  /** Per-line fulfill-from location; '' = the selling store. */
+  sourceLocationId: string;
   deliveryDate: string;
   availableHere?: number;
   atpDate?: string | null;
@@ -120,9 +122,10 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
   // --- reference data ---
   const [locations, setLocations] = useState<LocationRow[]>([]);
   const [locationId, setLocationId] = useState('');
-  // Fulfill-from: which location's stock this order reserves/consumes.
-  // '' = same as the selling store.
-  const [stockLocationId, setStockLocationId] = useState('');
+  // The Add Product dialog's "From" location — the source stamped on
+  // each line as it is added ('' = the selling store). Per-line after
+  // that; each row has its own Source select.
+  const [searchSourceId, setSearchSourceId] = useState('');
   const [taxRateBps, setTaxRateBps] = useState(0);
   const [members, setMembers] = useState<MemberRow[]>([]);
   const [recyclingFeeCents, setRecyclingFeeCents] = useState(1050);
@@ -319,9 +322,6 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
     }, 250);
   }, [custQuery]);
 
-  const sourceLocationId = stockLocationId || locationId;
-  const sourceLocation = locations.find((l) => l.id === sourceLocationId);
-
   const totals = useMemo(() => {
     let merchandise = 0;
     let recycling = 0;
@@ -375,6 +375,7 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
           lineDiscountCents: 0,
           lineType: 'stock',
           fulfillmentMethod: '',
+          sourceLocationId: searchSourceId && searchSourceId !== locationId ? searchSourceId : '',
           deliveryDate: '',
           availableHere: row.availableHere,
           atpDate: row.atpDate,
@@ -395,6 +396,7 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
               lineDiscountCents: 0,
               lineType: 'custom',
               fulfillmentMethod: '',
+              sourceLocationId: '',
               deliveryDate: '',
             });
         }
@@ -426,7 +428,6 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
         id: string;
         customerId: string;
         locationId: string;
-        stockLocationId: string | null;
         fulfillmentType: string;
         requestedDate: string | null;
         deliveryInstructions: string | null;
@@ -442,13 +443,13 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
           discountCents: number;
           lineType: string;
           fulfillmentMethod: string | null;
+          sourceLocationId: string | null;
           deliveryDate: string | null;
         }[];
       }>(`/v1/orders/${id}`);
       const cust = await api<CustomerHit>(`/v1/customers/${o.customerId}`);
       setCustomer(cust);
       setLocationId(o.locationId);
-      setStockLocationId(o.stockLocationId ?? '');
       setFulfillment((o.fulfillmentType as Fulfillment) ?? 'delivery');
       setRequestedDate(o.requestedDate ?? '');
       setDeliveryInstructions(o.deliveryInstructions ?? '');
@@ -466,6 +467,7 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
           lineDiscountCents: l.discountCents,
           lineType: (l.lineType as Line['lineType']) ?? 'stock',
           fulfillmentMethod: (l.fulfillmentMethod as Line['fulfillmentMethod']) ?? '',
+          sourceLocationId: l.sourceLocationId ?? '',
           deliveryDate: l.deliveryDate ?? '',
         })),
       );
@@ -540,6 +542,8 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
         lineDiscountCents: l.lineDiscountCents || undefined,
         lineType: l.lineType,
         fulfillmentMethod: l.fulfillmentMethod || undefined,
+        sourceLocationId:
+          l.sourceLocationId && l.sourceLocationId !== locationId ? l.sourceLocationId : undefined,
         deliveryDate: l.deliveryDate || undefined,
       }));
 
@@ -552,7 +556,7 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
         mode === 'complete' &&
         orderType === 'sales_order' &&
         fulfillment === 'take_with' &&
-        (!stockLocationId || stockLocationId === locationId) &&
+        lines.every((l) => !l.sourceLocationId || l.sourceLocationId === locationId) &&
         allSellable &&
         totals.paidCents >= totals.totalCents &&
         totals.totalCents > 0
@@ -595,8 +599,6 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
         method: 'POST',
         body: JSON.stringify({
           locationId,
-          stockLocationId:
-            stockLocationId && stockLocationId !== locationId ? stockLocationId : undefined,
           customerId: customer.id,
           orderKind: orderType === 'layaway' ? 'layaway' : 'sales_order',
           fulfillmentType: fulfillment,
@@ -671,7 +673,7 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
     setDeliveryInstructions('');
     setRequestedDate('');
     setShipDiffers(false);
-    setStockLocationId('');
+    setSearchSourceId('');
     setResumedDraftId(null);
     setOrderType('sales_order');
     setDone(null);
@@ -967,6 +969,7 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
                       lineDiscountCents: 0,
                       lineType: 'custom',
                       fulfillmentMethod: '',
+                      sourceLocationId: '',
                       deliveryDate: '',
                     },
                   ])
@@ -999,6 +1002,7 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
                     <th>Price $</th>
                     <th>Disc $</th>
                     <th>Fulfillment</th>
+                    <th>Inventory from</th>
                     <th className="num">Amount</th>
                     <th />
                   </tr>
@@ -1008,6 +1012,8 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
                     <LineRow
                       key={l.key}
                       line={l}
+                      storeId={locationId}
+                      locations={locations}
                       onPatch={patchLine}
                       onRemove={(k) => setLines((p) => p.filter((x) => x.key !== k))}
                     />
@@ -1048,42 +1054,6 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
                   </option>
                 ))}
               </Select>
-            </Field>
-            <Field label="Inventory from">
-              <Select
-                value={stockLocationId}
-                onChange={(e) => setStockLocationId(e.target.value)}
-                style={{ width: '100%' }}
-                data-testid="stock-source"
-              >
-                <option value="">Same as store</option>
-                {[...locations]
-                  .sort((a, b) =>
-                    a.locationType === b.locationType
-                      ? a.name.localeCompare(b.name)
-                      : a.locationType === 'warehouse'
-                        ? -1
-                        : 1,
-                  )
-                  .map((l) => (
-                    <option key={l.id} value={l.id}>
-                      {l.name}
-                      {l.locationType === 'warehouse' ? ' (warehouse)' : ''}
-                    </option>
-                  ))}
-              </Select>
-              {stockLocationId && stockLocationId !== locationId && (
-                <span
-                  style={{
-                    display: 'block',
-                    marginTop: 3,
-                    fontSize: 11.5,
-                    color: 'var(--text-muted)',
-                  }}
-                >
-                  Stock reserves and ships from {sourceLocation?.name ?? 'the selected location'}.
-                </span>
-              )}
             </Field>
             <Field label="Fulfillment">
               <Select
@@ -1353,8 +1323,13 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
 
       {showProductSearch && (
         <ProductSearchDialog
-          locationId={sourceLocationId}
-          locationName={sourceLocation?.name ?? null}
+          locationId={searchSourceId || locationId}
+          locationName={
+            locations.find((l) => l.id === (searchSourceId || locationId))?.name ?? null
+          }
+          locations={locations}
+          storeId={locationId}
+          onChangeLocation={(id) => setSearchSourceId(id === locationId ? '' : id)}
           onAdd={addProduct}
           onClose={() => setShowProductSearch(false)}
         />
@@ -1365,10 +1340,14 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
 
 function LineRow({
   line: l,
+  storeId,
+  locations,
   onPatch,
   onRemove,
 }: {
   line: Line;
+  storeId: string;
+  locations: LocationRow[];
   onPatch: (key: string, patch: Partial<Line>) => void;
   onRemove: (key: string) => void;
 }) {
@@ -1436,6 +1415,40 @@ function LineRow({
             </Select>
           )}
         </td>
+        <td>
+          {l.lineType === 'custom' ? (
+            <span className="muted" style={{ fontSize: 12 }}>
+              —
+            </span>
+          ) : (
+            <Select
+              value={l.sourceLocationId || storeId}
+              onChange={(e) =>
+                onPatch(l.key, {
+                  sourceLocationId: e.target.value === storeId ? '' : e.target.value,
+                })
+              }
+              style={{ width: 130, padding: '4px 8px' }}
+              aria-label={`Inventory source for ${l.description}`}
+              data-testid="line-source"
+            >
+              {[...locations]
+                .sort((a, b) =>
+                  a.locationType === b.locationType
+                    ? a.name.localeCompare(b.name)
+                    : a.locationType === 'warehouse'
+                      ? -1
+                      : 1,
+                )
+                .map((loc) => (
+                  <option key={loc.id} value={loc.id}>
+                    {loc.name}
+                    {loc.locationType === 'warehouse' ? ' (WH)' : ''}
+                  </option>
+                ))}
+            </Select>
+          )}
+        </td>
         <td className="num">
           <Money cents={amount} />
         </td>
@@ -1451,7 +1464,7 @@ function LineRow({
       </tr>
       {outOfStock && (
         <tr>
-          <td colSpan={7} style={{ paddingTop: 0 }}>
+          <td colSpan={8} style={{ paddingTop: 0 }}>
             <div
               style={{
                 background: '#fef3c7',
@@ -1480,11 +1493,17 @@ function LineRow({
 function ProductSearchDialog({
   locationId,
   locationName,
+  locations,
+  storeId,
+  onChangeLocation,
   onAdd,
   onClose,
 }: {
   locationId: string;
   locationName: string | null;
+  locations: LocationRow[];
+  storeId: string;
+  onChangeLocation: (id: string) => void;
   onAdd: (row: SearchRow) => void;
   onClose: () => void;
 }) {
@@ -1569,7 +1588,33 @@ function ProductSearchDialog({
               <option value="1">In stock</option>
               <option value="0">Not in stock</option>
             </Select>
+            <Select
+              value={locationId}
+              onChange={(e) => onChangeLocation(e.target.value)}
+              data-testid="search-source"
+              aria-label="Inventory from"
+            >
+              {[...locations]
+                .sort((a, b) =>
+                  a.locationType === b.locationType
+                    ? a.name.localeCompare(b.name)
+                    : a.locationType === 'warehouse'
+                      ? -1
+                      : 1,
+                )
+                .map((loc) => (
+                  <option key={loc.id} value={loc.id}>
+                    From {loc.name}
+                    {loc.locationType === 'warehouse' ? ' (WH)' : ''}
+                    {loc.id === storeId ? ' — this store' : ''}
+                  </option>
+                ))}
+            </Select>
           </div>
+          <p className="muted" style={{ margin: '0 0 6px', fontSize: 12 }}>
+            Availability and the added line&apos;s inventory source follow the &ldquo;From&rdquo;
+            location — each line can still be changed on the order afterwards.
+          </p>
           <div style={{ maxHeight: '52vh', overflowY: 'auto' }}>
             <table className="table" style={{ fontSize: 13 }}>
               <thead>

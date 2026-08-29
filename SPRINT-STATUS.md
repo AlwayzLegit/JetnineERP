@@ -3237,3 +3237,28 @@ User Security` and `Review Settings Activity` extracts. "A morning's
 - Tests: orders suite 68→72 (warehouse-only reservation, blocked move
   while reserved + release/re-point, warehouse consumption on fulfill,
   mine on both endpoints). pos/locations now returns locationType.
+
+## Checkpoint — 2026-08-29 (mixed fulfillment split + PER-LINE inventory source)
+
+- **Mixed orders (owner Q: delivery + take-with on one sale)**:
+  scheduling now books only delivery-bound lines (line override, else
+  order type; direct-ship already excluded); an all-counter remainder
+  refuses with directions. Order page: per-line method chips, a
+  counter-lines hint, and "Hand over counter items (N)" on delivery
+  orders — take-with lines hand over at the register on any order
+  type.
+- **Per-line inventory source (owner follow-up: choose each item's
+  source in step 2)**: `order_lines.source_location_id` (migration
+  0072, null = order default). reserveOrder/releaseOrder/
+  applyFulfillment group lines by effective source (levels locked per
+  location); allocatePending groups per (order, location); single-line
+  releases and FIFO consumption follow the line. New Sale: order-level
+  "Inventory from" replaced by a **From selector inside Add Product**
+  (availability follows it, stamped on the added line) + an
+  "Inventory from" select on every line row (warehouse-first); order
+  page shows "from X" chips per line. Sources equal to the selling
+  store normalize to null; order-level stockLocationId stays as the
+  API-level default.
+- Tests: orders suite 72→75 (mixed schedule/hand-over split,
+  all-counter refusal message, per-line reserve/consume at two
+  locations with normalization).

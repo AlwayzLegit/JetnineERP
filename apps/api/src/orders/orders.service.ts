@@ -86,7 +86,7 @@ export class OrdersService {
       .select({
         orderId: schema.orders.id,
         number: schema.orders.number,
-        locationId: sql<string>`coalesce(${schema.orders.stockLocationId}, ${schema.orders.locationId})`,
+        locationId: sql<string>`coalesce(${schema.orderLines.sourceLocationId}, ${schema.orders.stockLocationId}, ${schema.orders.locationId})`,
         orderLineId: schema.orderLines.id,
         variantId: schema.orderLines.variantId,
         need: sql<number>`${need}`,
@@ -123,7 +123,9 @@ export class OrdersService {
       }
     }
 
-    const byOrder = new Map<
+    // Grouped per (order, source location): with per-line fulfill-from,
+    // one order's lines can reserve at different locations.
+    const byOrderLoc = new Map<
       string,
       {
         orderId: string;
@@ -140,22 +142,23 @@ export class OrdersService {
       const take = Math.min(available, r.need);
       if (take <= 0) continue;
       free.set(key, available - take);
-      if (!byOrder.has(r.orderId)) {
-        byOrder.set(r.orderId, {
+      const groupKey = `${r.orderId}:${r.locationId}`;
+      if (!byOrderLoc.has(groupKey)) {
+        byOrderLoc.set(groupKey, {
           orderId: r.orderId,
           number: r.number,
           locationId: r.locationId,
           lines: [],
         });
       }
-      byOrder
-        .get(r.orderId)!
+      byOrderLoc
+        .get(groupKey)!
         .lines.push({ orderLineId: r.orderLineId, variantId: r.variantId, quantity: take });
     }
 
-    const allocations = [...byOrder.values()];
+    const groups = [...byOrderLoc.values()];
     if (!args.dryRun) {
-      for (const a of allocations) {
+      for (const a of groups) {
         await this.applyReservations(db, {
           businessId: args.businessId,
           orderId: a.orderId,
@@ -169,7 +172,22 @@ export class OrdersService {
         });
       }
     }
-    return allocations.map(({ orderId, number, lines }) => ({ orderId, number, lines }));
+    // Report per order (the callers' shape), merging location groups.
+    const byOrder = new Map<
+      string,
+      {
+        orderId: string;
+        number: string;
+        lines: { orderLineId: string; variantId: string; quantity: number }[];
+      }
+    >();
+    for (const g of groups) {
+      if (!byOrder.has(g.orderId)) {
+        byOrder.set(g.orderId, { orderId: g.orderId, number: g.number, lines: [] });
+      }
+      byOrder.get(g.orderId)!.lines.push(...g.lines);
+    }
+    return [...byOrder.values()];
   }
 
   /**
@@ -349,16 +367,34 @@ export class OrdersService {
         quantity: schema.orderLines.quantity,
         qtyReserved: schema.orderLines.qtyReserved,
         lineType: schema.orderLines.lineType,
+        sourceLocationId: schema.orderLines.sourceLocationId,
       })
       .from(schema.orderLines)
       .where(eq(schema.orderLines.orderId, args.orderId));
 
-    const variantIds = lines.map((l) => l.variantId).filter((id): id is string => Boolean(id));
-    const levels = await this.stockLevels(db, args.locationId, variantIds, { lock: true });
-    const plan = planReservations(lines, levels);
-
-    await this.applyReservations(db, { ...args, reservations: plan.reservations });
-    return plan;
+    // Per-line fulfill-from: each line reserves at its own source
+    // (line override, else args.locationId — the order's default). Lines
+    // are grouped so each location's levels are read and locked once.
+    const groups = new Map<string, typeof lines>();
+    for (const l of lines) {
+      const loc = l.sourceLocationId ?? args.locationId;
+      if (!groups.has(loc)) groups.set(loc, []);
+      groups.get(loc)!.push(l);
+    }
+    const merged = { reservations: [] as Reservation[], shortfalls: [] as Shortfall[] };
+    for (const [loc, group] of groups) {
+      const variantIds = group.map((l) => l.variantId).filter((id): id is string => Boolean(id));
+      const levels = await this.stockLevels(db, loc, variantIds, { lock: true });
+      const plan = planReservations(group, levels);
+      await this.applyReservations(db, {
+        ...args,
+        locationId: loc,
+        reservations: plan.reservations,
+      });
+      merged.reservations.push(...plan.reservations);
+      merged.shortfalls.push(...plan.shortfalls);
+    }
+    return merged;
   }
 
   /** Release everything an order currently holds. */
@@ -379,13 +415,25 @@ export class OrdersService {
         quantity: schema.orderLines.quantity,
         qtyReserved: schema.orderLines.qtyReserved,
         lineType: schema.orderLines.lineType,
+        sourceLocationId: schema.orderLines.sourceLocationId,
       })
       .from(schema.orderLines)
       .where(eq(schema.orderLines.orderId, args.orderId));
 
-    const releases = planReleases(lines);
-    await this.applyReleases(db, { ...args, releases });
-    return releases;
+    // Release each line at the location it reserved from.
+    const all: Release[] = [];
+    const groups = new Map<string, typeof lines>();
+    for (const l of lines) {
+      const loc = l.sourceLocationId ?? args.locationId;
+      if (!groups.has(loc)) groups.set(loc, []);
+      groups.get(loc)!.push(l);
+    }
+    for (const [loc, group] of groups) {
+      const releases = planReleases(group);
+      await this.applyReleases(db, { ...args, locationId: loc, releases });
+      all.push(...releases);
+    }
+    return all;
   }
 
   /**
@@ -556,7 +604,19 @@ export class OrdersService {
       referenceId?: string;
     },
   ): Promise<void> {
+    // Per-line fulfill-from: consume each line at the location it
+    // reserved from (line override, else args.locationId).
+    const sourceRows = await db
+      .select({
+        id: schema.orderLines.id,
+        sourceLocationId: schema.orderLines.sourceLocationId,
+      })
+      .from(schema.orderLines)
+      .where(eq(schema.orderLines.orderId, args.orderId));
+    const sourceOf = new Map(sourceRows.map((r) => [r.id, r.sourceLocationId]));
+
     for (const step of args.steps) {
+      const stepLocationId = sourceOf.get(step.orderLineId) ?? args.locationId;
       await db
         .update(schema.orderLines)
         .set({
@@ -572,7 +632,7 @@ export class OrdersService {
         .values({
           businessId: args.businessId,
           variantId: step.variantId,
-          locationId: args.locationId,
+          locationId: stepLocationId,
           onHand: -step.quantity,
           reserved: 0,
         })
@@ -610,7 +670,7 @@ export class OrdersService {
       await db.insert(schema.inventoryMovements).values({
         businessId: args.businessId,
         variantId: step.variantId,
-        locationId: args.locationId,
+        locationId: stepLocationId,
         delta: -step.quantity,
         reason: 'order_fulfill',
         referenceType: args.referenceType ?? 'order',
@@ -622,7 +682,7 @@ export class OrdersService {
       await this.costing.consume(db, {
         businessId: args.businessId,
         variantId: step.variantId,
-        locationId: args.locationId,
+        locationId: stepLocationId,
         quantity: step.quantity,
         referenceType: 'order_fulfill',
         referenceId: args.orderId,

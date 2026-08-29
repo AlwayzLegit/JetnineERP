@@ -214,6 +214,15 @@ export const orderLines = pgTable(
       .notNull()
       .references(() => orders.id, { onDelete: 'cascade' }),
     variantId: uuid('variant_id').references(() => productVariants.id, { onDelete: 'set null' }),
+    /**
+     * Per-line fulfill-from: which location's stock THIS line reserves
+     * and consumes. Null = the order's default (orders.stock_location_id,
+     * else the selling location). Chosen at item selection in New Sale;
+     * immutable while the line holds a reservation.
+     */
+    sourceLocationId: uuid('source_location_id').references(() => locations.id, {
+      onDelete: 'restrict',
+    }),
     description: text('description').notNull(),
     quantity: integer('quantity').notNull(),
     qtyReserved: integer('qty_reserved').notNull().default(0),
