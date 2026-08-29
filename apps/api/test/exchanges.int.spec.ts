@@ -31,6 +31,7 @@ const PASSWORD = 'Exchange!2026x';
 let app: INestApplication;
 let businessId = '';
 let locationId = '';
+let warehouseId = '';
 let customerId = '';
 let otherCustomerId = '';
 let v1Id = ''; // original product
@@ -105,6 +106,17 @@ async function seed() {
       .values({ businessId, name: 'Store', timezone: 'America/Los_Angeles', taxRateBps: 0 })
       .returning();
     locationId = loc!.id;
+    const [wh] = await db
+      .insert(schema.locations)
+      .values({
+        businessId,
+        name: 'Warehouse',
+        timezone: 'America/Los_Angeles',
+        taxRateBps: 0,
+        locationType: 'warehouse',
+      })
+      .returning();
+    warehouseId = wh!.id;
 
     const [cust] = await db
       .insert(schema.customers)
@@ -151,6 +163,8 @@ async function seed() {
     await db.insert(schema.inventoryLevels).values([
       { businessId, variantId: v1Id, locationId, onHand: 20, reserved: 0 },
       { businessId, variantId: v2Id, locationId, onHand: 20, reserved: 0 },
+      { businessId, variantId: v1Id, locationId: warehouseId, onHand: 10, reserved: 0 },
+      { businessId, variantId: v2Id, locationId: warehouseId, onHand: 10, reserved: 0 },
     ]);
   });
 }
@@ -868,5 +882,130 @@ describe('New Exchange stress test', () => {
       expect(salePayments[0]!.amountCents).toBe(50_000);
     });
     expect(await ledgerBalance(customerId)).toBe(0);
+  });
+});
+
+/**
+ * Exchange money-and-goods routing: collecting the balance the customer
+ * owes after the credit applies, receiving the returned goods at a
+ * chosen location (warehouse vs. store), and pulling the replacement's
+ * inventory from a chosen source location.
+ */
+describe('Exchange — pay the difference and route the goods', () => {
+  it('collects the exact remaining balance on the replacement after settlement', async () => {
+    const orig = await soldOriginal(v1Id, 50_000);
+    const { saleOrderId, returnId } = await legsFor(orig.orderId, orig.lineId, v2Id);
+    const bound = await owner().post('/v1/exchanges').send({ saleOrderId, returnId });
+    expect(bound.status).toBe(201);
+    await owner().post(`/v1/order-returns/${returnId}/receive`).send({}).expect(201);
+
+    // The page reads the settled balance and charges exactly that.
+    const settled = await owner().get(`/v1/exchanges/${bound.body.id}`);
+    const due = settled.body.settlement.saleBalanceDueCents as number;
+    expect(due).toBe(10_000);
+    await owner()
+      .post(`/v1/orders/${saleOrderId}/payments`)
+      .send({ method: 'card', amountCents: due, kind: 'balance' })
+      .expect(201);
+
+    const after = await owner().get(`/v1/exchanges/${bound.body.id}`);
+    expect(after.body.settlement.saleBalanceDueCents).toBe(0);
+    expect(after.body.settlement.salePaidCents).toBe(60_000);
+  });
+
+  it('receives the returned goods at a chosen location — As-Is pieces land at the warehouse', async () => {
+    const orig = await soldOriginal(v1Id, 50_000);
+    const { saleOrderId, returnId } = await legsFor(orig.orderId, orig.lineId, v2Id);
+    await owner().post('/v1/exchanges').send({ saleOrderId, returnId }).expect(201);
+    await owner()
+      .post(`/v1/order-returns/${returnId}/receive`)
+      .send({ locationId: warehouseId })
+      .expect(201);
+    await withDb(async (db) => {
+      const pieces = await db
+        .select()
+        .from(schema.asIsItems)
+        .where(
+          and(
+            eq(schema.asIsItems.referenceType, 'order'),
+            eq(schema.asIsItems.referenceId, orig.orderId),
+          ),
+        );
+      expect(pieces).toHaveLength(1);
+      expect(pieces[0]!.locationId).toBe(warehouseId);
+    });
+  });
+
+  it('a bogus receive location is refused and the return stays authorized', async () => {
+    const orig = await soldOriginal(v1Id, 50_000);
+    const { saleOrderId, returnId } = await legsFor(orig.orderId, orig.lineId, v2Id);
+    await owner().post('/v1/exchanges').send({ saleOrderId, returnId }).expect(201);
+    const bad = await owner()
+      .post(`/v1/order-returns/${returnId}/receive`)
+      .send({ locationId: '00000000-0000-4000-8000-000000000000' });
+    expect(bad.status).toBe(400);
+    expect(bad.body.message).toMatch(/location/i);
+    // Untouched: the correct receive still works.
+    await owner().post(`/v1/order-returns/${returnId}/receive`).send({}).expect(201);
+  });
+
+  it('replacement lines can pull from the warehouse — reservation and consumption land there', async () => {
+    const orig = await soldOriginal(v1Id, 50_000);
+    const replacement = await owner()
+      .post(`/v1/orders/${orig.orderId}/exchange`)
+      .send({
+        locationId,
+        confirm: true,
+        lines: [{ variantId: v2Id, quantity: 1, sourceLocationId: warehouseId }],
+      });
+    expect(replacement.status).toBe(201);
+    expect(replacement.body.lines[0].sourceLocationId).toBe(warehouseId);
+    await withDb(async (db) => {
+      const [wh] = await db
+        .select()
+        .from(schema.inventoryLevels)
+        .where(
+          and(
+            eq(schema.inventoryLevels.variantId, v2Id),
+            eq(schema.inventoryLevels.locationId, warehouseId),
+          ),
+        );
+      expect(wh!.reserved).toBe(1);
+    });
+  });
+
+  it('drop-off returns route the goods too — returnToLocationId on the plain return', async () => {
+    const orig = await soldOriginal(v1Id, 50_000);
+    await owner()
+      .post(`/v1/orders/${orig.orderId}/return`)
+      .send({
+        fulfillment: 'drop_off',
+        refundMethod: 'store_credit',
+        returnToLocationId: warehouseId,
+        lines: [{ lineId: orig.lineId, quantity: 1 }],
+      })
+      .expect(201);
+    await withDb(async (db) => {
+      const pieces = await db
+        .select()
+        .from(schema.asIsItems)
+        .where(
+          and(
+            eq(schema.asIsItems.referenceType, 'order'),
+            eq(schema.asIsItems.referenceId, orig.orderId),
+          ),
+        );
+      expect(pieces).toHaveLength(1);
+      expect(pieces[0]!.locationId).toBe(warehouseId);
+    });
+    // Burn the plain-return store credit so later ledger checks stay clean.
+    await withDb(async (db) => {
+      await db.insert(schema.storeCreditEntries).values({
+        businessId,
+        customerId,
+        deltaCents: -50_000,
+        reason: 'routing-test cleanup',
+      });
+    });
   });
 });
