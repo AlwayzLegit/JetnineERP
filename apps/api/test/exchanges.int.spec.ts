@@ -1009,3 +1009,47 @@ describe('Exchange — pay the difference and route the goods', () => {
     });
   });
 });
+
+describe('Exchange — replacement priced on screen', () => {
+  it('an edited unit price flows through to the replacement order and the balance due', async () => {
+    const orig = await soldOriginal(v1Id, 50_000);
+    // The writer edited the price up to $650 (list is $600) — what the
+    // screen shows is what the order bills.
+    const replacement = await owner()
+      .post(`/v1/orders/${orig.orderId}/exchange`)
+      .send({
+        locationId,
+        confirm: true,
+        lines: [{ variantId: v2Id, quantity: 1, unitPriceCents: 65_000 }],
+      });
+    expect(replacement.status).toBe(201);
+    expect(replacement.body.lines[0].unitPriceCents).toBe(65_000);
+    expect(replacement.body.totalCents).toBe(65_000);
+
+    await owner()
+      .post(`/v1/orders/${orig.orderId}/return`)
+      .send({
+        fulfillment: 'pickup',
+        refundMethod: 'store_credit',
+        lines: [{ lineId: orig.lineId, quantity: 1 }],
+      })
+      .expect(201);
+    const rets = await owner().get(`/v1/order-returns?orderId=${orig.orderId}&status=authorized`);
+    const returnId = rets.body.data[0].id as string;
+    const bound = await owner()
+      .post('/v1/exchanges')
+      .send({ saleOrderId: replacement.body.id, returnId });
+    expect(bound.status).toBe(201);
+    await owner().post(`/v1/order-returns/${returnId}/receive`).send({}).expect(201);
+
+    // $500 credit against the $650 replacement → the customer owes $150.
+    const settled = await owner().get(`/v1/exchanges/${bound.body.id}`);
+    expect(settled.body.settlement.saleBalanceDueCents).toBe(15_000);
+    await owner()
+      .post(`/v1/orders/${replacement.body.id}/payments`)
+      .send({ method: 'card', amountCents: 15_000, kind: 'balance' })
+      .expect(201);
+    const after = await owner().get(`/v1/exchanges/${bound.body.id}`);
+    expect(after.body.settlement.saleBalanceDueCents).toBe(0);
+  });
+});
