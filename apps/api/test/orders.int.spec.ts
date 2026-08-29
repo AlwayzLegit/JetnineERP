@@ -3082,4 +3082,52 @@ describe('Per-line inventory source (fulfill-from on the line)', () => {
     // remains reserved anywhere.
     expect((await levelAt(whVariantId, locationId)).reserved).toBe(0);
   });
+
+  it('model swap: removing a warehouse-sourced line releases at the warehouse; the added line reserves at its own source', async () => {
+    const create = await request(app.getHttpServer())
+      .post('/v1/orders')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({
+        locationId,
+        customerId,
+        fulfillmentType: 'delivery',
+        confirm: true,
+        lines: [{ variantId: whVariantId, quantity: 1, sourceLocationId: warehouseId }],
+      });
+    expect(create.status).toBe(201);
+    const orderId = create.body.id as string;
+    const oldLineId =
+      create.body.lines?.[0]?.id ??
+      (
+        await request(app.getHttpServer())
+          .get(`/v1/orders/${orderId}`)
+          .set('Cookie', ownerCookie)
+          .set('X-Business-Id', businessId)
+      ).body.lines[0].id;
+    expect((await levelAt(whVariantId, warehouseId)).reserved).toBe(1);
+
+    // The customer changes models: remove the old line…
+    await request(app.getHttpServer())
+      .delete(`/v1/orders/${orderId}/lines/${oldLineId}`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .expect(200);
+    expect((await levelAt(whVariantId, warehouseId)).reserved).toBe(0);
+
+    // …and add the new one, sourced from the warehouse too.
+    const add = await request(app.getHttpServer())
+      .post(`/v1/orders/${orderId}/lines`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ variantId: storeVariantId, quantity: 1 });
+    expect(add.status).toBe(201);
+    // The new line has no override → reserves at the order default (store).
+    expect((await levelAt(storeVariantId, locationId)).reserved).toBeGreaterThanOrEqual(1);
+    const detail = add.body;
+    expect(detail.lines.some((l: { variantId: string }) => l.variantId === storeVariantId)).toBe(
+      true,
+    );
+    expect(detail.lines.some((l: { id: string }) => l.id === oldLineId)).toBe(false);
+  });
 });
