@@ -356,14 +356,14 @@ export class DeliveriesController {
         qtyFulfilled: l.qtyFulfilled + (pending.get(l.id) ?? 0),
       }));
 
-    // Mixed fulfillment: by default only DELIVERY-bound lines ride the
-    // truck. A line's effective method is its own override, else the
-    // order's type — a take-with or pickup line on a delivery order is
-    // handed over at the counter (order fulfill), never scheduled.
-    // An explicit body.lines still schedules exactly what it names.
-    const truckBound = schedulable.filter(
-      (l) => (l.fulfillmentMethod ?? order.fulfillmentType) === 'delivery',
-    );
+    // Mixed fulfillment: lines EXPLICITLY marked take-with or pickup are
+    // handed over at the counter (order fulfill), never scheduled by
+    // default. Lines with no override follow the human's explicit act of
+    // scheduling — booking a delivery on a pickup-typed order is a
+    // deliberate change of plan, not a mistake to refuse. An explicit
+    // body.lines still schedules exactly what it names.
+    const counterMarked = (m: string | null) => m === 'take_with' || m === 'pickup';
+    const truckBound = schedulable.filter((l) => !counterMarked(l.fulfillmentMethod));
     const requests: FulfillmentRequest[] =
       body.lines && body.lines.length > 0
         ? body.lines.map((l) => ({
@@ -373,9 +373,7 @@ export class DeliveriesController {
         : remainingFulfillment(truckBound);
     if (requests.length === 0) {
       const counterRemaining = schedulable.some(
-        (l) =>
-          (l.fulfillmentMethod ?? order.fulfillmentType) !== 'delivery' &&
-          l.quantity - l.qtyFulfilled > 0,
+        (l) => counterMarked(l.fulfillmentMethod) && l.quantity - l.qtyFulfilled > 0,
       );
       throw new BadRequestException(
         counterRemaining
