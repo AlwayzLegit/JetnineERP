@@ -35,6 +35,7 @@ interface MemberRow {
   roleName: string;
   dataScope: string;
   scopeLocationIds: string[];
+  hiddenNav: string[];
   invitedAt: Date | null;
   acceptedAt: Date | null;
 }
@@ -53,6 +54,8 @@ interface UpdateMemberBody {
   dataScope?: 'all' | 'store';
   /** Replaces the member's location scope set (only meaningful with 'store'). */
   scopeLocationIds?: string[];
+  /** Left-nav hrefs hidden for this member (visibility only; permissions still gate the API). */
+  hiddenNav?: string[];
 }
 
 interface MemberAccess {
@@ -91,6 +94,7 @@ export class MembersController {
         invitedAt: schema.memberships.invitedAt,
         acceptedAt: schema.memberships.acceptedAt,
         dataScope: schema.memberships.dataScope,
+        hiddenNavJson: schema.memberships.hiddenNavJson,
         // Lets the commissions page show who is currently on a plan.
         commissionPlanId: schema.memberships.commissionPlanId,
       })
@@ -111,7 +115,41 @@ export class MembersController {
       list.push(sRow.locationId);
       byMembership.set(sRow.membershipId, list);
     }
-    return rows.map((r) => ({ ...r, scopeLocationIds: byMembership.get(r.membershipId) ?? [] }));
+    return rows.map(({ hiddenNavJson, ...r }) => ({
+      ...r,
+      scopeLocationIds: byMembership.get(r.membershipId) ?? [],
+      hiddenNav: Array.isArray(hiddenNavJson) ? (hiddenNavJson as string[]) : [],
+    }));
+  }
+
+  /**
+   * The calling member's own access snapshot — what the app shell needs
+   * to shape itself: which nav tabs are hidden for them and which
+   * locations their selling/data scope covers. No permission required:
+   * it only describes the caller's own membership.
+   */
+  @Get('me')
+  async me(@CurrentTenant() tenant: RequestTenantContext): Promise<{
+    membershipId: string | null;
+    dataScope: 'all' | 'store';
+    scopeLocationIds: string[] | null;
+    hiddenNav: string[];
+  }> {
+    let hiddenNav: string[] = [];
+    if (tenant.membershipId) {
+      const [row] = await this.db
+        .select({ hiddenNavJson: schema.memberships.hiddenNavJson })
+        .from(schema.memberships)
+        .where(eq(schema.memberships.id, tenant.membershipId))
+        .limit(1);
+      if (row && Array.isArray(row.hiddenNavJson)) hiddenNav = row.hiddenNavJson as string[];
+    }
+    return {
+      membershipId: tenant.membershipId,
+      dataScope: tenant.dataScope,
+      scopeLocationIds: tenant.scopeLocationIds,
+      hiddenNav,
+    };
   }
 
   @Post('invite')
@@ -266,6 +304,19 @@ export class MembersController {
       update.dataScope = body.dataScope;
       before.dataScope = existing.dataScope;
       after.dataScope = body.dataScope;
+    }
+
+    if (body.hiddenNav !== undefined) {
+      if (
+        !Array.isArray(body.hiddenNav) ||
+        body.hiddenNav.some((h) => typeof h !== 'string' || !h.startsWith('/'))
+      ) {
+        throw new BadRequestException('hiddenNav must be an array of nav hrefs (e.g. ["/gl"])');
+      }
+      const cleaned = [...new Set(body.hiddenNav)];
+      update.hiddenNavJson = cleaned as never;
+      before.hiddenNav = existing.hiddenNavJson;
+      after.hiddenNav = cleaned;
     }
 
     let scopeChange: string[] | null = null;

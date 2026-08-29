@@ -3427,3 +3427,26 @@ pass reasonCodeId` writing an exchange in production: the New Exchange
   drafts (the bare /reserve does not). Also hid "Release reserved
   stock" on drafts (nothing is reserved yet). API path was already
   fully tested (draft → open + qtyReserved), so this is web-only.
+
+## Checkpoint — 2026-08-29 (per-member nav visibility + selling-store scope)
+
+- Owner: (1) any left-nav tab can be hidden per member; (2) the owner
+  picks which stores each member can sell out of.
+- **Nav**: migration **0074_member_hidden_nav**
+  (`memberships.hidden_nav_json`), `hiddenNav` on members list/PATCH
+  (validated hrefs, deduped, audited), new `GET /v1/business/members/me`
+  (the caller's own hiddenNav/dataScope/scopeLocationIds — no permission
+  needed). The app shell fetches /me and drops hidden tabs (empty groups
+  vanish); the member page gains a **Navigation** card — grouped
+  checkboxes mirroring the sidebar, immediate save, "Show all" reset.
+  Visibility only: the API stays permission-gated.
+- **Selling stores**: rides the existing data-scope +
+  membership_location_scopes rows (the member page's scope card,
+  retitled "Store access"). NEW enforcement: `assertSellingScope` 403s
+  order/sale creation at out-of-scope locations ("You are not set up to
+  sell at this location…"), and `pos/locations` filters a store-scoped
+  member's list to their stores (warehouses always pass — they are
+  inventory sources, not selling locations).
+- Tests: orders suite 77→80 (scoped cashier blocked off-scope + allowed
+  in-scope + filtered pos/locations + owner unrestricted; hiddenNav
+  dedupe/roundtrip via /me; malformed hrefs 400; cleanup restores).

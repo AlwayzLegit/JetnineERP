@@ -1,0 +1,1 @@
+ALTER TABLE "memberships" ADD COLUMN "hidden_nav_json" jsonb;

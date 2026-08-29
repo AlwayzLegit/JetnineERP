@@ -3250,3 +3250,109 @@ describe('Customer purchase history — orders with line detail in one call', ()
     expect(receipt.lines[0].qtyFulfilled).toBe(1);
   });
 });
+
+describe('Per-member selling scope + nav visibility', () => {
+  const asCookie = (cookie: string) => ({
+    get: (url: string) =>
+      request(app.getHttpServer()).get(url).set('Cookie', cookie).set('X-Business-Id', businessId),
+    post: (url: string) =>
+      request(app.getHttpServer()).post(url).set('Cookie', cookie).set('X-Business-Id', businessId),
+    patch: (url: string) =>
+      request(app.getHttpServer())
+        .patch(url)
+        .set('Cookie', cookie)
+        .set('X-Business-Id', businessId),
+  });
+
+  let cashierMembershipId = '';
+  let otherStoreId = '';
+
+  it('setup: find the cashier membership and add a second store', async () => {
+    const members = await asCookie(ownerCookie).get('/v1/business/members');
+    expect(members.status).toBe(200);
+    const cashier = members.body.find((m: { email: string }) => m.email.startsWith('cashier@'));
+    expect(cashier).toBeTruthy();
+    cashierMembershipId = cashier.membershipId;
+
+    const sql = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    try {
+      const db = drizzle(sql);
+      const [loc2] = await db
+        .insert(schema.locations)
+        .values({ businessId, name: 'Second Store', timezone: 'America/Los_Angeles' })
+        .returning();
+      otherStoreId = loc2!.id;
+    } finally {
+      await sql.end({ timeout: 5 });
+    }
+  });
+
+  it('a store-scoped member cannot sell at a location outside their scope', async () => {
+    await asCookie(ownerCookie)
+      .patch(`/v1/business/members/${cashierMembershipId}`)
+      .send({ dataScope: 'store', scopeLocationIds: [locationId] })
+      .expect(200);
+
+    // Off-scope store → refused with the friendly message.
+    const denied = await asCookie(cashierCookie)
+      .post('/v1/orders')
+      .send({
+        locationId: otherStoreId,
+        customerId,
+        confirm: true,
+        lines: [{ variantId: sofaVariantId, quantity: 1 }],
+      });
+    expect(denied.status).toBe(403);
+    expect(denied.body.message).toMatch(/not set up to sell/);
+
+    // In-scope store → writes normally.
+    const ok = await asCookie(cashierCookie)
+      .post('/v1/orders')
+      .send({
+        locationId,
+        customerId,
+        confirm: true,
+        lines: [{ variantId: sofaVariantId, quantity: 1 }],
+      });
+    expect(ok.status).toBe(201);
+
+    // The register's location list hides the off-scope store too.
+    const locs = await asCookie(cashierCookie).get('/v1/pos/locations');
+    expect(locs.status).toBe(200);
+    expect(locs.body.some((l: { id: string }) => l.id === otherStoreId)).toBe(false);
+    expect(locs.body.some((l: { id: string }) => l.id === locationId)).toBe(true);
+
+    // Owner remains unrestricted.
+    const ownerLocs = await asCookie(ownerCookie).get('/v1/pos/locations');
+    expect(ownerLocs.body.some((l: { id: string }) => l.id === otherStoreId)).toBe(true);
+  });
+
+  it('hidden nav tabs round-trip through PATCH and surface on /me', async () => {
+    await asCookie(ownerCookie)
+      .patch(`/v1/business/members/${cashierMembershipId}`)
+      .send({ hiddenNav: ['/gl', '/audit', '/gl'] })
+      .expect(200);
+
+    const me = await asCookie(cashierCookie).get('/v1/business/members/me');
+    expect(me.status).toBe(200);
+    expect(me.body.membershipId).toBe(cashierMembershipId);
+    expect(me.body.hiddenNav.sort()).toEqual(['/audit', '/gl']); // deduped
+    expect(me.body.dataScope).toBe('store');
+    expect(me.body.scopeLocationIds).toEqual([locationId]);
+
+    // Malformed entries are refused.
+    const bad = await asCookie(ownerCookie)
+      .patch(`/v1/business/members/${cashierMembershipId}`)
+      .send({ hiddenNav: ['gl'] });
+    expect(bad.status).toBe(400);
+
+    // Cleanup: restore the cashier for any later suites.
+    await asCookie(ownerCookie)
+      .patch(`/v1/business/members/${cashierMembershipId}`)
+      .send({ dataScope: 'all', scopeLocationIds: [], hiddenNav: [] })
+      .expect(200);
+    const after = await asCookie(cashierCookie).get('/v1/business/members/me');
+    expect(after.body.hiddenNav).toEqual([]);
+    expect(after.body.dataScope).toBe('all');
+  });
+});

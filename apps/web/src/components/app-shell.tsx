@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import {
   Landmark,
   BadgeDollarSign,
@@ -40,6 +40,7 @@ import {
   Undo2,
 } from 'lucide-react';
 import { ActiveBusinessBadge } from '@/components/active-business-badge';
+import { api } from '@/lib/api';
 import { useBusinessBranding, useBusinessName } from '@/lib/business-settings';
 
 /**
@@ -59,7 +60,8 @@ interface NavGroup {
   items: NavItem[];
 }
 
-const NAV: NavGroup[] = [
+/** Exported for the member editor: the owner picks which of these tabs a member sees. */
+export const NAV: NavGroup[] = [
   {
     label: 'Sell',
     items: [
@@ -124,6 +126,14 @@ const NAV: NavGroup[] = [
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname() ?? '';
   const [open, setOpen] = useState(false);
+  // Per-member nav visibility: tabs the owner hid for this member are
+  // simply not rendered (the API stays gated by permissions regardless).
+  const [hiddenNav, setHiddenNav] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    api<{ hiddenNav: string[] }>('/v1/business/members/me')
+      .then((me) => setHiddenNav(new Set(me.hiddenNav ?? [])))
+      .catch(() => setHiddenNav(new Set()));
+  }, []);
 
   const isActive = (href: string) =>
     href === '/dashboard'
@@ -147,32 +157,36 @@ export function AppShell({ children }: { children: ReactNode }) {
         } md:translate-x-0`}
       >
         <BrandHeader />
-        {NAV.map((group) => (
-          <div key={group.label} className="mb-3.5">
-            <p className="mb-1 px-2.5 text-[10.5px] font-bold uppercase tracking-[0.08em] text-white/60">
-              {group.label}
-            </p>
-            {group.items.map((item) => {
-              const active = isActive(item.href);
-              const Icon = item.icon;
-              return (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  onClick={() => setOpen(false)}
-                  className={`mb-px flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-[13px] no-underline transition-colors ${
-                    active
-                      ? 'bg-white/10 font-semibold text-white'
-                      : 'font-normal text-[var(--sidebar-text)] hover:bg-white/5 hover:text-white'
-                  }`}
-                >
-                  <Icon size={15} strokeWidth={active ? 2.2 : 1.8} aria-hidden />
-                  {item.label}
-                </Link>
-              );
-            })}
-          </div>
-        ))}
+        {NAV.map((group) => {
+          const items = group.items.filter((i) => !hiddenNav.has(i.href));
+          if (items.length === 0) return null;
+          return (
+            <div key={group.label} className="mb-3.5">
+              <p className="mb-1 px-2.5 text-[10.5px] font-bold uppercase tracking-[0.08em] text-white/60">
+                {group.label}
+              </p>
+              {items.map((item) => {
+                const active = isActive(item.href);
+                const Icon = item.icon;
+                return (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    onClick={() => setOpen(false)}
+                    className={`mb-px flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-[13px] no-underline transition-colors ${
+                      active
+                        ? 'bg-white/10 font-semibold text-white'
+                        : 'font-normal text-[var(--sidebar-text)] hover:bg-white/5 hover:text-white'
+                    }`}
+                  >
+                    <Icon size={15} strokeWidth={active ? 2.2 : 1.8} aria-hidden />
+                    {item.label}
+                  </Link>
+                );
+              })}
+            </div>
+          );
+        })}
       </aside>
 
       <div className="app-main md:ml-[var(--sidebar-width)]">

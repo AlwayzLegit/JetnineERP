@@ -519,6 +519,13 @@
       "when": 1788036455607,
       "tag": "0073_customer_referral_source",
       "breakpoints": true
+    },
+    {
+      "idx": 74,
+      "version": "7",
+      "when": 1788044779887,
+      "tag": "0074_member_hidden_nav",
+      "breakpoints": true
     }
   ]
 }

@@ -1,3 +1,4 @@
+import { ForbiddenException } from '@nestjs/common';
 import { type SQL, inArray, sql } from 'drizzle-orm';
 import type { PgColumn } from 'drizzle-orm/pg-core';
 import type { RequestTenantContext } from '../tenancy/request-context';
@@ -31,4 +32,19 @@ export function salesScopeCond(
 
 function isSql(x: PgColumn | SQL): x is SQL {
   return !('name' in x && 'table' in x);
+}
+
+/**
+ * Write-side counterpart of `salesScopeCond`: a store-scoped member may
+ * only WRITE sales documents at locations inside their scope. Throws
+ * 403 otherwise; a no-op for unrestricted members.
+ */
+export function assertSellingScope(tenant: RequestTenantContext, locationId: string): void {
+  if (tenant.dataScope !== 'store') return;
+  const ids = tenant.scopeLocationIds ?? [];
+  if (!ids.includes(locationId)) {
+    throw new ForbiddenException(
+      'You are not set up to sell at this location — ask a manager to add it to your store access',
+    );
+  }
 }
