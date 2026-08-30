@@ -15,6 +15,10 @@ export const WEBHOOK_EVENT_TYPES = [
   'order.payment_received',
   'order.cancelled',
   'order.completed',
+  // Payload: { orderId, orderNumber, newOrderId, newOrderNumber,
+  // lines: [{ lineId, variantId, description, quantity }] } — the
+  // backorder split that moves lines onto a new order.
+  'order.split',
   'delivery.scheduled',
   'delivery.delivered',
   'customer.created',
