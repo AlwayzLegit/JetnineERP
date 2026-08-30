@@ -3742,3 +3742,13 @@ Owner batch of four:
 - Tests: exchanges S1 rewritten to pin the amendment (free text 201 with
   active codes + code-binding path); orders suite 92→93 (add-line at a
   set price: line price, balance delta = charge+tax, payment lands).
+
+### Hotfix — 2026-08-30 (manager dashboard 500: int32 overflow in month-written SQL)
+
+Owner screenshot: a member's dashboard showed "Internal server error".
+Render logs pinned it to the month-written aggregate: `total_cents *
+10000` in int32 overflows for any order past $2,147.48 — i.e. every
+real mattress order; tests used small totals so it passed. Fix:
+`total_cents::bigint` in both CASE branches. The daily-ops test's
+big-ticket fixture is now $50,000 so the overflow path is exercised
+(the assertion floor rose to $50.4k written).

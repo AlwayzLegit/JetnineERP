@@ -1050,11 +1050,14 @@ export class MorningDashboardController {
     // and my commission accrual for the current payroll period.
     const [monthOrders] = await this.db
       .select({
+        // total_cents * split_bps must widen to bigint: int32 overflows
+        // at $2,147.48 × 10000 — every real mattress order (prod 500,
+        // 2026-08-30).
         cents: sql<number>`COALESCE(SUM(CASE
           WHEN ${schema.orders.salespersonMembershipId} = ${myMembershipId}
-            THEN ROUND(${schema.orders.totalCents} * (CASE WHEN ${schema.orders.secondSalespersonMembershipId} IS NOT NULL THEN COALESCE(${schema.orders.splitBps}, 10000) ELSE 10000 END) / 10000.0)
+            THEN ROUND(${schema.orders.totalCents}::bigint * (CASE WHEN ${schema.orders.secondSalespersonMembershipId} IS NOT NULL THEN COALESCE(${schema.orders.splitBps}, 10000) ELSE 10000 END) / 10000.0)
           WHEN ${schema.orders.secondSalespersonMembershipId} = ${myMembershipId}
-            THEN ROUND(${schema.orders.totalCents} * (10000 - COALESCE(${schema.orders.splitBps}, 10000)) / 10000.0)
+            THEN ROUND(${schema.orders.totalCents}::bigint * (10000 - COALESCE(${schema.orders.splitBps}, 10000)) / 10000.0)
           ELSE 0 END), 0)::int`,
       })
       .from(schema.orders)
