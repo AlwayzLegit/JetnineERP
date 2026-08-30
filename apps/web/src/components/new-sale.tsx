@@ -177,7 +177,7 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
     return () => clearTimeout(t);
   }, [creatingCustomer, newCust.phone]);
 
-  async function useExistingCustomer(idToUse: string) {
+  async function attachExistingCustomer(idToUse: string) {
     try {
       const existing = await api<CustomerHit>(`/v1/customers/${idToUse}`);
       setCustomer(existing);
@@ -983,7 +983,7 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
                           size="sm"
                           variant="secondary"
                           data-testid="use-existing-customer"
-                          onClick={() => void useExistingCustomer(dupeWarn.id)}
+                          onClick={() => void attachExistingCustomer(dupeWarn.id)}
                         >
                           Use existing
                         </Button>
