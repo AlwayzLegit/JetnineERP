@@ -565,3 +565,114 @@ describe('Brand & Collection reference data', () => {
     expect(row?.isActive).toBe(false);
   });
 });
+
+/**
+ * Owner ask 2026-08-30: "I need to be able to delete a product
+ * completely." Hard delete goes through only for a product with zero
+ * stock and no document history; anything else is refused with the
+ * reason and steered to Deactivate.
+ */
+describe('Product delete (owner ask 2026-08-30)', () => {
+  let locationId = '';
+
+  async function makeProduct(sku: string): Promise<{ id: string; variantId: string }> {
+    const res = await request(app.getHttpServer())
+      .post('/v1/products')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ sku, name: `Deletable ${sku}`, variants: [{ sku: `${sku}-V`, priceCents: 9_900 }] });
+    expect(res.status).toBe(201);
+    return { id: res.body.id, variantId: res.body.variants[0].id };
+  }
+
+  beforeAll(async () => {
+    const sql2 = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    const db = drizzle(sql2);
+    try {
+      const [loc] = await db
+        .insert(schema.locations)
+        .values({ businessId, name: 'Delete Test Store', timezone: 'America/Los_Angeles' })
+        .returning();
+      locationId = loc!.id;
+    } finally {
+      await sql2.end({ timeout: 5 });
+    }
+  });
+
+  it('deletes an unused product completely', async () => {
+    const p = await makeProduct('DEL-CLEAN');
+    const del = await request(app.getHttpServer())
+      .delete(`/v1/products/${p.id}`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId);
+    expect(del.status).toBe(200);
+    expect(del.body.deleted).toBe(true);
+
+    const gone = await request(app.getHttpServer())
+      .get(`/v1/products/${p.id}`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId);
+    expect(gone.status).toBe(404);
+  });
+
+  it('refuses while stock remains, then deletes once zeroed', async () => {
+    const p = await makeProduct('DEL-STOCK');
+    const sql2 = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    const db = drizzle(sql2);
+    try {
+      await db
+        .insert(schema.inventoryLevels)
+        .values({ businessId, variantId: p.variantId, locationId, onHand: 3, reserved: 0 });
+
+      const refused = await request(app.getHttpServer())
+        .delete(`/v1/products/${p.id}`)
+        .set('Cookie', ownerCookie)
+        .set('X-Business-Id', businessId);
+      expect(refused.status).toBe(400);
+      expect(refused.body.message).toMatch(/3 on hand/);
+
+      await db
+        .update(schema.inventoryLevels)
+        .set({ onHand: 0 })
+        .where(eq(schema.inventoryLevels.variantId, p.variantId));
+    } finally {
+      await sql2.end({ timeout: 5 });
+    }
+
+    const ok = await request(app.getHttpServer())
+      .delete(`/v1/products/${p.id}`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId);
+    expect(ok.status).toBe(200);
+  });
+
+  it('refuses a product that appears on documents, steering to Deactivate', async () => {
+    const p = await makeProduct('DEL-DOCS');
+    const sql2 = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    const db = drizzle(sql2);
+    try {
+      await db
+        .insert(schema.asIsItems)
+        .values({ businessId, variantId: p.variantId, locationId, quantity: 1 });
+    } finally {
+      await sql2.end({ timeout: 5 });
+    }
+
+    const refused = await request(app.getHttpServer())
+      .delete(`/v1/products/${p.id}`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId);
+    expect(refused.status).toBe(400);
+    expect(refused.body.message).toMatch(/1 as-is pieces/);
+    expect(refused.body.message).toMatch(/Deactivate it instead/);
+  });
+
+  it('a cashier cannot delete products', async () => {
+    const p = await makeProduct('DEL-PERM');
+    const res = await request(app.getHttpServer())
+      .delete(`/v1/products/${p.id}`)
+      .set('Cookie', cashierCookie)
+      .set('X-Business-Id', businessId);
+    expect(res.status).toBe(403);
+  });
+});
