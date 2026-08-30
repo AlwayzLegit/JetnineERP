@@ -18,6 +18,7 @@ import { signOut, useSession } from '@/lib/auth-client';
 import { Money } from '@/components/money';
 import { readActiveBusinessId } from '@/lib/offline';
 import { RevenueTrend, type TrendPoint } from './revenue-trend';
+import ManagerDashboardView from './manager-dashboard';
 
 interface ChecklistStep {
   key: string;
@@ -135,6 +136,9 @@ export default function DashboardClient() {
   const [notifications, setNotifications] = useState<NotificationRow[] | null>(null);
   const [morning, setMorning] = useState<MorningBrief | null>(null);
   const [myOrders, setMyOrders] = useState<MyOrderRow[] | null>(null);
+  // Per-member manager-dashboard toggle (owner decision 2026-08-30):
+  // when set, the whole page swaps to the store-scoped manager view.
+  const [managerMode, setManagerMode] = useState<boolean | null>(null);
 
   useEffect(() => {
     if (!session.data) return;
@@ -158,6 +162,9 @@ export default function DashboardClient() {
 
   useEffect(() => {
     if (!businessActive) return;
+    void api<{ managerDashboard: boolean }>('/v1/business/members/me')
+      .then((r) => setManagerMode(r.managerDashboard))
+      .catch(() => setManagerMode(false));
     // Sales-gated cards.
     void api<ZReport>('/v1/reports/z')
       .then(setZ)
@@ -226,6 +233,10 @@ export default function DashboardClient() {
         <Link href="/login">Sign in</Link>
       </div>
     );
+  }
+
+  if (businessActive && managerMode) {
+    return <ManagerDashboardView userName={session.data.user.name ?? session.data.user.email} />;
   }
 
   return (

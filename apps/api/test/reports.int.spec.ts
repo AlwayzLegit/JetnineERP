@@ -1338,3 +1338,120 @@ describe('Blind-count cash balancing (cash pack AC-5..10, owner 2026-08-28)', ()
     await setCashOps(null);
   });
 });
+
+describe('Manager dashboard (owner ask 2026-08-30)', () => {
+  it('is gated by the per-member toggle, which the owner flips on', async () => {
+    const denied = await request(app.getHttpServer())
+      .get('/v1/dashboard/manager')
+      .set('Cookie', scopedCookie)
+      .set('X-Business-Id', businessId);
+    expect(denied.status).toBe(403);
+    expect(denied.body.message).toMatch(/not enabled/);
+
+    await request(app.getHttpServer())
+      .patch(`/v1/business/members/${scopedMembershipId}`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ managerDashboard: true, sellingScope: 'approved' })
+      .expect(200);
+
+    const me = await request(app.getHttpServer())
+      .get('/v1/business/members/me')
+      .set('Cookie', scopedCookie)
+      .set('X-Business-Id', businessId)
+      .expect(200);
+    expect(me.body.managerDashboard).toBe(true);
+  });
+
+  it('scopes to approved stores, counts today in STORE-LOCAL time, and fills the queues', async () => {
+    // Baseline first — earlier suites wrote today's orders at Main too,
+    // so every money assertion below is a delta.
+    const before = (
+      await request(app.getHttpServer())
+        .get('/v1/dashboard/manager')
+        .set('Cookie', scopedCookie)
+        .set('X-Business-Id', businessId)
+        .expect(200)
+    ).body;
+    expect(before.location.id).toBe(locationId);
+    expect(before.locations.map((l: { id: string }) => l.id)).toEqual([locationId]);
+    expect(before.salesByDay).toHaveLength(14);
+    expect(before.salesByDay[13].day).toBe(before.date);
+
+    // The Annex is not on the approved list.
+    const wrongStore = await request(app.getHttpServer())
+      .get(`/v1/dashboard/manager?locationId=${annexLocationId}`)
+      .set('Cookie', scopedCookie)
+      .set('X-Business-Id', businessId);
+    expect(wrongStore.status).toBe(403);
+    expect(wrongStore.body.message).toMatch(/not approved/);
+
+    const sqlc = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    try {
+      const [cust] = await sqlc`
+        INSERT INTO customers (business_id, first_name, last_name, phone)
+        VALUES (${businessId}, 'Vlad', 'Caller', '555-201-7788') RETURNING id`;
+      // Mine, written now, half paid.
+      const [o1] = await sqlc`
+        INSERT INTO orders (business_id, location_id, customer_id, number, status,
+                            salesperson_membership_id, subtotal_cents, total_cents)
+        VALUES (${businessId}, ${locationId}, ${cust!.id}, 'MDASH-1', 'open',
+                ${scopedMembershipId}, 40000, 40000) RETURNING id`;
+      await sqlc`
+        INSERT INTO payments (business_id, order_id, kind, method, amount_cents, status)
+        VALUES (${businessId}, ${o1!.id}, 'deposit', 'cash', 15000, 'succeeded')`;
+      // Written at 23:00 STORE time tonight — that timestamp is already
+      // TOMORROW in UTC, so a UTC day boundary would miss it (audit D3).
+      await sqlc`
+        INSERT INTO orders (business_id, location_id, customer_id, number, status,
+                            subtotal_cents, total_cents, created_at)
+        VALUES (${businessId}, ${locationId}, ${cust!.id}, 'MDASH-2', 'open', 10000, 10000,
+                (((now() AT TIME ZONE 'America/New_York')::date + time '23:00')
+                  AT TIME ZONE 'America/New_York'))`;
+      // Past its promised date → the attention counter.
+      await sqlc`
+        INSERT INTO orders (business_id, location_id, customer_id, number, status,
+                            subtotal_cents, total_cents, requested_date, created_at)
+        VALUES (${businessId}, ${locationId}, ${cust!.id}, 'MDASH-3', 'open', 9000, 9000,
+                (now() AT TIME ZONE 'America/New_York')::date - 3, now() - interval '2 days')`;
+    } finally {
+      await sqlc.end({ timeout: 5 });
+    }
+
+    const after = (
+      await request(app.getHttpServer())
+        .get('/v1/dashboard/manager')
+        .set('Cookie', scopedCookie)
+        .set('X-Business-Id', businessId)
+        .expect(200)
+    ).body;
+
+    // Store wrote +$500 today (MDASH-1 + the 23:00-local MDASH-2); a UTC
+    // boundary would have shown only +$400.
+    expect(after.kpis.store.writtenCents - before.kpis.store.writtenCents).toBe(50_000);
+    expect(after.kpis.store.writtenCount - before.kpis.store.writtenCount).toBe(2);
+    // Mine: only MDASH-1 carries my name.
+    expect(after.kpis.mine.writtenCents - before.kpis.mine.writtenCents).toBe(40_000);
+    expect(after.kpis.mine.writtenCount - before.kpis.mine.writtenCount).toBe(1);
+    expect(after.kpis.store.collectedCents - before.kpis.store.collectedCents).toBe(15_000);
+    expect(after.kpis.mine.collectedCents - before.kpis.mine.collectedCents).toBe(15_000);
+    expect(after.kpis.pastDuePromises - before.kpis.pastDuePromises).toBe(1);
+
+    // Queues: the phone-call columns are all there.
+    const row = after.queues.storeOpen.find((r: { number: string }) => r.number === 'MDASH-1');
+    expect(row).toBeTruthy();
+    expect(row.customerName).toBe('Vlad Caller');
+    expect(row.customerPhone).toBe('555-201-7788');
+    expect(row.balanceDueCents).toBe(25_000);
+    expect(row.salespersonName).toBe('Scoped');
+    const mineNumbers = after.queues.myOpen.map((r: { number: string }) => r.number);
+    expect(mineNumbers).toContain('MDASH-1');
+    expect(mineNumbers).not.toContain('MDASH-2');
+
+    // The board credits me with this week's written business.
+    const myBar = after.leaderboardWeek.find((r: { name: string }) => r.name === 'Scoped');
+    expect(myBar.cents).toBeGreaterThanOrEqual(40_000);
+    // Pipeline segments cover the open book.
+    expect(after.pipeline.map((p: { key: string }) => p.key)).toContain('open');
+  });
+});

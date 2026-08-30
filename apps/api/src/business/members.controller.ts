@@ -35,6 +35,7 @@ interface MemberRow {
   roleName: string;
   dataScope: string;
   sellingScope: string;
+  managerDashboard: boolean;
   scopeLocationIds: string[];
   hiddenNav: string[];
   invitedAt: Date | null;
@@ -55,6 +56,7 @@ interface UpdateMemberBody {
   dataScope?: 'all' | 'store';
   /** Selling rights: 'approved' limits ringing sales to scopeLocationIds. */
   sellingScope?: 'all' | 'approved';
+  managerDashboard?: boolean;
   /** Replaces the member's location scope set (only meaningful with 'store'). */
   scopeLocationIds?: string[];
   /** Left-nav hrefs hidden for this member (visibility only; permissions still gate the API). */
@@ -98,6 +100,7 @@ export class MembersController {
         acceptedAt: schema.memberships.acceptedAt,
         dataScope: schema.memberships.dataScope,
         sellingScope: schema.memberships.sellingScope,
+        managerDashboard: schema.memberships.managerDashboard,
         hiddenNavJson: schema.memberships.hiddenNavJson,
         // Lets the commissions page show who is currently on a plan.
         commissionPlanId: schema.memberships.commissionPlanId,
@@ -141,16 +144,22 @@ export class MembersController {
     /** The approved stores WITH names — the login store picker renders these. */
     scopeLocations: { id: string; name: string }[];
     hiddenNav: string[];
+    managerDashboard: boolean;
   }> {
     let hiddenNav: string[] = [];
+    let managerDashboard = false;
     let scopeLocations: { id: string; name: string }[] = [];
     if (tenant.membershipId) {
       const [row] = await this.db
-        .select({ hiddenNavJson: schema.memberships.hiddenNavJson })
+        .select({
+          hiddenNavJson: schema.memberships.hiddenNavJson,
+          managerDashboard: schema.memberships.managerDashboard,
+        })
         .from(schema.memberships)
         .where(eq(schema.memberships.id, tenant.membershipId))
         .limit(1);
       if (row && Array.isArray(row.hiddenNavJson)) hiddenNav = row.hiddenNavJson as string[];
+      managerDashboard = row?.managerDashboard ?? false;
       scopeLocations = await this.db
         .select({ id: schema.locations.id, name: schema.locations.name })
         .from(schema.membershipLocationScopes)
@@ -168,6 +177,7 @@ export class MembersController {
       scopeLocationIds: tenant.scopeLocationIds,
       scopeLocations,
       hiddenNav,
+      managerDashboard,
     };
   }
 
@@ -332,6 +342,18 @@ export class MembersController {
       update.sellingScope = body.sellingScope;
       before.sellingScope = existing.sellingScope;
       after.sellingScope = body.sellingScope;
+    }
+
+    if (
+      body.managerDashboard !== undefined &&
+      body.managerDashboard !== existing.managerDashboard
+    ) {
+      if (typeof body.managerDashboard !== 'boolean') {
+        throw new BadRequestException('managerDashboard must be a boolean');
+      }
+      update.managerDashboard = body.managerDashboard;
+      before.managerDashboard = existing.managerDashboard;
+      after.managerDashboard = body.managerDashboard;
     }
 
     if (body.hiddenNav !== undefined) {
