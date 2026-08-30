@@ -3752,3 +3752,12 @@ real mattress order; tests used small totals so it passed. Fix:
 `total_cents::bigint` in both CASE branches. The daily-ops test's
 big-ticket fixture is now $50,000 so the overflow path is exercised
 (the assertion floor rose to $50.4k written).
+
+### Checkpoint — 2026-08-30 (New Sale: repeat product = new line at its own price)
+
+Owner: adding the same product again must land as an additional line so
+a second unit can sell at a different price. Add Product no longer
+merges into an existing line — every add pushes a fresh line with its
+own editable price box (quantity per line still editable when one price
+covers several units). Client-only; the API already handled duplicate-
+variant lines (reservation pooling + split-at-sale tests pin it).
