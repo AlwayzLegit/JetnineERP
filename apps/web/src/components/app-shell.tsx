@@ -41,6 +41,7 @@ import {
 } from 'lucide-react';
 import { ActiveBusinessBadge } from '@/components/active-business-badge';
 import { api } from '@/lib/api';
+import { GlobalSearch } from '@/components/global-search';
 import { useBusinessBranding, useBusinessName } from '@/lib/business-settings';
 
 /**
@@ -235,6 +236,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             <Menu size={18} aria-hidden />
           </button>
           <ActiveBusinessBadge />
+          <GlobalSearch />
           <div className="ml-auto flex items-center gap-2">
             {sellingStore && (
               <button

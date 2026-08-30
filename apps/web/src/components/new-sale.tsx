@@ -145,6 +145,13 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
     region: '',
     postalCode: '',
   });
+  // Dedupe warn-on-create (handoff G4): a matching phone means the
+  // caller probably already exists — offer them, never block.
+  const [dupeWarn, setDupeWarn] = useState<{
+    id: string;
+    name: string;
+    phone: string | null;
+  } | null>(null);
   const [billDiffers, setBillDiffers] = useState(false);
   const [newBill, setNewBill] = useState({
     line1: '',
@@ -153,6 +160,34 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
     region: '',
     postalCode: '',
   });
+
+  useEffect(() => {
+    const digits = newCust.phone.replace(/\D/g, '');
+    if (!creatingCustomer || digits.length < 7) {
+      setDupeWarn(null);
+      return;
+    }
+    const t = setTimeout(() => {
+      void api<{ customers: { id: string; name: string; phone: string | null }[] }>(
+        `/v1/search?q=${encodeURIComponent(digits)}`,
+      )
+        .then((r) => setDupeWarn(r.customers[0] ?? null))
+        .catch(() => setDupeWarn(null));
+    }, 300);
+    return () => clearTimeout(t);
+  }, [creatingCustomer, newCust.phone]);
+
+  async function attachExistingCustomer(idToUse: string) {
+    try {
+      const existing = await api<CustomerHit>(`/v1/customers/${idToUse}`);
+      setCustomer(existing);
+      setCreatingCustomer(false);
+      setDupeWarn(null);
+      toast.success('Attached the existing customer — no duplicate created.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
   const custTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // --- ship to ---
@@ -924,6 +959,36 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
                         style={{ minWidth: 0 }}
                       />
                     </div>
+                    {dupeWarn && (
+                      <div
+                        data-testid="dupe-warning"
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 8,
+                          flexWrap: 'wrap',
+                          fontSize: 12.5,
+                          padding: '6px 10px',
+                          borderRadius: 'var(--radius-sm)',
+                          border: '1px solid var(--warning, #b58900)',
+                          background: 'var(--warning-soft, transparent)',
+                        }}
+                      >
+                        <span>
+                          Looks like <strong>{dupeWarn.name}</strong>
+                          {dupeWarn.phone ? ` (${dupeWarn.phone})` : ''} already exists — use them
+                          instead?
+                        </span>
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          data-testid="use-existing-customer"
+                          onClick={() => void attachExistingCustomer(dupeWarn.id)}
+                        >
+                          Use existing
+                        </Button>
+                      </div>
+                    )}
                     <div className="grid gap-2 sm:grid-cols-5">
                       <Input
                         placeholder="Delivery address"
