@@ -50,3 +50,21 @@ export function assertSellingScope(tenant: RequestTenantContext, locationId: str
     );
   }
 }
+
+/**
+ * Read filter for WORK QUEUES tied to a member's own stores (owner ask
+ * 2026-08-29, first used by Delivery Dates in Jeopardy): an
+ * approved-only seller works the at-risk orders of the stores they are
+ * approved for, even though their general data visibility may be
+ * unrestricted. Same contract as `salesScopeCond`: undefined when the
+ * member is unrestricted, FALSE when approved nowhere (fail closed).
+ */
+export function sellingScopeCond(
+  tenant: RequestTenantContext,
+  locationColumn: PgColumn,
+): SQL | undefined {
+  if (tenant.sellingScope !== 'approved') return undefined;
+  const ids = tenant.scopeLocationIds ?? [];
+  if (ids.length === 0) return sql`false`;
+  return inArray(locationColumn, ids);
+}

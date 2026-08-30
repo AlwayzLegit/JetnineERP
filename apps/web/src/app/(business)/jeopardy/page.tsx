@@ -16,6 +16,8 @@ interface JeopardyRow {
   sku: string | null;
   shortfall: number;
   deliveryDate: string;
+  salespersonMembershipId: string | null;
+  salespersonName: string | null;
   risk: 'no_supply' | 'late';
   daysLate: number | null;
   supplySource: 'po' | 'transfer' | null;
@@ -111,45 +113,8 @@ export default function JeopardyPage() {
                     </td>
                   </tr>
                 )}
-                {report.rows.map((r) => (
-                  <tr key={r.lineId}>
-                    <td>{r.deliveryDate}</td>
-                    <td>
-                      <Link href={`/orders/${r.orderId}`}>{r.orderNumber}</Link>
-                    </td>
-                    <td>{r.customerName ?? '—'}</td>
-                    <td>{r.locationName ?? '—'}</td>
-                    <td>
-                      {r.productName}
-                      {r.sku && (
-                        <span style={{ color: 'var(--text-muted)', fontSize: 12 }}> {r.sku}</span>
-                      )}
-                    </td>
-                    <td className="num">{r.shortfall}</td>
-                    <td>
-                      {r.risk === 'no_supply' ? (
-                        <span style={{ color: 'var(--danger)', fontWeight: 600 }}>No supply</span>
-                      ) : (
-                        <span style={{ color: 'var(--warning, #b45309)', fontWeight: 600 }}>
-                          {r.daysLate}d late
-                        </span>
-                      )}
-                    </td>
-                    <td>
-                      {r.supplyReference ? (
-                        <>
-                          {r.supplySource === 'po' ? 'PO ' : 'Transfer '}
-                          {r.supplyReference}
-                          <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>
-                            {' '}
-                            → {r.supplyDate}
-                          </span>
-                        </>
-                      ) : (
-                        '—'
-                      )}
-                    </td>
-                  </tr>
+                {groupBySalesperson(report.rows).map((group) => (
+                  <SalespersonGroup key={group.key} group={group} />
                 ))}
               </tbody>
             </table>
@@ -157,5 +122,92 @@ export default function JeopardyPage() {
         )}
       </Card>
     </div>
+  );
+}
+
+interface SpGroup {
+  key: string;
+  name: string;
+  rows: JeopardyRow[];
+}
+
+/**
+ * The call list is worked BY SALESPERSON (owner ask 2026-08-29): each
+ * seller's at-risk orders sit together under their name so the callbacks
+ * can be divided up; unassigned orders group last under "No salesperson".
+ */
+function groupBySalesperson(rows: JeopardyRow[]): SpGroup[] {
+  const by = new Map<string, SpGroup>();
+  for (const r of rows) {
+    const key = r.salespersonMembershipId ?? '—';
+    const cur = by.get(key) ?? {
+      key,
+      name: r.salespersonName ?? 'No salesperson',
+      rows: [],
+    };
+    cur.rows.push(r);
+    by.set(key, cur);
+  }
+  return [...by.values()].sort((a, b) => {
+    if (a.key === '—') return 1;
+    if (b.key === '—') return -1;
+    return a.name.localeCompare(b.name);
+  });
+}
+
+function SalespersonGroup({ group }: { group: SpGroup }) {
+  return (
+    <>
+      <tr data-testid="jeopardy-salesperson">
+        <td
+          colSpan={8}
+          style={{
+            background: 'var(--surface-muted, var(--surface))',
+            fontWeight: 700,
+            fontSize: 12.5,
+            textTransform: 'uppercase',
+            letterSpacing: '0.04em',
+            color: 'var(--text-secondary)',
+          }}
+        >
+          {group.name} · {group.rows.length} at-risk line{group.rows.length === 1 ? '' : 's'}
+        </td>
+      </tr>
+      {group.rows.map((r) => (
+        <tr key={r.lineId}>
+          <td>{r.deliveryDate}</td>
+          <td>
+            <Link href={`/orders/${r.orderId}`}>{r.orderNumber}</Link>
+          </td>
+          <td>{r.customerName ?? '—'}</td>
+          <td>{r.locationName ?? '—'}</td>
+          <td>
+            {r.productName}
+            {r.sku && <span style={{ color: 'var(--text-muted)', fontSize: 12 }}> {r.sku}</span>}
+          </td>
+          <td className="num">{r.shortfall}</td>
+          <td>
+            {r.risk === 'no_supply' ? (
+              <span style={{ color: 'var(--danger)', fontWeight: 600 }}>No supply</span>
+            ) : (
+              <span style={{ color: 'var(--warning, #b45309)', fontWeight: 600 }}>
+                {r.daysLate}d late
+              </span>
+            )}
+          </td>
+          <td>
+            {r.supplyReference ? (
+              <>
+                {r.supplySource === 'po' ? 'PO ' : 'Transfer '}
+                {r.supplyReference}
+                <span style={{ color: 'var(--text-muted)', fontSize: 12 }}> → {r.supplyDate}</span>
+              </>
+            ) : (
+              '—'
+            )}
+          </td>
+        </tr>
+      ))}
+    </>
   );
 }

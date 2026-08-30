@@ -882,6 +882,100 @@ describe('Sales Views — delivery dates in jeopardy', () => {
   });
 });
 
+describe('Jeopardy — approved-store filter + salesperson attribution', () => {
+  let cashierMembershipId = '';
+
+  it('rows carry the salesperson, and an approved-only member sees only their stores', async () => {
+    const members = await request(app.getHttpServer())
+      .get('/v1/business/members')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .expect(200);
+    const cashier = members.body.find((m: { email: string }) => m.email.startsWith('cashier@'));
+    cashierMembershipId = cashier.membershipId;
+
+    // An at-risk order AT THE ANNEX carrying a salesperson.
+    const sql4 = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    try {
+      const db = drizzle(sql4);
+      const iso = (offsetDays: number) => {
+        const d = new Date();
+        d.setUTCDate(d.getUTCDate() + offsetDays);
+        return d.toISOString().slice(0, 10);
+      };
+      const [cust] = await db
+        .insert(schema.customers)
+        .values({ businessId, firstName: 'Annex', lastName: 'Buyer' })
+        .returning();
+      const [jx] = await db
+        .insert(schema.orders)
+        .values({
+          businessId,
+          locationId: annexLocationId,
+          customerId: cust!.id,
+          number: 'JEO-ANNEX',
+          status: 'confirmed',
+          requestedDate: iso(4),
+          totalCents: 1000,
+          salespersonMembershipId: cashierMembershipId,
+        })
+        .returning();
+      await db.insert(schema.orderLines).values({
+        businessId,
+        orderId: jx!.id,
+        variantId: variantAId,
+        description: 'Widget',
+        quantity: 1,
+        unitPriceCents: 1000,
+        totalCents: 1000,
+      });
+    } finally {
+      await sql4.end({ timeout: 5 });
+    }
+
+    // The owner sees both stores, and the annex row names its salesperson.
+    const ownerView = await request(app.getHttpServer())
+      .get('/v1/reports/delivery-jeopardy?horizonDays=60')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .expect(200);
+    const annexRow = ownerView.body.rows.find(
+      (r: { orderNumber: string }) => r.orderNumber === 'JEO-ANNEX',
+    );
+    expect(annexRow).toBeTruthy();
+    expect(annexRow.salespersonMembershipId).toBe(cashierMembershipId);
+    expect(annexRow.salespersonName).toBeTruthy();
+    expect(
+      ownerView.body.rows.some((r: { orderNumber: string }) => r.orderNumber === 'JEO-1'),
+    ).toBe(true);
+
+    // Approve the cashier for the MAIN store only -> the annex row drops
+    // from their call list while the main-store rows stay.
+    await request(app.getHttpServer())
+      .patch(`/v1/business/members/${cashierMembershipId}`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ sellingScope: 'approved', scopeLocationIds: [locationId] })
+      .expect(200);
+    const scopedView = await request(app.getHttpServer())
+      .get('/v1/reports/delivery-jeopardy?horizonDays=60')
+      .set('Cookie', cashierCookie)
+      .set('X-Business-Id', businessId)
+      .expect(200);
+    const scopedNumbers = scopedView.body.rows.map((r: { orderNumber: string }) => r.orderNumber);
+    expect(scopedNumbers).toContain('JEO-1');
+    expect(scopedNumbers).not.toContain('JEO-ANNEX');
+
+    // Cleanup for later suites.
+    await request(app.getHttpServer())
+      .patch(`/v1/business/members/${cashierMembershipId}`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ sellingScope: 'all', scopeLocationIds: [] })
+      .expect(200);
+  });
+});
+
 describe('Sales Views — gift-card liability + delivery date changes', () => {
   beforeAll(async () => {
     const sql3 = postgres(TEST_DB_URL, { max: 1, prepare: false });
