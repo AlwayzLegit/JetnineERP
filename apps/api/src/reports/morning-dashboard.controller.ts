@@ -75,6 +75,11 @@ interface ManagerQueueRow {
   customerName: string | null;
   customerPhone: string | null;
   salespersonName: string | null;
+  salespersonMembershipId: string | null;
+  secondSalespersonMembershipId: string | null;
+  createdAt: Date;
+  /** Stock-line units still unreserved (quantity − reserved − fulfilled). */
+  shortUnits: number;
 }
 
 interface ManagerDashboard {
@@ -83,6 +88,8 @@ interface ManagerDashboard {
   location: { id: string; name: string; timezone: string };
   /** Stores this member may point the dashboard at. */
   locations: { id: string; name: string }[];
+  /** The caller's membership — the UI filters "mine" rows with it. */
+  membershipId: string;
   kpis: {
     mine: {
       writtenCents: number;
@@ -92,11 +99,25 @@ interface ManagerDashboard {
       openBalanceCents: number;
       closed7dCount: number;
       closed7dCents: number;
+      /** Written this store-local calendar month, ANY store. */
+      monthWrittenCents: number;
+      monthlyGoalCents: number | null;
+      /** Commission accrued for the current payroll period. */
+      commissionPeriodCents: number;
     };
-    store: { writtenCents: number; writtenCount: number; collectedCents: number };
+    store: {
+      writtenCents: number;
+      writtenCount: number;
+      collectedCents: number;
+      /** Today's money by tender. */
+      tenderMix: { method: string; cents: number }[];
+    };
     exceptionsOpen: number;
     pastDuePromises: number;
+    /** Open orders owing money for 14+ days. */
+    unpaidAging: number;
   };
+  drawer: { shiftOpen: boolean; closedToday: boolean; suspended: boolean };
   salesByDay: { day: string; mineCents: number; storeCents: number }[];
   leaderboardWeek: { name: string; cents: number }[];
   pipeline: { key: string; count: number; cents: number }[];
@@ -107,10 +128,55 @@ interface ManagerDashboard {
     todaysDeliveries: (ManagerQueueRow & {
       deliveryId: string;
       deliveryState: string;
+      scheduledDate: string;
       windowStart: string | null;
       windowEnd: string | null;
+      driverName: string | null;
     })[];
+    /** Open orders with unreserved stock units, soonest promise first. */
+    backorders: ManagerQueueRow[];
+    /** Drafts and quotes going cold, oldest first. */
+    staleCarts: ManagerQueueRow[];
   };
+  returnsInFlight: {
+    id: string;
+    rmaNumber: string;
+    status: string;
+    createdAt: Date;
+    orderId: string | null;
+    orderNumber: string | null;
+    customerName: string | null;
+    salespersonMembershipId: string | null;
+    salespersonName: string | null;
+  }[];
+  incoming: {
+    kind: 'transfer' | 'po';
+    id: string;
+    number: string;
+    status: string;
+    expected: string | null;
+  }[];
+  lowStock: {
+    variantId: string;
+    productName: string;
+    variantName: string | null;
+    sku: string | null;
+    available: number;
+  }[];
+  creditHolders: {
+    customerId: string;
+    customerName: string | null;
+    phone: string | null;
+    balanceCents: number;
+    salespersonMembershipId: string | null;
+    salespersonName: string | null;
+  }[];
+  activity: {
+    orderId: string;
+    orderNumber: string;
+    latestAt: Date;
+    events: { action: string; actorName: string | null; createdAt: Date }[];
+  }[];
 }
 
 const REFUND_ACTIONS = [
@@ -490,7 +556,10 @@ export class MorningDashboardController {
       throw new ForbiddenException('The manager dashboard needs a signed-in member');
     }
     const [me] = await this.db
-      .select({ managerDashboard: schema.memberships.managerDashboard })
+      .select({
+        managerDashboard: schema.memberships.managerDashboard,
+        monthlyGoalCents: schema.memberships.monthlyGoalCents,
+      })
       .from(schema.memberships)
       .where(eq(schema.memberships.id, tenant.membershipId))
       .limit(1);
@@ -532,11 +601,15 @@ export class MorningDashboardController {
     const tz = loc.timezone;
 
     const [todayRow] = await this.db
-      .select({ today: sql<string>`(now() AT TIME ZONE ${tz})::date::text` })
+      .select({
+        today: sql<string>`(now() AT TIME ZONE ${tz})::date::text`,
+        tomorrow: sql<string>`((now() AT TIME ZONE ${tz})::date + 1)::text`,
+      })
       .from(schema.businesses)
       .where(eq(schema.businesses.id, businessId))
       .limit(1);
     const today = todayRow!.today;
+    const tomorrow = todayRow!.tomorrow;
 
     const localDay = (col: unknown) => sql<string>`(${col} AT TIME ZONE ${tz})::date::text`;
 
@@ -618,8 +691,16 @@ export class MorningDashboardController {
       openBalanceCents: 0,
       closed7dCount: 0,
       closed7dCents: 0,
+      monthWrittenCents: 0,
+      monthlyGoalCents: null as number | null,
+      commissionPeriodCents: 0,
     };
-    const kpiStore = { writtenCents: 0, writtenCount: 0, collectedCents: 0 };
+    const kpiStore = {
+      writtenCents: 0,
+      writtenCount: 0,
+      collectedCents: 0,
+      tenderMix: [] as { method: string; cents: number }[],
+    };
 
     for (const o of orderRows) {
       const bucket = byDay.get(o.day);
@@ -678,9 +759,11 @@ export class MorningDashboardController {
     }
 
     // --- Collected today (store-local) ------------------------------------
+    const tenderMix = new Map<string, number>();
     const orderPays = await this.db
       .select({
         amountCents: schema.payments.amountCents,
+        method: schema.payments.method,
         primary: schema.orders.salespersonMembershipId,
         second: schema.orders.secondSalespersonMembershipId,
       })
@@ -696,6 +779,7 @@ export class MorningDashboardController {
       );
     for (const pRow of orderPays) {
       kpiStore.collectedCents += pRow.amountCents;
+      tenderMix.set(pRow.method, (tenderMix.get(pRow.method) ?? 0) + pRow.amountCents);
       if (pRow.primary === myMembershipId || pRow.second === myMembershipId) {
         kpiMine.collectedCents += pRow.amountCents;
       }
@@ -703,6 +787,7 @@ export class MorningDashboardController {
     const salePays = await this.db
       .select({
         amountCents: schema.payments.amountCents,
+        method: schema.payments.method,
         associateUserId: schema.sales.associateUserId,
       })
       .from(schema.payments)
@@ -717,6 +802,7 @@ export class MorningDashboardController {
       );
     for (const pRow of salePays) {
       kpiStore.collectedCents += pRow.amountCents;
+      tenderMix.set(pRow.method, (tenderMix.get(pRow.method) ?? 0) + pRow.amountCents);
       if (pRow.associateUserId === myUserId) kpiMine.collectedCents += pRow.amountCents;
     }
 
@@ -737,6 +823,7 @@ export class MorningDashboardController {
       customerFirst: schema.customers.firstName,
       customerLast: schema.customers.lastName,
       customerPhone: schema.customers.phone,
+      createdAt: schema.orders.createdAt,
     };
     const openRows = await this.db
       .select(queueSelect)
@@ -774,8 +861,10 @@ export class MorningDashboardController {
         ...queueSelect,
         deliveryId: schema.deliveries.id,
         deliveryState: schema.deliveries.status,
+        scheduledDate: schema.deliveries.scheduledDate,
         windowStart: schema.deliveries.windowStart,
         windowEnd: schema.deliveries.windowEnd,
+        driverMembershipId: schema.deliveries.driverMembershipId,
       })
       .from(schema.deliveries)
       .innerJoin(schema.orders, eq(schema.orders.id, schema.deliveries.orderId))
@@ -784,12 +873,243 @@ export class MorningDashboardController {
         and(
           eq(schema.deliveries.businessId, businessId),
           eq(schema.orders.locationId, loc.id),
-          eq(schema.deliveries.scheduledDate, today),
+          inArray(schema.deliveries.scheduledDate, [today, tomorrow]),
           sql`${schema.deliveries.status} != 'cancelled'`,
         ),
       )
-      .orderBy(schema.deliveries.routePosition)
-      .limit(40);
+      .orderBy(schema.deliveries.scheduledDate, schema.deliveries.routePosition)
+      .limit(60);
+
+    // Unreserved stock units per open order — feeds the backorder watch
+    // and the per-row "N short" flag.
+    const shortMap = new Map<string, number>();
+    if (openRows.length > 0) {
+      const shorts = await this.db
+        .select({
+          orderId: schema.orderLines.orderId,
+          short: sql<number>`COALESCE(SUM(GREATEST(${schema.orderLines.quantity} - ${schema.orderLines.qtyReserved} - ${schema.orderLines.qtyFulfilled}, 0)), 0)::int`,
+        })
+        .from(schema.orderLines)
+        .where(
+          and(
+            inArray(
+              schema.orderLines.orderId,
+              openRows.map((r) => r.id),
+            ),
+            eq(schema.orderLines.lineType, 'stock'),
+            sql`${schema.orderLines.variantId} IS NOT NULL`,
+          ),
+        )
+        .groupBy(schema.orderLines.orderId);
+      for (const r of shorts) shortMap.set(r.orderId, r.short);
+    }
+
+    // Returns and exchanges still owed a resolution at this store.
+    const returnRows = await this.db
+      .select({
+        id: schema.orderReturns.id,
+        rmaNumber: schema.orderReturns.rmaNumber,
+        retStatus: schema.orderReturns.status,
+        createdAt: schema.orderReturns.authorizedAt,
+        orderId: schema.orders.id,
+        orderNumber: schema.orders.number,
+        primary: schema.orders.salespersonMembershipId,
+        customerFirst: schema.customers.firstName,
+        customerLast: schema.customers.lastName,
+      })
+      .from(schema.orderReturns)
+      .innerJoin(schema.orders, eq(schema.orders.id, schema.orderReturns.orderId))
+      .leftJoin(schema.customers, eq(schema.customers.id, schema.orderReturns.customerId))
+      .where(
+        and(
+          eq(schema.orderReturns.businessId, businessId),
+          eq(schema.orders.locationId, loc.id),
+          sql`${schema.orderReturns.status} NOT IN ('completed', 'cancelled')`,
+        ),
+      )
+      .orderBy(desc(schema.orderReturns.authorizedAt))
+      .limit(10);
+
+    // Incoming stock: transfers on the truck plus POs the vendor owes.
+    const incomingTransfers = await this.db
+      .select({
+        id: schema.stockTransfers.id,
+        number: schema.stockTransfers.number,
+        status: schema.stockTransfers.status,
+        expected: schema.stockTransfers.scheduledFor,
+      })
+      .from(schema.stockTransfers)
+      .where(
+        and(
+          eq(schema.stockTransfers.businessId, businessId),
+          eq(schema.stockTransfers.toLocationId, loc.id),
+          eq(schema.stockTransfers.status, 'in_transit'),
+        ),
+      )
+      .limit(8);
+    const incomingPOs = await this.db
+      .select({
+        id: schema.purchaseOrders.id,
+        number: schema.purchaseOrders.number,
+        status: schema.purchaseOrders.status,
+        expected: sql<
+          string | null
+        >`(${schema.purchaseOrders.expectedAt} AT TIME ZONE ${tz})::date::text`,
+      })
+      .from(schema.purchaseOrders)
+      .where(
+        and(
+          eq(schema.purchaseOrders.businessId, businessId),
+          eq(schema.purchaseOrders.locationId, loc.id),
+          inArray(schema.purchaseOrders.status, ['ordered', 'partially_received']),
+        ),
+      )
+      .orderBy(sql`${schema.purchaseOrders.expectedAt} ASC NULLS LAST`)
+      .limit(8);
+
+    // Worst stock positions at this store (stocked variants only).
+    const lowStock = await this.db
+      .select({
+        variantId: schema.inventoryLevels.variantId,
+        productName: schema.products.name,
+        variantName: schema.productVariants.name,
+        sku: schema.productVariants.sku,
+        available: sql<number>`(${schema.inventoryLevels.onHand} - ${schema.inventoryLevels.reserved})::int`,
+      })
+      .from(schema.inventoryLevels)
+      .innerJoin(
+        schema.productVariants,
+        eq(schema.productVariants.id, schema.inventoryLevels.variantId),
+      )
+      .innerJoin(schema.products, eq(schema.products.id, schema.productVariants.productId))
+      .where(
+        and(
+          eq(schema.inventoryLevels.businessId, businessId),
+          eq(schema.inventoryLevels.locationId, loc.id),
+          sql`(${schema.inventoryLevels.onHand} - ${schema.inventoryLevels.reserved}) <= 5`,
+          sql`(${schema.inventoryLevels.onHand} > 0 OR ${schema.inventoryLevels.reserved} > 0)`,
+        ),
+      )
+      .orderBy(sql`(${schema.inventoryLevels.onHand} - ${schema.inventoryLevels.reserved}) ASC`)
+      .limit(5);
+
+    // Order-change activity at this store, grouped by order.
+    const actRows = await this.db
+      .select({
+        action: schema.auditLogs.action,
+        createdAt: schema.auditLogs.createdAt,
+        actorName: schema.users.name,
+        actorEmail: schema.users.email,
+        orderId: schema.orders.id,
+        orderNumber: schema.orders.number,
+      })
+      .from(schema.auditLogs)
+      .innerJoin(schema.orders, sql`${schema.auditLogs.targetId} = ${schema.orders.id}::text`)
+      .leftJoin(schema.users, eq(schema.users.id, schema.auditLogs.actorUserId))
+      .where(
+        and(
+          eq(schema.auditLogs.businessId, businessId),
+          sql`${schema.auditLogs.action} LIKE 'order.%'`,
+          eq(schema.orders.locationId, loc.id),
+        ),
+      )
+      .orderBy(desc(schema.auditLogs.createdAt))
+      .limit(60);
+
+    // Customers holding store credit whose latest order lives here.
+    const creditRows = (await this.db.execute(sql`
+      SELECT c.id AS customer_id, c.first_name, c.last_name, c.phone,
+             s.bal::int AS balance_cents, o.salesperson_membership_id
+      FROM (
+        SELECT customer_id, SUM(delta_cents) AS bal
+        FROM store_credit_entries
+        WHERE business_id = ${businessId}
+        GROUP BY customer_id
+        HAVING SUM(delta_cents) > 0
+      ) s
+      JOIN customers c ON c.id = s.customer_id
+      LEFT JOIN LATERAL (
+        SELECT salesperson_membership_id, location_id
+        FROM orders
+        WHERE customer_id = c.id
+        ORDER BY created_at DESC
+        LIMIT 1
+      ) o ON true
+      WHERE o.location_id = ${loc.id}
+      ORDER BY s.bal DESC
+      LIMIT 10`)) as unknown as {
+      customer_id: string;
+      first_name: string | null;
+      last_name: string | null;
+      phone: string | null;
+      balance_cents: number;
+      salesperson_membership_id: string | null;
+    }[];
+
+    // My month so far (ANY store — the goal is per member, not per store)
+    // and my commission accrual for the current payroll period.
+    const [monthOrders] = await this.db
+      .select({
+        cents: sql<number>`COALESCE(SUM(CASE
+          WHEN ${schema.orders.salespersonMembershipId} = ${myMembershipId}
+            THEN ROUND(${schema.orders.totalCents} * (CASE WHEN ${schema.orders.secondSalespersonMembershipId} IS NOT NULL THEN COALESCE(${schema.orders.splitBps}, 10000) ELSE 10000 END) / 10000.0)
+          WHEN ${schema.orders.secondSalespersonMembershipId} = ${myMembershipId}
+            THEN ROUND(${schema.orders.totalCents} * (10000 - COALESCE(${schema.orders.splitBps}, 10000)) / 10000.0)
+          ELSE 0 END), 0)::int`,
+      })
+      .from(schema.orders)
+      .where(
+        and(
+          eq(schema.orders.businessId, businessId),
+          sql`${schema.orders.status} NOT IN ('draft', 'quote', 'cancelled')`,
+          isNull(schema.orders.importedAt),
+          sql`(${schema.orders.createdAt} AT TIME ZONE ${tz}) >= date_trunc('month', now() AT TIME ZONE ${tz})`,
+        ),
+      );
+    let monthSalesCents = 0;
+    if (myUserId) {
+      const [monthSales] = await this.db
+        .select({ cents: sql<number>`COALESCE(SUM(${schema.sales.totalCents}), 0)::int` })
+        .from(schema.sales)
+        .where(
+          and(
+            eq(schema.sales.businessId, businessId),
+            eq(schema.sales.status, 'completed'),
+            isNull(schema.sales.importedAt),
+            eq(schema.sales.associateUserId, myUserId),
+            sql`(${schema.sales.createdAt} AT TIME ZONE ${tz}) >= date_trunc('month', now() AT TIME ZONE ${tz})`,
+          ),
+        );
+      monthSalesCents = monthSales?.cents ?? 0;
+    }
+    const [commission] = await this.db
+      .select({
+        cents: sql<number>`COALESCE(SUM(${schema.commissionEntries.amountCents}), 0)::int`,
+      })
+      .from(schema.commissionEntries)
+      .where(
+        and(
+          eq(schema.commissionEntries.businessId, businessId),
+          eq(schema.commissionEntries.membershipId, myMembershipId!),
+          sql`${schema.commissionEntries.period} = to_char(now() AT TIME ZONE ${tz}, 'YYYY-MM')`,
+        ),
+      );
+
+    // Drawer status for the store.
+    const [lastShift] = await this.db
+      .select({
+        closedAt: schema.cashShifts.closedAt,
+        suspendedAt: schema.cashShifts.suspendedAt,
+        closedDay: sql<
+          string | null
+        >`(${schema.cashShifts.closedAt} AT TIME ZONE ${tz})::date::text`,
+      })
+      .from(schema.cashShifts)
+      .where(
+        and(eq(schema.cashShifts.businessId, businessId), eq(schema.cashShifts.locationId, loc.id)),
+      )
+      .orderBy(desc(schema.cashShifts.openedAt))
+      .limit(1);
 
     // Salesperson names for every membership id we touched, and user
     // names for register associates on the leaderboard.
@@ -798,6 +1118,9 @@ export class MorningDashboardController {
         [...openRows, ...closedRows, ...delRows]
           .flatMap((r) => [r.primary, r.second])
           .concat([...leaderboard.keys()].filter((k) => k.startsWith('m:')).map((k) => k.slice(2)))
+          .concat(delRows.map((r) => r.driverMembershipId))
+          .concat(returnRows.map((r) => r.primary))
+          .concat(creditRows.map((r) => r.salesperson_membership_id))
           .filter(Boolean) as string[],
       ),
     ];
@@ -859,6 +1182,10 @@ export class MorningDashboardController {
       customerName: [r.customerFirst, r.customerLast].filter(Boolean).join(' ').trim() || null,
       customerPhone: r.customerPhone,
       salespersonName: r.primary ? (memberName.get(r.primary) ?? null) : null,
+      salespersonMembershipId: r.primary,
+      secondSalespersonMembershipId: r.second,
+      createdAt: r.createdAt,
+      shortUnits: shortMap.get(r.id) ?? 0,
     });
 
     const myOpenAll = openRows.filter(
@@ -895,6 +1222,46 @@ export class MorningDashboardController {
     const pastDuePromises = openRows.filter(
       (r) => r.status !== 'draft' && r.requestedDate != null && r.requestedDate < today,
     ).length;
+    const agingCutoff = Date.now() - 14 * 86_400_000;
+    const unpaidAging = openRows.filter(
+      (r) =>
+        r.status === 'open' &&
+        r.totalCents - r.paidCents > 0 &&
+        r.createdAt.getTime() < agingCutoff,
+    ).length;
+    const backorders = openRows
+      .filter((r) => r.status === 'open' && (shortMap.get(r.id) ?? 0) > 0)
+      .slice(0, 10);
+    const staleCarts = [...openRows]
+      .filter((r) => r.status === 'draft' || r.status === 'quote')
+      .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
+      .slice(0, 10);
+
+    // Group the audit trail one row per order, newest order first.
+    const activityByOrder = new Map<string, ManagerDashboard['activity'][number]>();
+    for (const a of actRows) {
+      const g = activityByOrder.get(a.orderId) ?? {
+        orderId: a.orderId,
+        orderNumber: a.orderNumber,
+        latestAt: a.createdAt,
+        events: [],
+      };
+      if (g.events.length < 6) {
+        g.events.push({
+          action: a.action,
+          actorName: a.actorName ?? a.actorEmail ?? null,
+          createdAt: a.createdAt,
+        });
+      }
+      activityByOrder.set(a.orderId, g);
+    }
+
+    kpiMine.monthWrittenCents = (monthOrders?.cents ?? 0) + monthSalesCents;
+    kpiMine.monthlyGoalCents = me.monthlyGoalCents ?? null;
+    kpiMine.commissionPeriodCents = commission?.cents ?? 0;
+    kpiStore.tenderMix = [...tenderMix.entries()]
+      .map(([method, cents]) => ({ method, cents }))
+      .sort((a, b) => b.cents - a.cents);
 
     const [openExceptions] = await this.db
       .select({ count: sql<number>`count(*)::int` })
@@ -910,11 +1277,18 @@ export class MorningDashboardController {
       date: today,
       location: { id: loc.id, name: loc.name, timezone: tz },
       locations: pickable.map((l) => ({ id: l.id, name: l.name })),
+      membershipId: myMembershipId!,
       kpis: {
         mine: kpiMine,
         store: kpiStore,
         exceptionsOpen: openExceptions?.count ?? 0,
         pastDuePromises,
+        unpaidAging,
+      },
+      drawer: {
+        shiftOpen: !!lastShift && !lastShift.closedAt,
+        closedToday: !!lastShift && lastShift.closedDay === today,
+        suspended: !!lastShift?.suspendedAt,
       },
       salesByDay: dayKeys.map((d) => ({ day: d, ...byDay.get(d)! })),
       leaderboardWeek: [...leaderboardByName.entries()]
@@ -932,10 +1306,57 @@ export class MorningDashboardController {
           ...toQueueRow(r),
           deliveryId: r.deliveryId,
           deliveryState: r.deliveryState,
+          scheduledDate: r.scheduledDate,
+          driverName: r.driverMembershipId ? (memberName.get(r.driverMembershipId) ?? null) : null,
           windowStart: r.windowStart,
           windowEnd: r.windowEnd,
         })),
+        backorders: backorders.map(toQueueRow),
+        staleCarts: staleCarts.map(toQueueRow),
       },
+      returnsInFlight: returnRows.map((r) => ({
+        id: r.id,
+        rmaNumber: r.rmaNumber,
+        status: r.retStatus,
+        createdAt: r.createdAt,
+        orderId: r.orderId,
+        orderNumber: r.orderNumber,
+        customerName: [r.customerFirst, r.customerLast].filter(Boolean).join(' ').trim() || null,
+        salespersonMembershipId: r.primary,
+        salespersonName: r.primary ? (memberName.get(r.primary) ?? null) : null,
+      })),
+      incoming: [
+        ...incomingTransfers.map((t) => ({
+          kind: 'transfer' as const,
+          id: t.id,
+          number: t.number,
+          status: t.status,
+          expected: t.expected,
+        })),
+        ...incomingPOs.map((po) => ({
+          kind: 'po' as const,
+          id: po.id,
+          number: po.number,
+          status: po.status,
+          expected: po.expected,
+        })),
+      ]
+        .sort((a, b) => (a.expected ?? '9999').localeCompare(b.expected ?? '9999'))
+        .slice(0, 10),
+      lowStock,
+      creditHolders: creditRows.map((r) => ({
+        customerId: r.customer_id,
+        customerName: [r.first_name, r.last_name].filter(Boolean).join(' ').trim() || null,
+        phone: r.phone,
+        balanceCents: r.balance_cents,
+        salespersonMembershipId: r.salesperson_membership_id,
+        salespersonName: r.salesperson_membership_id
+          ? (memberName.get(r.salesperson_membership_id) ?? null)
+          : null,
+      })),
+      activity: [...activityByOrder.values()]
+        .sort((a, b) => b.latestAt.getTime() - a.latestAt.getTime())
+        .slice(0, 12),
     };
   }
 }

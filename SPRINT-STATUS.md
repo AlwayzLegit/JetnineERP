@@ -3669,3 +3669,38 @@ Owner-picked "warn on create + merge tool" (G4 — the same caller existed
 - Tests: customers suite 11→14 (three phone formats + email + name-only
   matches; merge moves orders/sale/credit + backfill + duplicate gone +
   history shows moved docs; self-merge/unknown guards).
+
+### Checkpoint — 2026-08-30 (dashboard daily-ops pack, handoff slice 4)
+
+Owner-approved 20-item list ("make the dashboard helpful for daily
+operations") — all on the manager dashboard, one aggregate call:
+
+- **Migration 0078_member_monthly_goal**: `memberships.monthly_goal_cents`;
+  member page gains a "Monthly sales goal" field.
+- **Store-wide (10)**: sales-today tiles now carry ▲/▼ vs the same
+  weekday last week (from the existing 14-day series); the deliveries
+  board covers today AND tomorrow with driver, window, and
+  balance-to-collect; Needs attention adds unpaid-14d+ to past-due
+  promises + exceptions; a Backorder watch (open orders with unreserved
+  stock units, soonest promise first); Aging carts (drafts/quotes oldest
+  first with age); Returns & exchanges in flight; Incoming stock
+  (in-transit transfers + ordered/partially-received POs by expected
+  date); Drawer & tenders (today's tender mix bars + open/closed/
+  suspended shift state); store-scoped Low stock (severity-sorted,
+  stocked variants only); the activity feed grouped one row per order
+  with expandable events.
+- **Per-member (10)**: My sales today + delta; My month vs goal
+  (progress bar, any store); My commission accrued this period
+  (commission_entries by payroll period); My open sales worklist with
+  next-action chips (N short / confirm / collect & schedule / collect);
+  My call-backs (my aging drafts/quotes); My deliveries today+tomorrow;
+  my at-risk rides the backorder/past-due data; My wins (closed 7d,
+  mine); My follow-up money (store-credit holders whose latest order is
+  mine + my returns in flight); Open-sales Mine/Whole-store tabs kept.
+- Endpoint stays ONE call: ~10 added queries, all store-scoped and
+  capped; queue rows now carry membership ids, createdAt, and shortUnits
+  so "mine" filtering happens client-side.
+- Tests: reports suite 43 (new daily-ops test seeds a short-stocked
+  order, week-old draft, live return, tomorrow's delivery, in-transit
+  transfer, ordered PO, thin stock, credit holder + goal PATCH, and
+  pins each block; tender mix pins today's cash).

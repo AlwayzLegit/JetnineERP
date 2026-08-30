@@ -1,0 +1,1 @@
+ALTER TABLE "memberships" ADD COLUMN "monthly_goal_cents" integer;
