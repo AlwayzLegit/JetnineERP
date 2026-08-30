@@ -17,7 +17,8 @@ import { Button, Card, Field, Input, Select } from '@/components/ui';
  *
  * Customer, merchandise, and payment all live on one screen: universal
  * customer search up top, an Add Product popup with stock/ATP awareness,
- * auto recycling-fee lines, and a pinned totals + payments rail. Complete
+ * one-click Removal/Recycling fee lines, and a pinned totals + payments
+ * rail. Complete
  * posts the order (or a plain register sale for a fully-paid take-with),
  * Save as Draft parks it store-wide.
  */
@@ -43,8 +44,6 @@ const TENDERS = [
 ] as const;
 type Tender = (typeof TENDERS)[number]['value'];
 
-/** Product categories that legally carry the CA recycling fee per unit. */
-const RECYCLING_RE = /\b(mattress|foundation|adjustable\s*base|box\s*spring)\b/i;
 const RECYCLING_DESC = 'Recycling Fee';
 
 interface CustomerHit {
@@ -464,26 +463,6 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
           availableHere: row.availableHere,
           atpDate: row.atpDate,
         });
-        // Auto fee line per unit for mattress/foundation/adjustable base
-        // (CA law; PLAN-POS-OPERATIONS §4). One fee line tracks total
-        // qualifying units; the associate may remove it.
-        if (RECYCLING_RE.test(`${row.productName} ${row.variantName ?? ''}`)) {
-          const fee = next.find((l) => l.lineType === 'custom' && l.description === RECYCLING_DESC);
-          if (fee) fee.quantity += 1;
-          else
-            next.push({
-              key: nextKey(),
-              variantId: null,
-              description: RECYCLING_DESC,
-              quantity: 1,
-              unitPriceCents: recyclingFeeCents,
-              lineDiscountCents: 0,
-              lineType: 'custom',
-              fulfillmentMethod: '',
-              sourceLocationId: '',
-              deliveryDate: '',
-            });
-        }
       }
       return next;
     });
@@ -1223,6 +1202,39 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
                 }
               >
                 + Removal ($0)
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                data-testid="add-recycling-fee"
+                onClick={() =>
+                  // Owner 2026-08-30: the CA recycling fee is added by
+                  // hand like Removal, never automatically. One untaxed
+                  // fee line; each click counts one more unit on it.
+                  setLines((prev) => {
+                    const next = prev.map((l) => ({ ...l }));
+                    const fee = next.find(
+                      (l) => l.lineType === 'custom' && l.description === RECYCLING_DESC,
+                    );
+                    if (fee) fee.quantity += 1;
+                    else
+                      next.push({
+                        key: nextKey(),
+                        variantId: null,
+                        description: RECYCLING_DESC,
+                        quantity: 1,
+                        unitPriceCents: recyclingFeeCents,
+                        lineDiscountCents: 0,
+                        lineType: 'custom',
+                        fulfillmentMethod: '',
+                        sourceLocationId: '',
+                        deliveryDate: '',
+                      });
+                    return next;
+                  })
+                }
+              >
+                + Recycling (${(recyclingFeeCents / 100).toFixed(2)})
               </Button>
               <Button
                 size="sm"
