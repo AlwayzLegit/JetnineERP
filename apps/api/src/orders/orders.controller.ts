@@ -3279,7 +3279,9 @@ export class OrdersController {
       const lineReason = await this.overrides.resolveReason(
         'return',
         { reasonCodeId: r.reasonCodeId, reason: r.reason ?? body.reason ?? null },
-        { required: false },
+        // Owner 2026-08-30: the typed reason suffices — a code is a
+        // bonus, never a gate, on returns and exchanges.
+        { required: false, codeOptional: true },
       );
       // Refund what the customer actually paid for the unit: the line
       // total plus its tax share (order lines keep tax separately).

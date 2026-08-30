@@ -187,7 +187,7 @@ export class SecurityOverrideService {
   async resolveReason(
     usageClass: ReasonUsageClass,
     input: { reasonCodeId?: string | null; reason?: string | null },
-    opts: { required?: boolean } = {},
+    opts: { required?: boolean; codeOptional?: boolean } = {},
   ): Promise<ResolvedReason> {
     const required = opts.required ?? true;
     if (input.reasonCodeId) {
@@ -220,7 +220,9 @@ export class SecurityOverrideService {
         ),
       )
       .limit(1);
-    if (anyCode) {
+    // Owner amendment 2026-08-30: some flows (returns/exchanges) accept
+    // free text even when codes exist — the typed reason is the record.
+    if (anyCode && !opts.codeOptional) {
       throw new BadRequestException(
         `A coded reason (class "${usageClass}") is required — pass reasonCodeId`,
       );

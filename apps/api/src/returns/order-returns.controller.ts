@@ -270,7 +270,7 @@ export class OrderReturnsController {
       const lineReason = await this.overrides.resolveReason(
         'return',
         { reasonCodeId: l.reasonCodeId, reason: l.reason ?? body.reason ?? null },
-        { required: false },
+        { required: false, codeOptional: true },
       );
       resolved.push({
         variantId: l.variantId!,

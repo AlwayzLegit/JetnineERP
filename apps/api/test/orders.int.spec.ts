@@ -3786,3 +3786,53 @@ describe('Global omnibox search (handoff G1)', () => {
     expect(res.body.sales).toEqual([]);
   });
 });
+
+describe('Add item to an existing order at a set price (owner ask 2026-08-30)', () => {
+  it('the new line carries the entered price and raises the balance to collect', async () => {
+    const create = await request(app.getHttpServer())
+      .post('/v1/orders')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({
+        locationId,
+        customerId,
+        fulfillmentType: 'delivery',
+        lines: [{ variantId: sofaVariantId, quantity: 1 }],
+        confirm: true,
+      });
+    expect(create.status).toBe(201);
+    const orderId = create.body.id as string;
+    const before = create.body.balanceDueCents as number;
+
+    // The chair lists at 19,999 — the writer charges 25,000 for two.
+    const added = await request(app.getHttpServer())
+      .post(`/v1/orders/${orderId}/lines`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ variantId: chairVariantId, quantity: 2, unitPriceCents: 25_000 });
+    expect(added.status).toBe(201);
+
+    const line = added.body.lines.find(
+      (l: { variantId: string | null }) => l.variantId === chairVariantId,
+    );
+    expect(line.unitPriceCents).toBe(25_000);
+    expect(line.quantity).toBe(2);
+    // Balance rose by the charge plus its tax (7%), ready for a payment.
+    const charge = 50_000 + Math.round((50_000 * 700) / 10_000);
+    expect(added.body.balanceDueCents - before).toBe(charge);
+
+    // And the payment on the new item goes straight through.
+    await request(app.getHttpServer())
+      .post(`/v1/orders/${orderId}/payments`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ method: 'card', amountCents: charge })
+      .expect(201);
+    const after = await request(app.getHttpServer())
+      .get(`/v1/orders/${orderId}`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .expect(200);
+    expect(after.body.balanceDueCents).toBe(before);
+  });
+});
