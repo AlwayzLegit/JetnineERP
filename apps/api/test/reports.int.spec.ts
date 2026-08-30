@@ -1454,4 +1454,136 @@ describe('Manager dashboard (owner ask 2026-08-30)', () => {
     // Pipeline segments cover the open book.
     expect(after.pipeline.map((p: { key: string }) => p.key)).toContain('open');
   });
+
+  it('daily-ops pack: goal pace, tender mix, backorders, carts, returns, incoming, low stock, credit', async () => {
+    // Owner sets a monthly goal for the member.
+    await request(app.getHttpServer())
+      .patch(`/v1/business/members/${scopedMembershipId}`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ monthlyGoalCents: 100_000 })
+      .expect(200);
+
+    const sqlc = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    let backorderId = '';
+    try {
+      const [cust] = await sqlc`SELECT id FROM customers WHERE last_name = 'Caller' LIMIT 1`;
+      // A promised order two units short of stock.
+      const [bo] = await sqlc`
+        INSERT INTO orders (business_id, location_id, customer_id, number, status,
+                            subtotal_cents, total_cents, requested_date)
+        VALUES (${businessId}, ${locationId}, ${cust!.id}, 'MDASH-BO-1', 'open', 20000, 20000,
+                (now() AT TIME ZONE 'America/New_York')::date + 5) RETURNING id`;
+      backorderId = bo!.id;
+      await sqlc`
+        INSERT INTO order_lines (business_id, order_id, variant_id, description, quantity,
+                                 unit_price_cents, line_type, qty_reserved, total_cents)
+        VALUES (${businessId}, ${backorderId}, ${variantAId}, 'Widget short', 2, 10000, 'stock', 0, 20000)`;
+      // A week-old draft cart.
+      await sqlc`
+        INSERT INTO orders (business_id, location_id, customer_id, number, status,
+                            subtotal_cents, total_cents, created_at)
+        VALUES (${businessId}, ${locationId}, ${cust!.id}, 'MDASH-DRAFT-1', 'draft', 5000, 5000,
+                now() - interval '7 days')`;
+      // A return still in flight on MDASH-1.
+      const [mdash1] = await sqlc`SELECT id FROM orders WHERE number = 'MDASH-1'`;
+      await sqlc`
+        INSERT INTO order_returns (business_id, order_id, customer_id, rma_number, status, amount_cents)
+        VALUES (${businessId}, ${mdash1!.id}, ${cust!.id}, 'RMA-MDASH-1-1', 'authorized', 5000)`;
+      // A delivery scheduled TOMORROW for MDASH-1.
+      await sqlc`
+        INSERT INTO deliveries (business_id, location_id, order_id, scheduled_date)
+        VALUES (${businessId}, ${locationId}, ${mdash1!.id},
+                ((now() AT TIME ZONE 'America/New_York')::date + 1)::text::date)`;
+      // Incoming stock: a transfer on the truck and a PO the vendor owes.
+      await sqlc`
+        INSERT INTO stock_transfers (business_id, from_location_id, to_location_id, number, status)
+        VALUES (${businessId}, ${annexLocationId}, ${locationId}, 'XFR-MDASH-1', 'in_transit')`;
+      const [vendor] = await sqlc`
+        INSERT INTO vendors (business_id, name) VALUES (${businessId}, 'MDash Vendor') RETURNING id`;
+      await sqlc`
+        INSERT INTO purchase_orders (business_id, vendor_id, location_id, number, status, expected_at)
+        VALUES (${businessId}, ${vendor!.id}, ${locationId}, 'PO-MDASH-1', 'ordered',
+                now() + interval '4 days')`;
+      // A thin stock position at this store.
+      await sqlc`
+        INSERT INTO inventory_levels (business_id, variant_id, location_id, on_hand, reserved)
+        VALUES (${businessId}, ${variantAId}, ${locationId}, 2, 0)
+        ON CONFLICT (variant_id, location_id)
+        DO UPDATE SET on_hand = 2, reserved = 0`;
+      // The customer sits on store credit; their latest order is mine at Main.
+      await sqlc`
+        INSERT INTO store_credit_entries (business_id, customer_id, delta_cents, reason)
+        VALUES (${businessId}, ${cust!.id}, 4500, 'mdash credit fixture')`;
+      await sqlc`
+        INSERT INTO orders (business_id, location_id, customer_id, number, status,
+                            salesperson_membership_id, subtotal_cents, total_cents, created_at)
+        VALUES (${businessId}, ${locationId}, ${cust!.id}, 'MDASH-CRED-1', 'open',
+                ${scopedMembershipId}, 1000, 1000, now() + interval '2 days')`;
+      // Dated past the 23:00-local tz fixture so it is the customer's latest order.
+    } finally {
+      await sqlc.end({ timeout: 5 });
+    }
+
+    const d = (
+      await request(app.getHttpServer())
+        .get('/v1/dashboard/manager')
+        .set('Cookie', scopedCookie)
+        .set('X-Business-Id', businessId)
+        .expect(200)
+    ).body;
+
+    // Goal pace: the member's writing this month counts toward the goal.
+    expect(d.kpis.mine.monthlyGoalCents).toBe(100_000);
+    expect(d.kpis.mine.monthWrittenCents).toBeGreaterThanOrEqual(40_000);
+    expect(d.membershipId).toBe(scopedMembershipId);
+
+    // Tender mix carries today's cash from the earlier payment.
+    const cash = d.kpis.store.tenderMix.find((t: { method: string }) => t.method === 'cash');
+    expect(cash.cents).toBeGreaterThanOrEqual(15_000);
+    // Drawer status reflects this store's latest shift (earlier suites
+    // open/close drawers at Main, so pin the shape, not the values).
+    expect(typeof d.drawer.shiftOpen).toBe('boolean');
+    expect(typeof d.drawer.closedToday).toBe('boolean');
+    expect(d.drawer.suspended).toBe(false);
+
+    // Backorder watch shows the short order with the unit count.
+    const bo = d.queues.backorders.find((r: { number: string }) => r.number === 'MDASH-BO-1');
+    expect(bo).toBeTruthy();
+    expect(bo.shortUnits).toBe(2);
+
+    // Aging carts list the week-old draft with its age visible via createdAt.
+    const draft = d.queues.staleCarts.find((r: { number: string }) => r.number === 'MDASH-DRAFT-1');
+    expect(draft).toBeTruthy();
+
+    // Returns in flight carry the RMA and the salesperson for "mine" filtering.
+    const ret = d.returnsInFlight.find(
+      (r: { rmaNumber: string }) => r.rmaNumber === 'RMA-MDASH-1-1',
+    );
+    expect(ret).toBeTruthy();
+    expect(ret.salespersonMembershipId).toBe(scopedMembershipId);
+
+    // Tomorrow's delivery rides in the board with its date.
+    const tom = d.queues.todaysDeliveries.find((r: { number: string }) => r.number === 'MDASH-1');
+    expect(tom).toBeTruthy();
+    expect(tom.scheduledDate > d.date).toBe(true);
+
+    // Incoming stock: the transfer and the PO, soonest expected first.
+    const kinds = d.incoming.map((r: { number: string }) => r.number);
+    expect(kinds).toContain('XFR-MDASH-1');
+    expect(kinds).toContain('PO-MDASH-1');
+
+    // Low stock shows the two-unit position.
+    const low = d.lowStock.find((r: { variantId: string }) => r.variantId === variantAId);
+    expect(low).toBeTruthy();
+    expect(low.available).toBe(2);
+
+    // Store-credit holder attributed to me.
+    const holder = d.creditHolders.find((c: { balanceCents: number }) => c.balanceCents === 4_500);
+    expect(holder).toBeTruthy();
+    expect(holder.salespersonMembershipId).toBe(scopedMembershipId);
+
+    // The activity feed is grouped rows, each with an order link.
+    expect(Array.isArray(d.activity)).toBe(true);
+  });
 });

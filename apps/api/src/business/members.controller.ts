@@ -36,6 +36,7 @@ interface MemberRow {
   dataScope: string;
   sellingScope: string;
   managerDashboard: boolean;
+  monthlyGoalCents: number | null;
   scopeLocationIds: string[];
   hiddenNav: string[];
   invitedAt: Date | null;
@@ -57,6 +58,7 @@ interface UpdateMemberBody {
   /** Selling rights: 'approved' limits ringing sales to scopeLocationIds. */
   sellingScope?: 'all' | 'approved';
   managerDashboard?: boolean;
+  monthlyGoalCents?: number | null;
   /** Replaces the member's location scope set (only meaningful with 'store'). */
   scopeLocationIds?: string[];
   /** Left-nav hrefs hidden for this member (visibility only; permissions still gate the API). */
@@ -101,6 +103,7 @@ export class MembersController {
         dataScope: schema.memberships.dataScope,
         sellingScope: schema.memberships.sellingScope,
         managerDashboard: schema.memberships.managerDashboard,
+        monthlyGoalCents: schema.memberships.monthlyGoalCents,
         hiddenNavJson: schema.memberships.hiddenNavJson,
         // Lets the commissions page show who is currently on a plan.
         commissionPlanId: schema.memberships.commissionPlanId,
@@ -354,6 +357,21 @@ export class MembersController {
       update.managerDashboard = body.managerDashboard;
       before.managerDashboard = existing.managerDashboard;
       after.managerDashboard = body.managerDashboard;
+    }
+
+    if (
+      body.monthlyGoalCents !== undefined &&
+      body.monthlyGoalCents !== existing.monthlyGoalCents
+    ) {
+      if (
+        body.monthlyGoalCents !== null &&
+        (!Number.isInteger(body.monthlyGoalCents) || body.monthlyGoalCents < 0)
+      ) {
+        throw new BadRequestException('monthlyGoalCents must be a non-negative integer or null');
+      }
+      update.monthlyGoalCents = body.monthlyGoalCents;
+      before.monthlyGoalCents = existing.monthlyGoalCents;
+      after.monthlyGoalCents = body.monthlyGoalCents;
     }
 
     if (body.hiddenNav !== undefined) {

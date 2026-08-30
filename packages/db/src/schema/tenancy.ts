@@ -157,6 +157,11 @@ export const memberships = pgTable(
      * the owner flips it on the member page; roles are not consulted.
      */
     managerDashboard: boolean('manager_dashboard').notNull().default(false),
+    /**
+     * Monthly written-sales goal in cents (owner ask 2026-08-30, the
+     * dashboard pace tracker). Null = no goal set; the tile hides.
+     */
+    monthlyGoalCents: integer('monthly_goal_cents'),
     // 'active' | 'invited' | 'disabled'
     status: text('status').notNull(),
     invitedByUserId: uuid('invited_by').references(() => users.id, { onDelete: 'set null' }),
