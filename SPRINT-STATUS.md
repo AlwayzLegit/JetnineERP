@@ -3473,3 +3473,18 @@ pass reasonCodeId` writing an exchange in production: the New Exchange
 - Tests reworked: approved-only cashier blocked off-scope, allowed
   in-scope, pos/locations filtered, **data still visible everywhere**
   (owner's off-scope order listed), /me carries the picker payload.
+
+## Checkpoint — 2026-08-29 (At Risk: approved-store filter + by-salesperson)
+
+- Owner: members' At Risk queue shows only orders from stores they are
+  approved for, worked by salesperson. New `sellingScopeCond` (read
+  filter twin of assertSellingScope) ANDed into delivery-jeopardy — an
+  approved-only member's call list covers exactly their stores (fail
+  closed at zero); owners/unrestricted see everything. Rows now carry
+  `salespersonMembershipId`/`salespersonName` (memberships→users, email
+  fallback) and the CSV gains the column. The jeopardy page groups rows
+  into per-salesperson sections (name header + line count, unassigned
+  last as "No salesperson").
+- Tests: reports suite 39→40 (annex at-risk order carries its
+  salesperson; approved-only cashier's report drops the annex row,
+  keeps main-store rows; owner unrestricted; cleanup restores).
