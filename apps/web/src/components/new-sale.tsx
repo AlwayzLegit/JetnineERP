@@ -102,6 +102,21 @@ interface DraftRow {
 let lineKeySeq = 0;
 const nextKey = () => `l${++lineKeySeq}`;
 
+/**
+ * The warehouse that Add Product should default to (owner 2026-08-30:
+ * "the default inventory for everyone needs to be warehouse"). Matched
+ * by location type first, then by name for locations created before
+ * location types existed.
+ */
+function findWarehouse<T extends { locationType?: string; name: string }>(
+  locs: T[],
+): T | undefined {
+  return (
+    locs.find((l) => l.locationType === 'warehouse') ??
+    locs.find((l) => /warehouse|whse|\bwh\b/i.test(l.name))
+  );
+}
+
 export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
   const router = useRouter();
 
@@ -341,7 +356,7 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
           // Goods come off the truck from the warehouse by default —
           // product search (and each added line's source) starts there;
           // the cashier flips "From" to the store for floor stock.
-          const wh = locs.find((l) => l.locationType === 'warehouse');
+          const wh = findWarehouse(locs);
           if (wh && wh.id !== selling.id) setSearchSourceId(wh.id);
         }
       })
@@ -436,7 +451,16 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
           lineDiscountCents: 0,
           lineType: 'stock',
           fulfillmentMethod: '',
-          sourceLocationId: searchSourceId && searchSourceId !== locationId ? searchSourceId : '',
+          // Take-with hands goods over the counter, so the line pulls
+          // from the store the member is logged into (owner 2026-08-30);
+          // delivery lines keep coming off the warehouse search source.
+          // The per-line "From" select changes either.
+          sourceLocationId:
+            fulfillment === 'take_with'
+              ? ''
+              : searchSourceId && searchSourceId !== locationId
+                ? searchSourceId
+                : '',
           deliveryDate: '',
           availableHere: row.availableHere,
           atpDate: row.atpDate,
@@ -752,7 +776,7 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
     setRequestedDate('');
     setShipDiffers(false);
     {
-      const wh = locations.find((l) => l.locationType === 'warehouse');
+      const wh = findWarehouse(locations);
       setSearchSourceId(wh && wh.id !== locationId ? wh.id : '');
     }
     setResumedDraftId(null);
@@ -1317,7 +1341,26 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
             <Field label="Fulfillment">
               <Select
                 value={fulfillment}
-                onChange={(e) => setFulfillment(e.target.value as Fulfillment)}
+                onChange={(e) => {
+                  const next = e.target.value as Fulfillment;
+                  setFulfillment(next);
+                  // Re-default every stock line's source for the new mode:
+                  // take-with pulls from the login store, delivery from
+                  // the warehouse. The per-line "From" select still wins
+                  // after this.
+                  const wh = findWarehouse(locations);
+                  setLines((prev) =>
+                    prev.map((l) =>
+                      l.lineType === 'custom'
+                        ? l
+                        : {
+                            ...l,
+                            sourceLocationId:
+                              next === 'take_with' ? '' : wh && wh.id !== locationId ? wh.id : '',
+                          },
+                    ),
+                  );
+                }}
                 style={{ width: '100%' }}
                 data-testid="fulfillment-method"
               >

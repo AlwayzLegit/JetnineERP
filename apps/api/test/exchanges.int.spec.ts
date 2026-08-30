@@ -646,7 +646,7 @@ describe('New Exchange stress test', () => {
     }
   }
 
-  it('S1 — the production bug: uncoded return 400s once a return code exists; retry with the code binds the SAME documents (no duplicates)', async () => {
+  it('S1 — owner amendment 2026-08-30: a typed reason suffices even when return codes exist; a code still binds when given', async () => {
     await withReasonCode('return', 'DEFECT', async (codeId) => {
       const orig = await soldOriginal(v1Id, 50_000);
       // Step 1 of the writer: the replacement order lands.
@@ -654,42 +654,51 @@ describe('New Exchange stress test', () => {
         .post(`/v1/orders/${orig.orderId}/exchange`)
         .send({ locationId, confirm: true, lines: [{ variantId: v2Id, quantity: 1 }] });
       expect(replacement.status).toBe(201);
-      // Step 2 without a reasonCodeId — exactly the screenshot failure.
-      const uncoded = await owner()
+      // Step 2 with only the typed reason — this used to 400 demanding a
+      // coded reason; the owner killed the picker.
+      const freeText = await owner()
         .post(`/v1/orders/${orig.orderId}/return`)
         .send({
           fulfillment: 'pickup',
           refundMethod: 'store_credit',
+          reason: 'Customer changed mind',
           lines: [{ lineId: orig.lineId, quantity: 1 }],
         });
-      expect(uncoded.status).toBe(400);
-      expect(uncoded.body.message).toMatch(/coded reason.*return.*reasonCodeId/i);
-      // Nothing half-written: no RMA exists yet.
-      const none = await owner().get(`/v1/order-returns?orderId=${orig.orderId}`);
-      expect(none.body.data).toHaveLength(0);
-      // The retry the error message promises: same replacement order,
-      // return now carrying the code.
-      await owner()
-        .post(`/v1/orders/${orig.orderId}/return`)
-        .send({
-          fulfillment: 'pickup',
-          refundMethod: 'store_credit',
-          lines: [{ lineId: orig.lineId, quantity: 1, reasonCodeId: codeId }],
-        })
-        .expect(201);
+      expect(freeText.status).toBe(201);
       const rets = await owner().get(`/v1/order-returns?orderId=${orig.orderId}&status=authorized`);
       expect(rets.body.data).toHaveLength(1);
       const bound = await owner()
         .post('/v1/exchanges')
         .send({ saleOrderId: replacement.body.id, returnId: rets.body.data[0].id });
       expect(bound.status).toBe(201);
-      // One exchange, one RMA, and the return line remembers the code.
+      // The line carries the typed reason, no code.
       await withDb(async (db) => {
         const rows = await db
           .select()
           .from(schema.orderReturnLines)
           .where(eq(schema.orderReturnLines.returnId, rets.body.data[0].id));
         expect(rows).toHaveLength(1);
+        expect(rows[0]!.reasonCodeId).toBeNull();
+      });
+
+      // A code, when the writer does pass one, still binds to the line.
+      const orig2 = await soldOriginal(v1Id, 50_000);
+      await owner()
+        .post(`/v1/orders/${orig2.orderId}/return`)
+        .send({
+          fulfillment: 'pickup',
+          refundMethod: 'store_credit',
+          lines: [{ lineId: orig2.lineId, quantity: 1, reasonCodeId: codeId }],
+        })
+        .expect(201);
+      const rets2 = await owner().get(
+        `/v1/order-returns?orderId=${orig2.orderId}&status=authorized`,
+      );
+      await withDb(async (db) => {
+        const rows = await db
+          .select()
+          .from(schema.orderReturnLines)
+          .where(eq(schema.orderReturnLines.returnId, rets2.body.data[0].id));
         expect(rows[0]!.reasonCodeId).toBe(codeId);
       });
     });

@@ -93,10 +93,8 @@ function NewExchangeInner() {
   const [goodsInHand, setGoodsInHand] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  // Return-class reason codes: once the registry has any, the server
-  // refuses uncoded returns, so the picker becomes required.
-  const [reasonCodes, setReasonCodes] = useState<ReasonCode[]>([]);
-  const [reasonCodeId, setReasonCodeId] = useState('');
+  // Owner 2026-08-30: the typed reason is the record — no coded-reason
+  // picker on exchanges; the server accepts free text.
   const [reasonText, setReasonText] = useState('');
   // Locations for "return goods to" and per-line "inventory from".
   const [locations, setLocations] = useState<LocationRow[]>([]);
@@ -106,9 +104,6 @@ function NewExchangeInner() {
   const [collectNow, setCollectNow] = useState(true);
   const [payMethod, setPayMethod] = useState<(typeof TENDERS)[number]['value']>('card');
   useEffect(() => {
-    api<ReasonCode[]>('/v1/reason-codes?usageClass=return')
-      .then(setReasonCodes)
-      .catch(() => setReasonCodes([]));
     api<LocationRow[]>('/v1/business/locations')
       .then(setLocations)
       .catch(() => setLocations([]));
@@ -207,8 +202,6 @@ function NewExchangeInner() {
     if (!original) return;
     if (pickedReturns.length === 0) return setError('Pick at least one item to return.');
     if (saleLines.length === 0) return setError('Add at least one replacement item.');
-    if (reasonCodes.length > 0 && !reasonCodeId)
-      return setError('Pick a return reason before writing the exchange.');
     setSaving(true);
     setError(null);
     let saleOrderId = createdLegs.saleOrderId;
@@ -253,7 +246,6 @@ function NewExchangeInner() {
             lines: pickedReturns.map((p) => ({
               lineId: p.line.id,
               quantity: p.quantity,
-              ...(reasonCodeId ? { reasonCodeId } : {}),
             })),
           }),
         });
@@ -408,33 +400,15 @@ function NewExchangeInner() {
               </div>
             )}
             <div className="mt-3 grid gap-3 sm:grid-cols-2">
-              {reasonCodes.length > 0 ? (
-                <Field label="Return reason (required)">
-                  <Select
-                    value={reasonCodeId}
-                    onChange={(e) => setReasonCodeId(e.target.value)}
-                    style={{ width: '100%' }}
-                    data-testid="return-reason-code"
-                  >
-                    <option value="">Pick a reason…</option>
-                    {reasonCodes.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.code}
-                        {c.description ? ` — ${c.description}` : ''}
-                      </option>
-                    ))}
-                  </Select>
-                </Field>
-              ) : (
-                <Field label="Return reason (optional note)">
-                  <Input
-                    value={reasonText}
-                    onChange={(e) => setReasonText(e.target.value)}
-                    placeholder="Why is it coming back?"
-                    style={{ width: '100%' }}
-                  />
-                </Field>
-              )}
+              <Field label="Return reason">
+                <Input
+                  value={reasonText}
+                  onChange={(e) => setReasonText(e.target.value)}
+                  placeholder="Why is it coming back?"
+                  style={{ width: '100%' }}
+                  data-testid="return-reason-text"
+                />
+              </Field>
               <Field label="Return goods to">
                 <Select
                   value={returnToId}

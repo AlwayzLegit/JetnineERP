@@ -3714,3 +3714,31 @@ for the whole range (the API's 62-day cap already allowed it), drag-to-
 reschedule works across every visible day, per-cell min-height trimmed
 so five rows scan well. Buttons relabeled Prev week / Today / Next week.
 Web-only — ships via Vercel from main, no API deploy.
+
+### Checkpoint — 2026-08-30 (POS sourcing defaults, order add-item price+payment, reason codes optional on returns)
+
+Owner batch of four:
+
+- **Add Product defaults to the warehouse for everyone** — New Sale and
+  the order page both; warehouse matched by location type OR name
+  (locations created before location types existed).
+- **Take-with pulls from the login store**: New Sale lines added under
+  take-with default their source to the selling location (per-line
+  "From" select still changes it); switching fulfillment re-defaults
+  every stock line (take-with → store, delivery → warehouse).
+- **Order page add-item works like New Sale**: picking a product now
+  opens a price step (unit price defaulting to list + quantity,
+  `add-line-price`/`add-line-qty`/`add-line-confirm`); on add, the
+  payment form pre-fills with exactly what the new item added to the
+  balance so the money is one click away. API already accepted
+  `unitPriceCents`; G6 variance gate still applies to discounts.
+- **Coded return reason no longer required** (owner: "we already have a
+  reason field to type in"): `resolveReason` gains `codeOptional`, set on
+  both return paths — free text is accepted even while return codes
+  exist; a code still binds when passed, wrong-class codes still 400.
+  The pickers are gone from the exchange writer and the order-page
+  return dialog; the typed reason field stays. Other reason classes
+  (exceptions, adjustments, counts, delivery failures) unchanged.
+- Tests: exchanges S1 rewritten to pin the amendment (free text 201 with
+  active codes + code-binding path); orders suite 92→93 (add-line at a
+  set price: line price, balance delta = charge+tax, payment lands).
