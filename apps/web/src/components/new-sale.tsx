@@ -82,6 +82,8 @@ interface LocationRow {
   name: string;
   taxRateBps: number | null;
   locationType?: string;
+  /** Where THIS member may ring a sale; inventory can source from anywhere. */
+  canSellHere?: boolean;
 }
 interface MemberRow {
   membershipId: string;
@@ -189,9 +191,12 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [priceGateMode, setPriceGateMode] = useState<'complete' | 'draft' | null>(null);
-  const [done, setDone] = useState<{ id: string; number: string; kind: 'order' | 'sale' } | null>(
-    null,
-  );
+  const [done, setDone] = useState<{
+    id: string;
+    number: string;
+    kind: 'order' | 'sale';
+    splitOrders?: { id: string; number: string; requestedDate: string | null }[];
+  } | null>(null);
 
   // §7: while writing a delivery sale, show how many stops the chosen
   // day still has against the soft cap.
@@ -577,6 +582,10 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
         mode === 'complete' &&
         orderType === 'sales_order' &&
         fulfillment === 'take_with' &&
+        // Custom fee lines (the recycling fee) can't ride the plain-sale
+        // shortcut — it prices variants only, so the fee would vanish
+        // from the document. The order path carries them, untaxed.
+        lines.every((l) => l.lineType !== 'custom') &&
         lines.every((l) => !l.sourceLocationId || l.sourceLocationId === locationId) &&
         allSellable &&
         totals.paidCents >= totals.totalCents &&
@@ -616,7 +625,12 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
       const createPath = exchangeOriginal
         ? `/v1/orders/${exchangeOriginal.id}/exchange`
         : '/v1/orders';
-      const order = await api<{ id: string; number: string; totalCents: number }>(createPath, {
+      const order = await api<{
+        id: string;
+        number: string;
+        totalCents: number;
+        splitOrders?: { id: string; number: string; requestedDate: string | null }[];
+      }>(createPath, {
         method: 'POST',
         body: JSON.stringify({
           locationId,
@@ -646,6 +660,9 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
           deliveryFeeCents: parseDollars(deliveryFee) || undefined,
           draft: mode === 'draft' ? true : undefined,
           confirm: mode === 'complete' && orderType !== 'quote' ? true : undefined,
+          // Lines promised on a different date split into -A/-B sibling
+          // orders server-side (backorder split at the register).
+          splitByDeliveryDate: true,
           ...(control ?? {}),
         }),
       });
@@ -670,7 +687,12 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
         resetAll();
         loadDrafts();
       } else {
-        setDone({ id: order.id, number: order.number, kind: 'order' });
+        setDone({
+          id: order.id,
+          number: order.number,
+          kind: 'order',
+          splitOrders: order.splitOrders,
+        });
       }
     }
   }
@@ -709,6 +731,19 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
         <h2 style={{ marginTop: 0 }}>
           {done.kind === 'sale' ? 'Sale' : 'Order'} {done.number} complete
         </h2>
+        {done.splitOrders && done.splitOrders.length > 0 && (
+          <p style={{ fontSize: 13 }} data-testid="split-siblings">
+            Backordered lines split into{' '}
+            {done.splitOrders.map((s, i) => (
+              <span key={s.id}>
+                {i > 0 && ', '}
+                <a href={`/orders/${s.id}`}>{s.number}</a>
+                {s.requestedDate ? ` (promised ${s.requestedDate})` : ''}
+              </span>
+            ))}{' '}
+            — payments stay on {done.number}.
+          </p>
+        )}
         <p className="muted" style={{ fontSize: 13 }}>
           Print / Email invoice arrive with the documents phase; the order page has the receipt for
           now.
@@ -1204,11 +1239,13 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
                 }}
                 style={{ width: '100%' }}
               >
-                {locations.map((l) => (
-                  <option key={l.id} value={l.id}>
-                    {l.name}
-                  </option>
-                ))}
+                {locations
+                  .filter((l) => l.canSellHere !== false)
+                  .map((l) => (
+                    <option key={l.id} value={l.id}>
+                      {l.name}
+                    </option>
+                  ))}
               </Select>
             </Field>
             <Field label="Fulfillment">

@@ -120,6 +120,12 @@ interface StepThreeFees {
 }
 
 interface CreateOrderBody extends StepThreeFees {
+  /**
+   * Split-at-sale (owner ask 2026-08-30): after the order is written,
+   * every group of lines whose per-line deliveryDate differs from the
+   * order's requestedDate moves to its own suffixed order (-A, -B …).
+   */
+  splitByDeliveryDate?: boolean;
   locationId?: string;
   customerId?: string;
   lines?: OrderLineInput[];
@@ -384,6 +390,7 @@ export class OrdersController {
     @Query('number') number?: string,
     @Query('salespersonMembershipId') salespersonMembershipId?: string,
     @Query('mine') mine?: string,
+    @Query('locationId') locationIdFilter?: string,
   ): Promise<PageResponse<OrderListRow>> {
     const limit = clampLimit(limitStr);
     const cursor = decodeCursor(cursorStr);
@@ -397,6 +404,7 @@ export class OrdersController {
     if (number) filters.push(eq(schema.orders.number, number.trim()));
     if (salespersonMembershipId)
       filters.push(eq(schema.orders.salespersonMembershipId, salespersonMembershipId));
+    if (locationIdFilter) filters.push(eq(schema.orders.locationId, locationIdFilter));
     // "My orders": carrying me as either salesperson — the dashboard card
     // every associate works their book from.
     if (mine === '1' || mine === 'true') {
@@ -461,6 +469,7 @@ export class OrdersController {
     @Query('q') q?: string,
     @Query('view') view?: string,
     @Query('mine') mine?: string,
+    @Query('locationId') locationIdFilter?: string,
   ): Promise<
     PageResponse<{
       id: string;
@@ -509,6 +518,7 @@ export class OrdersController {
         )!,
       );
     }
+    if (locationIdFilter) filters.push(eq(schema.orders.locationId, locationIdFilter));
     const cursorWhere = timestampCursorWhere(schema.orders.createdAt, schema.orders.id, cursor);
     if (cursorWhere) filters.push(cursorWhere);
 
@@ -1165,7 +1175,9 @@ export class OrdersController {
     @CurrentTenant() tenant: RequestTenantContext,
     @CurrentUser() actor: CurrentUserPayload,
     @Body() body: CreateOrderBody,
-  ): Promise<OrderDetail> {
+  ): Promise<
+    OrderDetail & { splitOrders?: { id: string; number: string; requestedDate: string | null }[] }
+  > {
     if (!body.locationId) throw new BadRequestException('locationId is required');
     assertSellingScope(tenant, body.locationId);
     if (!body.customerId) throw new BadRequestException('customerId is required');
@@ -1405,9 +1417,60 @@ export class OrdersController {
       }
     }
 
+    let splitOrders: { id: string; number: string; requestedDate: string | null }[] = [];
+    if (body.splitByDeliveryDate) {
+      splitOrders = await this.splitByDeliveryDates(tenant, actor, order.id);
+    }
     const detail = await this.loadDetail(order.id);
     this.fireOrderEvent('order.created', tenant.businessId!, detail);
-    return detail;
+    return splitOrders.length > 0 ? { ...detail, splitOrders } : detail;
+  }
+
+  /**
+   * Split-at-sale: lines promised on a different date than the order
+   * itself peel off into suffixed sibling orders, one per distinct
+   * date. Lines with no date (or the order's own date) stay put; a
+   * date that would take EVERY line is skipped — that is a date
+   * change, not a split.
+   */
+  private async splitByDeliveryDates(
+    tenant: RequestTenantContext,
+    actor: CurrentUserPayload,
+    orderId: string,
+  ): Promise<{ id: string; number: string; requestedDate: string | null }[]> {
+    const siblings: { id: string; number: string; requestedDate: string | null }[] = [];
+    for (;;) {
+      const [order] = await this.db
+        .select()
+        .from(schema.orders)
+        .where(eq(schema.orders.id, orderId))
+        .limit(1);
+      if (!order) break;
+      const lines = await this.db
+        .select()
+        .from(schema.orderLines)
+        .where(eq(schema.orderLines.orderId, orderId));
+      const splitDates = [
+        ...new Set(
+          lines
+            .map((l) => l.deliveryDate)
+            .filter((d): d is string => Boolean(d) && d !== order.requestedDate),
+        ),
+      ].sort();
+      const date = splitDates[0];
+      if (!date) break;
+      const moving = lines.filter((l) => l.deliveryDate === date);
+      if (moving.length === lines.length) break; // would empty the order
+      const sibling = await this.executeSplit(
+        tenant,
+        actor,
+        order,
+        moving.map((line) => ({ line, quantity: line.quantity })),
+        date,
+      );
+      siblings.push({ ...sibling, requestedDate: date });
+    }
+    return siblings;
   }
 
   @Patch('orders/:id')
@@ -1792,13 +1855,53 @@ export class OrdersController {
       );
     }
 
+    const newOrder = await this.executeSplit(
+      tenant,
+      actor,
+      order,
+      moves,
+      body.requestedDate ?? null,
+    );
+    return { order: await this.loadDetail(id), newOrder };
+  }
+
+  /**
+   * Split numbering (owner ask 2026-08-30): the pieces keep the base
+   * document number with a letter suffix — SO-2026-000016 splits into
+   * SO-2026-000016-A, then -B, and so on. Splitting a suffixed order
+   * strips its own letter first so the family shares one base.
+   */
+  private async nextSplitNumber(businessId: string, sourceNumber: string): Promise<string> {
+    const base = sourceNumber.replace(/-[A-Z]$/, '');
+    const rows = await this.db
+      .select({ number: schema.orders.number })
+      .from(schema.orders)
+      .where(
+        and(
+          eq(schema.orders.businessId, businessId),
+          sql`${schema.orders.number} LIKE ${`${base}-%`}`,
+        ),
+      );
+    const used = new Set(rows.map((r) => r.number));
+    for (let i = 0; i < 26; i++) {
+      const candidate = `${base}-${String.fromCharCode(65 + i)}`;
+      if (!used.has(candidate)) return candidate;
+    }
+    throw new BadRequestException('Too many splits of this order');
+  }
+
+  /** The mechanics shared by the split endpoint and split-at-sale. */
+  private async executeSplit(
+    tenant: RequestTenantContext,
+    actor: CurrentUserPayload,
+    order: typeof schema.orders.$inferSelect,
+    moves: { line: typeof schema.orderLines.$inferSelect; quantity: number }[],
+    requestedDate: string | null,
+  ): Promise<{ id: string; number: string }> {
+    const id = order.id;
     // The new order: same customer, store, salespeople, and addresses —
     // only the promised date is its own.
-    const number = await this.orders.generateOrderNumber(
-      this.db,
-      tenant.businessId!,
-      order.locationId,
-    );
+    const number = await this.nextSplitNumber(tenant.businessId!, order.number);
     const newStatus =
       order.status === 'draft' ? 'draft' : order.status === 'quote' ? 'quote' : 'open';
     const [target] = await this.db
@@ -1825,7 +1928,7 @@ export class OrdersController {
         addressRegion: order.addressRegion,
         addressPostalCode: order.addressPostalCode,
         addressPhone: order.addressPhone,
-        requestedDate: body.requestedDate ?? null,
+        requestedDate: requestedDate,
         notes: `Split from ${order.number}`,
       })
       .returning();
@@ -1919,7 +2022,51 @@ export class OrdersController {
       },
     });
 
-    return { order: await this.loadDetail(id), newOrder: { id: target.id, number } };
+    return { id: target.id, number };
+  }
+
+  /**
+   * Release ONE line's reservation (owner ask 2026-08-30, reached from
+   * the inventory page's reserved drill-down): the committed units go
+   * back to sellable stock so another order can take them; this order's
+   * line stays, unreserved, to be re-committed later (Reserve on the
+   * order page, or the nightly allocator when stock returns).
+   */
+  @Post('orders/:id/lines/:lineId/release')
+  @RequirePermission('orders.update')
+  async releaseLine(
+    @CurrentTenant() tenant: RequestTenantContext,
+    @CurrentUser() actor: CurrentUserPayload,
+    @Param('id') id: string,
+    @Param('lineId') lineId: string,
+  ): Promise<OrderDetail> {
+    const order = await this.requireLiveOrder(id);
+    this.assertUnlocked(order);
+    await this.assertNotOnOpenRun(id);
+    const [line] = await this.db
+      .select()
+      .from(schema.orderLines)
+      .where(and(eq(schema.orderLines.id, lineId), eq(schema.orderLines.orderId, id)))
+      .limit(1);
+    if (!line) throw new NotFoundException('Order line not found');
+    if (!line.variantId || line.qtyReserved <= 0) {
+      throw new BadRequestException('This line has no reserved units to release');
+    }
+    await this.orders.applyReleases(this.db, {
+      businessId: tenant.businessId!,
+      orderId: id,
+      locationId: line.sourceLocationId ?? order.stockLocationId ?? order.locationId,
+      actorUserId: actor?.id ?? null,
+      releases: [{ orderLineId: line.id, variantId: line.variantId, quantity: line.qtyReserved }],
+      updateLines: true,
+    });
+    await this.audit.log({
+      action: 'order.line.release',
+      targetType: 'order',
+      targetId: id,
+      after: { lineId, variantId: line.variantId, released: line.qtyReserved },
+    });
+    return this.loadDetail(id);
   }
 
   /**
