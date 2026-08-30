@@ -1519,7 +1519,9 @@ describe('Manager dashboard (owner ask 2026-08-30)', () => {
         INSERT INTO orders (business_id, location_id, customer_id, number, status,
                             salesperson_membership_id, subtotal_cents, total_cents, created_at)
         VALUES (${businessId}, ${locationId}, ${cust!.id}, 'MDASH-CRED-1', 'open',
-                ${scopedMembershipId}, 1000, 1000, now() + interval '2 days')`;
+                ${scopedMembershipId}, 5000000, 5000000, now() + interval '2 days')`;
+      // $50,000 on purpose: total_cents × 10000 must not overflow int32
+      // in the month-written SQL (the prod 500 of 2026-08-30).
       // Dated past the 23:00-local tz fixture so it is the customer's latest order.
     } finally {
       await sqlc.end({ timeout: 5 });
@@ -1535,7 +1537,9 @@ describe('Manager dashboard (owner ask 2026-08-30)', () => {
 
     // Goal pace: the member's writing this month counts toward the goal.
     expect(d.kpis.mine.monthlyGoalCents).toBe(100_000);
-    expect(d.kpis.mine.monthWrittenCents).toBeGreaterThanOrEqual(40_000);
+    // Includes the $50k big-ticket fixture — proves the SQL survives
+    // totals past the int32 overflow line ($2,147.48).
+    expect(d.kpis.mine.monthWrittenCents).toBeGreaterThanOrEqual(5_040_000);
     expect(d.membershipId).toBe(scopedMembershipId);
 
     // Tender mix carries today's cash from the earlier payment.
