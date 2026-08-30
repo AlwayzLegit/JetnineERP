@@ -5,7 +5,16 @@ import { toast } from 'sonner';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams } from 'next/navigation';
 import type { Permission } from '@jetnine/shared';
-import { Button, Card, Field, LoadingRows, PageHeader, Select, StatusBadge } from '@/components/ui';
+import {
+  Button,
+  Card,
+  Field,
+  LoadingRows,
+  PageHeader,
+  Select,
+  StatusBadge,
+  Input,
+} from '@/components/ui';
 import { NAV } from '@/components/app-shell';
 import { PermissionGroupsEditor } from '@/components/permission-groups';
 import { api } from '@/lib/api';
@@ -22,6 +31,7 @@ interface Member {
   dataScope: 'all' | 'store';
   sellingScope: 'all' | 'approved';
   managerDashboard: boolean;
+  monthlyGoalCents: number | null;
   scopeLocationIds: string[];
   hiddenNav: string[];
   invitedAt: string | null;
@@ -293,6 +303,29 @@ export default function MemberDetailPage() {
               </span>
             </span>
           </label>
+          <Field label="Monthly sales goal (written $, drives their dashboard pace bar)">
+            <Input
+              type="number"
+              min={0}
+              step={100}
+              placeholder="e.g. 60000 — blank for no goal"
+              defaultValue={
+                member.monthlyGoalCents != null ? String(member.monthlyGoalCents / 100) : ''
+              }
+              data-testid={`monthly-goal-${member.membershipId}`}
+              onBlur={(e) => {
+                const raw = e.target.value.trim();
+                const cents = raw === '' ? null : Math.round(Number(raw) * 100);
+                if (cents !== null && (!Number.isFinite(cents) || cents < 0)) return;
+                if (cents === member.monthlyGoalCents) return;
+                void patchMember(
+                  { monthlyGoalCents: cents },
+                  cents === null ? 'Goal cleared.' : 'Monthly goal saved.',
+                );
+              }}
+              style={{ width: '100%' }}
+            />
+          </Field>
           <Field label="Where can they sell?">
             <Select
               value={member.sellingScope}
