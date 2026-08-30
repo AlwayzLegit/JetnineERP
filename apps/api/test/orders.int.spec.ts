@@ -3667,3 +3667,122 @@ describe('Recycling fee is never taxed', () => {
     expect(sofa.taxCents).toBe(Math.round((129_999 * 700) / 10000));
   });
 });
+
+describe('Global omnibox search (handoff G1)', () => {
+  let callerId = '';
+  let callerOrderId = '';
+  let callerOrderNumber = '';
+
+  it('is authenticated — no session, no directory', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/v1/search?q=555')
+      .set('X-Business-Id', businessId);
+    expect([401, 403]).toContain(res.status);
+    // Anyone who can view orders can use it — the clerk included.
+    await request(app.getHttpServer())
+      .get('/v1/search?q=555')
+      .set('Cookie', clerkCookie)
+      .set('X-Business-Id', businessId)
+      .expect(200);
+  });
+
+  it('finds a caller by phone digits regardless of formatting', async () => {
+    const create = await request(app.getHttpServer())
+      .post('/v1/customers')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ firstName: 'Rita', lastName: 'Ringer', phone: '(818) 555-0142' });
+    expect(create.status).toBe(201);
+    callerId = create.body.id;
+
+    for (const q of ['8185550142', '555-0142', '818 555']) {
+      const res = await request(app.getHttpServer())
+        .get(`/v1/search?q=${encodeURIComponent(q)}`)
+        .set('Cookie', cashierCookie)
+        .set('X-Business-Id', businessId)
+        .expect(200);
+      const ids = res.body.customers.map((c: { id: string }) => c.id);
+      expect(ids).toContain(callerId);
+    }
+    // And by name, of course.
+    const byName = await request(app.getHttpServer())
+      .get('/v1/search?q=rita ring')
+      .set('Cookie', cashierCookie)
+      .set('X-Business-Id', businessId)
+      .expect(200);
+    expect(byName.body.customers.map((c: { id: string }) => c.id)).toContain(callerId);
+    expect(byName.body.customers[0].phone).toBe('(818) 555-0142');
+  });
+
+  it('finds documents by number — current, legacy STORIS, and receipts', async () => {
+    const order = await request(app.getHttpServer())
+      .post('/v1/orders')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({
+        locationId,
+        customerId: callerId,
+        fulfillmentType: 'delivery',
+        lines: [{ variantId: sofaVariantId, quantity: 1 }],
+        confirm: true,
+      });
+    expect(order.status).toBe(201);
+    callerOrderId = order.body.id;
+    callerOrderNumber = order.body.number;
+
+    const sql = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    try {
+      await sql`UPDATE orders SET legacy_number = 'ST-40417788' WHERE id = ${callerOrderId}`;
+      await sql`
+        INSERT INTO sales (business_id, location_id, customer_id, number, status,
+                           subtotal_cents, total_cents, imported_at)
+        VALUES (${businessId}, ${locationId}, ${callerId}, 'SRCH-RCPT-1', 'completed',
+                12000, 12000, now())`;
+    } finally {
+      await sql.end({ timeout: 5 });
+    }
+
+    // Partial current number (the tail digits a customer reads out).
+    const tail = callerOrderNumber.slice(-5);
+    const byNumber = await request(app.getHttpServer())
+      .get(`/v1/search?q=${encodeURIComponent(tail)}`)
+      .set('Cookie', cashierCookie)
+      .set('X-Business-Id', businessId)
+      .expect(200);
+    const hit = byNumber.body.orders.find((o: { id: string }) => o.id === callerOrderId);
+    expect(hit).toBeTruthy();
+    expect(hit.customerName).toBe('Rita Ringer');
+
+    // The old STORIS invoice number still resolves.
+    const byLegacy = await request(app.getHttpServer())
+      .get('/v1/search?q=ST-40417788')
+      .set('Cookie', cashierCookie)
+      .set('X-Business-Id', businessId)
+      .expect(200);
+    expect(byLegacy.body.orders.map((o: { id: string }) => o.id)).toContain(callerOrderId);
+
+    // Register receipts match too, flagged as imported.
+    const byReceipt = await request(app.getHttpServer())
+      .get('/v1/search?q=SRCH-RCPT')
+      .set('Cookie', cashierCookie)
+      .set('X-Business-Id', businessId)
+      .expect(200);
+    const receipt = byReceipt.body.sales.find(
+      (r: { number: string }) => r.number === 'SRCH-RCPT-1',
+    );
+    expect(receipt).toBeTruthy();
+    expect(receipt.imported).toBe(true);
+    expect(receipt.customerName).toBe('Rita Ringer');
+  });
+
+  it('a one-character query returns nothing rather than everything', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/v1/search?q=r')
+      .set('Cookie', cashierCookie)
+      .set('X-Business-Id', businessId)
+      .expect(200);
+    expect(res.body.customers).toEqual([]);
+    expect(res.body.orders).toEqual([]);
+    expect(res.body.sales).toEqual([]);
+  });
+});

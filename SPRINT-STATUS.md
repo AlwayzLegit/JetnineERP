@@ -3620,3 +3620,26 @@ deferred to later slices; the owner keeps the company-wide dashboard.
 - Later slices from the handoff: global omnibox + customer-call flow,
   customer dedupe (warn-on-create + merge, owner-picked), existing
   dashboard D2–D10 fixes.
+
+### Checkpoint — 2026-08-30 (global omnibox, handoff slice 2)
+
+The audit's one **Critical** finding (G1): no way to reach a calling
+customer from wherever you are.
+
+- **`GET /v1/search?q=`** (orders.view): one call matching customers by
+  name, email, and PHONE — compared digits-to-digits, so "(818)
+  555-0142", "818.555.0142" and "8185550142" all hit — plus orders by
+  current OR legacy STORIS number and register receipts by number, each
+  respecting the caller's data scope. Queries under 2 chars return
+  nothing.
+- **Omnibox in the topbar** (every page): ⌘K / Ctrl-K focuses it,
+  results group Customers / Orders / Receipts with arrow-key + Enter
+  navigation, click-outside/Escape dismiss; a hit deep-links to the
+  customer page (with its full purchase history), the order, or the
+  receipt. Phone → customer page = two interactions, per the handoff's
+  acceptance bar.
+- Tests: orders suite 88→92 (auth gate + clerk allowed, three phone
+  formats + name, partial current number, legacy ST- number, imported
+  receipt flag, short-query empty).
+- Still queued from the handoff: customer dedupe (warn-on-create +
+  merge — owner-picked), then D2–D10 on the standard dashboard.
