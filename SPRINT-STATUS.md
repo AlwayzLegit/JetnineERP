@@ -3704,3 +3704,13 @@ operations") — all on the manager dashboard, one aggregate call:
   order, week-old draft, live return, tomorrow's delivery, in-transit
   transfer, ordered PO, thin stock, credit holder + goal PATCH, and
   pins each block; tender mix pins today's cash).
+
+### Checkpoint — 2026-08-30 (deliveries calendar: a month on screen)
+
+Owner: "deliveries shows only 7 days then you hit next — I want 30 days
+on screen, same style." The board now renders FIVE week-rows (35 days,
+aligned Sunday–Saturday) in the identical day-column style, one fetch
+for the whole range (the API's 62-day cap already allowed it), drag-to-
+reschedule works across every visible day, per-cell min-height trimmed
+so five rows scan well. Buttons relabeled Prev week / Today / Next week.
+Web-only — ships via Vercel from main, no API deploy.
