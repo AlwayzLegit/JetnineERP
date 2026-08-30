@@ -562,7 +562,7 @@ function OpsCard({ settings, onSaved }: { settings: Settings; onSaved: (s: Setti
           style={{ width: '100%' }}
         />
       </Field>
-      <Field label="Manager-approval tier starts above (%; blank = 15)">
+      <Field label="Deep-discount log tier starts above (%; blank = 15)">
         <Input
           name="pvTier2Pct"
           type="number"

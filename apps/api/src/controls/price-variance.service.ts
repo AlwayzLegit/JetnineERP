@@ -1,4 +1,4 @@
-import { BadRequestException, Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { eq } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { schema } from '@jetnine/db';
@@ -24,7 +24,7 @@ export interface PriceControlBody {
 }
 
 /**
- * The G6 price-variance gate, shared by every path that can discount:
+ * The G6 price-variance monitor, shared by every path that can discount:
  * sales orders, order line edits, AND the register (`POST /v1/sales`).
  *
  * It lived on OrdersController until the 2026-08-26 QA pass found the
@@ -32,6 +32,10 @@ export interface PriceControlBody {
  * take-with fast lane, which posts a register sale. A control that only
  * one of two doors honours is not a control, so it now sits in one
  * service both doors call.
+ *
+ * Amendment A10 (2026-08-30) demoted it from a gate to a monitor: no
+ * reason, no manager override — any associate discounts freely, and the
+ * tier math only grades the exception-register entry.
  */
 @Injectable()
 export class PriceVarianceService {
@@ -42,17 +46,20 @@ export class PriceVarianceService {
   ) {}
 
   /**
-   * G6 three-tier price variance (PLAN-STORIS-GAP §5 / amendment A6),
-   * applied to line price overrides, line discounts, and the order
-   * discount against catalog list prices:
+   * G6 three-tier price variance (PLAN-STORIS-GAP §5 / amendment A6,
+   * demoted to log-only by amendment A10), applied to line price
+   * overrides, line discounts, and the order discount against catalog
+   * list prices:
    *
-   *   tier 1 — ≤ tier1Pct (5%) OR ≤ tier1MaxCents ($50): logged only.
-   *   tier 2 — up to tier2Pct (15%): a coded reason is required
-   *            (class `exception`) and the discount hits the register.
-   *   tier 3 — beyond tier2Pct, or selling below cost: a manager
-   *            security override (`orders.price_override`) on top.
+   *   tier 1 — ≤ tier1Pct (5%) OR ≤ tier1MaxCents ($50): nothing recorded.
+   *   tier 2 — up to tier2Pct (15%): exception logged (info).
+   *   tier 3 — beyond tier2Pct: exception logged (warning); selling
+   *            below cost logs critical.
    *
-   * Thresholds are admin-editable via ops settings `priceVariance`.
+   * Nothing blocks and no reason is demanded — every user approves
+   * their own discounts (A10). A reason sent anyway still lands on the
+   * exception entry. Thresholds stay admin-editable via ops settings
+   * `priceVariance` because they grade the register entries.
    */
   async enforce(
     businessId: string,
@@ -107,32 +114,16 @@ export class PriceVarianceService {
     }
     if (worstTier === 1) return;
 
-    if (worstTier === 3) {
-      await this.overrides.require({
-        permission: 'orders.price_override',
-        action: `${context.action}: ${flagged.join('; ')}${belowCost ? ' (below cost)' : ''}`,
-        entityType: context.entityType,
-        entityId: context.entityId,
-        override: body.override,
-      });
-    }
-    if (
-      !body.priceReasonCodeId &&
-      !body.priceReason?.trim() &&
-      !body.override?.reasonCodeId &&
-      !body.override?.reason?.trim()
-    ) {
-      throw new BadRequestException({
-        statusCode: 400,
-        code: 'REASON_REQUIRED',
-        usageClass: 'exception',
-        message: `This discount (${flagged.join('; ')}) needs a reason`,
-      });
-    }
-    const reason = await this.overrides.resolveReason('exception', {
-      reasonCodeId: body.priceReasonCodeId ?? body.override?.reasonCodeId,
-      reason: body.priceReason ?? body.override?.reason,
-    });
+    // A10: no override, no required reason — a reason volunteered by the
+    // client is still validated and stamped onto the exception entry.
+    const reason = await this.overrides.resolveReason(
+      'exception',
+      {
+        reasonCodeId: body.priceReasonCodeId ?? body.override?.reasonCodeId,
+        reason: body.priceReason ?? body.override?.reason,
+      },
+      { required: false, codeOptional: true },
+    );
     await this.exceptions.record({
       type: 'price_override',
       severity: belowCost ? 'critical' : worstTier === 3 ? 'warning' : 'info',
