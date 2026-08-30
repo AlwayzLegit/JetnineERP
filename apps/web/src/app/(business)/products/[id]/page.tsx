@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
-import { useParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { centsToInputString } from '@jetnine/shared';
 import { api } from '@/lib/api';
@@ -57,6 +57,7 @@ interface TaxClass {
 
 export default function ProductDetailPage() {
   const params = useParams<{ id: string }>();
+  const router = useRouter();
   const id = (params?.id ?? '') as string;
   const [p, setP] = useState<Product | null>(null);
   const [taxClasses, setTaxClasses] = useState<TaxClass[]>([]);
@@ -152,6 +153,38 @@ export default function ProductDetailPage() {
     }
   }
 
+  // Product-level switch (owner ask 2026-08-30): deactivating hides the
+  // product from search and New Sale everywhere; every existing document
+  // keeps its lines. Reactivate brings it right back.
+  async function toggleProductActive() {
+    if (!p) return;
+    if (
+      p.isActive &&
+      !confirm(
+        `Deactivate ${p.name}? It disappears from product search and New Sale; ` +
+          'existing orders and receipts are untouched. You can reactivate it here anytime.',
+      )
+    )
+      return;
+    await patchProduct({ isActive: !p.isActive });
+    toast.success(p.isActive ? 'Product deactivated' : 'Product reactivated');
+  }
+
+  // Full delete — the server refuses (with the reason) if the product
+  // still has stock or appears on any document; junk and duplicates go.
+  async function deleteProduct() {
+    if (!p) return;
+    if (!confirm(`Permanently delete ${p.name} and all its variants? This cannot be undone.`))
+      return;
+    try {
+      await api(`/v1/products/${id}`, { method: 'DELETE' });
+      toast.success('Product deleted');
+      router.push('/products');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    }
+  }
+
   async function deactivateVariant(variantId: string) {
     if (!confirm('Deactivate this variant?')) return;
     try {
@@ -210,6 +243,26 @@ export default function ProductDetailPage() {
           <>
             SKU <code>{p.sku ?? '—'}</code> ·{' '}
             <StatusBadge status={p.isActive ? 'active' : 'inactive'} />
+          </>
+        }
+        actions={
+          <>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => void toggleProductActive()}
+              data-testid="product-toggle-active"
+            >
+              {p.isActive ? 'Deactivate' : 'Reactivate'}
+            </Button>
+            <Button
+              size="sm"
+              variant="danger"
+              onClick={() => void deleteProduct()}
+              data-testid="product-delete"
+            >
+              Delete product…
+            </Button>
           </>
         }
       />

@@ -3777,3 +3777,20 @@ change (its remaining override dialog is the return-window gate, which
 stays). Settings keep the tier thresholds since they still grade the
 exception register. G6 specs rewritten to pin the log-only behavior;
 layaway-minimum, return-window, and all other override gates untouched.
+
+### Checkpoint — 2026-08-30 (product deactivate button + full product delete)
+
+Owner hit an "INP Issue" box deactivating the recycling fee — that box
+is the Vercel toolbar's performance monitor flagging the blocking
+`confirm()` dialog, not an app error. Real gaps fixed instead: the
+product page only had per-variant Deactivate, so the header now carries
+product-level Deactivate/Reactivate (PATCH isActive — search and New
+Sale already exclude inactive products at both product and variant
+level) and a "Delete product…" button. New `DELETE /v1/products/:id`
+(products.delete, already seeded to Owner/Manager): hard-deletes the
+product and variants only when stock is zero everywhere and no
+order/sale/PO/transfer/as-is/write-off row references any variant —
+otherwise 400 naming the exact blockers and steering to Deactivate.
+Catalog cascades (levels, cost layers, serials, physical-inventory
+rows, images) ride the FKs; order/sale lines would keep their text but
+a documented product is refused anyway. 4 new catalog spec tests.
