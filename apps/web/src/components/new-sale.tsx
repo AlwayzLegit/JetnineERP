@@ -438,10 +438,11 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
   function addProduct(row: SearchRow) {
     setLines((prev) => {
       const next = [...prev];
-      const existing = next.find((l) => l.variantId === row.variantId);
-      if (existing) {
-        existing.quantity += 1;
-      } else {
+      // Owner 2026-08-30: adding the same product again always makes a
+      // NEW line — a second unit often sells at a different price, and
+      // each line carries its own price box. (Quantity on a line is
+      // still editable when one price covers several units.)
+      {
         next.push({
           key: nextKey(),
           variantId: row.variantId,
