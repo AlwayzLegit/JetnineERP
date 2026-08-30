@@ -533,6 +533,13 @@
       "when": 1788045629060,
       "tag": "0075_member_selling_scope",
       "breakpoints": true
+    },
+    {
+      "idx": 76,
+      "version": "7",
+      "when": 1788060869279,
+      "tag": "0076_split_money_repair",
+      "breakpoints": true
     }
   ]
 }

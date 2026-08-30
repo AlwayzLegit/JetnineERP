@@ -295,6 +295,14 @@ interface OrderDetail extends OrderListRow {
   cancelledAt: Date | null;
   lines: OrderLineRow[];
   payments: OrderPaymentRow[];
+  /** Other live orders in this order's split family (base number + letter suffixes). */
+  family: {
+    id: string;
+    number: string;
+    status: string;
+    totalCents: number;
+    balanceDueCents: number;
+  }[];
 }
 
 /** The one-call payload the printable documents render from (§11). */
@@ -701,6 +709,7 @@ export class OrdersController {
 
     const enriched = pageRows.map((r) => {
       const balance = Math.max(0, r.totalCents - (paid.get(r.id) ?? 0));
+      const credit = Math.max(0, (paid.get(r.id) ?? 0) - r.totalCents);
       const trip = deliveryState.get(r.id);
       let displayStatus: string;
       if (r.status === 'draft') displayStatus = 'Draft';
@@ -724,6 +733,7 @@ export class OrdersController {
         poNumber: displayStatus === 'On PO' ? (poByOrder.get(r.id) ?? null) : null,
         deliveryDate: trip?.date ?? r.requestedDate,
         balanceDueCents: balance,
+        creditDueCents: credit,
         salespersonName: r.salespersonName ?? null,
         lineSummary: lineSummaryByOrder.get(r.id) ?? null,
         totalCents: r.totalCents,
@@ -1866,6 +1876,66 @@ export class OrdersController {
   }
 
   /**
+   * Move an overpayment onto another of the customer's orders — the
+   * companion action to the credit state on the Money card (handoff
+   * 2026-08-30). Typically used across a split family, but any live
+   * order of the same customer qualifies. Moves at most
+   * min(this order's credit, the target's balance due).
+   */
+  @Post('orders/:id/move-credit')
+  @RequirePermission('orders.deposit.take')
+  async moveCredit(
+    @CurrentTenant() tenant: RequestTenantContext,
+    @CurrentUser() actor: CurrentUserPayload,
+    @Param('id') id: string,
+    @Body() body: { toOrderId?: string },
+  ): Promise<OrderDetail> {
+    if (!body.toOrderId) throw new BadRequestException('toOrderId is required');
+    if (body.toOrderId === id) {
+      throw new BadRequestException('toOrderId must be a different order');
+    }
+    const order = await this.requireLiveOrder(id);
+    const target = await this.requireLiveOrder(body.toOrderId);
+    if (target.customerId !== order.customerId) {
+      throw new BadRequestException("Credit can only move between one customer's own orders");
+    }
+    const [fromPayments, toPayments] = await Promise.all([
+      this.db
+        .select({ amountCents: schema.payments.amountCents, status: schema.payments.status })
+        .from(schema.payments)
+        .where(eq(schema.payments.orderId, id)),
+      this.db
+        .select({ amountCents: schema.payments.amountCents, status: schema.payments.status })
+        .from(schema.payments)
+        .where(eq(schema.payments.orderId, target.id)),
+    ]);
+    const creditCents = paidCents(fromPayments) - order.totalCents;
+    if (creditCents <= 0) throw new BadRequestException('This order has no credit to move');
+    const targetDue = balanceDueCents(target.totalCents, toPayments);
+    if (targetDue <= 0) throw new BadRequestException(`${target.number} has no balance due`);
+    const amountCents = Math.min(creditCents, targetDue);
+    await this.movePayments(id, target.id, amountCents);
+    await this.audit.log({
+      action: 'order.credit.move',
+      targetType: 'order',
+      targetId: id,
+      after: { toOrderId: target.id, toNumber: target.number, amountCents },
+    });
+    await this.audit.log({
+      action: 'order.credit.move',
+      targetType: 'order',
+      targetId: target.id,
+      after: { fromOrderId: id, fromNumber: order.number, amountCents },
+    });
+    await this.ticketFlags.applyEdit(
+      target.id,
+      { kind: 'header_change', field: 'deposit' },
+      'order.payment',
+    );
+    return this.loadDetail(id);
+  }
+
+  /**
    * Split numbering (owner ask 2026-08-30): the pieces keep the base
    * document number with a letter suffix — SO-2026-000016 splits into
    * SO-2026-000016-A, then -B, and so on. Splitting a suffixed order
@@ -1888,6 +1958,80 @@ export class OrdersController {
       if (!used.has(candidate)) return candidate;
     }
     throw new BadRequestException('Too many splits of this order');
+  }
+
+  /**
+   * Orders sharing one split family: the base document number plus its
+   * letter-suffixed siblings (SO-2026-000016, -A, -B, ...), excluding
+   * `excludeId`, ordered base first then A, B, ...
+   */
+  private async splitFamily(
+    businessId: string,
+    number: string,
+    excludeId: string,
+  ): Promise<(typeof schema.orders.$inferSelect)[]> {
+    const base = number.replace(/-[A-Z]$/, '');
+    const rows = await this.db
+      .select()
+      .from(schema.orders)
+      .where(
+        and(
+          eq(schema.orders.businessId, businessId),
+          or(eq(schema.orders.number, base), sql`${schema.orders.number} LIKE ${`${base}-_`}`),
+        ),
+      );
+    return rows.filter((r) => r.id !== excludeId).sort((a, b) => a.number.localeCompare(b.number));
+  }
+
+  /**
+   * Move `amountCents` of collected money from one order to another by
+   * re-homing its most recent succeeded payment rows. A row that
+   * straddles the boundary is split in two — both halves keep the same
+   * method, kind, and processor reference, so the one real card charge
+   * stays traceable from either order (handoff 2026-08-30).
+   */
+  private async movePayments(
+    fromOrderId: string,
+    toOrderId: string,
+    amountCents: number,
+  ): Promise<{ movedCents: number }> {
+    const rows = await this.db
+      .select()
+      .from(schema.payments)
+      .where(and(eq(schema.payments.orderId, fromOrderId), eq(schema.payments.status, 'succeeded')))
+      .orderBy(desc(schema.payments.createdAt));
+    let remaining = amountCents;
+    for (const p of rows) {
+      if (remaining <= 0) break;
+      if (p.amountCents <= remaining) {
+        await this.db
+          .update(schema.payments)
+          .set({ orderId: toOrderId })
+          .where(eq(schema.payments.id, p.id));
+        remaining -= p.amountCents;
+      } else {
+        await this.db
+          .update(schema.payments)
+          .set({ amountCents: p.amountCents - remaining })
+          .where(eq(schema.payments.id, p.id));
+        await this.db.insert(schema.payments).values({
+          businessId: p.businessId,
+          saleId: null,
+          orderId: toOrderId,
+          kind: p.kind,
+          method: p.method,
+          amountCents: remaining,
+          processor: p.processor,
+          processorRef: p.processorRef,
+          financingProvider: p.financingProvider,
+          financingRef: p.financingRef,
+          status: 'succeeded',
+          createdAt: p.createdAt,
+        });
+        remaining = 0;
+      }
+    }
+    return { movedCents: amountCents - remaining };
   }
 
   /** The mechanics shared by the split endpoint and split-at-sale. */
@@ -1981,8 +2125,65 @@ export class OrdersController {
       }
     }
 
-    await this.orders.recomputeTotals(this.db, id);
-    await this.orders.recomputeTotals(this.db, target.id);
+    const parentTotals = await this.orders.recomputeTotals(this.db, id);
+    const targetTotals = await this.orders.recomputeTotals(this.db, target.id);
+
+    // Splitting must never change what the customer owes in total
+    // (handoff 2026-08-30). Per-line rounding and the order-discount
+    // pro-rata can drift the combined figure by a cent or two — pin any
+    // drift onto the new order so parent + child always equal the
+    // pre-split total.
+    let childTotalCents = targetTotals.totalCents;
+    const driftCents = order.totalCents - (parentTotals.totalCents + targetTotals.totalCents);
+    if (driftCents !== 0) {
+      childTotalCents += driftCents;
+      await this.db
+        .update(schema.orders)
+        .set({
+          taxCents: Math.max(0, targetTotals.taxCents + driftCents),
+          totalCents: childTotalCents,
+          updatedAt: new Date(),
+        })
+        .where(eq(schema.orders.id, target.id));
+    }
+
+    // Money follows the goods: whatever was already collected past the
+    // parent's new (smaller) total covers the moved lines, so that
+    // excess moves with them — a fully-paid order splits into two
+    // fully-paid orders, never an overpaid parent plus an unpaid child.
+    const collectedRows = await this.db
+      .select({ amountCents: schema.payments.amountCents, status: schema.payments.status })
+      .from(schema.payments)
+      .where(eq(schema.payments.orderId, id));
+    const excessCents = paidCents(collectedRows) - parentTotals.totalCents;
+    let movedPaymentsCents = 0;
+    if (excessCents > 0) {
+      movedPaymentsCents = (
+        await this.movePayments(id, target.id, Math.min(excessCents, childTotalCents))
+      ).movedCents;
+    }
+
+    // Each piece asks for the policy deposit on ITS total from here on —
+    // the parent keeping the combined order's deposit line is how an $18
+    // fee order ends up "requiring" a $73 deposit.
+    await this.db
+      .update(schema.orders)
+      .set({
+        depositRequiredCents: defaultDepositCents(
+          parentTotals.totalCents,
+          DEFAULT_DEPOSIT_RATE_BPS,
+        ),
+        updatedAt: new Date(),
+      })
+      .where(eq(schema.orders.id, id));
+    await this.db
+      .update(schema.orders)
+      .set({
+        depositRequiredCents: defaultDepositCents(childTotalCents, DEFAULT_DEPOSIT_RATE_BPS),
+        updatedAt: new Date(),
+      })
+      .where(eq(schema.orders.id, target.id));
+
     if (newStatus === 'open') {
       await this.orders.reserveOrder(this.db, {
         businessId: tenant.businessId!,
@@ -2002,13 +2203,13 @@ export class OrdersController {
       action: 'order.split',
       targetType: 'order',
       targetId: id,
-      after: { toOrderId: target.id, toNumber: number, lines: movedSummary },
+      after: { toOrderId: target.id, toNumber: number, lines: movedSummary, movedPaymentsCents },
     });
     await this.audit.log({
       action: 'order.split',
       targetType: 'order',
       targetId: target.id,
-      after: { fromOrderId: id, fromNumber: order.number, lines: movedSummary },
+      after: { fromOrderId: id, fromNumber: order.number, lines: movedSummary, movedPaymentsCents },
     });
     void this.webhooks.fire({
       businessId: tenant.businessId!,
@@ -2276,10 +2477,45 @@ export class OrdersController {
       .from(schema.payments)
       .where(eq(schema.payments.orderId, id));
     const due = balanceDueCents(order.totalCents, existing);
-    if (body.amountCents > due) {
-      throw new BadRequestException(
-        `amountCents (${body.amountCents}) exceeds the balance due (${due})`,
+
+    // One tender can cover a whole split family (SO-..., -A, -B): the
+    // register takes a single payment for the combined balance and the
+    // money lands on each piece up to what that piece is owed, this order
+    // first, then siblings in family order. Anything past the family's
+    // combined balance is still refused — over-collecting is a refund
+    // problem, not a bigger deposit.
+    const allocations: {
+      order: typeof order;
+      amountCents: number;
+      hadMoney: boolean;
+    }[] = [];
+    let leftover = body.amountCents;
+    const firstShare = Math.min(leftover, due);
+    if (firstShare > 0) {
+      allocations.push({ order, amountCents: firstShare, hadMoney: paidCents(existing) > 0 });
+      leftover -= firstShare;
+    }
+    if (leftover > 0) {
+      const family = (await this.splitFamily(tenant.businessId!, order.number, id)).filter((r) =>
+        isLiveOrderStatus(r.status),
       );
+      for (const sib of family) {
+        if (leftover <= 0) break;
+        const sibPayments = await this.db
+          .select({ amountCents: schema.payments.amountCents, status: schema.payments.status })
+          .from(schema.payments)
+          .where(eq(schema.payments.orderId, sib.id));
+        const sibDue = balanceDueCents(sib.totalCents, sibPayments);
+        if (sibDue <= 0) continue;
+        const take = Math.min(leftover, sibDue);
+        allocations.push({ order: sib, amountCents: take, hadMoney: paidCents(sibPayments) > 0 });
+        leftover -= take;
+      }
+      if (leftover > 0) {
+        throw new BadRequestException(
+          `amountCents (${body.amountCents}) exceeds the balance due (${due})`,
+        );
+      }
     }
 
     // Infer the kind: the first money in is the deposit, the rest is
@@ -2314,79 +2550,100 @@ export class OrdersController {
     // Money down means the customer committed, so a quote becomes an open
     // order and commits its stock here. Taking a deposit is one action at
     // the register, and this keeps the invariant worth having: an order
-    // holding money is an order holding its goods.
-    if (order.status === 'quote') {
-      await this.orders.reserveOrder(this.db, {
-        businessId: tenant.businessId!,
-        orderId: id,
-        locationId: order.stockLocationId ?? order.locationId,
-        actorUserId: actor?.id ?? null,
+    // holding money is an order holding its goods. Each order receiving a
+    // share of the tender gets its own payment row, audit entry, ticket
+    // staleness, and webhook.
+    let primaryPaymentId: string | null = null;
+    for (const alloc of allocations) {
+      const t = alloc.order;
+      const allocKind = body.kind ?? (alloc.hadMoney ? 'balance' : 'deposit');
+      if (t.status === 'quote') {
+        await this.orders.reserveOrder(this.db, {
+          businessId: tenant.businessId!,
+          orderId: t.id,
+          locationId: t.stockLocationId ?? t.locationId,
+          actorUserId: actor?.id ?? null,
+        });
+        await this.db
+          .update(schema.orders)
+          .set({ status: 'open', updatedAt: new Date() })
+          .where(eq(schema.orders.id, t.id));
+      }
+
+      const [payment] = await this.db
+        .insert(schema.payments)
+        .values({
+          businessId: tenant.businessId!,
+          saleId: null,
+          orderId: t.id,
+          kind: allocKind,
+          method: body.method,
+          amountCents: alloc.amountCents,
+          processor: body.method === 'card' ? 'manual' : null,
+          processorRef: body.processorRef ?? null,
+          financingProvider: body.financingProvider ?? null,
+          financingRef: body.financingRef ?? null,
+          status: 'succeeded',
+        })
+        .returning();
+      if (t.id === id) primaryPaymentId = payment!.id;
+
+      // §10: store credit is a real ledger — the tender checks the
+      // customer's balance and writes the redemption (throws 400 when the
+      // balance can't cover it, before any of this commits… the request
+      // transaction rolls the payment row back with it).
+      if (body.method === 'store_credit') {
+        await this.storeCredit.redeem(this.db, {
+          businessId: tenant.businessId!,
+          customerId: t.customerId,
+          amountCents: alloc.amountCents,
+          referenceType: 'payment',
+          referenceId: payment!.id,
+          actorUserId: actor?.id ?? null,
+        });
+      }
+
+      await this.audit.log({
+        action: 'order.payment.take',
+        targetType: 'order',
+        targetId: t.id,
+        after: {
+          paymentId: payment!.id,
+          kind: allocKind,
+          method: body.method,
+          amountCents: alloc.amountCents,
+          ...(t.id === id ? {} : { spilloverFrom: order.number, tenderedCents: body.amountCents }),
+        },
       });
-      await this.db
-        .update(schema.orders)
-        .set({ status: 'open', updatedAt: new Date() })
-        .where(eq(schema.orders.id, id));
+
+      // R8 (erp-delivery-reprints): a deposit of any kind on an order with
+      // printed delivery tickets stales them all.
+      await this.ticketFlags.applyEdit(
+        t.id,
+        { kind: 'header_change', field: 'deposit' },
+        'order.payment',
+      );
+
+      if (t.id !== id) {
+        const sibDetail = await this.loadDetail(t.id);
+        this.fireOrderEvent('order.payment_received', tenant.businessId!, sibDetail, {
+          paymentId: payment!.id,
+          kind: allocKind,
+          method: body.method,
+          amountCents: alloc.amountCents,
+        });
+      }
     }
-
-    const [payment] = await this.db
-      .insert(schema.payments)
-      .values({
-        businessId: tenant.businessId!,
-        saleId: null,
-        orderId: id,
-        kind,
-        method: body.method,
-        amountCents: body.amountCents,
-        processor: body.method === 'card' ? 'manual' : null,
-        processorRef: body.processorRef ?? null,
-        financingProvider: body.financingProvider ?? null,
-        financingRef: body.financingRef ?? null,
-        status: 'succeeded',
-      })
-      .returning();
-
-    // §10: store credit is a real ledger — the tender checks the
-    // customer's balance and writes the redemption (throws 400 when the
-    // balance can't cover it, before any of this commits… the request
-    // transaction rolls the payment row back with it).
-    if (body.method === 'store_credit') {
-      await this.storeCredit.redeem(this.db, {
-        businessId: tenant.businessId!,
-        customerId: order.customerId,
-        amountCents: body.amountCents,
-        referenceType: 'payment',
-        referenceId: payment!.id,
-        actorUserId: actor?.id ?? null,
-      });
-    }
-
-    await this.audit.log({
-      action: 'order.payment.take',
-      targetType: 'order',
-      targetId: id,
-      after: {
-        paymentId: payment!.id,
-        kind,
-        method: body.method,
-        amountCents: body.amountCents,
-      },
-    });
-
-    // R8 (erp-delivery-reprints): a deposit of any kind on an order with
-    // printed delivery tickets stales them all.
-    await this.ticketFlags.applyEdit(
-      id,
-      { kind: 'header_change', field: 'deposit' },
-      'order.payment',
-    );
 
     const detail = await this.loadDetail(id);
-    this.fireOrderEvent('order.payment_received', tenant.businessId!, detail, {
-      paymentId: payment!.id,
-      kind,
-      method: body.method,
-      amountCents: body.amountCents,
-    });
+    if (primaryPaymentId) {
+      this.fireOrderEvent('order.payment_received', tenant.businessId!, detail, {
+        paymentId: primaryPaymentId,
+        kind,
+        method: body.method,
+        amountCents: allocations.find((a) => a.order.id === id)?.amountCents ?? 0,
+      });
+    }
     return detail;
   }
 
@@ -3721,6 +3978,36 @@ export class OrdersController {
       .where(eq(schema.payments.orderId, id))
       .orderBy(schema.payments.createdAt);
 
+    // Split family (base number + letter suffixes), so the page can link
+    // the pieces and offer to move credit between them.
+    const familyRows = await this.splitFamily(order.businessId, order.number, order.id);
+    let family: OrderDetail['family'] = [];
+    if (familyRows.length > 0) {
+      const famPayments = await this.db
+        .select({
+          orderId: schema.payments.orderId,
+          amountCents: schema.payments.amountCents,
+          status: schema.payments.status,
+        })
+        .from(schema.payments)
+        .where(
+          inArray(
+            schema.payments.orderId,
+            familyRows.map((r) => r.id),
+          ),
+        );
+      family = familyRows.map((r) => ({
+        id: r.id,
+        number: r.number,
+        status: r.status,
+        totalCents: r.totalCents,
+        balanceDueCents: balanceDueCents(
+          r.totalCents,
+          famPayments.filter((fp) => fp.orderId === r.id),
+        ),
+      }));
+    }
+
     return {
       id: order.id,
       number: order.number,
@@ -3786,6 +4073,7 @@ export class OrdersController {
         sourceLocationId: l.sourceLocationId,
         deliveryDate: l.deliveryDate,
       })),
+      family,
       payments: payments.map((p) => ({
         id: p.id,
         kind: p.kind,
