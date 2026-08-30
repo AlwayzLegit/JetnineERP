@@ -12,7 +12,7 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
-import { and, asc, desc, eq, gt, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, inArray, or, sql } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { schema } from '@jetnine/db';
 import { AuditService } from '../audit/audit.service';
@@ -367,6 +367,86 @@ export class CatalogProductsController {
     }
 
     return this.get(tenant, id);
+  }
+
+  /**
+   * Hard-delete a product and all its variants (owner ask 2026-08-30:
+   * "I need to be able to delete a product completely"). Only a product
+   * with zero stock and no document history qualifies — one that has
+   * sold, been ordered or transferred, been written off, or sits in
+   * as-is review is refused with the reason, because deleting it would
+   * gut those documents; deactivating hides it from selling while the
+   * paperwork keeps its meaning. Inventory levels, cost layers, serial
+   * rows, physical-inventory rows, and images ride the FK cascades.
+   */
+  @Delete(':id')
+  @RequirePermission('products.delete')
+  async remove(
+    @CurrentTenant() tenant: RequestTenantContext,
+    @Param('id') id: string,
+  ): Promise<{ deleted: true }> {
+    const [product] = await this.db
+      .select()
+      .from(schema.products)
+      .where(eq(schema.products.id, id))
+      .limit(1);
+    if (!product) throw new NotFoundException('Product not found');
+
+    const variantRows = await this.db
+      .select({ id: schema.productVariants.id })
+      .from(schema.productVariants)
+      .where(eq(schema.productVariants.productId, id));
+    const variantIds = variantRows.map((v) => v.id);
+
+    if (variantIds.length > 0) {
+      const [stock] = await this.db
+        .select({
+          onHand: sql<number>`coalesce(sum(${schema.inventoryLevels.onHand}), 0)::int`,
+          reserved: sql<number>`coalesce(sum(${schema.inventoryLevels.reserved}), 0)::int`,
+        })
+        .from(schema.inventoryLevels)
+        .where(inArray(schema.inventoryLevels.variantId, variantIds));
+      if ((stock?.onHand ?? 0) !== 0 || (stock?.reserved ?? 0) !== 0) {
+        throw new BadRequestException(
+          `Cannot delete "${product.name}" — it still has ${stock!.onHand} on hand and ` +
+            `${stock!.reserved} reserved. Zero the stock out first (adjust or transfer it), ` +
+            'or deactivate the product instead.',
+        );
+      }
+
+      const refTables = [
+        ['order lines', schema.orderLines.variantId, schema.orderLines],
+        ['sales receipt lines', schema.saleLines.variantId, schema.saleLines],
+        ['purchase order lines', schema.purchaseOrderLines.variantId, schema.purchaseOrderLines],
+        ['transfer lines', schema.stockTransferLines.variantId, schema.stockTransferLines],
+        ['as-is pieces', schema.asIsItems.variantId, schema.asIsItems],
+        ['write-offs', schema.writeOffs.variantId, schema.writeOffs],
+      ] as const;
+      const blockers: string[] = [];
+      for (const [label, column, table] of refTables) {
+        const [row] = await this.db
+          .select({ n: sql<number>`count(*)::int` })
+          .from(table)
+          .where(inArray(column, variantIds));
+        if ((row?.n ?? 0) > 0) blockers.push(`${row!.n} ${label}`);
+      }
+      if (blockers.length > 0) {
+        throw new BadRequestException(
+          `Cannot delete "${product.name}" — it appears on ${blockers.join(', ')}. ` +
+            'Deactivate it instead so those documents keep their history.',
+        );
+      }
+    }
+
+    await this.db.delete(schema.products).where(eq(schema.products.id, id));
+    await this.audit.log({
+      action: 'product.delete',
+      targetType: 'product',
+      targetId: id,
+      before: { name: product.name, sku: product.sku, variantCount: variantIds.length },
+      after: null,
+    });
+    return { deleted: true };
   }
 
   /**
