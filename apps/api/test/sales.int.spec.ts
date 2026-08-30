@@ -455,8 +455,8 @@ describe('Refunds honour a SALE-level discount (QA D1)', () => {
         lines: [{ variantId: variantAId, quantity: 1 }],
         // $2.00 line, 30% off the cart = $0.60 off → $1.40 + 10% tax.
         orderDiscountCents: 60,
-        // 30% is tier 3, so the G6 gate wants a reason (owner holds
-        // orders.price_override, so no second signature is needed).
+        // 30% is tier 3 — log-only since A10; the reason just
+        // annotates the exception entry.
         priceReason: 'D1 fixture — deep discount',
         payments: [{ method: 'cash', amountCents: 154 }],
       });
@@ -494,17 +494,11 @@ describe('Refunds honour a SALE-level discount (QA D1)', () => {
  * gate entirely — a 30% discount rang straight through to cash with no
  * reason, no authorization, and no exception. New Sale's fully-paid
  * take-with fast lane posts here too, so the hole was reachable from the
- * order screen as well. Same door, same lock now.
+ * order screen as well. Same door, same monitor now — since A10 the gate
+ * is log-only (no reason, no override), but the register-sale path must
+ * still record the exception the order path records.
  */
-describe('Register sales pass the price-variance gate (QA D2)', () => {
-  const cart = (orderDiscountCents: number, extra: Record<string, unknown> = {}) => ({
-    locationId,
-    lines: [{ variantId: variantAId, quantity: 1 }],
-    orderDiscountCents,
-    payments: [{ method: 'cash', amountCents: 0 }],
-    ...extra,
-  });
-
+describe('Register sales pass the price-variance monitor (QA D2 / A10)', () => {
   it('a small discount still rings through untouched (tier 1)', async () => {
     // $2.00 line, $0.05 off → under both the 5% and $50 floors.
     const res = await request(app.getHttpServer())
@@ -523,18 +517,21 @@ describe('Register sales pass the price-variance gate (QA D2)', () => {
     if (res.status === 400) expect(res.body.code).not.toBe('REASON_REQUIRED');
   });
 
-  it('a 30% register discount is refused without a reason', async () => {
+  it('a 30% register discount rings through with no reason (A10)', async () => {
     const res = await request(app.getHttpServer())
       .post('/v1/sales')
       .set('Cookie', ownerCookie)
       .set('X-Business-Id', businessId)
-      .send(cart(60));
-    expect(res.status).toBe(400);
-    expect(res.body.code).toBe('REASON_REQUIRED');
-    expect(res.body.usageClass).toBe('exception');
+      .send({
+        locationId,
+        lines: [{ variantId: variantAId, quantity: 1 }],
+        orderDiscountCents: 60,
+        payments: [{ method: 'cash', amountCents: 154 }],
+      });
+    expect(res.status).toBe(201);
   });
 
-  it('the same discount goes through with a reason, and registers an exception', async () => {
+  it('the same discount with a volunteered reason registers an exception', async () => {
     const res = await request(app.getHttpServer())
       .post('/v1/sales')
       .set('Cookie', ownerCookie)

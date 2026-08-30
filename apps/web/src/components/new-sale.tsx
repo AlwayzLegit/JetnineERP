@@ -5,9 +5,8 @@ import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { Plus, Search, X } from 'lucide-react';
 import { formatMoney } from '@jetnine/shared';
-import { api, ApiError } from '@/lib/api';
+import { api } from '@/lib/api';
 import { ProductSearchDialog, type SearchRow } from '@/components/product-search-dialog';
-import { SecurityOverrideDialog } from '@/components/security-override-dialog';
 import { Money } from '@/components/money';
 import { Button, Card, Field, Input, Select } from '@/components/ui';
 
@@ -240,7 +239,6 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
 
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [priceGateMode, setPriceGateMode] = useState<'complete' | 'draft' | null>(null);
   const [done, setDone] = useState<{
     id: string;
     number: string;
@@ -438,10 +436,11 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
   function addProduct(row: SearchRow) {
     setLines((prev) => {
       const next = [...prev];
-      const existing = next.find((l) => l.variantId === row.variantId);
-      if (existing) {
-        existing.quantity += 1;
-      } else {
+      // Owner 2026-08-30: adding the same product again always makes a
+      // NEW line — a second unit often sells at a different price, and
+      // each line carries its own price box. (Quantity on a line is
+      // still editable when one price covers several units.)
+      {
         next.push({
           key: nextKey(),
           variantId: row.variantId,
@@ -563,15 +562,6 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
     }
   }
 
-  // G6: the server may refuse a deep discount with REASON_REQUIRED
-  // (tier 2 — coded reason) or OVERRIDE_REQUIRED (tier 3 — manager
-  // credentials); the override dialog collects both and retries.
-  interface PriceControl {
-    priceReasonCodeId?: string;
-    priceReason?: string;
-    override?: { email: string; password: string; reasonCodeId?: string; reason?: string };
-  }
-
   async function submit(mode: 'complete' | 'draft') {
     setError(null);
     if (!customer) {
@@ -603,20 +593,13 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
     try {
       await doSubmit(mode);
     } catch (err) {
-      if (
-        err instanceof ApiError &&
-        (err.code === 'REASON_REQUIRED' || err.code === 'OVERRIDE_REQUIRED')
-      ) {
-        setPriceGateMode(mode);
-      } else {
-        setError(err instanceof Error ? err.message : String(err));
-      }
+      setError(err instanceof Error ? err.message : String(err));
     } finally {
       setBusy(false);
     }
   }
 
-  async function doSubmit(mode: 'complete' | 'draft', control?: PriceControl) {
+  async function doSubmit(mode: 'complete' | 'draft') {
     if (!customer) throw new Error('Attach a customer first.');
     {
       const linePayload = lines.map((l) => ({
@@ -666,7 +649,6 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
             orderDiscountCents: parseDollars(orderDiscount) || undefined,
             // The register honours the same G6 discount gate as an
             // order, so the reason/override travels with it.
-            ...(control ?? {}),
             payments: [
               {
                 method: payments[0]?.method === 'cash' ? 'cash' : 'card',
@@ -722,7 +704,6 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
           // Lines promised on a different date split into -A/-B sibling
           // orders server-side (backorder split at the register).
           splitByDeliveryDate: true,
-          ...(control ?? {}),
         }),
       });
 
@@ -827,21 +808,6 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
 
   return (
     <div className="grid gap-4 xl:grid-cols-[1fr_340px]" data-testid="new-sale">
-      <SecurityOverrideDialog
-        open={priceGateMode != null}
-        title="Discount needs approval"
-        usageClass="exception"
-        submitLabel="Approve & save"
-        perform={(payload) =>
-          doSubmit(priceGateMode!, {
-            priceReasonCodeId: payload.reasonCodeId,
-            priceReason: payload.reason,
-            override: payload.override,
-          })
-        }
-        onClose={() => setPriceGateMode(null)}
-        onSuccess={() => undefined}
-      />
       <div className="min-w-0">
         {exchangeOriginal && (
           <div

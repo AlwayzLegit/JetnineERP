@@ -27,6 +27,14 @@ conflict; per protocol the change is recorded here before the code changes:
 - **A9:** free-text reasons are replaced by the coded Reason Code registry
   everywhere a reason is prompted (free text remains only as a transitional
   fallback while a business has no active codes for that usage class).
+- **A10 (2026-08-30, supersedes A6):** the discount-approval prompt is removed for
+  every user — any associate may discount to any depth with no reason and no
+  manager override (owner: "Its a distraction and all users can approve discounts
+  without a reason"). This restores the original PLAN-POS-OPERATIONS decision
+  ("price override: any associate, no approval, no cap"). The G6 three-tier math
+  survives only to grade the exception-register entry (tier 2 = info, tier 3 =
+  warning, below cost = critical), so deep discounts stay visible in reports
+  without ever blocking the sale.
 
 ## Ranked build order (the sprint tracker — mirrors SPRINT-STATUS.md)
 

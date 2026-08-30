@@ -67,7 +67,7 @@ There is a search field in the top bar of every page; **⌘K / Ctrl-K** focuses 
 - [ ] Create a small delivery order for QA Caller (one item, confirm it, no payment yet). Note the balance.
 - [ ] On the order page, **Add product** → search dialog (should default to the warehouse) → pick an item → a small **price step** appears: unit price pre-filled with list, quantity 1. Change the price (e.g. up $20) and Add.
 - [ ] Expected: toast says the payment form is pre-filled; the **Take payment** amount box now holds exactly what the new item added (price + tax); one click on the pay button with tender Cash settles just that charge; balance returns to what it was before the add.
-- [ ] Also check: lowering the price far below list on a confirmed order should be challenged by the manager price gate (error naming a reason/override) — that's correct behavior, not a bug.
+- [ ] Also check: lowering the price far below list on a confirmed order must go through with NO approval popup and no reason prompt (owner decision 2026-08-30 — deep discounts are logged to the exception register, never blocked).
 
 ## 6. Returns & exchanges — no coded reason dropdown
 

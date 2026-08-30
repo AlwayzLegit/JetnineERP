@@ -1057,8 +1057,8 @@ describe('Day 1 — partial stock, line edits, and cancellation', () => {
 
 describe('Day 1 — order pricing rules', () => {
   it('An order-level discount is allocated across lines before tax', async () => {
-    // Deep negotiated prices — since G6 that takes the owner (who holds
-    // orders.price_override) plus a reason; the tax math is unchanged.
+    // Deep negotiated prices — log-only since A10 (the reason sent here
+    // just annotates the exception entry); the tax math is unchanged.
     const res = await request(app.getHttpServer())
       .post('/v1/orders')
       .set('Cookie', ownerCookie)
@@ -1682,14 +1682,8 @@ describe('Price variance 3-tier + §5 gates (PLAN-STORIS-GAP G6)', () => {
     expect(res.status).toBe(201);
   });
 
-  it('tier 2: a 10% discount needs a reason (REASON_REQUIRED), then passes', async () => {
-    const refused = await as(cashierCookie).post('/v1/orders').send(orderBody(90_000));
-    expect(refused.status).toBe(400);
-    expect(refused.body.code).toBe('REASON_REQUIRED');
-
-    const ok = await as(cashierCookie)
-      .post('/v1/orders')
-      .send(orderBody(90_000, { priceReason: 'competitor price match' }));
+  it('tier 2: a 10% discount rings through with no reason and logs an exception (A10)', async () => {
+    const ok = await as(cashierCookie).post('/v1/orders').send(orderBody(90_000));
     expect(ok.status).toBe(201);
 
     const register = await as(ownerCookie).get('/v1/exceptions?type=price_override');
@@ -1697,26 +1691,12 @@ describe('Price variance 3-tier + §5 gates (PLAN-STORIS-GAP G6)', () => {
     expect(register.body.data.length).toBeGreaterThan(0);
   });
 
-  it('tier 3: a 30% discount from a cashier needs a manager override; below cost is critical', async () => {
-    const refused = await as(cashierCookie)
-      .post('/v1/orders')
-      .send(orderBody(70_000, { priceReason: 'trying anyway' }));
-    expect(refused.status).toBe(403);
-    expect(refused.body.code).toBe('OVERRIDE_REQUIRED');
-    expect(refused.body.permission).toBe('orders.price_override');
-
-    const ok = await as(cashierCookie)
-      .post('/v1/orders')
-      .send(
-        orderBody(50_000, {
-          override: {
-            email: 'owner@orders-test.local',
-            password: PASSWORD,
-            reason: 'clearance unit',
-          },
-        }),
-      );
+  it('tier 3: a 30% cashier discount needs no override; below cost logs critical (A10)', async () => {
+    const ok = await as(cashierCookie).post('/v1/orders').send(orderBody(70_000));
     expect(ok.status).toBe(201);
+
+    const below = await as(cashierCookie).post('/v1/orders').send(orderBody(50_000));
+    expect(below.status).toBe(201);
 
     // $500 < $600 cost → the exception is critical.
     const register = await as(ownerCookie).get(
@@ -1726,7 +1706,7 @@ describe('Price variance 3-tier + §5 gates (PLAN-STORIS-GAP G6)', () => {
     expect(register.body.data[0].summary).toMatch(/BELOW COST/);
   });
 
-  it('the owner passes tier 3 directly with a reason (holds orders.price_override)', async () => {
+  it('a volunteered reason still lands on the exception entry', async () => {
     const res = await as(ownerCookie)
       .post('/v1/orders')
       .send(orderBody(70_000, { priceReason: 'floor model' }));
