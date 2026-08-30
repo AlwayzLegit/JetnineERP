@@ -3541,3 +3541,46 @@ pass reasonCodeId` writing an exchange in production: the New Exchange
 - Tests: orders suite 83→88 (BASE-A at write time, manual re-split -B,
   drill-down + release + re-release 400, locationId filter, untaxed
   fee); pos/locations scope test moved to the canSellHere flag model.
+
+### Checkpoint — 2026-08-30 (split money integrity: payments follow the goods)
+
+Owner handoff (SO-2026-000018 / -A, Vladimir B.): a fully-paid order was
+split and the child demanded $273.28 again while the parent silently held
+a $271.52 credit. Three bugs, fixed as one slice:
+
+- **Payments reallocate on split** (`executeSplit`): after both totals
+  recompute, whatever was collected past the parent's new total moves to
+  the child (newest payment rows first; a straddling row splits in two,
+  both halves keeping method/kind/processorRef so the one real charge is
+  traceable from either order). Invariant enforced in code: parent +
+  child totals always equal the pre-split total (rounding drift is
+  pinned onto the child). Both pieces also get their OWN policy
+  deposit-required — no more "$73.26 deposit" on an $18 fee order.
+  `order.split` audits carry `movedPaymentsCents`.
+- **One register tender covers a split family** (`takePayment`): the
+  over-collect guard now allocates across the family (base + -A/-B
+  siblings, this order first) before refusing — split-at-sale carts
+  paid in full at New Sale land each sibling as paid; past the family's
+  combined balance is still a 400. Per-order rows/audits/webhooks.
+- **Credit is visible + movable**: order detail/list expose
+  `creditDueCents` (list rows show "Credit $X" in the balance column;
+  the Money card shows "Overpaid — credit" with per-sibling **Move
+  credit to …** buttons) and detail gains `family` (linked split
+  siblings). New `POST /v1/orders/:id/move-credit {toOrderId}` moves
+  min(credit, target balance) between one customer's orders (audited
+  both sides).
+- **Data repair — migration 0076_split_money_repair** (data-only,
+  custom migration; drift check clean): untaxes recycling-fee lines on
+  in-flight orders + rebuilds those headers/deposits, then finds split
+  pairs (`notes LIKE 'Split from %'`) with an overpaid parent and an
+  owing child and reallocates, writing audit rows. Idempotent. On
+  deploy this fixes SO-2026-000018/-A in place — do NOT take payment on
+  -A before this deploys; after it, both show $0 due.
+- Note: current code already preserved per-line tax through a split (the
+  live pair's $1.76 came from the fee line being taxed at creation under
+  an older build — repro proved it; the repair untaxes it).
+- Tests: new `split-payments.int.spec.ts` (7) — full-pay split → both
+  paid; deposit-only stays put; partial excess moves exactly; family
+  tender + refusal past family balance; move-credit + wrong-customer
+  400; the 0076 repair run twice against a fabricated copy of the prod
+  breakage. Orders suite still 88/88.

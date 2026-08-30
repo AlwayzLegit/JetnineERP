@@ -25,6 +25,7 @@ interface ListRow {
   poNumber: string | null;
   deliveryDate: string | null;
   balanceDueCents: number;
+  creditDueCents: number;
   salespersonName: string | null;
   totalCents: number;
   createdAt: string;
@@ -291,7 +292,15 @@ export default function OrdersPage() {
                   </td>
                   <td style={{ whiteSpace: 'nowrap' }}>{r.deliveryDate ?? '—'}</td>
                   <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
-                    {r.balanceDueCents > 0 ? <Money cents={r.balanceDueCents} /> : '—'}
+                    {r.balanceDueCents > 0 ? (
+                      <Money cents={r.balanceDueCents} />
+                    ) : (r.creditDueCents ?? 0) > 0 ? (
+                      <span style={{ color: 'var(--danger)' }}>
+                        Credit <Money cents={r.creditDueCents} />
+                      </span>
+                    ) : (
+                      '—'
+                    )}
                   </td>
                   <td>{r.salespersonName ?? '—'}</td>
                 </tr>

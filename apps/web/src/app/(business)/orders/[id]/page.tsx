@@ -71,6 +71,13 @@ interface OrderDetail {
   paidCents: number;
   balanceDueCents: number;
   creditDueCents: number;
+  family: {
+    id: string;
+    number: string;
+    status: string;
+    totalCents: number;
+    balanceDueCents: number;
+  }[];
   orderKind: string;
   originalOrderId: string | null;
   addressLine1: string | null;
@@ -259,6 +266,23 @@ export default function OrderDetailPage() {
     }
   }
 
+  async function moveCredit(toOrderId: string, toNumber: string) {
+    setBusy(true);
+    setError(null);
+    try {
+      await api(`/v1/orders/${id}/move-credit`, {
+        method: 'POST',
+        body: JSON.stringify({ toOrderId }),
+      });
+      toast.success(`Credit moved to ${toNumber}.`);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function splitOrder() {
     if (splitSel.size === 0) return;
     setBusy(true);
@@ -274,7 +298,9 @@ export default function OrderDetailPage() {
           }),
         },
       );
-      toast.success(`Split to ${result.newOrder.number} — payments stay on this order.`);
+      toast.success(
+        `Split to ${result.newOrder.number} — money and balances updated on both orders.`,
+      );
       setSplitMode(false);
       setSplitSel(new Set());
       setSplitDate('');
@@ -1133,6 +1159,46 @@ export default function OrderDetailPage() {
             <div data-testid="balance-due">
               <Row label="Balance due" value={order.balanceDueCents} bold />
             </div>
+            {order.creditDueCents > 0 && (
+              <div data-testid="credit-due" style={{ color: 'var(--danger)' }}>
+                <Row label="Overpaid — credit" value={order.creditDueCents} bold />
+              </div>
+            )}
+            {live &&
+              order.creditDueCents > 0 &&
+              (order.family ?? [])
+                .filter((f) => f.balanceDueCents > 0)
+                .map((f) => (
+                  <Button
+                    key={f.id}
+                    variant="secondary"
+                    onClick={() => void moveCredit(f.id, f.number)}
+                    disabled={busy}
+                    data-testid={`move-credit-${f.number}`}
+                    style={{ marginTop: 8, width: '100%' }}
+                  >
+                    Move credit to {f.number} (owes <Money cents={f.balanceDueCents} />)
+                  </Button>
+                ))}
+            {(order.family ?? []).length > 0 && (
+              <p
+                data-testid="split-family"
+                style={{
+                  fontSize: 13,
+                  color: 'var(--text-secondary)',
+                  marginTop: 10,
+                  marginBottom: 0,
+                }}
+              >
+                Split family:{' '}
+                {(order.family ?? []).map((f, i) => (
+                  <span key={f.id}>
+                    {i > 0 ? ' · ' : ''}
+                    <Link href={`/orders/${f.id}`}>{f.number}</Link>
+                  </span>
+                ))}
+              </p>
+            )}
           </Card>
 
           {live && (
