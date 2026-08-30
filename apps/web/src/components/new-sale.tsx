@@ -741,7 +741,8 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
                 {s.requestedDate ? ` (promised ${s.requestedDate})` : ''}
               </span>
             ))}{' '}
-            — payments stay on {done.number}.
+            — one payment covers them all: money taken at the register lands on each order up to
+            what it owes.
           </p>
         )}
         <p className="muted" style={{ fontSize: 13 }}>
