@@ -116,6 +116,18 @@ export default function CustomerDetailPage() {
     entries: { id: string; deltaCents: number; reason: string | null; createdAt: string }[];
   } | null>(null);
   const [history, setHistory] = useState<HistoryOrder[] | null>(null);
+  const [dupes, setDupes] = useState<
+    {
+      id: string;
+      firstName: string | null;
+      lastName: string | null;
+      phone: string | null;
+      email: string | null;
+      matchedBy: string;
+      docCount: number;
+    }[]
+  >([]);
+  const [merging, setMerging] = useState(false);
 
   async function load() {
     setError(null);
@@ -130,8 +142,36 @@ export default function CustomerDetailPage() {
       void api<HistoryOrder[]>(`/v1/customers/${id}/order-history?limit=25`)
         .then(setHistory)
         .catch(() => setHistory(null));
+      void api<typeof dupes>(`/v1/customers/${id}/duplicates`)
+        .then(setDupes)
+        .catch(() => setDupes([]));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  async function mergeDupe(sourceId: string) {
+    const d = dupes.find((x) => x.id === sourceId);
+    const label = d ? [d.firstName, d.lastName].filter(Boolean).join(' ') || 'this duplicate' : '';
+    if (
+      !window.confirm(
+        `Merge ${label} into this record? Their orders, receipts, and credit move here, and the duplicate is deleted. This cannot be undone.`,
+      )
+    ) {
+      return;
+    }
+    setMerging(true);
+    try {
+      await api(`/v1/customers/${id}/merge`, {
+        method: 'POST',
+        body: JSON.stringify({ sourceCustomerId: sourceId }),
+      });
+      toast.success('Merged — one customer, one history.');
+      await load();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    } finally {
+      setMerging(false);
     }
   }
   useEffect(() => {
@@ -313,6 +353,51 @@ export default function CustomerDetailPage() {
         </form>
       </Card>
 
+      {dupes.length > 0 && (
+        <Card title="Possible duplicates" style={{ marginTop: 16 }} data-testid="duplicates-card">
+          <p style={{ margin: '0 0 8px', fontSize: 12.5, color: 'var(--text-secondary)' }}>
+            These records look like the same person. Merging moves their whole history — orders,
+            receipts, store credit, notes — onto THIS record and deletes the duplicate.
+          </p>
+          <div style={{ display: 'grid', gap: 6 }}>
+            {dupes.map((d) => (
+              <div
+                key={d.id}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  flexWrap: 'wrap',
+                  fontSize: 13,
+                  border: '1px solid var(--border)',
+                  borderRadius: 'var(--radius-sm)',
+                  padding: '6px 10px',
+                }}
+              >
+                <Link href={`/customers/${d.id}`}>
+                  <strong>
+                    {[d.firstName, d.lastName].filter(Boolean).join(' ') || 'unnamed'}
+                  </strong>
+                </Link>
+                <span style={{ color: 'var(--text-secondary)' }}>
+                  {[d.phone, d.email].filter(Boolean).join(' · ') || 'no contact info'} · same{' '}
+                  {d.matchedBy} · {d.docCount} document{d.docCount === 1 ? '' : 's'}
+                </span>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  disabled={merging}
+                  data-testid={`merge-${d.id}`}
+                  style={{ marginLeft: 'auto' }}
+                  onClick={() => void mergeDupe(d.id)}
+                >
+                  Merge into this record
+                </Button>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
       {credit && (credit.balanceCents > 0 || credit.entries.length > 0) && (
         <Card title="Store credit" style={{ marginTop: 16 }}>
           <p style={{ fontSize: 14, marginTop: 0 }} data-testid="store-credit-balance">

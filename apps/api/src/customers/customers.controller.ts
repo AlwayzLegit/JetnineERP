@@ -11,7 +11,7 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
-import { and, desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, ne, or, sql } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { schema } from '@jetnine/db';
 import { AuditService } from '../audit/audit.service';
@@ -369,6 +369,213 @@ export class CustomersController {
       after,
     });
     return updated;
+  }
+
+  /**
+   * Possible duplicates of one customer (handoff G4): same phone
+   * digits, same email, or the same exact name. The register created
+   * the same caller four to six times, and every duplicate breaks the
+   * phone-call flow — this list feeds the merge tool below.
+   */
+  @Get(':id/duplicates')
+  @RequirePermission('customers.view')
+  async duplicates(
+    @CurrentTenant() tenant: RequestTenantContext,
+    @Param('id') id: string,
+  ): Promise<
+    {
+      id: string;
+      firstName: string | null;
+      lastName: string | null;
+      phone: string | null;
+      email: string | null;
+      matchedBy: string;
+      docCount: number;
+    }[]
+  > {
+    const [me] = await this.db
+      .select()
+      .from(schema.customers)
+      .where(eq(schema.customers.id, id))
+      .limit(1);
+    if (!me) throw new NotFoundException('Customer not found');
+
+    const digits = (me.phone ?? '').replace(/\D/g, '');
+    const fullName = [me.firstName, me.lastName].filter(Boolean).join(' ').trim().toLowerCase();
+    const phoneCond =
+      digits.length >= 7
+        ? sql`regexp_replace(COALESCE(${schema.customers.phone}, ''), '\\D', '', 'g') = ${digits}`
+        : sql`false`;
+    const emailCond = me.email
+      ? sql`LOWER(${schema.customers.email}) = ${me.email.toLowerCase()}`
+      : sql`false`;
+    const nameCond = fullName
+      ? sql`LOWER(TRIM(CONCAT(COALESCE(${schema.customers.firstName}, ''), ' ', COALESCE(${schema.customers.lastName}, '')))) = ${fullName}`
+      : sql`false`;
+
+    const rows = await this.db
+      .select({
+        id: schema.customers.id,
+        firstName: schema.customers.firstName,
+        lastName: schema.customers.lastName,
+        phone: schema.customers.phone,
+        email: schema.customers.email,
+        phoneHit: sql<boolean>`${phoneCond}`,
+        emailHit: sql<boolean>`${emailCond}`,
+      })
+      .from(schema.customers)
+      .where(
+        and(
+          eq(schema.customers.businessId, tenant.businessId!),
+          ne(schema.customers.id, id),
+          or(phoneCond, emailCond, nameCond),
+        ),
+      )
+      .orderBy(desc(schema.customers.updatedAt))
+      .limit(10);
+    if (rows.length === 0) return [];
+
+    const ids = rows.map((r) => r.id);
+    const docCounts = new Map<string, number>();
+    for (const table of [schema.orders, schema.sales] as const) {
+      const counts = await this.db
+        .select({ customerId: table.customerId, n: sql<number>`count(*)::int` })
+        .from(table)
+        .where(inArray(table.customerId, ids))
+        .groupBy(table.customerId);
+      for (const c of counts) {
+        if (c.customerId) docCounts.set(c.customerId, (docCounts.get(c.customerId) ?? 0) + c.n);
+      }
+    }
+
+    return rows.map((r) => ({
+      id: r.id,
+      firstName: r.firstName,
+      lastName: r.lastName,
+      phone: r.phone,
+      email: r.email,
+      matchedBy: r.phoneHit ? 'phone' : r.emailHit ? 'email' : 'name',
+      docCount: docCounts.get(r.id) ?? 0,
+    }));
+  }
+
+  /**
+   * Merge a duplicate into this customer (handoff G4, owner-picked
+   * warn-plus-merge). Every document and ledger entry the duplicate
+   * owns — orders, receipts, store credit, returns, service tickets,
+   * notes, tags, gift cards, serialized units, discount redemptions —
+   * re-homes onto :id, blank contact fields backfill from the
+   * duplicate, and the duplicate row is deleted. One customer, one
+   * history.
+   */
+  @Post(':id/merge')
+  @RequirePermission('customers.update')
+  async merge(
+    @CurrentTenant() tenant: RequestTenantContext,
+    @Param('id') id: string,
+    @Body() body: { sourceCustomerId?: string },
+  ): Promise<CustomerRow> {
+    const sourceId = body.sourceCustomerId;
+    if (!sourceId) throw new BadRequestException('sourceCustomerId is required');
+    if (sourceId === id) {
+      throw new BadRequestException('A customer cannot be merged into themselves');
+    }
+    const [target] = await this.db
+      .select()
+      .from(schema.customers)
+      .where(and(eq(schema.customers.id, id), eq(schema.customers.businessId, tenant.businessId!)))
+      .limit(1);
+    if (!target) throw new NotFoundException('Customer not found');
+    const [source] = await this.db
+      .select()
+      .from(schema.customers)
+      .where(
+        and(eq(schema.customers.id, sourceId), eq(schema.customers.businessId, tenant.businessId!)),
+      )
+      .limit(1);
+    if (!source) throw new NotFoundException('Duplicate customer not found');
+
+    // Re-home every reference. Tag links dedupe against the target's
+    // existing tags before the leftovers are dropped with the source.
+    const repoint: [string, string][] = [
+      ['orders', 'customer_id'],
+      ['sales', 'customer_id'],
+      ['store_credit_entries', 'customer_id'],
+      ['order_returns', 'customer_id'],
+      ['discount_redemptions', 'customer_id'],
+      ['service_orders', 'customer_id'],
+      ['customer_notes', 'customer_id'],
+      ['serial_units', 'customer_id'],
+      ['gift_cards', 'issued_for_customer_id'],
+    ];
+    for (const [table, column] of repoint) {
+      await this.db.execute(
+        sql`UPDATE ${sql.identifier(table)} SET ${sql.identifier(column)} = ${id} WHERE ${sql.identifier(column)} = ${sourceId}`,
+      );
+    }
+    await this.db.execute(sql`
+      UPDATE customer_tag_links l SET customer_id = ${id}
+      WHERE l.customer_id = ${sourceId}
+        AND NOT EXISTS (
+          SELECT 1 FROM customer_tag_links x
+          WHERE x.customer_id = ${id} AND x.tag_id = l.tag_id
+        )`);
+    await this.db.execute(sql`DELETE FROM customer_tag_links WHERE customer_id = ${sourceId}`);
+
+    // Blank contact fields on the keeper backfill from the duplicate.
+    const backfill: Record<string, unknown> = {};
+    if (!target.phone && source.phone) backfill.phone = source.phone;
+    if (!target.email && source.email) backfill.email = source.email;
+    if (!target.firstName && source.firstName) backfill.firstName = source.firstName;
+    if (!target.lastName && source.lastName) backfill.lastName = source.lastName;
+    if (!target.referralSource && source.referralSource) {
+      backfill.referralSource = source.referralSource;
+    }
+    const targetAddresses = Array.isArray(target.addressesJson)
+      ? (target.addressesJson as unknown[])
+      : [];
+    if (targetAddresses.length === 0 && Array.isArray(source.addressesJson)) {
+      backfill.addressesJson = source.addressesJson;
+    }
+    if (!target.notes && source.notes) backfill.notes = source.notes;
+    if (Object.keys(backfill).length > 0) {
+      await this.db
+        .update(schema.customers)
+        .set({ ...backfill, updatedAt: new Date() })
+        .where(eq(schema.customers.id, id));
+    }
+
+    await this.db.delete(schema.customers).where(eq(schema.customers.id, sourceId));
+
+    await this.audit.log({
+      action: 'customer.merge',
+      targetType: 'customer',
+      targetId: id,
+      before: {
+        mergedCustomerId: sourceId,
+        mergedName: [source.firstName, source.lastName].filter(Boolean).join(' '),
+        mergedPhone: source.phone,
+        mergedEmail: source.email,
+      },
+      after: { keptCustomerId: id },
+    });
+    void this.webhooks.fire({
+      businessId: tenant.businessId!,
+      eventType: 'customer.merged',
+      payload: {
+        customerId: id,
+        mergedCustomerId: sourceId,
+        mergedPhone: source.phone,
+        mergedEmail: source.email,
+      },
+    });
+
+    const [row] = await this.db
+      .select(SELECT_COLS)
+      .from(schema.customers)
+      .where(eq(schema.customers.id, id))
+      .limit(1);
+    return row!;
   }
 
   @Delete(':id')

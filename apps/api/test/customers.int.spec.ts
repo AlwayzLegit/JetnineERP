@@ -349,3 +349,130 @@ describe('Counter capture — addresses and referral source in one create', () =
     expect(patched.body.addressesJson).toHaveLength(2);
   });
 });
+
+describe('Duplicates + merge (handoff G4, owner-picked warn-and-merge)', () => {
+  let keeperId = '';
+  let dupeId = '';
+  let locId = '';
+
+  it('lists possible duplicates by phone digits, email, and exact name', async () => {
+    const keeper = await request(app.getHttpServer())
+      .post('/v1/customers')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ firstName: 'Arman', lastName: 'Doubled', phone: '(310) 555-2001' })
+      .expect(201);
+    keeperId = keeper.body.id;
+    const dupe = await request(app.getHttpServer())
+      .post('/v1/customers')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({
+        firstName: 'Arman',
+        lastName: 'Doubled',
+        phone: '310.555.2001',
+        email: 'arman.d@example.test',
+        notes: 'prefers morning delivery',
+      })
+      .expect(201);
+    dupeId = dupe.body.id;
+    // A third record sharing only the name still surfaces, marked so.
+    await request(app.getHttpServer())
+      .post('/v1/customers')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ firstName: 'Arman', lastName: 'Doubled' })
+      .expect(201);
+
+    const res = await request(app.getHttpServer())
+      .get(`/v1/customers/${keeperId}/duplicates`)
+      .set('Cookie', cashierCookie)
+      .set('X-Business-Id', businessId)
+      .expect(200);
+    const phoneMatch = res.body.find((d: { id: string }) => d.id === dupeId);
+    expect(phoneMatch).toBeTruthy();
+    expect(phoneMatch.matchedBy).toBe('phone');
+    expect(res.body.some((d: { matchedBy: string }) => d.matchedBy === 'name')).toBe(true);
+    // The list never includes the customer themselves.
+    expect(res.body.map((d: { id: string }) => d.id)).not.toContain(keeperId);
+  });
+
+  it('merging re-homes documents and credit, backfills blanks, deletes the duplicate', async () => {
+    const sql = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    try {
+      const [loc] = await sql`
+        INSERT INTO locations (business_id, name, timezone)
+        VALUES (${businessId}, 'Merge Test Store', 'America/Los_Angeles') RETURNING id`;
+      locId = loc!.id;
+      await sql`
+        INSERT INTO orders (business_id, location_id, customer_id, number, status,
+                            subtotal_cents, total_cents)
+        VALUES (${businessId}, ${locId}, ${dupeId}, 'MRG-ORD-1', 'open', 5000, 5000)`;
+      await sql`
+        INSERT INTO sales (business_id, location_id, customer_id, number, status,
+                           subtotal_cents, total_cents)
+        VALUES (${businessId}, ${locId}, ${dupeId}, 'MRG-SALE-1', 'completed', 3000, 3000)`;
+      await sql`
+        INSERT INTO store_credit_entries (business_id, customer_id, delta_cents, reason)
+        VALUES (${businessId}, ${dupeId}, 2500, 'merge test credit')`;
+    } finally {
+      await sql.end({ timeout: 5 });
+    }
+
+    const merged = await request(app.getHttpServer())
+      .post(`/v1/customers/${keeperId}/merge`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ sourceCustomerId: dupeId });
+    expect(merged.status).toBe(201);
+    // Blank fields on the keeper backfilled from the duplicate.
+    expect(merged.body.email).toBe('arman.d@example.test');
+    // The keeper's own phone was NOT overwritten.
+    expect(merged.body.phone).toBe('(310) 555-2001');
+
+    const sql2 = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    try {
+      const [gone] = await sql2`SELECT count(*)::int AS n FROM customers WHERE id = ${dupeId}`;
+      expect(gone!.n).toBe(0);
+      const [ord] = await sql2`
+        SELECT customer_id FROM orders WHERE number = 'MRG-ORD-1'`;
+      expect(ord!.customer_id).toBe(keeperId);
+      const [sale] = await sql2`
+        SELECT customer_id FROM sales WHERE number = 'MRG-SALE-1'`;
+      expect(sale!.customer_id).toBe(keeperId);
+      const [credit] = await sql2`
+        SELECT COALESCE(SUM(delta_cents), 0)::int AS bal FROM store_credit_entries
+        WHERE customer_id = ${keeperId}`;
+      expect(credit!.bal).toBe(2500);
+    } finally {
+      await sql2.end({ timeout: 5 });
+    }
+
+    // The customer 360 now shows the moved history.
+    const history = await request(app.getHttpServer())
+      .get(`/v1/customers/${keeperId}/order-history`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .expect(200);
+    const numbers = history.body.map((h: { number: string }) => h.number);
+    expect(numbers).toContain('MRG-ORD-1');
+    expect(numbers).toContain('MRG-SALE-1');
+  });
+
+  it('refuses a self-merge and an unknown duplicate', async () => {
+    const self = await request(app.getHttpServer())
+      .post(`/v1/customers/${keeperId}/merge`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ sourceCustomerId: keeperId });
+    expect(self.status).toBe(400);
+    expect(self.body.message).toMatch(/themselves/);
+
+    const missing = await request(app.getHttpServer())
+      .post(`/v1/customers/${keeperId}/merge`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ sourceCustomerId: '00000000-0000-4000-8000-0000000000ff' });
+    expect(missing.status).toBe(404);
+  });
+});

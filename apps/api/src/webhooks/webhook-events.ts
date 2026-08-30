@@ -22,6 +22,11 @@ export const WEBHOOK_EVENT_TYPES = [
   'delivery.scheduled',
   'delivery.delivered',
   'customer.created',
+  /**
+   * A duplicate customer was merged away. Payload: customerId (the
+   * keeper), mergedCustomerId (now deleted), mergedPhone, mergedEmail.
+   */
+  'customer.merged',
   'inventory.adjusted',
   'purchase_order.received',
   'stock_transfer.received',

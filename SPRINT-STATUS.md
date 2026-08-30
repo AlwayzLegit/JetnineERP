@@ -3643,3 +3643,29 @@ customer from wherever you are.
   receipt flag, short-query empty).
 - Still queued from the handoff: customer dedupe (warn-on-create +
   merge — owner-picked), then D2–D10 on the standard dashboard.
+
+### Checkpoint — 2026-08-30 (customer dedupe: warn + merge, handoff slice 3)
+
+Owner-picked "warn on create + merge tool" (G4 — the same caller existed
+4–6×, breaking the phone-call flow):
+
+- **`GET /v1/customers/:id/duplicates`**: same phone digits (any
+  formatting), same email, or the same exact name — each row marked with
+  what matched and how many documents it owns; never lists the customer
+  themselves.
+- **`POST /v1/customers/:id/merge {sourceCustomerId}`**
+  (customers.update): re-homes EVERYTHING the duplicate owns — orders,
+  sales, store credit, returns, discount redemptions, service tickets,
+  notes, tag links (deduped), gift cards, serialized units — onto the
+  keeper, backfills the keeper's blank contact fields from the
+  duplicate, deletes the duplicate, audits (`customer.merge`) and fires
+  the new `customer.merged` webhook. Self-merge 400, unknown source 404.
+- **Customer page**: "Possible duplicates" card with per-row
+  "Merge into this record" (confirm dialog spells out the move).
+- **POS warn-on-create**: typing 7+ phone digits on the New Sale
+  new-customer form checks for an existing match and offers
+  "Looks like {name} already exists — use them instead?" with a
+  one-click "Use existing" that attaches them (create never blocked).
+- Tests: customers suite 11→14 (three phone formats + email + name-only
+  matches; merge moves orders/sale/credit + backfill + duplicate gone +
+  history shows moved docs; self-merge/unknown guards).
