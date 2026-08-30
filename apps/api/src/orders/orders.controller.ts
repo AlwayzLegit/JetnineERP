@@ -1732,6 +1732,197 @@ export class OrdersController {
   }
 
   /**
+   * Split an order (owner ask 2026-08-30): a backorder pushes part of
+   * the sale to a later date, so the writer picks the affected lines
+   * and they move to a NEW order with its own promised date, delivery,
+   * ticket, and balance. Stock committed to the moved units re-commits
+   * on the new order at the same per-line source. Payments stay on the
+   * original — they were tendered against it — and each order then
+   * shows its own balance due.
+   */
+  @Post('orders/:id/split')
+  @RequirePermission('orders.update')
+  async splitOrder(
+    @CurrentTenant() tenant: RequestTenantContext,
+    @CurrentUser() actor: CurrentUserPayload,
+    @Param('id') id: string,
+    @Body()
+    body: {
+      lines?: { lineId?: string; quantity?: number }[];
+      /** The new order's promised date — the later, backordered date. */
+      requestedDate?: string | null;
+    },
+  ): Promise<{ order: OrderDetail; newOrder: { id: string; number: string } }> {
+    const order = await this.requireLiveOrder(id);
+    this.assertUnlocked(order);
+    await this.assertNotOnOpenRun(id);
+    if (!body.lines || body.lines.length === 0) {
+      throw new BadRequestException('lines must name at least one line to move');
+    }
+    const ids = body.lines.map((l) => l.lineId);
+    if (ids.some((x) => !x) || new Set(ids).size !== ids.length) {
+      throw new BadRequestException('lines[].lineId must be unique and present');
+    }
+
+    const allLines = await this.db
+      .select()
+      .from(schema.orderLines)
+      .where(eq(schema.orderLines.orderId, id));
+    const byId = new Map(allLines.map((l) => [l.id, l]));
+    const moves: { line: (typeof allLines)[number]; quantity: number }[] = [];
+    for (const r of body.lines) {
+      const line = byId.get(r.lineId!);
+      if (!line) throw new NotFoundException('Order line not found');
+      const movable = line.quantity - line.qtyFulfilled - line.qtyReturned;
+      const qty = r.quantity ?? movable;
+      if (!Number.isInteger(qty) || qty <= 0 || qty > movable) {
+        throw new BadRequestException(
+          `Line "${line.description}" has ${Math.max(movable, 0)} movable unit(s) — delivered units stay with the original order`,
+        );
+      }
+      moves.push({ line, quantity: qty });
+    }
+    const movesEverything = allLines.every((l) => {
+      const m = moves.find((x) => x.line.id === l.id);
+      return m ? m.quantity === l.quantity : false;
+    });
+    if (movesEverything) {
+      throw new BadRequestException(
+        "Moving every line is not a split — change this order's promised date instead",
+      );
+    }
+
+    // The new order: same customer, store, salespeople, and addresses —
+    // only the promised date is its own.
+    const number = await this.orders.generateOrderNumber(
+      this.db,
+      tenant.businessId!,
+      order.locationId,
+    );
+    const newStatus =
+      order.status === 'draft' ? 'draft' : order.status === 'quote' ? 'quote' : 'open';
+    const [target] = await this.db
+      .insert(schema.orders)
+      .values({
+        businessId: tenant.businessId!,
+        locationId: order.locationId,
+        stockLocationId: order.stockLocationId,
+        number,
+        status: newStatus,
+        customerId: order.customerId,
+        salespersonMembershipId: order.salespersonMembershipId,
+        secondSalespersonMembershipId: order.secondSalespersonMembershipId,
+        splitBps: order.splitBps,
+        orderKind: order.orderKind,
+        fulfillmentType: order.fulfillmentType,
+        deliveryInstructions: order.deliveryInstructions,
+        pickupLocationId: order.pickupLocationId,
+        billingAddressJson: order.billingAddressJson as never,
+        marketingCode: order.marketingCode,
+        addressLine1: order.addressLine1,
+        addressLine2: order.addressLine2,
+        addressCity: order.addressCity,
+        addressRegion: order.addressRegion,
+        addressPostalCode: order.addressPostalCode,
+        addressPhone: order.addressPhone,
+        requestedDate: body.requestedDate ?? null,
+        notes: `Split from ${order.number}`,
+      })
+      .returning();
+    if (!target) throw new BadRequestException('failed to create the split order');
+
+    for (const m of moves) {
+      // Free the moved units' commitment at the line's effective source…
+      const releaseQty = Math.min(m.line.qtyReserved, m.quantity);
+      if (m.line.variantId && releaseQty > 0) {
+        await this.orders.applyReleases(this.db, {
+          businessId: tenant.businessId!,
+          orderId: id,
+          locationId: m.line.sourceLocationId ?? order.stockLocationId ?? order.locationId,
+          actorUserId: actor?.id ?? null,
+          releases: [{ orderLineId: m.line.id, variantId: m.line.variantId, quantity: releaseQty }],
+          updateLines: true,
+        });
+      }
+      // …write the moved units onto the new order (discount travels
+      // proportionally)…
+      const discountShare = Math.round((m.line.discountCents * m.quantity) / m.line.quantity);
+      await this.db.insert(schema.orderLines).values({
+        businessId: tenant.businessId!,
+        orderId: target.id,
+        variantId: m.line.variantId,
+        description: m.line.description,
+        quantity: m.quantity,
+        lineType: m.line.lineType,
+        unitPriceCents: m.line.unitPriceCents,
+        discountCents: discountShare,
+        taxRateBps: m.line.taxRateBps,
+        taxClassId: m.line.taxClassId,
+        sourceLocationId: m.line.sourceLocationId,
+        fulfillmentMethod: m.line.fulfillmentMethod,
+        serialUnitIds: null,
+        taxCents: 0,
+        totalCents: 0,
+      });
+      // …and shrink or drop the source line.
+      if (m.quantity === m.line.quantity) {
+        await this.db.delete(schema.orderLines).where(eq(schema.orderLines.id, m.line.id));
+      } else {
+        await this.db
+          .update(schema.orderLines)
+          .set({
+            quantity: m.line.quantity - m.quantity,
+            discountCents: m.line.discountCents - discountShare,
+          })
+          .where(eq(schema.orderLines.id, m.line.id));
+      }
+    }
+
+    await this.orders.recomputeTotals(this.db, id);
+    await this.orders.recomputeTotals(this.db, target.id);
+    if (newStatus === 'open') {
+      await this.orders.reserveOrder(this.db, {
+        businessId: tenant.businessId!,
+        orderId: target.id,
+        locationId: target.stockLocationId ?? target.locationId,
+        actorUserId: actor?.id ?? null,
+      });
+    }
+
+    const movedSummary = moves.map((m) => ({
+      lineId: m.line.id,
+      variantId: m.line.variantId,
+      description: m.line.description,
+      quantity: m.quantity,
+    }));
+    await this.audit.log({
+      action: 'order.split',
+      targetType: 'order',
+      targetId: id,
+      after: { toOrderId: target.id, toNumber: number, lines: movedSummary },
+    });
+    await this.audit.log({
+      action: 'order.split',
+      targetType: 'order',
+      targetId: target.id,
+      after: { fromOrderId: id, fromNumber: order.number, lines: movedSummary },
+    });
+    void this.webhooks.fire({
+      businessId: tenant.businessId!,
+      eventType: 'order.split',
+      payload: {
+        orderId: id,
+        orderNumber: order.number,
+        newOrderId: target.id,
+        newOrderNumber: number,
+        lines: movedSummary,
+      },
+    });
+
+    return { order: await this.loadDetail(id), newOrder: { id: target.id, number } };
+  }
+
+  /**
    * PO-060: the line type must be changeable on an open order line —
    * stock that will never arrive (store closing, consignment) or an
    * exchange replacement flips to `direct_ship` and the vendor ships to
