@@ -192,6 +192,12 @@ export default function OrderDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [payAmount, setPayAmount] = useState('');
+  // Add-product price step (owner 2026-08-30): pick the product, set
+  // the price it sells at, then the payment form pre-fills with the
+  // charge so money can be taken on the new item immediately.
+  const [pendingAdd, setPendingAdd] = useState<SearchRow | null>(null);
+  const [addPrice, setAddPrice] = useState('');
+  const [addQty, setAddQty] = useState('1');
   const [payMethod, setPayMethod] = useState<(typeof TENDERS)[number]['value']>('card');
   const [payRef, setPayRef] = useState('');
   const [deliveries, setDeliveries] = useState<DeliveryRow[]>([]);
@@ -330,21 +336,33 @@ export default function OrderDetailPage() {
     }
   }
 
-  async function addLine(row: SearchRow) {
-    setShowAddProduct(false);
+  async function addLine(row: SearchRow, unitPriceCents: number, quantity: number) {
     setBusy(true);
     setError(null);
     try {
       const defaultSource = order?.stockLocationId ?? order?.locationId;
-      await api(`/v1/orders/${id}/lines`, {
+      const prevBalance = order?.balanceDueCents ?? 0;
+      const detail = await api<{ balanceDueCents: number }>(`/v1/orders/${id}/lines`, {
         method: 'POST',
         body: JSON.stringify({
           variantId: row.variantId,
-          quantity: 1,
+          quantity,
+          unitPriceCents,
           sourceLocationId: addSourceId && addSourceId !== defaultSource ? addSourceId : undefined,
         }),
       });
-      toast.success(`Added ${row.productName} — totals and stock updated.`);
+      setPendingAdd(null);
+      const deltaCents = Math.max(0, detail.balanceDueCents - prevBalance);
+      if (deltaCents > 0) {
+        // Pre-fill the payment form with exactly what the new item added
+        // to the balance so taking the money is one click away.
+        setPayAmount((deltaCents / 100).toFixed(2));
+        toast.success(
+          `Added ${row.productName} — payment form pre-filled with the ${(deltaCents / 100).toLocaleString(undefined, { style: 'currency', currency: 'USD' })} it added.`,
+        );
+      } else {
+        toast.success(`Added ${row.productName} — totals and stock updated.`);
+      }
       await load();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err));
@@ -563,9 +581,78 @@ export default function OrderDetailPage() {
           locations={locations}
           storeId={order.locationId}
           onChangeLocation={(locId) => setAddSourceId(locId)}
-          onAdd={(row) => void addLine(row)}
+          onAdd={(row) => {
+            setShowAddProduct(false);
+            setPendingAdd(row);
+            setAddPrice((row.priceCents / 100).toFixed(2));
+            setAddQty('1');
+          }}
           onClose={() => setShowAddProduct(false)}
         />
+      )}
+
+      {pendingAdd && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          data-testid="add-price-dialog"
+        >
+          <div
+            className="card"
+            style={{ maxWidth: 420, width: '100%', padding: 20, background: 'var(--surface)' }}
+          >
+            <h3 style={{ margin: '0 0 4px', fontSize: 16 }}>
+              Add {pendingAdd.productName}
+              {pendingAdd.variantName ? ` — ${pendingAdd.variantName}` : ''}
+            </h3>
+            <p style={{ margin: '0 0 12px', fontSize: 13, color: 'var(--text-secondary)' }}>
+              Set the price it sells at (list <Money cents={pendingAdd.priceCents} />
+              ). The payment form pre-fills with the charge after it&apos;s added.
+            </p>
+            <div className="grid gap-2 sm:grid-cols-2" style={{ marginBottom: 12 }}>
+              <Field label="Unit price ($)">
+                <Input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={addPrice}
+                  onChange={(e) => setAddPrice(e.target.value)}
+                  data-testid="add-line-price"
+                  autoFocus
+                />
+              </Field>
+              <Field label="Quantity">
+                <Input
+                  type="number"
+                  min={1}
+                  step={1}
+                  value={addQty}
+                  onChange={(e) => setAddQty(e.target.value)}
+                  data-testid="add-line-qty"
+                />
+              </Field>
+            </div>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <Button variant="ghost" size="sm" onClick={() => setPendingAdd(null)} disabled={busy}>
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
+                disabled={busy || !(Number(addPrice) >= 0) || !(Number(addQty) >= 1)}
+                data-testid="add-line-confirm"
+                onClick={() =>
+                  void addLine(
+                    pendingAdd,
+                    Math.round(Number(addPrice) * 100),
+                    Math.max(1, Math.round(Number(addQty))),
+                  )
+                }
+              >
+                Add to order
+              </Button>
+            </div>
+          </div>
+        </div>
       )}
 
       <div className="grid gap-4 lg:grid-cols-[2fr_1fr]">
@@ -595,7 +682,12 @@ export default function OrderDetailPage() {
                     variant="secondary"
                     disabled={busy}
                     onClick={() => {
-                      setAddSourceId(order.stockLocationId ?? order.locationId);
+                      // Goods come off the truck: Add Product defaults to
+                      // the warehouse for everyone (owner 2026-08-30).
+                      const wh =
+                        locations.find((l) => l.locationType === 'warehouse') ??
+                        locations.find((l) => /warehouse|whse|\bwh\b/i.test(l.name));
+                      setAddSourceId(wh?.id ?? order.stockLocationId ?? order.locationId);
                       setShowAddProduct(true);
                     }}
                     data-testid="order-add-product"
@@ -1511,10 +1603,6 @@ function ReturnsCard({
       authorizedAt: string;
     }[]
   >([]);
-  const [returnCodes, setReturnCodes] = useState<
-    { id: string; code: string; description: string }[]
-  >([]);
-  const [returnCodeId, setReturnCodeId] = useState('');
   // Cancelling a return authorization is override-gated server-side, so
   // it needs the dialog rather than a native prompt. Declared with the
   // other state — ReturnsCard returns early below.
@@ -1539,9 +1627,6 @@ function ReturnsCard({
   }
   useEffect(() => {
     void loadReturns();
-    api<{ id: string; code: string; description: string }[]>('/v1/reason-codes?usageClass=return')
-      .then(setReturnCodes)
-      .catch(() => setReturnCodes([]));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [order.id]);
   // Coded adjustment reasons (gap sprint G2). While the business has no
@@ -1572,7 +1657,6 @@ function ReturnsCard({
         .map(([lineId, quantity]) => ({
           lineId,
           quantity,
-          ...(returnCodeId ? { reasonCodeId: returnCodeId } : {}),
         })),
       refundMethod: method,
       fulfillment,
@@ -1584,10 +1668,6 @@ function ReturnsCard({
     const body = buildReturnBody();
     if (body.lines.length === 0) {
       toast.error('Enter a quantity on at least one line.');
-      return;
-    }
-    if (returnCodes.length > 0 && !returnCodeId) {
-      toast.error('Select a return reason.');
       return;
     }
     setWorking(true);
@@ -1827,24 +1907,6 @@ function ReturnsCard({
             <option value="pickup">Truck pickup (refund on receipt)</option>
           </select>
         </label>
-        {returnCodes.length > 0 && (
-          <label style={{ display: 'grid', gap: 2, fontSize: 12 }}>
-            Return reason
-            <select
-              className="select"
-              value={returnCodeId}
-              data-testid="return-reason-code"
-              onChange={(e) => setReturnCodeId(e.target.value)}
-            >
-              <option value="">Select…</option>
-              {returnCodes.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.code} — {c.description}
-                </option>
-              ))}
-            </select>
-          </label>
-        )}
         <label style={{ display: 'grid', gap: 2, fontSize: 12, flex: 1, minWidth: 160 }}>
           Reason
           <Input value={reason} onChange={(e) => setReason(e.target.value)} />

@@ -7,10 +7,11 @@ import { Money } from '@/components/money';
 import { Button, LinkButton, PageHeader } from '@/components/ui';
 
 /**
- * Delivery calendar (STORIS cutover Day 3). Week view by default, one
- * column per day; a card is one truck stop. Click through for the
- * day-sheet (print) or the delivery itself. Drag a card onto another day
- * to reschedule it.
+ * Delivery calendar (STORIS cutover Day 3; owner ask 2026-08-30: a full
+ * month on screen, no paging). Five week-rows of seven day columns — 35
+ * days starting from the current week — each cell one day, each card one
+ * truck stop. Click through for the day-sheet (print) or the delivery
+ * itself. Drag a card onto any visible day to reschedule it.
  */
 
 interface DeliveryRow {
@@ -55,20 +56,27 @@ export default function DeliveriesPage() {
   const [error, setError] = useState<string | null>(null);
   const [dragId, setDragId] = useState<string | null>(null);
 
+  // 5 week-rows × 7 days = 35 days on screen (owner: "30 days worth"),
+  // aligned to full Sunday–Saturday weeks so the grid stays readable.
   const days = useMemo(
     () =>
-      Array.from({ length: 7 }, (_, i) => {
+      Array.from({ length: 35 }, (_, i) => {
         const d = new Date(weekStart);
         d.setDate(d.getDate() + i);
         return d;
       }),
     [weekStart],
   );
+  const weeks = useMemo(() => {
+    const out: Date[][] = [];
+    for (let i = 0; i < days.length; i += 7) out.push(days.slice(i, i + 7));
+    return out;
+  }, [days]);
 
   async function load() {
     try {
       const from = fmtDate(days[0]!);
-      const to = fmtDate(days[6]!);
+      const to = fmtDate(days[days.length - 1]!);
       setRows(await api<DeliveryRow[]>(`/v1/deliveries?from=${from}&to=${to}`));
       setError(null);
     } catch (err) {
@@ -123,118 +131,120 @@ export default function DeliveriesPage() {
               Dispatch
             </LinkButton>
             <Button size="sm" onClick={() => shiftWeek(-7)}>
-              ← Prev
+              ← Prev week
             </Button>
             <Button size="sm" onClick={() => setWeekStart(startOfWeek(new Date()))}>
-              This week
+              Today
             </Button>
             <Button size="sm" onClick={() => shiftWeek(7)}>
-              Next →
+              Next week →
             </Button>
           </>
         }
       />
       {error && <p style={{ color: 'var(--danger)', fontSize: 13 }}>{error}</p>}
 
-      <div className="overflow-x-auto pb-2">
-        <div className="flex gap-2 lg:grid lg:grid-cols-7">
-          {days.map((d) => {
-            const key = fmtDate(d);
-            const list = byDay.get(key) ?? [];
-            const isToday = key === today;
-            return (
-              <div
-                key={key}
-                onDragOver={(e) => e.preventDefault()}
-                onDrop={() => {
-                  if (dragId) void reschedule(dragId, key);
-                  setDragId(null);
-                }}
-                className="min-w-[160px] flex-1 lg:min-w-0"
-                style={{
-                  background: isToday ? 'var(--brand-soft)' : 'var(--neutral-soft)',
-                  borderRadius: 'var(--radius)',
-                  padding: 8,
-                  minHeight: 220,
-                }}
-              >
-                <Link
-                  href={`/deliveries/day/${key}`}
+      {weeks.map((week) => (
+        <div key={fmtDate(week[0]!)} className="overflow-x-auto pb-2">
+          <div className="flex gap-2 lg:grid lg:grid-cols-7">
+            {week.map((d) => {
+              const key = fmtDate(d);
+              const list = byDay.get(key) ?? [];
+              const isToday = key === today;
+              return (
+                <div
+                  key={key}
+                  onDragOver={(e) => e.preventDefault()}
+                  onDrop={() => {
+                    if (dragId) void reschedule(dragId, key);
+                    setDragId(null);
+                  }}
+                  className="min-w-[160px] flex-1 lg:min-w-0"
                   style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    fontSize: 11,
-                    fontWeight: 600,
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.05em',
-                    color: isToday ? 'var(--brand-soft-text)' : 'var(--text-secondary)',
-                    textDecoration: 'none',
-                    padding: '2px 4px 8px',
-                    marginBottom: 4,
+                    background: isToday ? 'var(--brand-soft)' : 'var(--neutral-soft)',
+                    borderRadius: 'var(--radius)',
+                    padding: 8,
+                    minHeight: 130,
                   }}
                 >
-                  {d.toLocaleDateString(undefined, {
-                    weekday: 'short',
-                    month: 'short',
-                    day: 'numeric',
-                  })}
-                  <span style={{ color: 'var(--text-muted)' }}>{list.length || ''}</span>
-                </Link>
-                {list.map((r) => (
                   <Link
-                    key={r.id}
-                    href={`/deliveries/${r.id}`}
-                    draggable={r.status === 'scheduled' || r.status === 'loaded'}
-                    onDragStart={() => setDragId(r.id)}
-                    data-testid="delivery-card"
-                    className="card card-hover"
+                    href={`/deliveries/day/${key}`}
                     style={{
-                      display: 'block',
-                      borderLeft: `4px solid ${STATUS_COLOR[r.status] ?? 'var(--text-muted)'}`,
-                      padding: '8px 10px',
-                      margin: '0 0 6px',
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      fontSize: 11,
+                      fontWeight: 600,
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.05em',
+                      color: isToday ? 'var(--brand-soft-text)' : 'var(--text-secondary)',
                       textDecoration: 'none',
-                      color: 'inherit',
-                      fontSize: 12,
-                      cursor: 'pointer',
+                      padding: '2px 4px 8px',
+                      marginBottom: 4,
                     }}
                   >
-                    <div style={{ fontWeight: 600 }}>{r.orderNumber}</div>
-                    <div style={{ color: 'var(--text-secondary)' }}>
-                      {r.customerName ?? '—'}
-                      {r.addressCity ? ` · ${r.addressCity}` : ''}
-                    </div>
-                    {(r.windowStart || r.windowEnd) && (
-                      <div style={{ color: 'var(--text-secondary)' }}>
-                        {r.windowStart?.slice(0, 5)}–{r.windowEnd?.slice(0, 5)}
-                      </div>
-                    )}
-                    <div style={{ marginTop: 2 }}>
-                      <span
-                        style={{
-                          fontSize: 10,
-                          textTransform: 'uppercase',
-                          letterSpacing: '0.04em',
-                          color: STATUS_COLOR[r.status] ?? 'var(--text-muted)',
-                          fontWeight: 700,
-                        }}
-                      >
-                        {r.status.replace(/_/g, ' ')}
-                      </span>
-                      {r.balanceDueCents > 0 && (
-                        <span style={{ float: 'right', color: 'var(--warning)' }}>
-                          <Money cents={r.balanceDueCents} /> due
-                        </span>
-                      )}
-                    </div>
+                    {d.toLocaleDateString(undefined, {
+                      weekday: 'short',
+                      month: 'short',
+                      day: 'numeric',
+                    })}
+                    <span style={{ color: 'var(--text-muted)' }}>{list.length || ''}</span>
                   </Link>
-                ))}
-              </div>
-            );
-          })}
+                  {list.map((r) => (
+                    <Link
+                      key={r.id}
+                      href={`/deliveries/${r.id}`}
+                      draggable={r.status === 'scheduled' || r.status === 'loaded'}
+                      onDragStart={() => setDragId(r.id)}
+                      data-testid="delivery-card"
+                      className="card card-hover"
+                      style={{
+                        display: 'block',
+                        borderLeft: `4px solid ${STATUS_COLOR[r.status] ?? 'var(--text-muted)'}`,
+                        padding: '8px 10px',
+                        margin: '0 0 6px',
+                        textDecoration: 'none',
+                        color: 'inherit',
+                        fontSize: 12,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      <div style={{ fontWeight: 600 }}>{r.orderNumber}</div>
+                      <div style={{ color: 'var(--text-secondary)' }}>
+                        {r.customerName ?? '—'}
+                        {r.addressCity ? ` · ${r.addressCity}` : ''}
+                      </div>
+                      {(r.windowStart || r.windowEnd) && (
+                        <div style={{ color: 'var(--text-secondary)' }}>
+                          {r.windowStart?.slice(0, 5)}–{r.windowEnd?.slice(0, 5)}
+                        </div>
+                      )}
+                      <div style={{ marginTop: 2 }}>
+                        <span
+                          style={{
+                            fontSize: 10,
+                            textTransform: 'uppercase',
+                            letterSpacing: '0.04em',
+                            color: STATUS_COLOR[r.status] ?? 'var(--text-muted)',
+                            fontWeight: 700,
+                          }}
+                        >
+                          {r.status.replace(/_/g, ' ')}
+                        </span>
+                        {r.balanceDueCents > 0 && (
+                          <span style={{ float: 'right', color: 'var(--warning)' }}>
+                            <Money cents={r.balanceDueCents} /> due
+                          </span>
+                        )}
+                      </div>
+                    </Link>
+                  ))}
+                </div>
+              );
+            })}
+          </div>
         </div>
-      </div>
+      ))}
     </div>
   );
 }
