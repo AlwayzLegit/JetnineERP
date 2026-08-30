@@ -43,6 +43,17 @@ interface Bin {
   isActive: boolean;
 }
 
+interface ReservationRow {
+  orderId: string;
+  orderNumber: string;
+  orderStatus: string;
+  requestedDate: string | null;
+  customerName: string | null;
+  lineId: string;
+  description: string;
+  qtyReserved: number;
+}
+
 const ADJUST_REASONS = ['count_correction', 'damage', 'theft', 'other'] as const;
 
 export default function InventoryPage() {
@@ -53,6 +64,41 @@ export default function InventoryPage() {
   const [q, setQ] = useState('');
   const [newBin, setNewBin] = useState('');
   const [error, setError] = useState<string | null>(null);
+  // Reserved drill-down: which orders hold this variant's committed units.
+  const [resFor, setResFor] = useState<Level | null>(null);
+  const [reservations, setReservations] = useState<ReservationRow[] | null>(null);
+
+  async function openReservations(level: Level) {
+    setResFor(level);
+    setReservations(null);
+    try {
+      setReservations(
+        await api<ReservationRow[]>(
+          `/v1/inventory/reservations?variantId=${level.variantId}&locationId=${level.locationId}`,
+        ),
+      );
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+      setResFor(null);
+    }
+  }
+
+  async function releaseReservation(r: ReservationRow) {
+    if (
+      !confirm(
+        `Release ${r.qtyReserved} reserved unit(s) from ${r.orderNumber}? The stock becomes sellable immediately; re-reserve on ${r.orderNumber} from its page when replacement stock lands.`,
+      )
+    )
+      return;
+    try {
+      await api(`/v1/orders/${r.orderId}/lines/${r.lineId}/release`, { method: 'POST' });
+      toast.success(`Released — ${r.orderNumber} now holds no reservation on this item.`);
+      if (resFor) await openReservations(resFor);
+      await loadLevels(locationId);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    }
+  }
 
   async function loadLocations() {
     try {
@@ -279,7 +325,22 @@ export default function InventoryPage() {
                       <code>{l.variantBarcode ?? '—'}</code>
                     </td>
                     <td className="num">{l.onHand}</td>
-                    <td className="num">{l.reserved}</td>
+                    <td className="num">
+                      {l.reserved > 0 ? (
+                        <button
+                          type="button"
+                          className="badge badge-info"
+                          style={{ cursor: 'pointer', border: 'none' }}
+                          title="See which orders hold these units — release from there to sell the piece today"
+                          data-testid="reserved-count"
+                          onClick={() => void openReservations(l)}
+                        >
+                          {l.reserved}
+                        </button>
+                      ) : (
+                        l.reserved
+                      )}
+                    </td>
                     <td className="num">
                       <button
                         type="button"
@@ -375,6 +436,72 @@ export default function InventoryPage() {
           onCommitted={() => (locationId ? loadLevels(locationId) : undefined)}
         />
       </details>
+
+      {resFor && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          data-testid="reservations-dialog"
+        >
+          <div
+            className="card"
+            style={{ maxWidth: 640, width: '100%', padding: 20, background: 'var(--surface)' }}
+          >
+            <h3 style={{ margin: '0 0 4px', fontSize: 16 }}>
+              Reserved — {resFor.productName} {resFor.variantSku ? `(${resFor.variantSku})` : ''}
+            </h3>
+            <p style={{ margin: '0 0 10px', fontSize: 13, color: 'var(--text-secondary)' }}>
+              These orders hold the committed units. Release one to sell the piece today, then
+              re-reserve it on that order from its page when replacement stock lands.
+            </p>
+            {!reservations ? (
+              <LoadingRows rows={2} />
+            ) : reservations.length === 0 ? (
+              <EmptyState>No live orders hold this item here.</EmptyState>
+            ) : (
+              <div style={{ overflowX: 'auto' }}>
+                <table className="table" style={{ fontSize: 13 }}>
+                  <thead>
+                    <tr>
+                      <th>Order</th>
+                      <th>Customer</th>
+                      <th>Promised</th>
+                      <th className="num">Reserved</th>
+                      <th />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {reservations.map((r) => (
+                      <tr key={r.lineId}>
+                        <td>
+                          <a href={`/orders/${r.orderId}`}>{r.orderNumber}</a>
+                        </td>
+                        <td>{r.customerName ?? '—'}</td>
+                        <td>{r.requestedDate ?? '—'}</td>
+                        <td className="num">{r.qtyReserved}</td>
+                        <td style={{ textAlign: 'right' }}>
+                          <Button
+                            size="sm"
+                            variant="danger"
+                            onClick={() => void releaseReservation(r)}
+                            data-testid="release-reservation"
+                          >
+                            Release
+                          </Button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            <div style={{ marginTop: 12, textAlign: 'right' }}>
+              <Button variant="secondary" onClick={() => setResFor(null)}>
+                Close
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
