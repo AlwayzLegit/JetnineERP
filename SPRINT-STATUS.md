@@ -3761,3 +3761,19 @@ merges into an existing line — every add pushes a fresh line with its
 own editable price box (quantity per line still editable when one price
 covers several units). Client-only; the API already handled duplicate-
 variant lines (reservation pooling + split-at-sale tests pin it).
+
+### Checkpoint — 2026-08-30 (discount-approval popup removed — G6 demoted to log-only, amendment A10)
+
+Owner: "remove the discounts need approval popup for all users. Its a
+distraction and all users can approve discounts without a reason."
+Recorded as PLAN-STORIS-GAP amendment A10 (supersedes A6, restores the
+original PLAN-POS-OPERATIONS "no approval, no cap" decision). The
+price-variance service no longer throws REASON_REQUIRED or demands the
+orders.price_override security override at any tier — it only records
+the exception (tier 2 info, tier 3 warning, below-cost critical), with
+any volunteered reason stamped on. New Sale's "Discount needs approval"
+dialog and its retry plumbing are deleted; the order page needed no
+change (its remaining override dialog is the return-window gate, which
+stays). Settings keep the tier thresholds since they still grade the
+exception register. G6 specs rewritten to pin the log-only behavior;
+layaway-minimum, return-window, and all other override gates untouched.
