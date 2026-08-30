@@ -3488,3 +3488,23 @@ pass reasonCodeId` writing an exchange in production: the New Exchange
 - Tests: reports suite 39→40 (annex at-risk order carries its
   salesperson; approved-only cashier's report drops the annex row,
   keeps main-store rows; owner unrestricted; cleanup restores).
+
+## Checkpoint — 2026-08-30 (backorder order split)
+
+- Owner: multiple delivery dates from a backorder → select the product
+  and split the order. New `POST /v1/orders/:id/split`
+  ({lines:[{lineId, quantity?}], requestedDate}): the picked lines (or
+  partial quantities) move to a NEW order copying customer/store/
+  salespeople/addresses with its own promised date; moved units'
+  reservations release at their per-line source and re-reserve on the
+  new order; discounts travel proportionally; payments STAY on the
+  original (each order then shows its own balance). Guards: unlocked,
+  not on an open run, delivered units stay, moving everything is
+  refused ("change the promised date instead"). `order.split` webhook +
+  audit on both orders (timeline shows the link).
+- Order page: **Split order…** mode in the Lines card — checkboxes on
+  movable lines, a "New promised date" input, one confirm
+  (`split-order`/`split-line`/`split-date`/`split-confirm` testids).
+- Tests: orders suite 80→83 (partial-qty split moves reservation and
+  money math checks out — source+target totals equal the original,
+  deposit stays; moving everything 400; over-quantity 400).

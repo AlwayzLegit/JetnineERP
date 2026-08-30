@@ -8,7 +8,16 @@ import { toast } from 'sonner';
 import { formatMoney } from '@jetnine/shared';
 import { api, ApiError } from '@/lib/api';
 import { Money } from '@/components/money';
-import { Button, Card, Input, LinkButton, LoadingRows, Select, StatusBadge } from '@/components/ui';
+import {
+  Button,
+  Card,
+  Field,
+  Input,
+  LinkButton,
+  LoadingRows,
+  Select,
+  StatusBadge,
+} from '@/components/ui';
 import { SecurityOverrideDialog } from '@/components/security-override-dialog';
 import { ProductSearchDialog, type SearchRow } from '@/components/product-search-dialog';
 
@@ -167,6 +176,11 @@ export default function OrderDetailPage() {
   );
   const [showAddProduct, setShowAddProduct] = useState(false);
   const [addSourceId, setAddSourceId] = useState('');
+  // Backorder split: pick lines, give them their own promised date, and
+  // they move to a new order.
+  const [splitMode, setSplitMode] = useState(false);
+  const [splitSel, setSplitSel] = useState<Set<string>>(new Set());
+  const [splitDate, setSplitDate] = useState('');
   const [timeline, setTimeline] = useState<AuditRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -237,6 +251,33 @@ export default function OrderDetailPage() {
         method: 'POST',
         body: body === undefined ? undefined : JSON.stringify(body),
       });
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function splitOrder() {
+    if (splitSel.size === 0) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await api<{ newOrder: { id: string; number: string } }>(
+        `/v1/orders/${id}/split`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            lines: [...splitSel].map((lineId) => ({ lineId })),
+            requestedDate: splitDate || null,
+          }),
+        },
+      );
+      toast.success(`Split to ${result.newOrder.number} — payments stay on this order.`);
+      setSplitMode(false);
+      setSplitSel(new Set());
+      setSplitDate('');
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -508,21 +549,70 @@ export default function OrderDetailPage() {
             style={{ marginBottom: 16 }}
             actions={
               live && !order.lockedAt ? (
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  disabled={busy}
-                  onClick={() => {
-                    setAddSourceId(order.stockLocationId ?? order.locationId);
-                    setShowAddProduct(true);
-                  }}
-                  data-testid="order-add-product"
-                >
-                  Add product
-                </Button>
+                <span style={{ display: 'inline-flex', gap: 8 }}>
+                  {order.lines.length > 1 && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={busy}
+                      onClick={() => {
+                        setSplitMode((v) => !v);
+                        setSplitSel(new Set());
+                      }}
+                      data-testid="split-order"
+                    >
+                      {splitMode ? 'Cancel split' : 'Split order…'}
+                    </Button>
+                  )}
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    disabled={busy}
+                    onClick={() => {
+                      setAddSourceId(order.stockLocationId ?? order.locationId);
+                      setShowAddProduct(true);
+                    }}
+                    data-testid="order-add-product"
+                  >
+                    Add product
+                  </Button>
+                </span>
               ) : undefined
             }
           >
+            {splitMode && (
+              <div
+                className="mb-3 flex flex-wrap items-end gap-2"
+                style={{
+                  border: '1px solid var(--border)',
+                  borderRadius: 'var(--radius-sm)',
+                  padding: '8px 10px',
+                }}
+                data-testid="split-bar"
+              >
+                <span style={{ fontSize: 13, alignSelf: 'center' }}>
+                  Tick the backordered lines — they move to a new order with its own promised date.
+                  Payments stay here.
+                </span>
+                <Field label="New promised date">
+                  <Input
+                    type="date"
+                    value={splitDate}
+                    onChange={(e) => setSplitDate(e.target.value)}
+                    data-testid="split-date"
+                  />
+                </Field>
+                <Button
+                  size="sm"
+                  variant="primary"
+                  disabled={busy || splitSel.size === 0}
+                  onClick={() => void splitOrder()}
+                  data-testid="split-confirm"
+                >
+                  Split {splitSel.size || ''} line{splitSel.size === 1 ? '' : 's'} to a new order
+                </Button>
+              </div>
+            )}
             <div className="overflow-x-auto">
               <table className="table">
                 <thead>
@@ -540,6 +630,23 @@ export default function OrderDetailPage() {
                   {order.lines.map((l) => (
                     <tr key={l.id}>
                       <td>
+                        {splitMode && l.quantity - l.qtyFulfilled > 0 && (
+                          <input
+                            type="checkbox"
+                            checked={splitSel.has(l.id)}
+                            style={{ accentColor: 'var(--brand)', marginRight: 8 }}
+                            aria-label={`Split ${l.description} to a new order`}
+                            data-testid="split-line"
+                            onChange={(e) => {
+                              setSplitSel((prev) => {
+                                const next = new Set(prev);
+                                if (e.target.checked) next.add(l.id);
+                                else next.delete(l.id);
+                                return next;
+                              });
+                            }}
+                          />
+                        )}
                         {l.description}
                         {l.fulfillmentMethod && l.fulfillmentMethod !== order.fulfillmentType && (
                           <span

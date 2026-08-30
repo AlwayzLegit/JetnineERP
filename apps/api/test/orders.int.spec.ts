@@ -3377,3 +3377,128 @@ describe('Per-member selling scope + nav visibility', () => {
     expect(after.body.sellingScope).toBe('all');
   });
 });
+
+describe('Order split — backorder lines move to their own order', () => {
+  const asOwner2 = () => ({
+    get: (url: string) =>
+      request(app.getHttpServer())
+        .get(url)
+        .set('Cookie', ownerCookie)
+        .set('X-Business-Id', businessId),
+    post: (url: string) =>
+      request(app.getHttpServer())
+        .post(url)
+        .set('Cookie', ownerCookie)
+        .set('X-Business-Id', businessId),
+  });
+
+  let freshVariantId = '';
+
+  it('setup: a fresh variant with plenty of stock', async () => {
+    const sql = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    try {
+      const db = drizzle(sql);
+      const [p] = await db
+        .insert(schema.products)
+        .values({ businessId, sku: 'SPLIT-P', name: 'Splittable Mattress' })
+        .returning();
+      const [v] = await db
+        .insert(schema.productVariants)
+        .values({ businessId, productId: p!.id, sku: 'SPLIT-V', priceCents: 40_000 })
+        .returning();
+      freshVariantId = v!.id;
+      await db.insert(schema.inventoryLevels).values({
+        businessId,
+        variantId: freshVariantId,
+        locationId,
+        onHand: 10,
+        reserved: 0,
+      });
+    } finally {
+      await sql.end({ timeout: 5 });
+    }
+  });
+
+  it('moves the picked quantity to a new order with its own promised date; money stays put', async () => {
+    const created = await asOwner2()
+      .post('/v1/orders')
+      .send({
+        locationId,
+        customerId,
+        confirm: true,
+        requestedDate: '2026-09-05',
+        lines: [
+          { variantId: freshVariantId, quantity: 3 },
+          { variantId: sofaVariantId, quantity: 1 },
+        ],
+      });
+    expect(created.status).toBe(201);
+    const orderId = created.body.id as string;
+    const splitLine = created.body.lines.find(
+      (l: { variantId: string }) => l.variantId === freshVariantId,
+    );
+    expect(splitLine.qtyReserved).toBe(3);
+    await asOwner2()
+      .post(`/v1/orders/${orderId}/payments`)
+      .send({ method: 'cash', amountCents: 50_000, kind: 'deposit' })
+      .expect(201);
+    const totalBefore = created.body.totalCents as number;
+
+    // One of the three mattresses is backordered — split it out to a
+    // later date.
+    const split = await asOwner2()
+      .post(`/v1/orders/${orderId}/split`)
+      .send({ lines: [{ lineId: splitLine.id, quantity: 1 }], requestedDate: '2026-10-15' });
+    expect(split.status).toBe(201);
+    expect(split.body.newOrder.number).toBeTruthy();
+
+    // Source: quantity shrank, reservation follows, total dropped, and
+    // the deposit stayed here.
+    const source = split.body.order;
+    const srcLine = source.lines.find((l: { variantId: string }) => l.variantId === freshVariantId);
+    expect(srcLine.quantity).toBe(2);
+    expect(srcLine.qtyReserved).toBe(2);
+    expect(source.lines).toHaveLength(2);
+    expect(source.totalCents).toBeLessThan(totalBefore);
+    expect(source.paidCents).toBe(50_000);
+
+    // Target: its own order, promised at the backorder date, reserved,
+    // unpaid.
+    const target = await asOwner2().get(`/v1/orders/${split.body.newOrder.id}`);
+    expect(target.status).toBe(200);
+    expect(target.body.status).toBe('open');
+    expect(target.body.requestedDate).toBe('2026-10-15');
+    expect(target.body.customerId).toBe(customerId);
+    expect(target.body.lines).toHaveLength(1);
+    expect(target.body.lines[0].variantId).toBe(freshVariantId);
+    expect(target.body.lines[0].quantity).toBe(1);
+    expect(target.body.lines[0].qtyReserved).toBe(1);
+    expect(target.body.paidCents).toBe(0);
+    expect(target.body.totalCents + source.totalCents).toBe(totalBefore);
+  });
+
+  it('guards: cannot move everything, cannot move more than the movable units', async () => {
+    const created = await asOwner2()
+      .post('/v1/orders')
+      .send({
+        locationId,
+        customerId,
+        confirm: true,
+        lines: [{ variantId: freshVariantId, quantity: 2 }],
+      });
+    expect(created.status).toBe(201);
+    const lineId = created.body.lines[0].id as string;
+
+    const all = await asOwner2()
+      .post(`/v1/orders/${created.body.id}/split`)
+      .send({ lines: [{ lineId }] });
+    expect(all.status).toBe(400);
+    expect(all.body.message).toMatch(/not a split/);
+
+    const tooMany = await asOwner2()
+      .post(`/v1/orders/${created.body.id}/split`)
+      .send({ lines: [{ lineId, quantity: 5 }] });
+    expect(tooMany.status).toBe(400);
+    expect(tooMany.body.message).toMatch(/movable unit/);
+  });
+});
