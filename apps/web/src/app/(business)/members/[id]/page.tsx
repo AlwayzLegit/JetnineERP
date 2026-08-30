@@ -21,6 +21,7 @@ interface Member {
   roleName: string;
   dataScope: 'all' | 'store';
   sellingScope: 'all' | 'approved';
+  managerDashboard: boolean;
   scopeLocationIds: string[];
   hiddenNav: string[];
   invitedAt: string | null;
@@ -260,6 +261,38 @@ export default function MemberDetailPage() {
         </Card>
 
         <Card title="Store access">
+          <label
+            data-testid={`manager-dashboard-${member.membershipId}`}
+            style={{
+              display: 'flex',
+              gap: 8,
+              alignItems: 'flex-start',
+              fontSize: 13,
+              marginBottom: 12,
+              cursor: 'pointer',
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={member.managerDashboard}
+              onChange={(e) =>
+                void patchMember(
+                  { managerDashboard: e.target.checked },
+                  e.target.checked ? 'Manager dashboard enabled.' : 'Manager dashboard turned off.',
+                )
+              }
+              style={{ marginTop: 2 }}
+            />
+            <span>
+              <strong>Store manager dashboard</strong>
+              <br />
+              <span style={{ color: 'var(--text-secondary)', fontSize: 12.5 }}>
+                Their home page becomes the store view: store sales today, the associate board,
+                open-sales queues, and today&apos;s deliveries — scoped to a store they pick from
+                their approved list.
+              </span>
+            </span>
+          </label>
           <Field label="Where can they sell?">
             <Select
               value={member.sellingScope}

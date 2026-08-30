@@ -149,6 +149,14 @@ export const memberships = pgTable(
      * permissions; this only removes tabs from the member's sidebar.
      */
     hiddenNavJson: jsonb('hidden_nav_json'),
+    /**
+     * Store-manager dashboard (owner decision 2026-08-30): when set, the
+     * member's /dashboard renders the store-scoped manager view (store
+     * KPIs, leaderboard, work queues) with a picker over their approved
+     * stores. Off = the standard dashboard. Purely a per-member toggle —
+     * the owner flips it on the member page; roles are not consulted.
+     */
+    managerDashboard: boolean('manager_dashboard').notNull().default(false),
     // 'active' | 'invited' | 'disabled'
     status: text('status').notNull(),
     invitedByUserId: uuid('invited_by').references(() => users.id, { onDelete: 'set null' }),

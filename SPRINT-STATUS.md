@@ -3584,3 +3584,39 @@ a $271.52 credit. Three bugs, fixed as one slice:
   tender + refusal past family balance; move-credit + wrong-customer
   400; the 0076 repair run twice against a fabricated copy of the prod
   breakage. Orders suite still 88/88.
+
+### Checkpoint — 2026-08-30 (manager dashboard, slice 1)
+
+Owner handoff (manager-dashboard UX audit) + 6 owner answers: per-member
+toggle decides who gets it; the dashboard carries its OWN store picker
+over the member's approved stores; manager dashboard ships first;
+written-sales leads with collected alongside; dedupe/merge and nav work
+deferred to later slices; the owner keeps the company-wide dashboard.
+
+- **Migration 0077_member_manager_dashboard**: `memberships.manager_dashboard`
+  boolean. Member page "Store access" card gains the Store manager
+  dashboard checkbox (`manager-dashboard-{id}`); members PATCH + /me
+  carry `managerDashboard`.
+- **`GET /v1/dashboard/manager?locationId=`** (orders.view + the toggle,
+  403 otherwise): ONE aggregate call returning KPIs (mine/store written
+  - collected today, my open book + balance, my closed 7d, open
+    exceptions + past-due promises), a 14-day mine-vs-store series, the
+    week's associate leaderboard (order splits + register sales folded
+    per person), an open-pipeline breakdown, and four queues (my open /
+    store open / recently closed / today's deliveries) with customer
+    name + PHONE + balance due + salesperson on every row. **"Today" is
+    the STORE's local calendar day** (`AT TIME ZONE location.timezone`) —
+    fixes audit D3; pinned by a test that writes an order at 23:00 store
+    time (tomorrow in UTC) and sees it count today. Store picker list =
+    approved stores for selling-restricted members (403 past it), every
+    active store otherwise.
+- **Web**: /dashboard reads /me — flagged members get the new
+  `manager-dashboard` view (store picker defaulting to the login store,
+  clickable KPI tiles, mine-vs-store day chart, leaderboard bars,
+  pipeline bar, Mine/Whole-store queue tabs, today's deliveries with
+  windows); everyone else keeps the existing page untouched.
+- Tests: reports suite 40→42 (toggle gate + /me roundtrip; approved-store
+  403, store-local tz delta, queue columns, leaderboard, past-due).
+- Later slices from the handoff: global omnibox + customer-call flow,
+  customer dedupe (warn-on-create + merge, owner-picked), existing
+  dashboard D2–D10 fixes.
