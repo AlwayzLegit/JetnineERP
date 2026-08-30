@@ -3318,11 +3318,14 @@ describe('Per-member selling scope + nav visibility', () => {
       });
     expect(ok.status).toBe(201);
 
-    // The register's location list hides the off-scope store...
+    // The register still lists EVERY location (inventory sources from
+    // anywhere) but marks where this member may ring a sale.
     const locs = await asCookie(cashierCookie).get('/v1/pos/locations');
     expect(locs.status).toBe(200);
-    expect(locs.body.some((l: { id: string }) => l.id === otherStoreId)).toBe(false);
-    expect(locs.body.some((l: { id: string }) => l.id === locationId)).toBe(true);
+    const offScope = locs.body.find((l: { id: string }) => l.id === otherStoreId);
+    const inScope = locs.body.find((l: { id: string }) => l.id === locationId);
+    expect(offScope.canSellHere).toBe(false);
+    expect(inScope.canSellHere).toBe(true);
 
     // ...but sales DATA stays visible everywhere: the owner writes an
     // order at the second store and the restricted cashier still sees it.
@@ -3341,7 +3344,9 @@ describe('Per-member selling scope + nav visibility', () => {
 
     // Owner remains unrestricted at the register too.
     const ownerLocs = await asCookie(ownerCookie).get('/v1/pos/locations');
-    expect(ownerLocs.body.some((l: { id: string }) => l.id === otherStoreId)).toBe(true);
+    expect(ownerLocs.body.every((l: { canSellHere: boolean }) => l.canSellHere === true)).toBe(
+      true,
+    );
   });
 
   it('/me carries the login picker payload and hidden nav round-trips', async () => {
@@ -3500,5 +3505,165 @@ describe('Order split — backorder lines move to their own order', () => {
       .send({ lines: [{ lineId, quantity: 5 }] });
     expect(tooMany.status).toBe(400);
     expect(tooMany.body.message).toMatch(/movable unit/);
+  });
+});
+
+describe('Split-at-sale suffix numbering + reserved drill-down', () => {
+  const asOwner3 = () => ({
+    get: (url: string) =>
+      request(app.getHttpServer())
+        .get(url)
+        .set('Cookie', ownerCookie)
+        .set('X-Business-Id', businessId),
+    post: (url: string) =>
+      request(app.getHttpServer())
+        .post(url)
+        .set('Cookie', ownerCookie)
+        .set('X-Business-Id', businessId),
+  });
+
+  let drillVariantId = '';
+
+  it('setup: another fresh variant with stock', async () => {
+    const sql = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    try {
+      const db = drizzle(sql);
+      const [p] = await db
+        .insert(schema.products)
+        .values({ businessId, sku: 'DRILL-P', name: 'Drilldown Mattress' })
+        .returning();
+      const [v] = await db
+        .insert(schema.productVariants)
+        .values({ businessId, productId: p!.id, sku: 'DRILL-V', priceCents: 30_000 })
+        .returning();
+      drillVariantId = v!.id;
+      await db.insert(schema.inventoryLevels).values({
+        businessId,
+        variantId: drillVariantId,
+        locationId,
+        onHand: 12,
+        reserved: 0,
+      });
+    } finally {
+      await sql.end({ timeout: 5 });
+    }
+  });
+
+  it('creating a sale with a later-dated line splits it into BASE-A at write time; the next split is -B', async () => {
+    const created = await asOwner3()
+      .post('/v1/orders')
+      .send({
+        locationId,
+        customerId,
+        confirm: true,
+        requestedDate: '2026-09-10',
+        splitByDeliveryDate: true,
+        lines: [
+          { variantId: drillVariantId, quantity: 1 },
+          { variantId: drillVariantId, quantity: 1, deliveryDate: '2026-10-25' },
+        ],
+      });
+    expect(created.status).toBe(201);
+    expect(created.body.splitOrders).toHaveLength(1);
+    const sibling = created.body.splitOrders[0];
+    expect(sibling.number).toBe(`${created.body.number}-A`);
+    expect(sibling.requestedDate).toBe('2026-10-25');
+    // Primary kept only the on-time line.
+    expect(created.body.lines).toHaveLength(1);
+
+    const sib = await asOwner3().get(`/v1/orders/${sibling.id}`);
+    expect(sib.body.requestedDate).toBe('2026-10-25');
+    expect(sib.body.lines).toHaveLength(1);
+    expect(sib.body.lines[0].qtyReserved).toBe(1);
+
+    // Add another line, then a manual split — the family continues at -B.
+    await asOwner3()
+      .post(`/v1/orders/${created.body.id}/lines`)
+      .send({ variantId: drillVariantId, quantity: 1 })
+      .expect(201);
+    const detail = await asOwner3().get(`/v1/orders/${created.body.id}`);
+    const lastLine = detail.body.lines[detail.body.lines.length - 1];
+    const manual = await asOwner3()
+      .post(`/v1/orders/${created.body.id}/split`)
+      .send({ lines: [{ lineId: lastLine.id }], requestedDate: '2026-11-05' });
+    expect(manual.status).toBe(201);
+    expect(manual.body.newOrder.number).toBe(`${created.body.number}-B`);
+  });
+
+  it('reserved drill-down lists the holding order; releasing the line frees the stock', async () => {
+    const created = await asOwner3()
+      .post('/v1/orders')
+      .send({
+        locationId,
+        customerId,
+        confirm: true,
+        lines: [{ variantId: drillVariantId, quantity: 2 }],
+      });
+    expect(created.status).toBe(201);
+    const lineId = created.body.lines[0].id as string;
+    expect(created.body.lines[0].qtyReserved).toBe(2);
+
+    const held = await asOwner3().get(
+      `/v1/inventory/reservations?variantId=${drillVariantId}&locationId=${locationId}`,
+    );
+    expect(held.status).toBe(200);
+    const mine = held.body.find((r: { orderId: string }) => r.orderId === created.body.id);
+    expect(mine).toBeTruthy();
+    expect(mine.qtyReserved).toBe(2);
+    expect(mine.orderNumber).toBe(created.body.number);
+
+    const released = await asOwner3().post(`/v1/orders/${created.body.id}/lines/${lineId}/release`);
+    expect(released.status).toBe(201);
+    expect(released.body.lines.find((l: { id: string }) => l.id === lineId).qtyReserved).toBe(0);
+    const after = await asOwner3().get(
+      `/v1/inventory/reservations?variantId=${drillVariantId}&locationId=${locationId}`,
+    );
+    expect(after.body.some((r: { orderId: string }) => r.orderId === created.body.id)).toBe(false);
+
+    // Nothing left to release → 400.
+    const again = await asOwner3().post(`/v1/orders/${created.body.id}/lines/${lineId}/release`);
+    expect(again.status).toBe(400);
+  });
+
+  it('orders list filters by locationId', async () => {
+    const res = await asOwner3().get(`/v1/orders?locationId=${locationId}&limit=5`);
+    expect(res.status).toBe(200);
+    expect(res.body.data.length).toBeGreaterThan(0);
+    const bogus = await asOwner3().get(
+      '/v1/orders?locationId=00000000-0000-4000-8000-000000000000&limit=5',
+    );
+    expect(bogus.body.data).toHaveLength(0);
+  });
+});
+
+describe('Recycling fee is never taxed', () => {
+  it('a custom Recycling Fee line carries 0% tax while merchandise taxes at the business rate', async () => {
+    const res = await request(app.getHttpServer())
+      .post('/v1/orders')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({
+        locationId,
+        customerId,
+        confirm: true,
+        lines: [
+          { variantId: sofaVariantId, quantity: 1 },
+          {
+            lineType: 'custom',
+            description: 'Recycling Fee',
+            quantity: 1,
+            unitPriceCents: 1050,
+          },
+        ],
+      });
+    expect(res.status).toBe(201);
+    const fee = res.body.lines.find(
+      (l: { description: string }) => l.description === 'Recycling Fee',
+    );
+    expect(fee.taxCents).toBe(0);
+    // Order tax equals the merchandise tax alone (business default 7%).
+    const sofa = res.body.lines.find((l: { variantId: string | null }) => l.variantId);
+    expect(res.body.taxCents).toBe(sofa.taxCents);
+    expect(sofa.taxCents).toBe(Math.round((129_999 * 700) / 10000));
   });
 });

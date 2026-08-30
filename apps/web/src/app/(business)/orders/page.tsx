@@ -108,6 +108,19 @@ export default function OrdersPage() {
       typeof window !== 'undefined' &&
       new URLSearchParams(window.location.search).get('mine') === '1',
   );
+  // The store chosen at login: a member working a store sees that
+  // store's orders by default (chip is clearable — data scope permits
+  // more).
+  const [loginStore] = useState<{ id: string; name: string } | null>(() => {
+    if (typeof window === 'undefined') return null;
+    try {
+      const raw = sessionStorage.getItem('jetnine.sellingStore');
+      return raw ? (JSON.parse(raw) as { id: string; name: string }) : null;
+    } catch {
+      return null;
+    }
+  });
+  const [atLoginStore, setAtLoginStore] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [selected, setSelected] = useState<ListRow | null>(null);
   const searchSeq = useRef(0);
@@ -118,6 +131,7 @@ export default function OrdersPage() {
       statusFilter: string,
       viewFilter: string,
       onlyMine: boolean,
+      locationFilter: string | null,
       cursor: string | null,
     ) => {
       const params = new URLSearchParams({ limit: '50' });
@@ -125,6 +139,7 @@ export default function OrdersPage() {
       if (statusFilter) params.set('status', statusFilter);
       if (viewFilter) params.set('view', viewFilter);
       if (onlyMine) params.set('mine', '1');
+      if (locationFilter) params.set('locationId', locationFilter);
       if (cursor) params.set('cursor', cursor);
       return api<{ data: ListRow[]; nextCursor: string | null }>(
         `/v1/orders/list-view?${params.toString()}`,
@@ -139,7 +154,7 @@ export default function OrdersPage() {
     const seq = ++searchSeq.current;
     const t = setTimeout(
       () => {
-        fetchPage(q, status, view, mine, null)
+        fetchPage(q, status, view, mine, loginStore && atLoginStore ? loginStore.id : null, null)
           .then((page) => {
             if (searchSeq.current !== seq) return;
             setRows(page.data);
@@ -155,13 +170,20 @@ export default function OrdersPage() {
     );
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [q, status, view, mine, fetchPage]);
+  }, [q, status, view, mine, atLoginStore, loginStore, fetchPage]);
 
   async function loadMore() {
     if (!nextCursor) return;
     setLoadingMore(true);
     try {
-      const page = await fetchPage(q, status, view, mine, nextCursor);
+      const page = await fetchPage(
+        q,
+        status,
+        view,
+        mine,
+        loginStore && atLoginStore ? loginStore.id : null,
+        nextCursor,
+      );
       setRows((prev) => [...(prev ?? []), ...page.data]);
       setNextCursor(page.nextCursor);
     } catch (err) {
@@ -217,6 +239,16 @@ export default function OrdersPage() {
         >
           My orders
         </button>
+        {loginStore && (
+          <button
+            className={`btn btn-sm ${atLoginStore ? 'btn-primary' : 'btn-secondary'}`}
+            data-testid="login-store-chip"
+            title="Orders at the store you logged into — click to see every store"
+            onClick={() => setAtLoginStore((v) => !v)}
+          >
+            At {loginStore.name}
+          </button>
+        )}
       </div>
 
       {error && <p style={{ color: 'var(--danger)', fontSize: 13 }}>{error}</p>}

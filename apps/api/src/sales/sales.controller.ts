@@ -373,7 +373,9 @@ export class SalesController {
   @RequirePermission('pos.access')
   async posLocations(
     @CurrentTenant() tenant: RequestTenantContext,
-  ): Promise<{ id: string; name: string; taxRateBps: number; locationType: string }[]> {
+  ): Promise<
+    { id: string; name: string; taxRateBps: number; locationType: string; canSellHere: boolean }[]
+  > {
     const [biz] = await this.db
       .select({ defaultTaxRateBps: schema.businesses.defaultTaxRateBps })
       .from(schema.businesses)
@@ -389,17 +391,17 @@ export class SalesController {
       .from(schema.locations)
       .where(eq(schema.locations.isActive, true))
       .orderBy(schema.locations.name);
-    // A selling-restricted member sells only at their approved stores.
-    // Warehouses always pass: they are inventory sources, not selling
-    // locations, and the register needs them for fulfill-from.
+    // Owner amendment 2026-08-30: every location comes back — members see
+    // and SOURCE inventory from anywhere. `canSellHere` marks where this
+    // member may actually ring the sale (the server still enforces it at
+    // write time); the register filters its selling-location picker by it.
     const scopeIds =
       tenant.sellingScope === 'approved' ? new Set(tenant.scopeLocationIds ?? []) : null;
-    return rows
-      .filter((r) => !scopeIds || r.locationType === 'warehouse' || scopeIds.has(r.id))
-      .map((r) => ({
-        ...r,
-        taxRateBps: r.taxRateBps ?? biz?.defaultTaxRateBps ?? 0,
-      }));
+    return rows.map((r) => ({
+      ...r,
+      taxRateBps: r.taxRateBps ?? biz?.defaultTaxRateBps ?? 0,
+      canSellHere: !scopeIds || scopeIds.has(r.id),
+    }));
   }
 
   /**

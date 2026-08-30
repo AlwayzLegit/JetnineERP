@@ -145,6 +145,62 @@ export class InventoryController {
   }
 
   /**
+   * Who holds the reserved units (owner ask 2026-08-30): clicking the
+   * Reserved number on the inventory page lists the order lines
+   * committing this variant at this location, so staff can release a
+   * reservation to sell the piece today and re-commit it elsewhere.
+   * A line counts against the location it actually reserves from:
+   * its own source, else the order's stock location, else the order's
+   * selling location.
+   */
+  @Get('reservations')
+  @RequirePermission('inventory.view')
+  async reservations(
+    @CurrentTenant() _tenant: RequestTenantContext,
+    @Query('variantId') variantId?: string,
+    @Query('locationId') locationId?: string,
+  ): Promise<
+    {
+      orderId: string;
+      orderNumber: string;
+      orderStatus: string;
+      requestedDate: string | null;
+      customerName: string | null;
+      lineId: string;
+      description: string;
+      qtyReserved: number;
+    }[]
+  > {
+    if (!variantId || !locationId) {
+      throw new BadRequestException('variantId and locationId are required');
+    }
+    return this.db
+      .select({
+        orderId: schema.orders.id,
+        orderNumber: schema.orders.number,
+        orderStatus: schema.orders.status,
+        requestedDate: schema.orders.requestedDate,
+        customerName: sql<
+          string | null
+        >`NULLIF(TRIM(CONCAT(${schema.customers.firstName}, ' ', ${schema.customers.lastName})), '')`,
+        lineId: schema.orderLines.id,
+        description: schema.orderLines.description,
+        qtyReserved: schema.orderLines.qtyReserved,
+      })
+      .from(schema.orderLines)
+      .innerJoin(schema.orders, eq(schema.orders.id, schema.orderLines.orderId))
+      .leftJoin(schema.customers, eq(schema.customers.id, schema.orders.customerId))
+      .where(
+        and(
+          eq(schema.orderLines.variantId, variantId),
+          sql`${schema.orderLines.qtyReserved} > 0`,
+          sql`COALESCE(${schema.orderLines.sourceLocationId}, ${schema.orders.stockLocationId}, ${schema.orders.locationId}) = ${locationId}`,
+        ),
+      )
+      .orderBy(asc(schema.orders.createdAt));
+  }
+
+  /**
    * Storage bins (STORIS Tracked Storage Location parity, lean). Bins are
    * per-location named slots; stock levels optionally point at one so the
    * pick list and receiving know where to walk. Convention: managed under

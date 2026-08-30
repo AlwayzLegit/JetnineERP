@@ -3508,3 +3508,36 @@ pass reasonCodeId` writing an exchange in production: the New Exchange
 - Tests: orders suite 80→83 (partial-qty split moves reservation and
   money math checks out — source+target totals equal the original,
   deposit stays; moving everything 400; over-quantity 400).
+
+## Checkpoint — 2026-08-30 (split-at-sale -A/-B, login-store view, reserved drill-down, untaxed fee)
+
+- **Split at New Sale + family numbering**: order create gains
+  `splitByDeliveryDate` (New Sale always sends it) — lines promised on a
+  different date than the order peel off at write time into sibling
+  orders, one per distinct date. Split numbering everywhere (endpoint
+  included) is now the family scheme: the base number stays and pieces
+  get **-A, -B, …** (`nextSplitNumber`, strips an existing letter so a
+  re-split continues the family). Create returns `splitOrders`; New
+  Sale's done screen links the siblings ("payments stay on …").
+- **Login-store view + all-location sourcing** (owner amendment):
+  `pos/locations` returns EVERY location again with a `canSellHere`
+  flag — members see and source inventory from anywhere; the register's
+  selling-location picker filters to canSellHere (server still enforces
+  at write). Orders list + list-view gain `locationId`; the orders page
+  defaults an **"At {login store}"** chip from the session store
+  (clearable — data scope already permits more).
+- **Reserved drill-down**: new `GET /v1/inventory/reservations`
+  (variant+location → the order lines holding the units, by effective
+  source) and `POST /orders/:id/lines/:lineId/release` (frees one
+  line's reservation; audited). The inventory page's Reserved count is
+  now a button → dialog listing the holding orders with per-row
+  Release; the freed stock is sellable immediately and can be
+  re-reserved on any order from its page.
+- **Recycling fee never taxed** (owner): pinned by test — custom
+  Recycling Fee lines carry 0% while merchandise taxes at the business
+  rate; and the take-with fast path no longer swallows the fee line
+  (carts with custom fees write an order, where the fee is a
+  first-class untaxed line, instead of the variant-only plain sale).
+- Tests: orders suite 83→88 (BASE-A at write time, manual re-split -B,
+  drill-down + release + re-release 400, locationId filter, untaxed
+  fee); pos/locations scope test moved to the canSellHere flag model.
