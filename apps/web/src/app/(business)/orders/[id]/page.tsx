@@ -1298,6 +1298,39 @@ export default function OrderDetailPage() {
                         </Link>{' '}
                         — {dv.status.replace(/_/g, ' ')} ·{' '}
                         {dv.lines.reduce((s, l) => s + l.quantity, 0)} unit(s)
+                        {['scheduled', 'loaded'].includes(dv.status) && (
+                          <>
+                            {' · '}
+                            <Input
+                              key={`resched-${dv.id}-${dv.scheduledDate}`}
+                              type="date"
+                              defaultValue={dv.scheduledDate}
+                              onBlur={async (e) => {
+                                const date = e.target.value;
+                                if (!date || date === dv.scheduledDate) return;
+                                // Owner 2026-08-31: New Sale books the
+                                // delivery; date changes happen here.
+                                setBusy(true);
+                                try {
+                                  await api(`/v1/deliveries/${dv.id}`, {
+                                    method: 'PATCH',
+                                    body: JSON.stringify({ scheduledDate: date }),
+                                  });
+                                  toast.success(`Delivery moved to ${date}`);
+                                  await load();
+                                } catch (err) {
+                                  toast.error(err instanceof Error ? err.message : String(err));
+                                  await load();
+                                } finally {
+                                  setBusy(false);
+                                }
+                              }}
+                              style={{ width: 140, padding: '2px 6px', fontSize: 12 }}
+                              aria-label="Change the delivery date"
+                              data-testid="reschedule-delivery-date"
+                            />
+                          </>
+                        )}
                       </li>
                     ))}
                   </ul>

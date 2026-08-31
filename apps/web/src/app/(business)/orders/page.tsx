@@ -292,7 +292,11 @@ export default function OrdersPage() {
                   </td>
                   <td style={{ whiteSpace: 'nowrap' }}>{r.deliveryDate ?? '—'}</td>
                   <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
-                    {r.balanceDueCents > 0 ? (
+                    {r.displayStatus === 'Cancelled' ? (
+                      // BA-0016: a cancelled order owes nothing — showing
+                      // its old balance made it read as a receivable.
+                      '—'
+                    ) : r.balanceDueCents > 0 ? (
                       <Money cents={r.balanceDueCents} />
                     ) : (r.creditDueCents ?? 0) > 0 ? (
                       <span style={{ color: 'var(--danger)' }}>
