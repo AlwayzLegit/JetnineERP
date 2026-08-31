@@ -578,6 +578,40 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
         })),
       );
       setResumedDraftId(id);
+      // BA-0021: the special-order/stock warning must follow the line —
+      // re-check availability for the restored variants per source.
+      const byLoc = new Map<string, string[]>();
+      for (const l of o.lines) {
+        if (!l.variantId) continue;
+        const loc = l.sourceLocationId ?? o.locationId;
+        byLoc.set(loc, [...(byLoc.get(loc) ?? []), l.variantId]);
+      }
+      const avail = new Map<string, { availableHere: number; atpDate: string | null }>();
+      await Promise.all(
+        [...byLoc.entries()].map(async ([loc, ids]) => {
+          try {
+            const rows = await api<SearchRow[]>(
+              `/v1/pos/product-search?locationId=${loc}&variantIds=${ids.join(',')}&limit=100`,
+            );
+            for (const r of rows)
+              avail.set(`${loc}:${r.variantId}`, {
+                availableHere: r.availableHere,
+                atpDate: r.atpDate,
+              });
+          } catch {
+            // availability refresh is best-effort — the draft still loads
+          }
+        }),
+      );
+      if (avail.size > 0) {
+        setLines((prev) =>
+          prev.map((l) => {
+            if (!l.variantId) return l;
+            const hit = avail.get(`${l.sourceLocationId || o.locationId}:${l.variantId}`);
+            return hit ? { ...l, availableHere: hit.availableHere, atpDate: hit.atpDate } : l;
+          }),
+        );
+      }
       toast.success('Draft loaded — completing it will replace the draft');
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -1581,7 +1615,7 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
                     <option value="">Me (signed in)</option>
                     {members.map((m) => (
                       <option key={m.membershipId} value={m.membershipId}>
-                        {m.name ?? m.email}
+                        {m.name?.trim() || m.email}
                       </option>
                     ))}
                   </Select>
@@ -1595,7 +1629,7 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
                     <option value="">None</option>
                     {members.map((m) => (
                       <option key={m.membershipId} value={m.membershipId}>
-                        {m.name ?? m.email}
+                        {m.name?.trim() || m.email}
                       </option>
                     ))}
                   </Select>
