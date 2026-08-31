@@ -936,12 +936,12 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
 
   return (
     <div className="grid gap-4 xl:grid-cols-[1fr_340px]" data-testid="new-sale">
-      <div className="min-w-0">
+      <div className="flex min-w-0 flex-col">
         {exchangeOriginal && (
           <div
             className="card mb-3"
             data-testid="exchange-banner"
-            style={{ padding: '10px 14px', borderColor: 'var(--warning)', fontSize: 13 }}
+            style={{ order: -2, padding: '10px 14px', borderColor: 'var(--warning)', fontSize: 13 }}
           >
             Writing an <strong>Exchange Order</strong> against original invoice{' '}
             <strong>{exchangeOriginal.number}</strong> — the document prints with the original
@@ -952,7 +952,7 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
           <div
             className="card mb-3"
             data-testid="duplicate-order-banner"
-            style={{ padding: '10px 14px', borderColor: 'var(--warning)', fontSize: 13 }}
+            style={{ order: -2, padding: '10px 14px', borderColor: 'var(--warning)', fontSize: 13 }}
           >
             This customer already has {openOrders.length === 1 ? 'an open order' : 'open orders'}:{' '}
             {openOrders.map((o, i) => (
@@ -963,66 +963,6 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
               </span>
             ))}
             {' — '}consider one truck: add to the existing order or match its delivery date.
-          </div>
-        )}
-        {drafts.length > 0 && (
-          <div className="mb-3 flex flex-wrap items-center gap-2" data-testid="draft-chips">
-            <span style={{ fontSize: 12.5, color: 'var(--text-secondary)' }}>Drafts:</span>
-            {drafts.map((d) => (
-              <span
-                key={d.id}
-                className="btn btn-sm"
-                style={{
-                  border: '1px dashed var(--border-strong)',
-                  background: 'var(--surface)',
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: 6,
-                  padding: 0,
-                }}
-              >
-                <button
-                  style={{
-                    border: 'none',
-                    background: 'none',
-                    cursor: 'pointer',
-                    font: 'inherit',
-                    padding: '4px 0 4px 10px',
-                  }}
-                  onClick={() => void resumeDraft(d.id)}
-                >
-                  {d.number} · {formatMoney(d.totalCents)}
-                </button>
-                <button
-                  aria-label={`Delete draft ${d.number}`}
-                  title="Delete this draft"
-                  data-testid="delete-draft"
-                  style={{
-                    border: 'none',
-                    background: 'none',
-                    cursor: 'pointer',
-                    color: 'var(--text-muted)',
-                    padding: '4px 8px 4px 0',
-                  }}
-                  onClick={() => {
-                    if (!confirm(`Delete draft ${d.number}? This cannot be undone.`)) return;
-                    void api(`/v1/orders/${d.id}/cancel`, {
-                      method: 'POST',
-                      body: JSON.stringify({ reason: 'draft deleted at the register' }),
-                    })
-                      .then(() => {
-                        toast.success(`Draft ${d.number} deleted`);
-                        loadDrafts();
-                      })
-                      .catch((err) =>
-                        toast.error(err instanceof Error ? err.message : String(err)),
-                      );
-                  }}
-                >
-                  ✕
-                </button>
-              </span>
-            ))}
           </div>
         )}
 
@@ -1047,6 +987,7 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
                 value={custQuery}
                 onChange={(e) => setCustQuery(e.target.value)}
                 placeholder="Search name, phone, email, or address…"
+                aria-label="Search customers"
                 style={{ width: '100%', padding: '10px 12px', fontSize: 15 }}
                 data-testid="customer-search"
                 autoFocus
@@ -1099,24 +1040,28 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
                     <div className="grid gap-2 sm:grid-cols-5">
                       <Input
                         placeholder="First name"
+                        aria-label="First name"
                         value={newCust.firstName}
                         onChange={(e) => setNewCust({ ...newCust, firstName: e.target.value })}
                         style={{ minWidth: 0 }}
                       />
                       <Input
                         placeholder="Last name"
+                        aria-label="Last name"
                         value={newCust.lastName}
                         onChange={(e) => setNewCust({ ...newCust, lastName: e.target.value })}
                         style={{ minWidth: 0 }}
                       />
                       <Input
                         placeholder="Phone"
+                        aria-label="Phone"
                         value={newCust.phone}
                         onChange={(e) => setNewCust({ ...newCust, phone: e.target.value })}
                         style={{ minWidth: 0 }}
                       />
                       <Input
                         placeholder="2nd phone (optional)"
+                        aria-label="2nd phone (optional)"
                         value={newCust.phone2}
                         onChange={(e) => setNewCust({ ...newCust, phone2: e.target.value })}
                         style={{ minWidth: 0 }}
@@ -1124,6 +1069,7 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
                       />
                       <Input
                         placeholder="Email"
+                        aria-label="Email"
                         value={newCust.email}
                         onChange={(e) => setNewCust({ ...newCust, email: e.target.value })}
                         style={{ minWidth: 0 }}
@@ -1162,6 +1108,7 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
                     <div className="grid gap-2 sm:grid-cols-5">
                       <Input
                         placeholder="Delivery address"
+                        aria-label="Delivery address"
                         value={newCust.line1}
                         onChange={(e) => setNewCust({ ...newCust, line1: e.target.value })}
                         style={{ minWidth: 0, gridColumn: 'span 2' }}
@@ -1169,12 +1116,14 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
                       />
                       <Input
                         placeholder="Apt / unit"
+                        aria-label="Apt / unit"
                         value={newCust.line2}
                         onChange={(e) => setNewCust({ ...newCust, line2: e.target.value })}
                         style={{ minWidth: 0 }}
                       />
                       <Input
                         placeholder="City"
+                        aria-label="City"
                         value={newCust.city}
                         onChange={(e) => setNewCust({ ...newCust, city: e.target.value })}
                         style={{ minWidth: 0 }}
@@ -1182,12 +1131,14 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
                       <div className="flex min-w-0 gap-2">
                         <Input
                           placeholder="State"
+                          aria-label="State"
                           value={newCust.region}
                           onChange={(e) => setNewCust({ ...newCust, region: e.target.value })}
                           style={{ width: 64, minWidth: 0 }}
                         />
                         <Input
                           placeholder="ZIP"
+                          aria-label="ZIP"
                           value={newCust.postalCode}
                           onChange={(e) => setNewCust({ ...newCust, postalCode: e.target.value })}
                           style={{ flex: 1, minWidth: 0 }}
@@ -1209,6 +1160,7 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
                       <div className="grid gap-2 sm:grid-cols-5">
                         <Input
                           placeholder="Billing address"
+                          aria-label="Billing address"
                           value={newBill.line1}
                           onChange={(e) => setNewBill({ ...newBill, line1: e.target.value })}
                           style={{ minWidth: 0, gridColumn: 'span 2' }}
@@ -1216,12 +1168,14 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
                         />
                         <Input
                           placeholder="Apt / unit"
+                          aria-label="Apt / unit"
                           value={newBill.line2}
                           onChange={(e) => setNewBill({ ...newBill, line2: e.target.value })}
                           style={{ minWidth: 0 }}
                         />
                         <Input
                           placeholder="City"
+                          aria-label="City"
                           value={newBill.city}
                           onChange={(e) => setNewBill({ ...newBill, city: e.target.value })}
                           style={{ minWidth: 0 }}
@@ -1229,12 +1183,14 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
                         <div className="flex min-w-0 gap-2">
                           <Input
                             placeholder="State"
+                            aria-label="State"
                             value={newBill.region}
                             onChange={(e) => setNewBill({ ...newBill, region: e.target.value })}
                             style={{ width: 64, minWidth: 0 }}
                           />
                           <Input
                             placeholder="ZIP"
+                            aria-label="ZIP"
                             value={newBill.postalCode}
                             onChange={(e) => setNewBill({ ...newBill, postalCode: e.target.value })}
                             style={{ flex: 1, minWidth: 0 }}
@@ -1245,6 +1201,7 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
                     <div className="flex min-w-0 flex-wrap gap-2">
                       <Input
                         placeholder="How did they hear about us?"
+                        aria-label="How did they hear about us?"
                         value={newCust.referralSource}
                         onChange={(e) => setNewCust({ ...newCust, referralSource: e.target.value })}
                         style={{ flex: 1, minWidth: 180 }}
@@ -1343,31 +1300,37 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
                 <div className="mt-2 grid gap-2 sm:grid-cols-3">
                   <Input
                     placeholder="Address line 1"
+                    aria-label="Address line 1"
                     value={ship.line1}
                     onChange={(e) => setShip({ ...ship, line1: e.target.value })}
                   />
                   <Input
                     placeholder="Line 2"
+                    aria-label="Line 2"
                     value={ship.line2}
                     onChange={(e) => setShip({ ...ship, line2: e.target.value })}
                   />
                   <Input
                     placeholder="City"
+                    aria-label="City"
                     value={ship.city}
                     onChange={(e) => setShip({ ...ship, city: e.target.value })}
                   />
                   <Input
                     placeholder="State"
+                    aria-label="State"
                     value={ship.region}
                     onChange={(e) => setShip({ ...ship, region: e.target.value })}
                   />
                   <Input
                     placeholder="ZIP"
+                    aria-label="ZIP"
                     value={ship.postalCode}
                     onChange={(e) => setShip({ ...ship, postalCode: e.target.value })}
                   />
                   <Input
                     placeholder="Phone at address"
+                    aria-label="Phone at address"
                     value={ship.phone}
                     onChange={(e) => setShip({ ...ship, phone: e.target.value })}
                   />
@@ -1665,6 +1628,72 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
             </Field>
           </div>
         </Card>
+        {/* BA-0036: DOM-last so the entry path gets the first tab stops;
+            CSS order keeps the strip visually on top. */}
+        {drafts.length > 0 && (
+          <div
+            className="mb-3 flex flex-wrap items-center gap-2"
+            style={{ order: -1 }}
+            data-testid="draft-chips"
+          >
+            <span style={{ fontSize: 12.5, color: 'var(--text-secondary)' }}>Drafts:</span>
+            {drafts.map((d) => (
+              <span
+                key={d.id}
+                className="btn btn-sm"
+                style={{
+                  border: '1px dashed var(--border-strong)',
+                  background: 'var(--surface)',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  padding: 0,
+                }}
+              >
+                <button
+                  style={{
+                    border: 'none',
+                    background: 'none',
+                    cursor: 'pointer',
+                    font: 'inherit',
+                    padding: '4px 0 4px 10px',
+                  }}
+                  onClick={() => void resumeDraft(d.id)}
+                >
+                  {d.number} · {formatMoney(d.totalCents)}
+                </button>
+                <button
+                  aria-label={`Delete draft ${d.number}`}
+                  title="Delete this draft"
+                  data-testid="delete-draft"
+                  style={{
+                    border: 'none',
+                    background: 'none',
+                    cursor: 'pointer',
+                    color: 'var(--text-muted)',
+                    padding: '4px 8px 4px 0',
+                  }}
+                  onClick={() => {
+                    if (!confirm(`Delete draft ${d.number}? This cannot be undone.`)) return;
+                    void api(`/v1/orders/${d.id}/cancel`, {
+                      method: 'POST',
+                      body: JSON.stringify({ reason: 'draft deleted at the register' }),
+                    })
+                      .then(() => {
+                        toast.success(`Draft ${d.number} deleted`);
+                        loadDrafts();
+                      })
+                      .catch((err) =>
+                        toast.error(err instanceof Error ? err.message : String(err)),
+                      );
+                  }}
+                >
+                  ✕
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Pinned totals + payments rail */}
@@ -1766,6 +1795,7 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
                 value={payMethod}
                 onChange={(e) => setPayMethod(e.target.value as Tender)}
                 data-testid="pay-method"
+                aria-label="Payment method"
               >
                 {TENDERS.map((t) => (
                   <option key={t.value} value={t.value}>
@@ -1781,6 +1811,7 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
                 value={payAmount}
                 onChange={(e) => setPayAmount(e.target.value)}
                 data-testid="pay-amount"
+                aria-label="Payment amount"
               />
             </div>
             {/* BA-0003: this field renders for every method so the rail
@@ -1791,6 +1822,7 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
               }
               value={payRef}
               onChange={(e) => setPayRef(e.target.value)}
+              aria-label="Payment reference"
               style={{ width: '100%', marginTop: 6 }}
             />
             <div className="flex gap-2" style={{ marginTop: 8 }}>
@@ -1883,6 +1915,7 @@ function LineRow({
             min={1}
             max={999}
             value={l.quantity}
+            aria-label={`Quantity for ${l.description}`}
             onChange={(e) => {
               // BA-0004/BA-0006: a typo must not delete the line or book
               // a billion-dollar order. Removal is the ✕ only; quantity
@@ -1912,6 +1945,7 @@ function LineRow({
             min={0}
             defaultValue={(l.unitPriceCents / 100).toFixed(2)}
             onBlur={(e) => onPatch(l.key, { unitPriceCents: parseDollars(e.target.value) })}
+            aria-label={`Unit price for ${l.description}`}
             style={{ width: 84, padding: '4px 8px' }}
             data-testid="line-price"
           />
@@ -1922,6 +1956,7 @@ function LineRow({
             step="0.01"
             min={0}
             placeholder="0.00"
+            aria-label={`Discount for ${l.description}`}
             onBlur={(e) => onPatch(l.key, { lineDiscountCents: parseDollars(e.target.value) })}
             style={{ width: 70, padding: '4px 8px' }}
           />
@@ -1938,6 +1973,7 @@ function LineRow({
                 onPatch(l.key, { fulfillmentMethod: e.target.value as Line['fulfillmentMethod'] })
               }
               style={{ width: 116, padding: '4px 8px' }}
+              aria-label={`Fulfillment for ${l.description}`}
             >
               <option value="">order default</option>
               {FULFILLMENTS.map((f) => (
