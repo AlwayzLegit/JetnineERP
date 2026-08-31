@@ -4005,3 +4005,29 @@ finding; §11 of PLAN-POS-OPERATIONS.md amended first (doc-first).
   shows "dev" locally).
   Remaining batches: keyboard (P-007/008), lists (P-013/014/018/019/024),
   plus BA-0017/0021/0038-copy stragglers.
+
+### Checkpoint — 2026-08-31 (S01 browser-audit batch 4: keyboard + labels — P-007/P-008)
+
+Batch 3 deployed (dep-daaule6k1f9s73euop80 live, 81/81; web via Vercel
+on the main merge). This batch makes order entry keyboard-completable
+and names every control.
+
+- BA-0010: Add Product results are keyboard-operable — ArrowUp/Down
+  move a visible highlight, Enter (from the search box) adds the
+  highlighted product, highlight follows the mouse too.
+- BA-0011: the popup is a real dialog — role=dialog + aria-modal,
+  focus trap (Tab wraps), Escape closes, and focus returns to whatever
+  opened it.
+- BA-0036: the drafts strip renders DOM-last with CSS order keeping it
+  visually on top — tab from the top of the page reaches the customer
+  search first, and the entry path owns the early tab stops. Draft
+  dismiss buttons were already named per draft.
+- BA-0009: every previously unnamed control on New Sale has a
+  programmatic name — placeholder-only inputs got matching aria-labels
+  (23 by sweep + customer search, tender method, payment amount,
+  reference, and per-line qty/price/discount/fulfillment named for
+  their item). Field-wrapped controls were already named via the
+  wrapping <label>. Visible-label-above-every-field remains a design
+  call for the S17 redesign pass — the audit's measurable (non-empty
+  accessible name on every control) now passes.
+  Remaining: lists batch (P-013/014/018/019/024), BA-0017/0021 stragglers.
