@@ -150,6 +150,7 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
     firstName: '',
     lastName: '',
     phone: '',
+    phone2: '',
     email: '',
     referralSource: '',
     line1: '',
@@ -867,14 +868,59 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
           <div className="mb-3 flex flex-wrap items-center gap-2" data-testid="draft-chips">
             <span style={{ fontSize: 12.5, color: 'var(--text-secondary)' }}>Drafts:</span>
             {drafts.map((d) => (
-              <button
+              <span
                 key={d.id}
                 className="btn btn-sm"
-                style={{ border: '1px dashed var(--border-strong)', background: 'var(--surface)' }}
-                onClick={() => void resumeDraft(d.id)}
+                style={{
+                  border: '1px dashed var(--border-strong)',
+                  background: 'var(--surface)',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  padding: 0,
+                }}
               >
-                {d.number} · {formatMoney(d.totalCents)}
-              </button>
+                <button
+                  style={{
+                    border: 'none',
+                    background: 'none',
+                    cursor: 'pointer',
+                    font: 'inherit',
+                    padding: '4px 0 4px 10px',
+                  }}
+                  onClick={() => void resumeDraft(d.id)}
+                >
+                  {d.number} · {formatMoney(d.totalCents)}
+                </button>
+                <button
+                  aria-label={`Delete draft ${d.number}`}
+                  title="Delete this draft"
+                  data-testid="delete-draft"
+                  style={{
+                    border: 'none',
+                    background: 'none',
+                    cursor: 'pointer',
+                    color: 'var(--text-muted)',
+                    padding: '4px 8px 4px 0',
+                  }}
+                  onClick={() => {
+                    if (!confirm(`Delete draft ${d.number}? This cannot be undone.`)) return;
+                    void api(`/v1/orders/${d.id}/cancel`, {
+                      method: 'POST',
+                      body: JSON.stringify({ reason: 'draft deleted at the register' }),
+                    })
+                      .then(() => {
+                        toast.success(`Draft ${d.number} deleted`);
+                        loadDrafts();
+                      })
+                      .catch((err) =>
+                        toast.error(err instanceof Error ? err.message : String(err)),
+                      );
+                  }}
+                >
+                  ✕
+                </button>
+              </span>
             ))}
           </div>
         )}
@@ -949,7 +995,7 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
                   // *under* the totals rail, which then swallows its
                   // clicks (caught by the checkpoint-8 e2e run).
                   <div style={{ display: 'grid', gap: 8 }}>
-                    <div className="grid gap-2 sm:grid-cols-4">
+                    <div className="grid gap-2 sm:grid-cols-5">
                       <Input
                         placeholder="First name"
                         value={newCust.firstName}
@@ -967,6 +1013,13 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
                         value={newCust.phone}
                         onChange={(e) => setNewCust({ ...newCust, phone: e.target.value })}
                         style={{ minWidth: 0 }}
+                      />
+                      <Input
+                        placeholder="2nd phone (optional)"
+                        value={newCust.phone2}
+                        onChange={(e) => setNewCust({ ...newCust, phone2: e.target.value })}
+                        style={{ minWidth: 0 }}
+                        data-testid="new-customer-phone2"
                       />
                       <Input
                         placeholder="Email"
@@ -1145,6 +1198,7 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
                               firstName: newCust.firstName || null,
                               lastName: newCust.lastName || null,
                               phone: newCust.phone || null,
+                              phone2: newCust.phone2 || null,
                               email: newCust.email || null,
                               referralSource: newCust.referralSource || null,
                               ...(addresses.length > 0 ? { addressesJson: addresses } : {}),

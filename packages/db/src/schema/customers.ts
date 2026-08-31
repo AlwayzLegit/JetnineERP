@@ -11,6 +11,8 @@ export const customers = pgTable(
       .references(() => businesses.id, { onDelete: 'cascade' }),
     email: citext('email'),
     phone: text('phone'),
+    /** Optional secondary phone (owner 2026-08-31) — spouse, work, cell. */
+    phone2: text('phone2'),
     firstName: text('first_name'),
     lastName: text('last_name'),
     addressesJson: jsonb('addresses_json'),

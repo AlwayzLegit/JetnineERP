@@ -77,7 +77,7 @@ export class GlobalSearchController {
             sql`CONCAT(COALESCE(${schema.customers.firstName}, ''), ' ', COALESCE(${schema.customers.lastName}, '')) ILIKE ${like}`,
             sql`${schema.customers.email} ILIKE ${like}`,
             digits.length >= 3
-              ? sql`regexp_replace(COALESCE(${schema.customers.phone}, ''), '\\D', '', 'g') LIKE ${`%${digits}%`}`
+              ? sql`(regexp_replace(COALESCE(${schema.customers.phone}, ''), '\\D', '', 'g') LIKE ${`%${digits}%`} OR regexp_replace(COALESCE(${schema.customers.phone2}, ''), '\\D', '', 'g') LIKE ${`%${digits}%`})`
               : sql`false`,
           ),
         ),

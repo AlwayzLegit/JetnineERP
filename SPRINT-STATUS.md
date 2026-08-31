@@ -3845,3 +3845,16 @@ with take-with lines marked "TAKEN WITH", family-combined money —
 rendered by InvoiceDoc from either piece. (4) DeliveryTicketDoc never
 prints take-with lines. PLAN-POS-OPERATIONS §4 amended. 3 new
 take-with int tests (100 orders tests green), full e2e green.
+
+### Checkpoint — 2026-08-31 (secondary phone + delete-draft chips)
+
+Owner: optional secondary phone in the New Sale customer capture, and
+a delete option on open drafts. Migration 0079_customer_phone2 adds
+`customers.phone2` (nullable). API: create/PATCH/read carry it, the
+dedupe check matches on either of a record's two numbers, customer
+merge backfills a lone phone2, and the omnibox phone-digit search hits
+phone2 too. Web: New Sale's capture row gains "2nd phone (optional)"
+(grid now 5 columns) and the customer page gets the matching edit
+field; each draft chip gains an ✕ that cancels the draft after a
+confirm ("draft deleted at the register" — same cancel the
+supersede-on-complete path uses). 2 new customers-spec tests.
