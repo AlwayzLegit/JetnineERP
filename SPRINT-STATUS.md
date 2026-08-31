@@ -3858,3 +3858,12 @@ phone2 too. Web: New Sale's capture row gains "2nd phone (optional)"
 field; each draft chip gains an ✕ that cancels the draft after a
 confirm ("draft deleted at the register" — same cancel the
 supersede-on-complete path uses). 2 new customers-spec tests.
+
+### Checkpoint — 2026-08-31 (declined-foundation $0 line button)
+
+Owner: next to Recycling, a one-click way to document that the client
+declined a new foundation. "+ Declined foundation ($0)" now sits in the
+Items header on New Sale and in the order page's Lines card — each
+click adds a "Client Declined New Foundation" custom line at $0 (no
+price, untaxed, removable like any line), so the declination prints on
+the invoice. Web-only; the server already accepts $0 custom lines.

@@ -772,6 +772,35 @@ export default function OrderDetailPage() {
                   </Button>
                   <Button
                     size="sm"
+                    variant="ghost"
+                    disabled={busy}
+                    data-testid="order-add-declined-foundation"
+                    onClick={async () => {
+                      // Owner 2026-08-31: no-charge documentation line,
+                      // same as New Sale's button.
+                      setBusy(true);
+                      try {
+                        await api(`/v1/orders/${id}/lines`, {
+                          method: 'POST',
+                          body: JSON.stringify({
+                            description: 'Client Declined New Foundation',
+                            lineType: 'custom',
+                            quantity: 1,
+                            unitPriceCents: 0,
+                          }),
+                        });
+                        await load();
+                      } catch (err) {
+                        toast.error(err instanceof Error ? err.message : String(err));
+                      } finally {
+                        setBusy(false);
+                      }
+                    }}
+                  >
+                    + Declined foundation ($0)
+                  </Button>
+                  <Button
+                    size="sm"
                     variant="secondary"
                     disabled={busy}
                     onClick={() => {
