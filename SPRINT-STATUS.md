@@ -3910,3 +3910,21 @@ failure toasts "schedule it from the order page" and never loses the
 sale. Order page: each scheduled/loaded delivery in the Deliveries card
 gains an inline date input (PATCH reschedule) so date changes happen
 from the order, per the owner. Web-only; e2e suite green.
+
+### Ops note — 2026-08-31 (STORIS sale-lines file converted, handed back)
+
+The owner's "all_invoices_Storis.txt" is the TE.326.RPT Written Sales
+Summary report (not a CSV): per-order blocks, item segments jammed on
+one physical line, page headers, CRLF. Converted offline (scratchpad —
+export data is never committed) into the sale_line import CSV: 1,078
+lines / 382 invoices (251 base + 131 \*-suffix pieces). Parser handles
+page breaks, As-Is/EXCHANGE/TAKE WITH types, letter-suffixed backorder
+quantities ("1P"), and duplicate invoice blocks. Known data limits, by
+the report's own semantics: the report prices the package on the first
+line ($0 on the rest); exchange lines show the full item price while
+the header bills the difference; the report's final order 0111854
+($1,000, 03/07/16) is cut off mid-block — its items are not in the
+export and need a re-export or manual entry. CSV delivered via chat;
+owner runs Settings → Import → "Closed sales history lines (per item)"
+→ Validate → Commit. Validation names any invoice numbers that don't
+match the previously imported receipts.
