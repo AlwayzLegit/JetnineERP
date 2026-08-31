@@ -2278,28 +2278,51 @@ export class OrdersController {
    * switching to stock tries to reserve. Refused once units are
    * fulfilled or a PO already carries the line.
    */
+  /**
+   * Edit one line in place (owner 2026-08-31: order lines look and work
+   * like New Sale's). Besides the PO-060 line-type flip, this accepts
+   * quantity, unit price, line discount, per-line fulfillment method,
+   * fulfill-from location, and per-line promised date. Reservations
+   * follow the edit: shrinking a quantity releases the excess, growing
+   * one (or moving the source) re-reserves what the line lacks, and
+   * money edits reprice the order and run the A10 price monitor.
+   */
   @Patch('orders/:id/lines/:lineId')
   @RequirePermission('orders.update')
-  async updateLineType(
+  async updateLine(
     @CurrentTenant() tenant: RequestTenantContext,
     @CurrentUser() actor: CurrentUserPayload,
     @Param('id') id: string,
     @Param('lineId') lineId: string,
-    @Body() body: { lineType?: string },
+    @Body()
+    body: {
+      lineType?: string;
+      quantity?: number;
+      unitPriceCents?: number;
+      lineDiscountCents?: number;
+      fulfillmentMethod?: string | null;
+      sourceLocationId?: string | null;
+      deliveryDate?: string | null;
+      priceReasonCodeId?: string;
+      priceReason?: string;
+    },
   ): Promise<OrderDetail> {
     const order = await this.requireLiveOrder(id);
     this.assertUnlocked(order);
     await this.assertNotOnOpenRun(id);
-    const allowed = ['stock', 'special_order', 'direct_ship'];
-    if (!body.lineType || !allowed.includes(body.lineType)) {
-      throw new BadRequestException(`lineType must be one of ${allowed.join(', ')}`);
-    }
     const [line] = await this.db
       .select()
       .from(schema.orderLines)
       .where(and(eq(schema.orderLines.id, lineId), eq(schema.orderLines.orderId, id)))
       .limit(1);
     if (!line) throw new NotFoundException('Order line not found');
+
+    if (body.lineType === undefined) return this.editLineFields(tenant, actor, order, line, body);
+
+    const allowed = ['stock', 'special_order', 'direct_ship'];
+    if (!allowed.includes(body.lineType)) {
+      throw new BadRequestException(`lineType must be one of ${allowed.join(', ')}`);
+    }
     if (line.lineType === body.lineType) return this.loadDetail(id);
     if (!line.variantId || line.lineType === 'custom') {
       throw new BadRequestException('Custom lines have no stock type to change');
@@ -2354,6 +2377,197 @@ export class OrdersController {
       after: { lineType: body.lineType },
     });
     return this.loadDetail(id);
+  }
+
+  /** The field-editor half of updateLine (everything except lineType). */
+  private async editLineFields(
+    tenant: RequestTenantContext,
+    actor: CurrentUserPayload,
+    order: typeof schema.orders.$inferSelect,
+    line: typeof schema.orderLines.$inferSelect,
+    body: {
+      quantity?: number;
+      unitPriceCents?: number;
+      lineDiscountCents?: number;
+      fulfillmentMethod?: string | null;
+      sourceLocationId?: string | null;
+      deliveryDate?: string | null;
+      priceReasonCodeId?: string;
+      priceReason?: string;
+    },
+  ): Promise<OrderDetail> {
+    const patch: Partial<typeof schema.orderLines.$inferInsert> = {};
+    const before: Record<string, unknown> = { lineId: line.id };
+    const after: Record<string, unknown> = {};
+    let repriced = false;
+    let sourceChanged = false;
+
+    if (body.quantity !== undefined) {
+      if (!Number.isInteger(body.quantity) || body.quantity < 1) {
+        throw new BadRequestException('quantity must be a positive integer');
+      }
+      if (body.quantity < line.qtyFulfilled) {
+        throw new BadRequestException(
+          `quantity cannot go below the ${line.qtyFulfilled} already fulfilled`,
+        );
+      }
+      if (body.quantity !== line.quantity) {
+        patch.quantity = body.quantity;
+        before.quantity = line.quantity;
+        after.quantity = body.quantity;
+        repriced = true;
+      }
+    }
+    if (body.unitPriceCents !== undefined) {
+      if (!Number.isInteger(body.unitPriceCents) || body.unitPriceCents < 0) {
+        throw new BadRequestException('unitPriceCents must be a non-negative integer');
+      }
+      if (body.unitPriceCents !== line.unitPriceCents) {
+        patch.unitPriceCents = body.unitPriceCents;
+        before.unitPriceCents = line.unitPriceCents;
+        after.unitPriceCents = body.unitPriceCents;
+        repriced = true;
+      }
+    }
+    if (body.lineDiscountCents !== undefined) {
+      if (!Number.isInteger(body.lineDiscountCents) || body.lineDiscountCents < 0) {
+        throw new BadRequestException('lineDiscountCents must be a non-negative integer');
+      }
+      if (body.lineDiscountCents !== line.discountCents) {
+        patch.discountCents = body.lineDiscountCents;
+        before.lineDiscountCents = line.discountCents;
+        after.lineDiscountCents = body.lineDiscountCents;
+        repriced = true;
+      }
+    }
+    {
+      const qty = patch.quantity ?? line.quantity;
+      const unit = patch.unitPriceCents ?? line.unitPriceCents;
+      const disc = patch.discountCents ?? line.discountCents;
+      if (disc > qty * unit) {
+        throw new BadRequestException('lineDiscountCents cannot exceed the line subtotal');
+      }
+    }
+    if (body.fulfillmentMethod !== undefined) {
+      const fm = body.fulfillmentMethod || null;
+      if (fm !== null && !FULFILLMENT_TYPES.includes(fm as (typeof FULFILLMENT_TYPES)[number])) {
+        throw new BadRequestException(
+          `fulfillmentMethod must be one of ${FULFILLMENT_TYPES.join(', ')} or null`,
+        );
+      }
+      if (fm !== line.fulfillmentMethod) {
+        patch.fulfillmentMethod = fm;
+        before.fulfillmentMethod = line.fulfillmentMethod;
+        after.fulfillmentMethod = fm;
+      }
+    }
+    if (body.deliveryDate !== undefined) {
+      const dd = body.deliveryDate || null;
+      if (dd !== null && !/^\d{4}-\d{2}-\d{2}$/.test(dd)) {
+        throw new BadRequestException('deliveryDate must be YYYY-MM-DD or null');
+      }
+      if (dd !== line.deliveryDate) {
+        patch.deliveryDate = dd;
+        before.deliveryDate = line.deliveryDate;
+        after.deliveryDate = dd;
+      }
+    }
+    if (body.sourceLocationId !== undefined) {
+      if (line.lineType === 'custom') {
+        throw new BadRequestException('Custom lines have no fulfill-from location');
+      }
+      const src = body.sourceLocationId || null;
+      if (src !== null) {
+        const [loc] = await this.db
+          .select({ id: schema.locations.id })
+          .from(schema.locations)
+          .where(eq(schema.locations.id, src))
+          .limit(1);
+        if (!loc) throw new NotFoundException('Line source location not found');
+      }
+      if (src !== line.sourceLocationId) {
+        patch.sourceLocationId = src;
+        before.sourceLocationId = line.sourceLocationId;
+        after.sourceLocationId = src;
+        sourceChanged = true;
+      }
+    }
+
+    if (Object.keys(after).length === 0) return this.loadDetail(order.id);
+
+    // A10 price monitor: a live-order price cut is logged (never
+    // blocked) against the variant's list price, like New Sale.
+    if (repriced && line.variantId && order.status !== 'draft') {
+      const [variant] = await this.db
+        .select({
+          priceCents: schema.productVariants.priceCents,
+          costCents: schema.productVariants.costCents,
+        })
+        .from(schema.productVariants)
+        .where(eq(schema.productVariants.id, line.variantId))
+        .limit(1);
+      if (variant) {
+        await this.priceVariance.enforce(
+          tenant.businessId!,
+          [
+            {
+              quantity: patch.quantity ?? line.quantity,
+              unitPriceCents: patch.unitPriceCents ?? line.unitPriceCents,
+              lineDiscountCents: patch.discountCents ?? line.discountCents,
+              lineType: line.lineType,
+              listPriceCents: variant.priceCents,
+              costCents: variant.costCents ?? null,
+              description: line.description,
+            },
+          ],
+          0,
+          body,
+          { action: `Edit line on ${order.number}`, entityType: 'order', entityId: order.id },
+        );
+      }
+    }
+
+    // Reservations follow the edit: moving the source releases the
+    // line's whole hold (it re-reserves at the new source below);
+    // shrinking the quantity releases just the excess. Both must land
+    // before the row update so the reserved-range check holds.
+    const targetQty = patch.quantity ?? line.quantity;
+    const releaseQty = sourceChanged ? line.qtyReserved : Math.max(0, line.qtyReserved - targetQty);
+    if (line.variantId && releaseQty > 0) {
+      await this.orders.applyReleases(this.db, {
+        businessId: tenant.businessId!,
+        orderId: order.id,
+        locationId: line.sourceLocationId ?? order.stockLocationId ?? order.locationId,
+        actorUserId: actor?.id ?? null,
+        releases: [{ orderLineId: line.id, variantId: line.variantId, quantity: releaseQty }],
+      });
+    }
+
+    await this.db.update(schema.orderLines).set(patch).where(eq(schema.orderLines.id, line.id));
+    if (repriced) await this.orders.recomputeTotals(this.db, order.id);
+    if (
+      line.variantId &&
+      line.lineType === 'stock' &&
+      order.status !== 'quote' &&
+      order.status !== 'draft' &&
+      (sourceChanged || targetQty > line.quantity)
+    ) {
+      await this.orders.reserveOrder(this.db, {
+        businessId: tenant.businessId!,
+        orderId: order.id,
+        locationId: order.stockLocationId ?? order.locationId,
+        actorUserId: actor?.id ?? null,
+      });
+    }
+
+    await this.audit.log({
+      action: 'order.line.update',
+      targetType: 'order',
+      targetId: order.id,
+      before,
+      after,
+    });
+    return this.loadDetail(order.id);
   }
 
   /**

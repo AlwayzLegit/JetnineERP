@@ -114,10 +114,12 @@ test.describe('Day 2 — order writer', () => {
     await expect(page.getByTestId('order-status')).toHaveText(/open/i);
     const lineRow = page.locator('tbody tr').first();
     await expect(lineRow).toContainText('Widget'); // seeded product name
-    // Columns: item, type, qty, reserved, fulfilled, total — confirming
-    // committed the full quantity.
-    await expect(lineRow.locator('td').nth(2)).toHaveText('1');
-    await expect(lineRow.locator('td').nth(3)).toHaveText('1');
+    // Columns mirror New Sale (item, type, qty, price, disc, fulfillment,
+    // from, amount); the reserved count sits under the item name —
+    // confirming committed the full quantity.
+    await expect(lineRow.getByTestId('order-line-qty')).toHaveValue('1');
+    await expect(lineRow).toContainText('1 reserved');
+    await expect(lineRow.getByTestId('order-line-price')).toHaveValue('10.00');
     await expect(page.getByTestId('balance-due')).toContainText('$10.00');
 
     // --- Take the deposit ---

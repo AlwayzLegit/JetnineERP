@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { CheckCircle2, CreditCard, Lock, Printer, Share2, Truck } from 'lucide-react';
 import { toast } from 'sonner';
@@ -366,6 +366,25 @@ export default function OrderDetailPage() {
       await load();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // Inline line editing (owner 2026-08-31: order lines look and work
+  // like New Sale's). Inputs commit on blur; a failed edit reloads so
+  // the boxes snap back to what the server holds.
+  async function patchLineField(lineId: string, patch: Record<string, unknown>) {
+    setBusy(true);
+    try {
+      await api(`/v1/orders/${id}/lines/${lineId}`, {
+        method: 'PATCH',
+        body: JSON.stringify(patch),
+      });
+      await load();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+      await load();
     } finally {
       setBusy(false);
     }
@@ -738,121 +757,274 @@ export default function OrderDetailPage() {
                     <th>Item</th>
                     <th>Type</th>
                     <th>Qty</th>
-                    <th>Reserved</th>
-                    <th>Fulfilled</th>
-                    <th className="num">Total</th>
+                    <th>Price $</th>
+                    <th>Disc $</th>
+                    <th>Fulfillment</th>
+                    <th>Inventory from</th>
+                    <th className="num">Amount</th>
                     <th />
                   </tr>
                 </thead>
                 <tbody>
                   {order.lines.map((l) => (
-                    <tr key={l.id}>
-                      <td>
-                        {splitMode && l.quantity - l.qtyFulfilled > 0 && (
-                          <input
-                            type="checkbox"
-                            checked={splitSel.has(l.id)}
-                            style={{ accentColor: 'var(--brand)', marginRight: 8 }}
-                            aria-label={`Split ${l.description} to a new order`}
-                            data-testid="split-line"
-                            onChange={(e) => {
-                              setSplitSel((prev) => {
-                                const next = new Set(prev);
-                                if (e.target.checked) next.add(l.id);
-                                else next.delete(l.id);
-                                return next;
-                              });
-                            }}
-                          />
-                        )}
-                        {l.description}
-                        {l.fulfillmentMethod && l.fulfillmentMethod !== order.fulfillmentType && (
-                          <span
-                            className="badge badge-info"
-                            style={{ marginLeft: 8, fontSize: 10.5 }}
-                          >
-                            {l.fulfillmentMethod.replace(/_/g, ' ')}
-                          </span>
-                        )}
-                        {l.sourceLocationId && (
-                          <span
-                            className="badge badge-neutral"
-                            style={{ marginLeft: 8, fontSize: 10.5 }}
-                            title="This line's stock reserves and ships from here"
-                          >
-                            from {locationNames.get(l.sourceLocationId) ?? 'other location'}
-                          </span>
-                        )}
-                      </td>
-                      <td>
-                        {l.lineType === 'custom' ? (
-                          'custom'
-                        ) : ['open', 'partially_fulfilled', 'draft', 'quote'].includes(
-                            order.status,
-                          ) && l.qtyFulfilled === 0 ? (
-                          // PO-060: the type stays changeable on an open
-                          // line — e.g. flip to direct ship when the
-                          // vendor will deliver straight to the customer.
-                          <select
-                            className="select"
-                            value={l.lineType}
-                            style={{ fontSize: 12, padding: '2px 4px' }}
-                            aria-label={`Line type for ${l.description}`}
-                            onChange={async (e) => {
-                              try {
-                                await api(`/v1/orders/${id}/lines/${l.id}`, {
-                                  method: 'PATCH',
-                                  body: JSON.stringify({ lineType: e.target.value }),
+                    <Fragment key={l.id}>
+                      <tr>
+                        <td>
+                          {splitMode && l.quantity - l.qtyFulfilled > 0 && (
+                            <input
+                              type="checkbox"
+                              checked={splitSel.has(l.id)}
+                              style={{ accentColor: 'var(--brand)', marginRight: 8 }}
+                              aria-label={`Split ${l.description} to a new order`}
+                              data-testid="split-line"
+                              onChange={(e) => {
+                                setSplitSel((prev) => {
+                                  const next = new Set(prev);
+                                  if (e.target.checked) next.add(l.id);
+                                  else next.delete(l.id);
+                                  return next;
                                 });
-                                await load();
-                              } catch (err) {
-                                toast.error(err instanceof Error ? err.message : String(err));
+                              }}
+                            />
+                          )}
+                          {l.description}
+                          {l.lineType !== 'custom' && (
+                            <div className="muted" style={{ fontSize: 11.5 }}>
+                              {l.qtyReserved} reserved · {l.qtyFulfilled} fulfilled
+                            </div>
+                          )}
+                        </td>
+                        <td>
+                          {l.lineType === 'custom' ? (
+                            'custom'
+                          ) : ['open', 'partially_fulfilled', 'draft', 'quote'].includes(
+                              order.status,
+                            ) && l.qtyFulfilled === 0 ? (
+                            // PO-060: the type stays changeable on an open
+                            // line — e.g. flip to direct ship when the
+                            // vendor will deliver straight to the customer.
+                            <select
+                              className="select"
+                              value={l.lineType}
+                              style={{ fontSize: 12, padding: '2px 4px' }}
+                              aria-label={`Line type for ${l.description}`}
+                              onChange={async (e) => {
+                                try {
+                                  await api(`/v1/orders/${id}/lines/${l.id}`, {
+                                    method: 'PATCH',
+                                    body: JSON.stringify({ lineType: e.target.value }),
+                                  });
+                                  await load();
+                                } catch (err) {
+                                  toast.error(err instanceof Error ? err.message : String(err));
+                                }
+                              }}
+                            >
+                              <option value="stock">stock</option>
+                              <option value="special_order">special order</option>
+                              <option value="direct_ship">direct ship</option>
+                            </select>
+                          ) : l.lineType === 'special_order' ? (
+                            <span style={{ color: 'var(--warning)' }}>special order</span>
+                          ) : l.lineType === 'direct_ship' ? (
+                            <span
+                              style={{ color: 'var(--info, var(--warning))' }}
+                              title="The vendor ships straight to the customer"
+                            >
+                              direct ship
+                            </span>
+                          ) : (
+                            'stock'
+                          )}
+                        </td>
+                        <td>
+                          {live && !order.lockedAt ? (
+                            <Input
+                              key={`qty-${l.id}-${l.quantity}`}
+                              type="number"
+                              min={1}
+                              defaultValue={l.quantity}
+                              onBlur={(e) => {
+                                const qty = Math.round(Number(e.target.value));
+                                if (Number.isFinite(qty) && qty >= 1 && qty !== l.quantity)
+                                  void patchLineField(l.id, { quantity: qty });
+                              }}
+                              style={{ width: 56, padding: '4px 8px' }}
+                              aria-label={`Quantity for ${l.description}`}
+                              data-testid="order-line-qty"
+                            />
+                          ) : (
+                            l.quantity
+                          )}
+                        </td>
+                        <td>
+                          {live && !order.lockedAt ? (
+                            <Input
+                              key={`price-${l.id}-${l.unitPriceCents}`}
+                              type="number"
+                              step="0.01"
+                              min={0}
+                              defaultValue={(l.unitPriceCents / 100).toFixed(2)}
+                              onBlur={(e) => {
+                                const cents = Math.round(Number(e.target.value) * 100);
+                                if (
+                                  Number.isFinite(cents) &&
+                                  cents >= 0 &&
+                                  cents !== l.unitPriceCents
+                                )
+                                  void patchLineField(l.id, { unitPriceCents: cents });
+                              }}
+                              style={{ width: 84, padding: '4px 8px' }}
+                              aria-label={`Unit price for ${l.description}`}
+                              data-testid="order-line-price"
+                            />
+                          ) : (
+                            <Money cents={l.unitPriceCents} />
+                          )}
+                        </td>
+                        <td>
+                          {live && !order.lockedAt ? (
+                            <Input
+                              key={`disc-${l.id}-${l.discountCents}`}
+                              type="number"
+                              step="0.01"
+                              min={0}
+                              placeholder="0.00"
+                              defaultValue={
+                                l.discountCents ? (l.discountCents / 100).toFixed(2) : ''
                               }
-                            }}
-                          >
-                            <option value="stock">stock</option>
-                            <option value="special_order">special order</option>
-                            <option value="direct_ship">direct ship</option>
-                          </select>
-                        ) : l.lineType === 'special_order' ? (
-                          <span style={{ color: 'var(--warning)' }}>special order</span>
-                        ) : l.lineType === 'direct_ship' ? (
-                          <span
-                            style={{ color: 'var(--info, var(--warning))' }}
-                            title="The vendor ships straight to the customer"
-                          >
-                            direct ship
-                          </span>
-                        ) : (
-                          'stock'
+                              onBlur={(e) => {
+                                const cents = Math.round(Number(e.target.value || '0') * 100);
+                                if (
+                                  Number.isFinite(cents) &&
+                                  cents >= 0 &&
+                                  cents !== l.discountCents
+                                )
+                                  void patchLineField(l.id, { lineDiscountCents: cents });
+                              }}
+                              style={{ width: 70, padding: '4px 8px' }}
+                              aria-label={`Discount for ${l.description}`}
+                              data-testid="order-line-disc"
+                            />
+                          ) : l.discountCents > 0 ? (
+                            <Money cents={l.discountCents} />
+                          ) : (
+                            '—'
+                          )}
+                        </td>
+                        <td>
+                          {l.lineType === 'custom' ? (
+                            <span className="muted" style={{ fontSize: 12 }}>
+                              fee
+                            </span>
+                          ) : live && !order.lockedAt ? (
+                            <Select
+                              value={l.fulfillmentMethod ?? ''}
+                              onChange={(e) =>
+                                void patchLineField(l.id, {
+                                  fulfillmentMethod: e.target.value || null,
+                                })
+                              }
+                              style={{ width: 116, padding: '4px 8px', fontSize: 12 }}
+                              aria-label={`Fulfillment for ${l.description}`}
+                              data-testid="order-line-fulfillment"
+                            >
+                              <option value="">order default</option>
+                              <option value="delivery">Delivery</option>
+                              <option value="pickup">Customer pickup</option>
+                              <option value="take_with">Take-with</option>
+                              <option value="direct_ship">Direct ship</option>
+                            </Select>
+                          ) : (
+                            (l.fulfillmentMethod ?? 'order default').replace(/_/g, ' ')
+                          )}
+                        </td>
+                        <td>
+                          {l.lineType === 'custom' ? (
+                            <span className="muted" style={{ fontSize: 12 }}>
+                              —
+                            </span>
+                          ) : live && !order.lockedAt ? (
+                            <Select
+                              value={
+                                l.sourceLocationId ?? order.stockLocationId ?? order.locationId
+                              }
+                              onChange={(e) => {
+                                const fallback = order.stockLocationId ?? order.locationId;
+                                void patchLineField(l.id, {
+                                  sourceLocationId:
+                                    e.target.value === fallback ? null : e.target.value,
+                                });
+                              }}
+                              style={{ width: 130, padding: '4px 8px', fontSize: 12 }}
+                              aria-label={`Inventory source for ${l.description}`}
+                              data-testid="order-line-source"
+                            >
+                              {[...locations]
+                                .sort((a, b) =>
+                                  a.locationType === b.locationType
+                                    ? a.name.localeCompare(b.name)
+                                    : a.locationType === 'warehouse'
+                                      ? -1
+                                      : 1,
+                                )
+                                .map((loc) => (
+                                  <option key={loc.id} value={loc.id}>
+                                    {loc.name}
+                                    {loc.locationType === 'warehouse' ? ' (WH)' : ''}
+                                  </option>
+                                ))}
+                            </Select>
+                          ) : (
+                            (locationNames.get(
+                              l.sourceLocationId ?? order.stockLocationId ?? order.locationId,
+                            ) ?? '—')
+                          )}
+                        </td>
+                        <td className="num">
+                          <Money cents={l.totalCents} />
+                        </td>
+                        <td>
+                          {live && !order.lockedAt && l.qtyFulfilled === 0 && (
+                            <button
+                              onClick={() => void removeLine(l)}
+                              disabled={busy}
+                              style={{
+                                border: 'none',
+                                background: 'none',
+                                cursor: 'pointer',
+                                color: 'var(--text-muted)',
+                              }}
+                              aria-label={`Remove ${l.description}`}
+                              title="Remove line (releases its reserved stock)"
+                              data-testid="order-remove-line"
+                            >
+                              ✕
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                      {l.lineType === 'stock' &&
+                        l.quantity - l.qtyFulfilled - l.qtyReserved > 0 && (
+                          <tr>
+                            <td colSpan={9} style={{ paddingTop: 0 }}>
+                              <div
+                                style={{
+                                  background: '#fef3c7',
+                                  color: '#92400e',
+                                  fontSize: 12.5,
+                                  padding: '4px 10px',
+                                  borderRadius: 6,
+                                }}
+                                data-testid="order-line-short"
+                              >
+                                {l.quantity - l.qtyFulfilled - l.qtyReserved} not reserved — not in
+                                stock at the selected source location.
+                              </div>
+                            </td>
+                          </tr>
                         )}
-                      </td>
-                      <td>{l.quantity}</td>
-                      <td>{l.qtyReserved}</td>
-                      <td>{l.qtyFulfilled}</td>
-                      <td className="num">
-                        <Money cents={l.totalCents} />
-                      </td>
-                      <td>
-                        {live && !order.lockedAt && l.qtyFulfilled === 0 && (
-                          <button
-                            onClick={() => void removeLine(l)}
-                            disabled={busy}
-                            style={{
-                              border: 'none',
-                              background: 'none',
-                              cursor: 'pointer',
-                              color: 'var(--text-muted)',
-                            }}
-                            aria-label={`Remove ${l.description}`}
-                            title="Remove line (releases its reserved stock)"
-                            data-testid="order-remove-line"
-                          >
-                            ✕
-                          </button>
-                        )}
-                      </td>
-                    </tr>
+                    </Fragment>
                   ))}
                 </tbody>
               </table>

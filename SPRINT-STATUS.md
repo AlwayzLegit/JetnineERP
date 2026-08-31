@@ -3806,3 +3806,21 @@ like any line. The per-product auto-add block and the RECYCLING_RE
 matcher are gone; totals/tax math untouched (fee stays untaxed via the
 custom-line path). PLAN-POS-OPERATIONS §4 fee bullet amended in the
 same commit. Web-only — Vercel ships it on merge.
+
+### Checkpoint — 2026-08-31 (order lines edit in place — New Sale parity)
+
+Owner: "in orders for Line needs to look and function similarly to how
+it does in New Sale." The order page's Lines table now carries New
+Sale's columns — Item / Type / Qty / Price $ / Disc $ / Fulfillment /
+Inventory from / Amount — with in-place inputs (commit on blur, snap
+back on error) while the order is live and unlocked; reserved/fulfilled
+counts sit under the item name and a stock line short at its source
+shows the amber "not reserved" strip. Server: PATCH
+/v1/orders/:id/lines/:lineId grew from the PO-060 type flip into a full
+line editor (quantity, unitPriceCents, lineDiscountCents,
+fulfillmentMethod, sourceLocationId, deliveryDate). Reservations follow
+the edit — shrink releases the excess, growth tops up, and a source
+move releases at the old location and re-reserves at the new one; money
+edits reprice the order and run the A10 log-only price monitor;
+quantity can never drop below what's fulfilled. 4 new orders-spec
+tests. API change — deploy rolled after merge.
