@@ -68,8 +68,10 @@ Single-screen order entry — customer, products, payment all on one screen (no 
 - **Price override**: click the price, type a new one. Any associate, no approval,
   no cap.
 - **Discounts**: per line item AND on the order subtotal.
-- **Auto fee lines**: any mattress, foundation, or adjustable base auto-adds a
-  Recycling Fee line per unit (rate = admin setting, e.g. $10.50/unit); removable by
+- **Fee lines** _(amended 2026-08-30: the Recycling Fee no longer auto-adds per
+  qualifying unit — the owner wants it added by hand)_: a "+ Recycling" button next
+  to "+ Removal" adds one untaxed Recycling Fee line (rate = admin setting, e.g.
+  $10.50/unit); each further click counts one more unit on that line; removable by
   the salesperson. Installation = order-level fee (default $0). Mattress Removal =
   selectable $0 line item. Delivery fee entered manually per order.
 - **Salespeople**: multiple per order; commission split defaults to equal, editable.

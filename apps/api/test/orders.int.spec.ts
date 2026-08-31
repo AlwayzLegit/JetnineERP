@@ -3816,3 +3816,169 @@ describe('Add item to an existing order at a set price (owner ask 2026-08-30)', 
     expect(after.body.balanceDueCents).toBe(before);
   });
 });
+
+/**
+ * Owner 2026-08-31: order lines edit in place like New Sale — qty,
+ * price, discount, per-line fulfillment, and fulfill-from, with
+ * reservations following the edit and money edits repricing.
+ */
+describe('Order line in-place editing (New Sale parity)', () => {
+  let annexId = '';
+  let leVariantId = '';
+
+  function req(method: 'post' | 'patch', url: string) {
+    return request(app.getHttpServer())
+      [method](url)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId);
+  }
+
+  async function reservedAt(locId: string): Promise<number> {
+    const sql2 = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    const db = drizzle(sql2);
+    try {
+      const [row] = await db
+        .select({ reserved: schema.inventoryLevels.reserved })
+        .from(schema.inventoryLevels)
+        .where(
+          and(
+            eq(schema.inventoryLevels.variantId, leVariantId),
+            eq(schema.inventoryLevels.locationId, locId),
+          ),
+        )
+        .limit(1);
+      return row?.reserved ?? 0;
+    } finally {
+      await sql2.end({ timeout: 5 });
+    }
+  }
+
+  beforeAll(async () => {
+    const sql2 = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    const db = drizzle(sql2);
+    try {
+      const [annex] = await db
+        .insert(schema.locations)
+        .values({ businessId, name: 'Line Edit Annex', timezone: 'America/New_York' })
+        .returning();
+      annexId = annex!.id;
+      const [p] = await db
+        .insert(schema.products)
+        .values({ businessId, sku: 'LNE-EDIT', name: 'Line Edit Sofa' })
+        .returning();
+      const [v] = await db
+        .insert(schema.productVariants)
+        .values({
+          businessId,
+          productId: p!.id,
+          sku: 'LNE-EDIT-1',
+          priceCents: 50_000,
+          costCents: 30_000,
+        })
+        .returning();
+      leVariantId = v!.id;
+      for (const loc of [locationId, annexId]) {
+        await db.insert(schema.inventoryLevels).values({
+          businessId,
+          variantId: leVariantId,
+          locationId: loc,
+          onHand: 10,
+          reserved: 0,
+        });
+      }
+    } finally {
+      await sql2.end({ timeout: 5 });
+    }
+  });
+
+  async function makeOrder(quantity: number): Promise<{ id: string; lineId: string }> {
+    const res = await req('post', '/v1/orders').send({
+      locationId,
+      customerId,
+      confirm: true,
+      lines: [{ variantId: leVariantId, quantity }],
+    });
+    expect(res.status).toBe(201);
+    return { id: res.body.id, lineId: res.body.lines[0].id };
+  }
+
+  it('quantity edits reprice and the reservation follows both ways', async () => {
+    const before = await reservedAt(locationId);
+    const o = await makeOrder(3);
+    expect(await reservedAt(locationId)).toBe(before + 3);
+
+    const down = await req('patch', `/v1/orders/${o.id}/lines/${o.lineId}`).send({ quantity: 2 });
+    expect(down.status).toBe(200);
+    expect(down.body.lines[0].quantity).toBe(2);
+    expect(down.body.lines[0].qtyReserved).toBe(2);
+    expect(down.body.subtotalCents).toBe(100_000);
+    expect(await reservedAt(locationId)).toBe(before + 2);
+
+    const up = await req('patch', `/v1/orders/${o.id}/lines/${o.lineId}`).send({ quantity: 4 });
+    expect(up.status).toBe(200);
+    expect(up.body.lines[0].qtyReserved).toBe(4);
+    expect(await reservedAt(locationId)).toBe(before + 4);
+
+    const zero = await req('patch', `/v1/orders/${o.id}/lines/${o.lineId}`).send({ quantity: 0 });
+    expect(zero.status).toBe(400);
+  });
+
+  it('price and discount edits reprice; an over-discount is refused', async () => {
+    const o = await makeOrder(1);
+    const priced = await req('patch', `/v1/orders/${o.id}/lines/${o.lineId}`).send({
+      unitPriceCents: 40_000,
+    });
+    expect(priced.status).toBe(200);
+    expect(priced.body.lines[0].unitPriceCents).toBe(40_000);
+    expect(priced.body.subtotalCents).toBe(40_000);
+
+    const disc = await req('patch', `/v1/orders/${o.id}/lines/${o.lineId}`).send({
+      lineDiscountCents: 1_000,
+    });
+    expect(disc.status).toBe(200);
+    expect(disc.body.lines[0].discountCents).toBe(1_000);
+    expect(disc.body.discountCents).toBe(1_000);
+
+    const over = await req('patch', `/v1/orders/${o.id}/lines/${o.lineId}`).send({
+      lineDiscountCents: 50_000,
+    });
+    expect(over.status).toBe(400);
+    expect(over.body.message).toMatch(/cannot exceed/);
+  });
+
+  it('per-line fulfillment sets and clears; junk is refused', async () => {
+    const o = await makeOrder(1);
+    const set = await req('patch', `/v1/orders/${o.id}/lines/${o.lineId}`).send({
+      fulfillmentMethod: 'take_with',
+    });
+    expect(set.status).toBe(200);
+    expect(set.body.lines[0].fulfillmentMethod).toBe('take_with');
+
+    const clear = await req('patch', `/v1/orders/${o.id}/lines/${o.lineId}`).send({
+      fulfillmentMethod: null,
+    });
+    expect(clear.status).toBe(200);
+    expect(clear.body.lines[0].fulfillmentMethod).toBeNull();
+
+    const junk = await req('patch', `/v1/orders/${o.id}/lines/${o.lineId}`).send({
+      fulfillmentMethod: 'teleport',
+    });
+    expect(junk.status).toBe(400);
+  });
+
+  it('moving the fulfill-from location re-homes the reservation', async () => {
+    const mainBefore = await reservedAt(locationId);
+    const annexBefore = await reservedAt(annexId);
+    const o = await makeOrder(2);
+    expect(await reservedAt(locationId)).toBe(mainBefore + 2);
+
+    const moved = await req('patch', `/v1/orders/${o.id}/lines/${o.lineId}`).send({
+      sourceLocationId: annexId,
+    });
+    expect(moved.status).toBe(200);
+    expect(moved.body.lines[0].sourceLocationId).toBe(annexId);
+    expect(moved.body.lines[0].qtyReserved).toBe(2);
+    expect(await reservedAt(locationId)).toBe(mainBefore);
+    expect(await reservedAt(annexId)).toBe(annexBefore + 2);
+  });
+});
