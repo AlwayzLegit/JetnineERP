@@ -915,8 +915,7 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
           </p>
         )}
         <p className="muted" style={{ fontSize: 13 }}>
-          Print / Email invoice arrive with the documents phase; the order page has the receipt for
-          now.
+          Open the {done.kind} page to print the invoice or receipt.
         </p>
         <div className="flex gap-2">
           <Button

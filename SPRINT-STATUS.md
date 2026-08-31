@@ -3971,3 +3971,37 @@ migration. This batch ships the S1s + money-safety S2s:
 - BA-0016 (display): cancelled orders show — in Balance due.
   Remaining batches: print/copy (P-010/011/021/022), keyboard (P-007/008),
   lists (P-013/014/018/019/024), build identifier.
+
+### Checkpoint — 2026-08-31 (S01 browser-audit batch 3: print/copy — P-010/011/021/022 + build id)
+
+Batch 1 deployed (dep-daau6ooae00c73anrh5g, boot 81/81
+head=0080_s01_audit_cleanup — the ZZTEST records and the phantom
+$1,254.50 are gone from production). This batch fixes every print/copy
+finding; §11 of PLAN-POS-OPERATIONS.md amended first (doc-first).
+
+- BA-0013: invoice prints the salesperson's full name, not initials.
+- BA-0014: Sold To carries the billing street address with ZIP (new
+  `customer.address` on the document payload, billing entry preferred);
+  Ship To falls back to printing the billing address instead of the
+  bare "Same as billing".
+- BA-0030: Customer # dropped from the invoice strip — no human-facing
+  customer number exists, and an id fragment fails the paste-into-search
+  test.
+- BA-0015: one definition of Merchandise — the invoice totals box now
+  excludes the recycling fee from Merchandise and breaks it out on its
+  own Recycling line (CA itemization), matching New Sale. Totals
+  unchanged; works for combined family invoices too.
+- BA-0028: delivery ticket drops fee lines (lineType custom) from the
+  load list — same rule the pick list already used.
+- BA-0029: Code 39 barcodes, no library — order-number barcode on the
+  delivery ticket and pick list, per-line SKU barcode on the pick list.
+- BA-0041: documents print tender labels ("Cash", "Credit card"), not
+  raw enum values.
+- BA-0031: stale roadmap copy deleted — the New Sale done screen and
+  the order page cancel card now describe what exists.
+- BA-0040: toasts moved bottom-right so they never cover Open register.
+- Audit hygiene: sidebar shows "Build <sha7>" from
+  NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA (Vercel system env, default-on;
+  shows "dev" locally).
+  Remaining batches: keyboard (P-007/008), lists (P-013/014/018/019/024),
+  plus BA-0017/0021/0038-copy stragglers.
