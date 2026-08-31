@@ -3824,3 +3824,24 @@ move releases at the old location and re-reserves at the new one; money
 edits reprice the order and run the A10 log-only price monitor;
 quantity can never drop below what's fulfilled. 4 new orders-spec
 tests. API change — deploy rolled after merge.
+
+### Checkpoint — 2026-08-31 (take-with hand-over + family invoice + recycling on orders)
+
+Owner batch, six answers locked. (1) The order page's Lines card gains
+the same "+ Recycling ($x)" button as New Sale (one untaxed fee line,
+each click counts a unit). (2) Take-with hand-over: Complete on a live
+order (New Sale calls it after payments; the order page's "Complete
+take-with items" button; the per-line hand-over button is REMOVED)
+splits take-with lines to a -A sibling — executeSplit gained
+payChildFirst (collected money covers the walking goods first) and a
+fulfillmentType override — then tryCompleteTakeWith tops up the
+reservation and, when every unit is covered and the money is in,
+fulfills and completes the piece. Short or unpaid pieces stay open
+(never an error): the response says why, the order page shows the amber
+waiting banner, and one click on the piece finishes it after a user
+with inventory access adjusts the stock in. (3) The invoice document
+now carries familyInvoice — every piece's lines under the base number
+with take-with lines marked "TAKEN WITH", family-combined money —
+rendered by InvoiceDoc from either piece. (4) DeliveryTicketDoc never
+prints take-with lines. PLAN-POS-OPERATIONS §4 amended. 3 new
+take-with int tests (100 orders tests green), full e2e green.

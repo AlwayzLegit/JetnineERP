@@ -332,6 +332,29 @@ interface OrderDocument {
   scheduledDate: string | null;
   order: OrderDetail;
   lines: (OrderLineRow & { model: string | null; brand: string | null })[];
+  /**
+   * Owner 2026-08-31: a split family prints ONE combined invoice —
+   * every piece's lines under the base number, take-with lines marked,
+   * with the family's combined money. Null when the order stands alone.
+   */
+  familyInvoice: {
+    numbers: string[];
+    lines: (OrderLineRow & {
+      model: string | null;
+      brand: string | null;
+      pieceNumber: string;
+      takenWith: boolean;
+    })[];
+    subtotalCents: number;
+    discountCents: number;
+    deliveryFeeCents: number;
+    installFeeCents: number;
+    otherFeeCents: number;
+    taxCents: number;
+    totalCents: number;
+    paidCents: number;
+    balanceDueCents: number;
+  } | null;
 }
 
 /** Step-3 fee fields must be non-negative integer cents. */
@@ -2041,6 +2064,17 @@ export class OrdersController {
     order: typeof schema.orders.$inferSelect,
     moves: { line: typeof schema.orderLines.$inferSelect; quantity: number }[],
     requestedDate: string | null,
+    opts: {
+      /**
+       * Take-with split (owner 2026-08-31): the collected money covers
+       * the goods walking out the door FIRST — the child takes
+       * min(everything paid, its own total), not just the excess past
+       * the parent's total.
+       */
+      payChildFirst?: boolean;
+      /** Override the child's fulfillment type (take-with pieces). */
+      fulfillmentType?: string;
+    } = {},
   ): Promise<{ id: string; number: string }> {
     const id = order.id;
     // The new order: same customer, store, salespeople, and addresses —
@@ -2061,7 +2095,7 @@ export class OrdersController {
         secondSalespersonMembershipId: order.secondSalespersonMembershipId,
         splitBps: order.splitBps,
         orderKind: order.orderKind,
-        fulfillmentType: order.fulfillmentType,
+        fulfillmentType: opts.fulfillmentType ?? order.fulfillmentType,
         deliveryInstructions: order.deliveryInstructions,
         pickupLocationId: order.pickupLocationId,
         billingAddressJson: order.billingAddressJson as never,
@@ -2155,12 +2189,13 @@ export class OrdersController {
       .select({ amountCents: schema.payments.amountCents, status: schema.payments.status })
       .from(schema.payments)
       .where(eq(schema.payments.orderId, id));
-    const excessCents = paidCents(collectedRows) - parentTotals.totalCents;
+    const collectedCents = paidCents(collectedRows);
+    const moveCents = opts.payChildFirst
+      ? Math.min(collectedCents, childTotalCents)
+      : Math.min(Math.max(0, collectedCents - parentTotals.totalCents), childTotalCents);
     let movedPaymentsCents = 0;
-    if (excessCents > 0) {
-      movedPaymentsCents = (
-        await this.movePayments(id, target.id, Math.min(excessCents, childTotalCents))
-      ).movedCents;
+    if (moveCents > 0) {
+      movedPaymentsCents = (await this.movePayments(id, target.id, moveCents)).movedCents;
     }
 
     // Each piece asks for the policy deposit on ITS total from here on —
@@ -2961,7 +2996,11 @@ export class OrdersController {
     @CurrentUser() actor: CurrentUserPayload,
     @Param('id') id: string,
     @Body() body: { allowBalance?: boolean },
-  ): Promise<OrderDetail> {
+  ): Promise<
+    OrderDetail & {
+      takeWith?: { orderId: string; number: string; completed: boolean; reason: string | null };
+    }
+  > {
     const [order] = await this.db
       .select()
       .from(schema.orders)
@@ -2970,6 +3009,63 @@ export class OrdersController {
     if (!order) throw new NotFoundException('Order not found');
     if (order.completedAt) throw new BadRequestException('Order is already completed');
     if (order.cancelledAt) throw new BadRequestException('A cancelled order cannot be completed');
+
+    // Take-with hand-over (owner 2026-08-31): hitting Complete on a live
+    // order that still carries take-with lines splits them off to a -A
+    // sibling (money collected covers the walking goods first) and
+    // completes that piece on the spot when its stock is reserved and
+    // its money is in. A short or unpaid piece stays open — never an
+    // error — and finishes with one click here once inventory is
+    // adjusted in. This replaces the per-line hand-over button.
+    if (['open', 'partially_fulfilled'].includes(order.status)) {
+      const lines = await this.db
+        .select()
+        .from(schema.orderLines)
+        .where(eq(schema.orderLines.orderId, id));
+      const isTakeWith = (l: (typeof lines)[number]) =>
+        l.lineType !== 'direct_ship' &&
+        (l.fulfillmentMethod ?? order.fulfillmentType) === 'take_with';
+      const twLines = lines.filter(isTakeWith);
+      const rest = lines.filter((l) => !isTakeWith(l));
+      if (twLines.length > 0) {
+        this.assertUnlocked(order);
+        await this.assertNotOnOpenRun(id);
+        let piece = order;
+        if (rest.length > 0) {
+          const moves = twLines
+            .map((line) => ({
+              line,
+              quantity: line.quantity - line.qtyFulfilled - line.qtyReturned,
+            }))
+            .filter((m) => m.quantity > 0);
+          if (moves.length === 0) {
+            throw new BadRequestException('Every take-with unit is already handed over');
+          }
+          const sp = await this.executeSplit(tenant, actor, order, moves, null, {
+            payChildFirst: true,
+            fulfillmentType: 'take_with',
+          });
+          const [created] = await this.db
+            .select()
+            .from(schema.orders)
+            .where(eq(schema.orders.id, sp.id))
+            .limit(1);
+          piece = created!;
+        }
+        const outcome = await this.tryCompleteTakeWith(tenant, actor, piece.id);
+        const detail = await this.loadDetail(id);
+        return {
+          ...detail,
+          takeWith: {
+            orderId: piece.id,
+            number: piece.number,
+            completed: outcome.completed,
+            reason: outcome.reason,
+          },
+        };
+      }
+    }
+
     if (order.status !== 'fulfilled') {
       throw new BadRequestException('Deliver or hand over every unit before completing the order');
     }
@@ -3019,6 +3115,97 @@ export class OrdersController {
     const detail = await this.loadDetail(id);
     this.fireOrderEvent('order.completed', tenant.businessId!, detail);
     return detail;
+  }
+
+  /**
+   * Finish a take-with piece: top up its reservation, and when every
+   * unit is covered and the money is in, hand the goods over (fulfill)
+   * and complete it. When it cannot finish, say exactly why — the order
+   * page shows the reason as the waiting banner and the piece stays
+   * open for the one-click retry after inventory is adjusted in.
+   */
+  private async tryCompleteTakeWith(
+    tenant: RequestTenantContext,
+    actor: CurrentUserPayload,
+    pieceId: string,
+  ): Promise<{ completed: boolean; reason: string | null }> {
+    const [piece] = await this.db
+      .select()
+      .from(schema.orders)
+      .where(eq(schema.orders.id, pieceId))
+      .limit(1);
+    if (!piece) return { completed: false, reason: 'take-with piece not found' };
+
+    // Top up first so "adjust inventory, then hit Complete" is one click.
+    await this.orders.reserveOrder(this.db, {
+      businessId: tenant.businessId!,
+      orderId: pieceId,
+      locationId: piece.stockLocationId ?? piece.locationId,
+      actorUserId: actor?.id ?? null,
+    });
+
+    const lines = await this.db
+      .select()
+      .from(schema.orderLines)
+      .where(eq(schema.orderLines.orderId, pieceId));
+    const shortUnits = lines
+      .filter((l) => l.variantId && l.lineType !== 'custom' && l.lineType !== 'direct_ship')
+      .reduce((n, l) => n + Math.max(0, l.quantity - l.qtyFulfilled - l.qtyReserved), 0);
+    if (shortUnits > 0) {
+      return {
+        completed: false,
+        reason:
+          `${shortUnits} unit(s) not in stock at the source location — a user with inventory ` +
+          'access must adjust them in, then hit Complete',
+      };
+    }
+
+    const payments = await this.db
+      .select({ amountCents: schema.payments.amountCents, status: schema.payments.status })
+      .from(schema.payments)
+      .where(eq(schema.payments.orderId, pieceId));
+    const due = balanceDueCents(piece.totalCents, payments);
+    if (due > 0) {
+      return {
+        completed: false,
+        reason: `waiting on payment — $${(due / 100).toFixed(2)} still due`,
+      };
+    }
+
+    const fulfillable = lines.filter((l) => l.lineType !== 'direct_ship');
+    const requests = remainingFulfillment(fulfillable);
+    if (requests.length > 0) {
+      const plan = planFulfillment(fulfillable, requests);
+      if (plan.errors.length > 0) return { completed: false, reason: plan.errors.join('; ') };
+      await this.orders.applyFulfillment(this.db, {
+        businessId: tenant.businessId!,
+        orderId: pieceId,
+        locationId: piece.stockLocationId ?? piece.locationId,
+        actorUserId: actor?.id ?? null,
+        steps: plan.steps,
+      });
+      const after = await this.db
+        .select({
+          quantity: schema.orderLines.quantity,
+          qtyFulfilled: schema.orderLines.qtyFulfilled,
+        })
+        .from(schema.orderLines)
+        .where(eq(schema.orderLines.orderId, pieceId));
+      await this.db
+        .update(schema.orders)
+        .set({ status: deriveFulfillmentStatus(after), updatedAt: new Date() })
+        .where(eq(schema.orders.id, pieceId));
+      await this.audit.log({
+        action: 'order.fulfill',
+        targetType: 'order',
+        targetId: pieceId,
+        after: { units: plan.steps.reduce((n, x) => n + x.quantity, 0), mode: 'take_with' },
+      });
+    }
+    // The piece is now 'fulfilled' with zero balance, so this lands in
+    // complete()'s normal tail (release residue, commissions, webhook).
+    await this.complete(tenant, actor, pieceId, {});
+    return { completed: true, reason: null };
   }
 
   /**
@@ -3806,7 +3993,21 @@ export class OrdersController {
     // real brand when one is assigned, falling back to the variant's
     // preferred vendor for unbranded catalog rows (the original v1
     // convention, kept so imported products still print something).
-    const variantIds = detail.lines.map((l) => l.variantId).filter((v): v is string => Boolean(v));
+    // Family pieces (split siblings) share the invoice — pull their
+    // details up front so one meta lookup covers every line printed.
+    const siblingRows = (
+      await this.splitFamily(tenant.businessId!, detail.number, detail.id)
+    ).filter((r) => !r.cancelledAt && r.status !== 'cancelled');
+    const familyPieces =
+      siblingRows.length > 0
+        ? [detail, ...(await Promise.all(siblingRows.map((r) => this.loadDetail(r.id))))].sort(
+            (a, b) => a.number.localeCompare(b.number),
+          )
+        : [detail];
+
+    const variantIds = [
+      ...new Set(familyPieces.flatMap((p) => p.lines.map((l) => l.variantId)).filter(Boolean)),
+    ] as string[];
     const lineMeta = new Map<
       string,
       { model: string | null; brand: string | null; bin: string | null }
@@ -3866,6 +4067,31 @@ export class OrdersController {
       originalOrderNumber = orig?.number ?? null;
     }
 
+    const familyInvoice =
+      familyPieces.length > 1
+        ? {
+            numbers: familyPieces.map((p) => p.number),
+            lines: familyPieces.flatMap((p) =>
+              p.lines.map((l) => ({
+                ...l,
+                model: l.variantId ? (lineMeta.get(l.variantId)?.model ?? null) : null,
+                brand: l.variantId ? (lineMeta.get(l.variantId)?.brand ?? null) : null,
+                pieceNumber: p.number,
+                takenWith: (l.fulfillmentMethod ?? p.fulfillmentType) === 'take_with',
+              })),
+            ),
+            subtotalCents: familyPieces.reduce((n, p) => n + p.subtotalCents, 0),
+            discountCents: familyPieces.reduce((n, p) => n + p.discountCents, 0),
+            deliveryFeeCents: familyPieces.reduce((n, p) => n + p.deliveryFeeCents, 0),
+            installFeeCents: familyPieces.reduce((n, p) => n + p.installFeeCents, 0),
+            otherFeeCents: familyPieces.reduce((n, p) => n + p.otherFeeCents, 0),
+            taxCents: familyPieces.reduce((n, p) => n + p.taxCents, 0),
+            totalCents: familyPieces.reduce((n, p) => n + p.totalCents, 0),
+            paidCents: familyPieces.reduce((n, p) => n + p.paidCents, 0),
+            balanceDueCents: familyPieces.reduce((n, p) => n + p.balanceDueCents, 0),
+          }
+        : null;
+
     return {
       business: {
         name: branding.publicName ?? biz?.name ?? '',
@@ -3899,6 +4125,7 @@ export class OrdersController {
         brand: l.variantId ? (lineMeta.get(l.variantId)?.brand ?? null) : null,
         bin: l.variantId ? (lineMeta.get(l.variantId)?.bin ?? null) : null,
       })),
+      familyInvoice,
     };
   }
 

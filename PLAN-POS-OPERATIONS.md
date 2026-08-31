@@ -74,6 +74,14 @@ Single-screen order entry — customer, products, payment all on one screen (no 
   $10.50/unit); each further click counts one more unit on that line; removable by
   the salesperson. Installation = order-level fee (default $0). Mattress Removal =
   selectable $0 line item. Delivery fee entered manually per order.
+- **Take-with hand-over** _(amendment 2026-08-31)_: completing a sale (New Sale, or
+  Complete on the order page — the per-line hand-over button is gone) splits any
+  take-with lines to a `-A` sibling order; money already collected covers that piece
+  first, and the piece fulfills + completes itself when every unit is reserved and
+  it is paid. A short or unpaid piece stays open with a waiting banner (a user with
+  inventory access adjusts the stock in) and finishes with one click on the piece.
+  The invoice prints the whole split family as ONE document under the base number
+  with take-with lines marked; the delivery ticket never lists take-with lines.
 - **Salespeople**: multiple per order; commission split defaults to equal, editable.
 - **Totals panel pinned**: merchandise, discounts, installation, delivery,
   recycling, tax, total, amount paid, balance due.
