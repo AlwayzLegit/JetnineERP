@@ -4093,3 +4093,10 @@ S01 status: every S1/S2/S3/S4 finding is now fixed, by design
 (owner setting list prices), or deferred to the S17 design pass
 (visible labels above every field). BA-0032 (Vercel prefetch 503s) is
 infra-level and monitored.
+
+### Checkpoint — 2026-08-31 (owner ask: remove Get started from the dashboard)
+
+The onboarding "Get started" checklist card is gone from the dashboard
+for every user. The /v1/onboarding/checklist fetch stays — it still
+powers the fresh-signup redirect to /welcome and the businessActive
+gate — only the card and its component were removed.
