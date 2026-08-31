@@ -111,7 +111,7 @@ test.describe('Day 2 — order writer', () => {
     await page.waitForURL(/\/orders\/[0-9a-f-]{36}$/);
 
     // --- Detail: open, line reserved, no money yet ---
-    await expect(page.getByTestId('order-status')).toHaveText(/open/i);
+    await expect(page.getByTestId('order-status')).toHaveText(/reserved/i);
     const lineRow = page.locator('tbody tr').first();
     await expect(lineRow).toContainText('Widget'); // seeded product name
     // Columns mirror New Sale (item, type, qty, price, disc, fulfillment,
@@ -166,7 +166,7 @@ test.describe('Day 2 — order writer', () => {
     await page.getByTestId('complete-sale').click();
     await page.getByRole('button', { name: 'Open order' }).click();
     await page.waitForURL(/\/orders\/[0-9a-f-]{36}$/);
-    await expect(page.getByTestId('order-status')).toHaveText(/open/i);
+    await expect(page.getByTestId('order-status')).toHaveText(/reserved/i);
 
     // Schedule a delivery for today.
     const today = new Date().toISOString().slice(0, 10);
@@ -187,14 +187,14 @@ test.describe('Day 2 — order writer', () => {
     // Back on the order: fulfilled, balance still due.
     await page.getByRole('link', { name: 'open the order' }).click();
     await page.waitForURL(/\/orders\/[0-9a-f-]{36}$/);
-    await expect(page.getByTestId('order-status')).toHaveText(/fulfilled/i);
+    await expect(page.getByTestId('order-status')).toHaveText(/delivered/i);
 
     // Collect the whole balance, then complete.
     await page.getByTestId('payment-amount').fill('10.00');
     await page.getByTestId('take-payment').click();
     await expect(page.getByTestId('balance-due')).toContainText('$0.00');
     await page.getByTestId('complete-order').click();
-    await expect(page.getByTestId('order-status')).toHaveText(/completed/i);
+    await expect(page.getByTestId('order-status')).toHaveText(/delivered/i);
   });
 
   test('New Sale saves a confirmed order with deposit', async ({ page }) => {
@@ -222,7 +222,7 @@ test.describe('Day 2 — order writer', () => {
     await page.getByRole('button', { name: 'Open order' }).click();
 
     await page.waitForURL(/\/orders\/[0-9a-f-]{36}$/);
-    await expect(page.getByTestId('order-status')).toHaveText(/open/i);
+    await expect(page.getByTestId('order-status')).toHaveText(/reserved/i);
     await expect(page.locator('tbody tr', { hasText: 'deposit' })).toContainText('$2.50');
     await expect(page.getByTestId('balance-due')).toContainText('$7.50');
   });

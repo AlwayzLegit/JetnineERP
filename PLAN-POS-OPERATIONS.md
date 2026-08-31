@@ -151,6 +151,14 @@ Returned/Exchanged.
 - Row click opens a slide-over panel (list keeps its place) with a full-page option.
 - Order detail shows a change-history timeline, every field change attributed.
 
+**Amendment (2026-08-31, S01 browser-audit P-013/BA-0017):** the display ladder
+above is the ONE status vocabulary everywhere an order status is shown or
+filtered — the list badge, the order-detail badge, and the status filter all use
+these exact words (plus Awaiting Return Pickup). The raw lifecycle statuses
+(`open`, `partially_fulfilled`, …) are internal only and never surface in the UI.
+The list filter filters BY display status (`display=` on `/v1/orders/list-view`);
+the detail endpoint returns `displayStatus` derived from the same ladder.
+
 ## 9. Commissions
 
 - Splits default equal across the order's salespeople; editable at entry.
