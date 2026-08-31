@@ -73,6 +73,27 @@ export interface OrderDocumentPayload {
     brand: string | null;
     bin: string | null;
   }[];
+  /**
+   * Owner 2026-08-31: a split family prints ONE invoice — every piece's
+   * lines under the base number, take-with lines marked, family money
+   * combined. Null when the order stands alone.
+   */
+  familyInvoice: {
+    numbers: string[];
+    lines: (OrderDocumentPayload['lines'][number] & {
+      pieceNumber: string;
+      takenWith: boolean;
+    })[];
+    subtotalCents: number;
+    discountCents: number;
+    deliveryFeeCents: number;
+    installFeeCents: number;
+    otherFeeCents: number;
+    taxCents: number;
+    totalCents: number;
+    paidCents: number;
+    balanceDueCents: number;
+  } | null;
 }
 
 export function usd(cents: number): string {
@@ -148,6 +169,11 @@ function ShipTo({ doc }: { doc: OrderDocumentPayload }) {
 /** §11 Invoice / Sales Order. */
 export function InvoiceDoc({ doc, printedAt }: { doc: OrderDocumentPayload; printedAt: Date }) {
   const o = doc.order;
+  // Combined family invoice: base number up top, every piece's lines in
+  // the grid (take-with marked), and the family's combined money.
+  const fam = doc.familyInvoice;
+  const docNumber = fam ? o.number.replace(/-[A-Z]$/, '') : o.number;
+  const money = fam ?? o;
   const title =
     o.orderKind === 'exchange'
       ? 'Exchange Order'
@@ -205,7 +231,10 @@ export function InvoiceDoc({ doc, printedAt }: { doc: OrderDocumentPayload; prin
         <div style={{ width: 200 }}>
           <div style={{ ...box, textAlign: 'center', marginBottom: 6 }}>
             <div style={label}>{title} #</div>
-            <div style={{ fontSize: 16, fontWeight: 700 }}>{o.number}</div>
+            <div style={{ fontSize: 16, fontWeight: 700 }}>{docNumber}</div>
+            {fam && (
+              <div style={{ fontSize: 9, marginTop: 2 }}>Covers {fam.numbers.join(' + ')}</div>
+            )}
           </div>
           {doc.originalOrderNumber && (
             <div style={{ ...box, textAlign: 'center', marginBottom: 6 }}>
@@ -254,7 +283,7 @@ export function InvoiceDoc({ doc, printedAt }: { doc: OrderDocumentPayload; prin
         <tbody>
           <tr>
             <td style={cell}>{doc.customer?.phone ?? '—'}</td>
-            <td style={cell}>{o.balanceDueCents > 0 ? 'Balance due' : 'Paid in full'}</td>
+            <td style={cell}>{money.balanceDueCents > 0 ? 'Balance due' : 'Paid in full'}</td>
             <td style={cell}>
               {initials(doc.salespersonName)}
               {doc.secondSalespersonName ? ` / ${initials(doc.secondSalespersonName)}` : ''}
@@ -292,15 +321,24 @@ export function InvoiceDoc({ doc, printedAt }: { doc: OrderDocumentPayload; prin
           </tr>
         </thead>
         <tbody>
-          {doc.lines.map((l, i) => (
+          {(
+            fam?.lines ?? doc.lines.map((l) => ({ ...l, pieceNumber: o.number, takenWith: false }))
+          ).map((l, i) => (
             <tr key={l.id}>
               <td style={cell}>{i + 1}</td>
               <td style={cell}>
-                {FULFILLMENT_CODES[l.fulfillmentMethod ?? o.fulfillmentType] ?? ''}
+                {l.takenWith
+                  ? 'T'
+                  : (FULFILLMENT_CODES[l.fulfillmentMethod ?? o.fulfillmentType] ?? '')}
               </td>
               <td style={cell}>{l.model ?? '—'}</td>
               <td style={cell}>{l.brand ?? '—'}</td>
-              <td style={cell}>{l.description}</td>
+              <td style={cell}>
+                {l.description}
+                {l.takenWith && (
+                  <span style={{ fontSize: 9 }}> — TAKEN WITH ({l.pieceNumber})</span>
+                )}
+              </td>
               <td style={{ ...cell, textAlign: 'right' }}>{l.quantity}</td>
               <td style={{ ...cell, textAlign: 'right' }}>{usd(l.unitPriceCents)}</td>
               <td style={{ ...cell, textAlign: 'right' }}>{usd(l.totalCents)}</td>
@@ -339,24 +377,29 @@ export function InvoiceDoc({ doc, printedAt }: { doc: OrderDocumentPayload; prin
         </div>
         <table style={{ width: 260, borderCollapse: 'collapse', fontSize: 12 }}>
           <tbody>
-            <TotalRow label="Merchandise" value={usd(o.subtotalCents)} />
-            {totalDiscount > 0 && <TotalRow label="Discounts" value={`-${usd(totalDiscount)}`} />}
-            {o.installFeeCents > 0 && (
-              <TotalRow label="Installation" value={usd(o.installFeeCents)} />
+            <TotalRow label="Merchandise" value={usd(money.subtotalCents)} />
+            {(fam ? fam.discountCents : totalDiscount) > 0 && (
+              <TotalRow
+                label="Discounts"
+                value={`-${usd(fam ? fam.discountCents : totalDiscount)}`}
+              />
             )}
-            {o.deliveryFeeCents > 0 && (
-              <TotalRow label="Delivery" value={usd(o.deliveryFeeCents)} />
+            {money.installFeeCents > 0 && (
+              <TotalRow label="Installation" value={usd(money.installFeeCents)} />
             )}
-            {o.otherFeeCents > 0 && (
-              <TotalRow label={o.otherFeeLabel ?? 'Other'} value={usd(o.otherFeeCents)} />
+            {money.deliveryFeeCents > 0 && (
+              <TotalRow label="Delivery" value={usd(money.deliveryFeeCents)} />
             )}
-            <TotalRow label="Tax" value={usd(o.taxCents)} />
-            <TotalRow label={`Total ${title}`} value={usd(o.totalCents)} bold />
-            <TotalRow label="Amount Paid" value={usd(o.paidCents)} />
-            {o.creditDueCents > 0 ? (
+            {money.otherFeeCents > 0 && (
+              <TotalRow label={o.otherFeeLabel ?? 'Other'} value={usd(money.otherFeeCents)} />
+            )}
+            <TotalRow label="Tax" value={usd(money.taxCents)} />
+            <TotalRow label={`Total ${title}`} value={usd(money.totalCents)} bold />
+            <TotalRow label="Amount Paid" value={usd(money.paidCents)} />
+            {!fam && o.creditDueCents > 0 ? (
               <TotalRow label="Credit Due" value={usd(o.creditDueCents)} bold boxed />
             ) : (
-              <TotalRow label="Amount Due" value={usd(o.balanceDueCents)} bold boxed />
+              <TotalRow label="Amount Due" value={usd(money.balanceDueCents)} bold boxed />
             )}
           </tbody>
         </table>
@@ -482,13 +525,15 @@ export function DeliveryTicketDoc({
           </tr>
         </thead>
         <tbody>
-          {doc.lines.map((l) => (
-            <tr key={l.id}>
-              <td style={{ ...cell, width: 40, textAlign: 'right' }}>{l.quantity}</td>
-              <td style={{ ...cell, width: 140 }}>{l.model ?? '—'}</td>
-              <td style={cell}>{l.description}</td>
-            </tr>
-          ))}
+          {doc.lines
+            .filter((l) => (l.fulfillmentMethod ?? o.fulfillmentType) !== 'take_with')
+            .map((l) => (
+              <tr key={l.id}>
+                <td style={{ ...cell, width: 40, textAlign: 'right' }}>{l.quantity}</td>
+                <td style={{ ...cell, width: 140 }}>{l.model ?? '—'}</td>
+                <td style={cell}>{l.description}</td>
+              </tr>
+            ))}
         </tbody>
       </table>
 

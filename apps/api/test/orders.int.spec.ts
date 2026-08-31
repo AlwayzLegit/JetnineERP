@@ -3982,3 +3982,199 @@ describe('Order line in-place editing (New Sale parity)', () => {
     expect(await reservedAt(annexId)).toBe(annexBefore + 2);
   });
 });
+
+/**
+ * Owner 2026-08-31: take-with goods leave the store when the sale
+ * completes. Complete on a live order splits take-with lines to a -A
+ * sibling (collected money covers it first) and completes the piece
+ * when stocked + paid; short or unpaid pieces wait, and one click on
+ * the piece finishes them after inventory is adjusted in. The invoice
+ * document prints the whole family combined.
+ */
+describe('Take-with hand-over on Complete', () => {
+  let twVariantId = '';
+  let dlVariantId = '';
+  let shortVariantId = '';
+
+  function req(method: 'post' | 'get', url: string) {
+    return request(app.getHttpServer())
+      [method](url)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId);
+  }
+
+  beforeAll(async () => {
+    const sql2 = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    const db = drizzle(sql2);
+    try {
+      const mk = async (sku: string, onHand: number) => {
+        const [pr] = await db
+          .insert(schema.products)
+          .values({ businessId, sku, name: `TW ${sku}` })
+          .returning();
+        const [v] = await db
+          .insert(schema.productVariants)
+          .values({ businessId, productId: pr!.id, sku: `${sku}-1`, priceCents: 50_000 })
+          .returning();
+        if (onHand > 0) {
+          await db.insert(schema.inventoryLevels).values({
+            businessId,
+            variantId: v!.id,
+            locationId,
+            onHand,
+            reserved: 0,
+          });
+        }
+        return v!.id;
+      };
+      twVariantId = await mk('TW-CHAIR', 10);
+      dlVariantId = await mk('TW-SOFA', 10);
+      shortVariantId = await mk('TW-NONE', 0);
+    } finally {
+      await sql2.end({ timeout: 5 });
+    }
+  });
+
+  async function onHandOf(variantId: string): Promise<{ onHand: number; reserved: number }> {
+    const sql2 = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    const db = drizzle(sql2);
+    try {
+      const [row] = await db
+        .select({
+          onHand: schema.inventoryLevels.onHand,
+          reserved: schema.inventoryLevels.reserved,
+        })
+        .from(schema.inventoryLevels)
+        .where(
+          and(
+            eq(schema.inventoryLevels.variantId, variantId),
+            eq(schema.inventoryLevels.locationId, locationId),
+          ),
+        )
+        .limit(1);
+      return { onHand: row?.onHand ?? 0, reserved: row?.reserved ?? 0 };
+    } finally {
+      await sql2.end({ timeout: 5 });
+    }
+  }
+
+  it('a paid mixed order splits its take-with line to a completed -A piece', async () => {
+    const before = await onHandOf(twVariantId);
+    const created = await req('post', '/v1/orders').send({
+      locationId,
+      customerId,
+      confirm: true,
+      lines: [
+        { variantId: dlVariantId, quantity: 1 },
+        { variantId: twVariantId, quantity: 1, fulfillmentMethod: 'take_with' },
+      ],
+    });
+    expect(created.status).toBe(201);
+    const total = created.body.totalCents as number;
+
+    const paid = await req('post', `/v1/orders/${created.body.id}/payments`).send({
+      method: 'cash',
+      amountCents: total,
+    });
+    expect(paid.status).toBe(201);
+
+    const done = await req('post', `/v1/orders/${created.body.id}/complete`).send({});
+    expect(done.status).toBe(201);
+    expect(done.body.takeWith).toBeTruthy();
+    expect(done.body.takeWith.completed).toBe(true);
+    expect(done.body.takeWith.number).toMatch(/-A$/);
+    // The parent keeps only the delivery line and stays open, paid up.
+    expect(done.body.lines).toHaveLength(1);
+    expect(done.body.lines[0].variantId).toBe(dlVariantId);
+    expect(done.body.status).toBe('open');
+    expect(done.body.balanceDueCents).toBe(0);
+
+    const piece = await req('get', `/v1/orders/${done.body.takeWith.orderId}`);
+    expect(piece.status).toBe(200);
+    expect(piece.body.status).toBe('completed');
+    expect(piece.body.balanceDueCents).toBe(0);
+    expect(piece.body.fulfillmentType).toBe('take_with');
+    expect(piece.body.lines[0].qtyFulfilled).toBe(1);
+
+    // The unit physically left: on hand down one, nothing still reserved.
+    const after = await onHandOf(twVariantId);
+    expect(after.onHand).toBe(before.onHand - 1);
+    expect(after.reserved).toBe(before.reserved);
+
+    // Owner 2026-08-31: the invoice document prints the family combined.
+    const doc = await req('get', `/v1/orders/${created.body.id}/document`);
+    expect(doc.status).toBe(200);
+    expect(doc.body.familyInvoice).toBeTruthy();
+    expect(doc.body.familyInvoice.numbers).toHaveLength(2);
+    const twLine = doc.body.familyInvoice.lines.find((l: { takenWith: boolean }) => l.takenWith);
+    expect(twLine).toBeTruthy();
+    expect(doc.body.familyInvoice.totalCents).toBe(total);
+    expect(doc.body.familyInvoice.balanceDueCents).toBe(0);
+  });
+
+  it('an unpaid mixed order still splits; the piece waits on payment', async () => {
+    const created = await req('post', '/v1/orders').send({
+      locationId,
+      customerId,
+      confirm: true,
+      lines: [
+        { variantId: dlVariantId, quantity: 1 },
+        { variantId: twVariantId, quantity: 1, fulfillmentMethod: 'take_with' },
+      ],
+    });
+    expect(created.status).toBe(201);
+
+    const done = await req('post', `/v1/orders/${created.body.id}/complete`).send({});
+    expect(done.status).toBe(201);
+    expect(done.body.takeWith.completed).toBe(false);
+    expect(done.body.takeWith.reason).toMatch(/waiting on payment/);
+
+    const piece = await req('get', `/v1/orders/${done.body.takeWith.orderId}`);
+    expect(piece.body.status).toBe('open');
+  });
+
+  it('a short take-with piece waits on stock, then one click finishes it after the adjustment', async () => {
+    const created = await req('post', '/v1/orders').send({
+      locationId,
+      customerId,
+      confirm: true,
+      lines: [
+        { variantId: dlVariantId, quantity: 1 },
+        { variantId: shortVariantId, quantity: 1, fulfillmentMethod: 'take_with' },
+      ],
+    });
+    expect(created.status).toBe(201);
+    const total = created.body.totalCents as number;
+    await req('post', `/v1/orders/${created.body.id}/payments`).send({
+      method: 'cash',
+      amountCents: total,
+    });
+
+    const done = await req('post', `/v1/orders/${created.body.id}/complete`).send({});
+    expect(done.status).toBe(201);
+    expect(done.body.takeWith.completed).toBe(false);
+    expect(done.body.takeWith.reason).toMatch(/not in stock/);
+    const pieceId = done.body.takeWith.orderId as string;
+
+    // An authorized user adjusts the inventory in…
+    const sql2 = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    const db = drizzle(sql2);
+    try {
+      await db.insert(schema.inventoryLevels).values({
+        businessId,
+        variantId: shortVariantId,
+        locationId,
+        onHand: 3,
+        reserved: 0,
+      });
+    } finally {
+      await sql2.end({ timeout: 5 });
+    }
+
+    // …and one click on the piece reserves, hands over, and completes.
+    const finish = await req('post', `/v1/orders/${pieceId}/complete`).send({});
+    expect(finish.status).toBe(201);
+    expect(finish.body.takeWith.completed).toBe(true);
+    expect(finish.body.status).toBe('completed');
+  });
+});
