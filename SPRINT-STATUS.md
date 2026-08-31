@@ -4031,3 +4031,38 @@ and names every control.
   call for the S17 redesign pass — the audit's measurable (non-empty
   accessible name on every control) now passes.
   Remaining: lists batch (P-013/014/018/019/024), BA-0017/0021 stragglers.
+
+### Checkpoint — 2026-08-31 (S01 browser-audit batch 5: lists — P-014/016/017/018/019/024)
+
+Batch 4 merged (PR #116; web-only, ships via Vercel). This batch is the
+lists pass plus the two small stragglers.
+
+- BA-0018 (P-014): Orders list columns Order # / Customer / Delivery
+  Date / Balance Due are sortable with direction toggle and aria-sort.
+  Derived columns sort server-side via scalar subqueries (min undelivered
+  trip date coalesced to requested date; total minus succeeded payments);
+  sorted views paginate by offset cursor ("o:<n>"), unsorted keeps the
+  created-at cursor.
+- BA-0024 (P-014): q/status/view/mine/sort/dir mirror into the URL
+  (router.replace) and initialize from it — reload, bookmark, share.
+- BA-0023/0033/0034 (P-018): one dense table pattern — .table-dense +
+  .table-sticky utilities; Orders and Sales lists both scroll inside a
+  max-height card with a sticky header; the Orders line summary rides
+  inline so rows drop to ~41px; Sales rows open on click like Orders;
+  Sales dates print "Aug 31, 2026 9:14 PM" (no seconds); the duplicate
+  Open register button left the Sales header (global top bar has it).
+- BA-0025/0039 (P-019): the Orders empty state names the active filters
+  and offers Clear filters; a bad order URL renders a titled "Order not
+  found" card inside the normal frame with a back link.
+- BA-0035 (P-024): order-detail header now has ONE primary control — a
+  Documents ▾ menu (Invoice / Delivery ticket / Pick list, same
+  testids), Share stays secondary, and "← All orders" became an
+  Orders / <number> breadcrumb.
+- BA-0020 (P-016): members with empty-string names fall back to email in
+  the salesperson dropdowns and on printed documents.
+- BA-0021 (P-017): reopening a draft re-checks availability for its
+  variants (product-search gained variantIds=) so the amber
+  stock/special-order warning survives the round trip.
+  Remaining from S01: P-013 status-vocabulary unification (one display
+  status across list/detail/filter — needs the detail endpoint to carry
+  displayStatus; next slice), BA-0017 rides with it.

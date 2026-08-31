@@ -191,6 +191,7 @@ export default function OrderDetailPage() {
   const [timeline, setTimeline] = useState<AuditRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [docsOpen, setDocsOpen] = useState(false);
   const [payAmount, setPayAmount] = useState('');
   // Add-product price step (owner 2026-08-30): pick the product, set
   // the price it sells at, then the payment form pre-fills with the
@@ -493,9 +494,18 @@ export default function OrderDetailPage() {
 
   if (error && !order) {
     return (
-      <p style={{ color: 'var(--danger)' }}>
-        {error} — <Link href="/orders">back to orders</Link>
-      </p>
+      <div>
+        <h1 className="page-title">Order not found</h1>
+        <div className="card" style={{ padding: 24, maxWidth: 520 }}>
+          <p style={{ margin: '0 0 4px', fontWeight: 600 }}>We couldn&apos;t open this order.</p>
+          <p className="muted" style={{ margin: '0 0 12px', fontSize: 13 }}>
+            {error}
+          </p>
+          <Link href="/orders" className="btn btn-secondary btn-sm no-underline">
+            ← Back to orders
+          </Link>
+        </div>
+      </div>
     );
   }
   if (!order) return <LoadingRows rows={5} />;
@@ -505,6 +515,14 @@ export default function OrderDetailPage() {
 
   return (
     <div>
+      {/* P-024: a breadcrumb takes you back; the action row keeps one
+          primary control. */}
+      <nav aria-label="Breadcrumb" style={{ fontSize: 12.5, marginBottom: 2 }}>
+        <Link href="/orders" className="muted no-underline">
+          Orders
+        </Link>{' '}
+        <span className="muted">/</span> {order.number}
+      </nav>
       <div
         style={{
           display: 'flex',
@@ -526,33 +544,6 @@ export default function OrderDetailPage() {
           </span>
         )}
         <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 8, flexWrap: 'wrap' }}>
-          <LinkButton
-            href={`/print/orders/${id}/invoice`}
-            variant="secondary"
-            size="sm"
-            target="_blank"
-            data-testid="print-invoice"
-          >
-            <Printer size={13} aria-hidden /> Invoice
-          </LinkButton>
-          <LinkButton
-            href={`/print/orders/${id}/delivery-ticket`}
-            variant="secondary"
-            size="sm"
-            target="_blank"
-            data-testid="print-delivery-ticket"
-          >
-            <Printer size={13} aria-hidden /> Delivery ticket
-          </LinkButton>
-          <LinkButton
-            href={`/print/orders/${id}/pick-list`}
-            variant="secondary"
-            size="sm"
-            target="_blank"
-            data-testid="print-pick-list"
-          >
-            <Printer size={13} aria-hidden /> Pick list
-          </LinkButton>
           <Button
             size="sm"
             variant="secondary"
@@ -574,9 +565,56 @@ export default function OrderDetailPage() {
           >
             <Share2 size={13} aria-hidden /> Share status link
           </Button>
-          <LinkButton href="/orders" variant="ghost" size="sm">
-            ← All orders
-          </LinkButton>
+          <span style={{ position: 'relative' }}>
+            <Button
+              size="sm"
+              variant="primary"
+              data-testid="order-documents-menu"
+              aria-haspopup="menu"
+              aria-expanded={docsOpen}
+              onClick={() => setDocsOpen((v) => !v)}
+            >
+              <Printer size={13} aria-hidden /> Documents ▾
+            </Button>
+            {docsOpen && (
+              <span
+                role="menu"
+                style={{
+                  position: 'absolute',
+                  right: 0,
+                  top: '110%',
+                  zIndex: 30,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  minWidth: 170,
+                  background: 'var(--surface)',
+                  border: '1px solid var(--border)',
+                  borderRadius: 8,
+                  boxShadow: '0 8px 24px rgba(0,0,0,0.12)',
+                  padding: 4,
+                }}
+              >
+                {[
+                  ['invoice', 'Invoice', 'print-invoice'],
+                  ['delivery-ticket', 'Delivery ticket', 'print-delivery-ticket'],
+                  ['pick-list', 'Pick list', 'print-pick-list'],
+                ].map(([slug, label, testid]) => (
+                  <Link
+                    key={slug}
+                    role="menuitem"
+                    href={`/print/orders/${id}/${slug}`}
+                    target="_blank"
+                    data-testid={testid}
+                    className="no-underline"
+                    style={{ padding: '6px 10px', fontSize: 13, borderRadius: 6, color: 'inherit' }}
+                    onClick={() => setDocsOpen(false)}
+                  >
+                    {label}
+                  </Link>
+                ))}
+              </span>
+            )}
+          </span>
         </span>
       </div>
       <p style={{ fontSize: 13, color: 'var(--text-secondary)', margin: '0 0 16px' }}>
