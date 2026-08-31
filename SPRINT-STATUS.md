@@ -4066,3 +4066,30 @@ lists pass plus the two small stragglers.
   Remaining from S01: P-013 status-vocabulary unification (one display
   status across list/detail/filter — needs the detail endpoint to carry
   displayStatus; next slice), BA-0017 rides with it.
+
+### Checkpoint — 2026-08-31 (S01 browser-audit batch 6: one status vocabulary — P-013, the last S01 fix)
+
+Batch 5 deployed (dep-daavadad0e5s73bnb9rg live, 81/81). This closes
+BA-0017 and with it the whole actionable S01 queue. Doc-first: §8 of
+PLAN-POS-OPERATIONS.md amended — the display ladder is the ONE status
+vocabulary; raw lifecycle statuses never surface in the UI.
+
+- The ladder (Draft → Pending → On PO → Reserved → Scheduled → Out for
+  Delivery → Delivered + Quote/Layaway/Cancelled/Returned/Exchanged/
+  Awaiting Return Pickup) is extracted to one deriveDisplayStatus()
+  used by the list AND the detail endpoint — no second copy to drift.
+- GET /v1/orders/:id now returns displayStatus (+ displayPoNumber);
+  the order page badge shows it, so an order reads identically in the
+  list and on its page. Shared DisplayStatusBadge in components/ui.
+- The list filter speaks display words: /v1/orders/list-view takes
+  display= (1:1 states narrow in SQL; derived states narrow to their
+  possible lifecycle statuses and post-filter on the computed value —
+  a page may under-fill while nextCursor keeps paging). Every filter
+  option is a badge you can see; every badge is a filter you can pick.
+- e2e updated to the new vocabulary (reserved/delivered).
+
+S01 status: every S1/S2/S3/S4 finding is now fixed, by design
+(BA-0019 D12 pricing, BA-0038 draft-cancel kept per owner), ops-owned
+(owner setting list prices), or deferred to the S17 design pass
+(visible labels above every field). BA-0032 (Vercel prefetch 503s) is
+infra-level and monitored.

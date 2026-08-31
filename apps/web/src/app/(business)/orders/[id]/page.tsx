@@ -17,6 +17,7 @@ import {
   LoadingRows,
   Select,
   StatusBadge,
+  DisplayStatusBadge,
 } from '@/components/ui';
 import { SecurityOverrideDialog } from '@/components/security-override-dialog';
 import { ProductSearchDialog, type SearchRow } from '@/components/product-search-dialog';
@@ -54,6 +55,9 @@ interface OrderPayment {
   createdAt: string;
 }
 interface OrderDetail {
+  /** P-013: the same display vocabulary the orders list shows. */
+  displayStatus?: string;
+  displayPoNumber?: string | null;
   id: string;
   number: string;
   status: string;
@@ -536,7 +540,15 @@ export default function OrderDetailPage() {
           {order.number}
         </h1>
         <span data-testid="order-status" style={{ display: 'inline-flex' }}>
-          <StatusBadge status={order.status} />
+          {/* P-013 (BA-0017): same badge words as the orders list. */}
+          {order.displayStatus ? (
+            <DisplayStatusBadge
+              displayStatus={order.displayStatus}
+              poNumber={order.displayPoNumber}
+            />
+          ) : (
+            <StatusBadge status={order.status} />
+          )}
         </span>
         {order.legacyNumber && (
           <span className="muted" style={{ fontSize: 12 }}>
