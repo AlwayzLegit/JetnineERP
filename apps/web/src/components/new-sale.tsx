@@ -398,6 +398,36 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
     }, 250);
   }, [custQuery]);
 
+  // BA-0001: an in-progress sale must not vanish on a stray nav click.
+  // Guard both browser unload (refresh/close) and in-app anchor
+  // navigation while the sale holds any work and isn't done.
+  const dirty = !done && (customer != null || lines.length > 0);
+  useEffect(() => {
+    if (!dirty) return;
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    const onClickCapture = (e: MouseEvent) => {
+      const a = (e.target as HTMLElement | null)?.closest?.('a[href]');
+      if (!a) return;
+      const href = a.getAttribute('href') ?? '';
+      if (!href.startsWith('/') || href.startsWith('/pos')) return;
+      if (
+        !window.confirm("This sale isn't saved — leave anyway? Use Save as Draft first to keep it.")
+      ) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    document.addEventListener('click', onClickCapture, true);
+    return () => {
+      window.removeEventListener('beforeunload', onBeforeUnload);
+      document.removeEventListener('click', onClickCapture, true);
+    };
+  }, [dirty]);
+
   const totals = useMemo(() => {
     let merchandise = 0;
     let recycling = 0;
@@ -426,6 +456,9 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
       merchandise,
       recycling,
       discounts: lineDiscount + orderDisc,
+      // BA-0026: what the order-discount box actually applied, so the UI
+      // can say when the typed number was capped at merchandise.
+      orderDiscApplied: orderDisc,
       install,
       delivery,
       taxCents,
@@ -477,7 +510,14 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
   }
 
   function addPayment() {
-    const cents = parseDollars(payAmount || (totals.balanceCents / 100).toFixed(2));
+    // BA-0027: an empty box used to record the full balance straight from
+    // the grey placeholder. Commit the default into the field first so
+    // the amount is visible before it becomes money.
+    if (!payAmount.trim()) {
+      if (totals.balanceCents > 0) setPayAmount((totals.balanceCents / 100).toFixed(2));
+      return;
+    }
+    const cents = parseDollars(payAmount);
     if (cents <= 0) return;
     setPayments((prev) => [
       ...prev,
@@ -553,6 +593,23 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
     if (lines.length === 0) {
       setError('Add at least one line.');
       return;
+    }
+    // BA-0002: money typed in the amount box must never vanish on
+    // Complete. Block with the reason instead of silently dropping it.
+    if (mode === 'complete' && parseDollars(payAmount) > 0) {
+      setError(
+        `You typed $${payAmount} in the payment box but didn't add it — press Add payment, or clear the box, then Complete.`,
+      );
+      return;
+    }
+    // BA-0005: a past delivery date now books a real truck stop.
+    if (mode === 'complete' && fulfillment === 'delivery' && requestedDate) {
+      const today = new Date();
+      const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+      if (requestedDate < todayStr) {
+        setError(`Delivery date ${requestedDate} is in the past — pick today or later.`);
+        return;
+      }
     }
     if (orderType === 'layaway' && mode === 'complete' && totals.paidCents < 10000) {
       setError('Layaway needs a minimum $100 deposit to open.');
@@ -1527,6 +1584,7 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
                 <Input
                   type="date"
                   value={requestedDate}
+                  min={new Date().toISOString().slice(0, 10)}
                   onChange={(e) => setRequestedDate(e.target.value)}
                   style={{ width: '100%' }}
                 />
@@ -1651,6 +1709,12 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
                     onChange={(e) => setOrderDiscount(e.target.value)}
                     style={{ width: '100%', padding: '4px 8px' }}
                   />
+                  {parseDollars(orderDiscount) > totals.orderDiscApplied && (
+                    <span style={{ fontSize: 11.5, color: 'var(--warning)' }}>
+                      Capped at the merchandise total — {formatMoney(totals.orderDiscApplied)}{' '}
+                      applied.
+                    </span>
+                  )}
                 </Field>
               </div>
               <div
@@ -1720,14 +1784,16 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
                 data-testid="pay-amount"
               />
             </div>
-            {payMethod !== 'cash' && (
-              <Input
-                placeholder="Reference / last 4 / approval #"
-                value={payRef}
-                onChange={(e) => setPayRef(e.target.value)}
-                style={{ width: '100%', marginTop: 6 }}
-              />
-            )}
+            {/* BA-0003: this field renders for every method so the rail
+                keeps one height and Complete never moves mid-aim. */}
+            <Input
+              placeholder={
+                payMethod === 'cash' ? 'Reference (optional)' : 'Reference / last 4 / approval #'
+              }
+              value={payRef}
+              onChange={(e) => setPayRef(e.target.value)}
+              style={{ width: '100%', marginTop: 6 }}
+            />
             <div className="flex gap-2" style={{ marginTop: 8 }}>
               <Button size="sm" variant="secondary" onClick={addPayment} data-testid="add-payment">
                 Add payment
@@ -1744,11 +1810,13 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
             </div>
           </Card>
 
-          {error && (
-            <p style={{ color: 'var(--danger)', fontSize: 13, marginBottom: 8 }} role="alert">
-              {error}
-            </p>
-          )}
+          <div style={{ minHeight: 26, marginBottom: 4 }} aria-live="polite">
+            {error && (
+              <p style={{ color: 'var(--danger)', fontSize: 13, margin: 0 }} role="alert">
+                {error}
+              </p>
+            )}
+          </div>
           <div className="flex flex-col gap-2">
             <Button
               variant="primary"
@@ -1813,12 +1881,25 @@ function LineRow({
         <td>
           <Input
             type="number"
-            min={0}
+            min={1}
+            max={999}
             value={l.quantity}
             onChange={(e) => {
-              const qty = Number(e.target.value);
-              if (qty <= 0) onRemove(l.key);
-              else onPatch(l.key, { quantity: qty });
+              // BA-0004/BA-0006: a typo must not delete the line or book
+              // a billion-dollar order. Removal is the ✕ only; quantity
+              // stays within 1–999.
+              const qty = Math.floor(Number(e.target.value));
+              if (!Number.isFinite(qty) || qty < 1) {
+                if (e.target.value !== '') toast('Quantity stays at 1 — use ✕ to remove the line');
+                onPatch(l.key, { quantity: l.quantity });
+                return;
+              }
+              if (qty > 999) {
+                toast('Quantity capped at 999');
+                onPatch(l.key, { quantity: 999 });
+                return;
+              }
+              onPatch(l.key, { quantity: qty });
             }}
             style={{ width: 56, padding: '4px 8px' }}
           />

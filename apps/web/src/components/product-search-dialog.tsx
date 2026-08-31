@@ -193,7 +193,15 @@ export function ProductSearchDialog({
                     </td>
                     <td>{r.vendorName ?? '—'}</td>
                     <td className="num">
-                      <Money cents={r.priceCents} />
+                      {r.priceCents > 0 ? (
+                        <Money cents={r.priceCents} />
+                      ) : (
+                        // D12: an unpriced catalog item is priced at the
+                        // register — say so instead of showing "$0.00".
+                        <span className="muted" style={{ fontSize: 12 }}>
+                          price at register
+                        </span>
+                      )}
                     </td>
                     <td className="num">{r.availableHere}</td>
                     <td className="num">{r.availableTotal}</td>

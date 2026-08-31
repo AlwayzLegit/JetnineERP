@@ -3910,3 +3910,64 @@ failure toasts "schedule it from the order page" and never loses the
 sale. Order page: each scheduled/loaded delivery in the Deliveries card
 gains an inline date input (PATCH reschedule) so date changes happen
 from the order, per the owner. Web-only; e2e suite green.
+
+### Ops note — 2026-08-31 (STORIS sale-lines file converted, handed back)
+
+The owner's "all_invoices_Storis.txt" is the TE.326.RPT Written Sales
+Summary report (not a CSV): per-order blocks, item segments jammed on
+one physical line, page headers, CRLF. Converted offline (scratchpad —
+export data is never committed) into the sale_line import CSV: 1,078
+lines / 382 invoices (251 base + 131 \*-suffix pieces). Parser handles
+page breaks, As-Is/EXCHANGE/TAKE WITH types, letter-suffixed backorder
+quantities ("1P"), and duplicate invoice blocks. Known data limits, by
+the report's own semantics: the report prices the package on the first
+line ($0 on the rest); exchange lines show the full item price while
+the header bills the difference; the report's final order 0111854
+($1,000, 03/07/16) is cut off mid-block — its items are not in the
+export and need a re-export or manual entry. CSV delivered via chat;
+owner runs Settings → Import → "Closed sales history lines (per item)"
+→ Validate → Commit. Validation names any invoice numbers that don't
+match the previously imported receipts.
+
+### Ops note — 2026-08-31 (password-reset links pointed at a dead Vercel preview)
+
+Owner's reset email linked to
+la-mattress-erp-git-claude-fix-latent-…-alwayzlegits-projects.vercel.app
+(NXDOMAIN). Root cause: BETTER_AUTH_URL on the Render API service was
+set to that stale branch-preview URL, and better-auth stamps its
+baseURL into every reset/verification link — sign-in never used it,
+which is why only these links were broken. Fixed: BETTER_AUTH_URL →
+https://jetnine-api.onrender.com (env merge via Render MCP; redeploy
+dep-daake1oae00c73a5cvfg live 09:20 UTC, boot 80/80). Old emailed links
+stay dead by nature — a fresh "forgot password" email carries the
+right host and lands on lamattress-erp.vercel.app/reset.
+
+### Checkpoint — 2026-08-31 (S01 browser-audit batch 1: money safety + audit-records repair)
+
+The owner's Claude-in-Chrome audit of Sales Order Entry (41 findings,
+BA-0001…BA-0041, now committed under docs/browser-audit/) opened four
+decisions, all answered: warn on nav-away (not autosave); keep the
+draft-cancel mechanics but fix the display; owner will set list prices
+himself (picker label fixed meanwhile); audit test records repaired by
+migration. This batch ships the S1s + money-safety S2s:
+
+- 0080_s01_audit_cleanup — deletes the ZZTEST customer, the three test
+  orders, and the phantom $1,254.50 cash payment; hands reserved units
+  back to stock; audited; idempotent (verified twice on a scratch DB).
+- BA-0002: money typed in the payment box blocks Complete with the
+  reason instead of silently posting the order unpaid.
+- BA-0027: an empty amount box no longer records the placeholder — the
+  first click commits the balance INTO the field, visible before it
+  becomes money.
+- BA-0003: the reference field renders for every tender and the error
+  slot reserves its height, so Complete never moves under the cursor.
+- BA-0004/0006: qty 0/negative keeps the line (✕ is the only removal);
+  quantity capped at 999 with a toast.
+- BA-0005: past delivery dates refused at submit + min= on the field
+  (they book real trucks since yesterday).
+- BA-0026: the order-discount box says when it was capped.
+- BA-0001: dirty-sale guard — beforeunload + confirm on in-app nav.
+- BA-0019 (partial): unpriced items say "price at register", not $0.00.
+- BA-0016 (display): cancelled orders show — in Balance due.
+  Remaining batches: print/copy (P-010/011/021/022), keyboard (P-007/008),
+  lists (P-013/014/018/019/024), build identifier.
