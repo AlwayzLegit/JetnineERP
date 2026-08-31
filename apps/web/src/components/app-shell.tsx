@@ -110,6 +110,7 @@ export const NAV: NavGroup[] = [
       { href: '/reports/builder', label: 'Report builder', icon: ScrollText },
       { href: '/gl', label: 'General ledger', icon: Landmark },
       { href: '/commissions', label: 'Commissions', icon: CreditCard },
+      { href: '/operations', label: 'Operations', icon: ShieldCheck },
       { href: '/exceptions', label: 'Exceptions', icon: TriangleAlert },
       { href: '/jobs', label: 'Nightly jobs', icon: MoonStar },
       { href: '/audit', label: 'Audit log', icon: ScrollText },

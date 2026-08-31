@@ -121,6 +121,7 @@ export const TENANT_SCOPED_TABLES = [
   'job_runs',
   'exchanges',
   'daily_closeouts',
+  'ops_reviews',
   'delivery_runs',
   'report_dictionaries',
   'report_definitions',

@@ -19,6 +19,7 @@ import { Money } from '@/components/money';
 import { readActiveBusinessId } from '@/lib/offline';
 import { RevenueTrend, type TrendPoint } from './revenue-trend';
 import ManagerDashboardView from './manager-dashboard';
+import OperationsDashboardView from './operations-dashboard';
 
 interface ChecklistStep {
   key: string;
@@ -139,6 +140,10 @@ export default function DashboardClient() {
   // Per-member manager-dashboard toggle (owner decision 2026-08-30):
   // when set, the whole page swaps to the store-scoped manager view.
   const [managerMode, setManagerMode] = useState<boolean | null>(null);
+  // Operations role (owner 2026-08-31): fixed by permission rather than a
+  // per-member toggle, and it outranks the manager view — a member who is
+  // both watches every store rather than one.
+  const [opsMode, setOpsMode] = useState<boolean | null>(null);
 
   useEffect(() => {
     if (!session.data) return;
@@ -162,9 +167,15 @@ export default function DashboardClient() {
 
   useEffect(() => {
     if (!businessActive) return;
-    void api<{ managerDashboard: boolean }>('/v1/business/members/me')
-      .then((r) => setManagerMode(r.managerDashboard))
-      .catch(() => setManagerMode(false));
+    void api<{ managerDashboard: boolean; operationsDashboard: boolean }>('/v1/business/members/me')
+      .then((r) => {
+        setManagerMode(r.managerDashboard);
+        setOpsMode(r.operationsDashboard);
+      })
+      .catch(() => {
+        setManagerMode(false);
+        setOpsMode(false);
+      });
     // Sales-gated cards.
     void api<ZReport>('/v1/reports/z')
       .then(setZ)
@@ -233,6 +244,10 @@ export default function DashboardClient() {
         <Link href="/login">Sign in</Link>
       </div>
     );
+  }
+
+  if (businessActive && opsMode) {
+    return <OperationsDashboardView userName={session.data.user.name ?? session.data.user.email} />;
   }
 
   if (businessActive && managerMode) {

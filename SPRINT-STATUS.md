@@ -4005,3 +4005,48 @@ finding; §11 of PLAN-POS-OPERATIONS.md amended first (doc-first).
   shows "dev" locally).
   Remaining batches: keyboard (P-007/008), lists (P-013/014/018/019/024),
   plus BA-0017/0021/0038-copy stragglers.
+
+### Checkpoint — 2026-08-31 (Operations role + dashboard, owner amendment A5)
+
+New owner request, not a carried sprint item: a member who watches every
+store's selling, every dollar in and out, and every hand-made change to
+money or stock — and signs off on what they read. `PLAN-POS-OPERATIONS.md`
+amended first (§0 A5 + new §12.1), doc-first as the protocol requires.
+
+- **Role:** `Operations` added to the catalog — read-everything across
+  sales, orders, inventory, cash, audit and the override register, plus
+  the two new permissions `ops.dashboard.view` and `ops.review.clear`.
+  Deliberately without the approval permissions, so the person who
+  authorizes an exception is never the person who clears it. Sells
+  occasionally: register and order-writing verbs, no commission.
+- **Rollout to existing tenants:** `SystemRoleSyncService` previously only
+  backfilled permissions onto roles that already existed, which would have
+  left Operations invisible in every tenant created before today —
+  including production. It now also creates a missing catalog role, and
+  skips any business that already has a role of that name so a hand-built
+  "Operations" is never shadowed.
+- **Schema:** `ops_reviews` (`0081_ops_reviews`) — the sign-off ledger, one
+  row per cleared subject, unique on (business, subjectType, subjectId),
+  with RLS. Exception-register rows clear through the existing
+  `exception_events.acknowledged_at` instead, so nothing is recorded twice.
+- **API:** `apps/api/src/ops/` — `GET /v1/dashboard/operations` (summary:
+  money in/out/net by tender, 14-day written business, by-store, open/close
+  ritual, feed counts), `/feed`, `/digest`, `/salespeople`, `/activity`, and
+  `POST /v1/ops-reviews/bulk`. Split rather than one call so a slow card
+  never holds up the page and a 403 hides one card, not the dashboard.
+- **Thresholds:** `ops_settings_json.opsReview`, tri-state — null means the
+  documented default, zero is a real value ("show me every refund").
+- **UI:** `/operations`, and `/dashboard` opens there for the Operations
+  role. Feed first with bulk clear; money tiles, by-store and
+  by-salesperson tables, flagged-activity-by-person, open/close, and store
+  activity underneath.
+- **Tests:** 21 unit (thresholds, ranking, digest), 18 integration (every
+  signal class from real rows, thresholds honoured, sign-off idempotent and
+  routed to the right table, permission boundary, role rollout), 1 e2e
+  (write-down → feed → clear → still gone after reload). Migration applies
+  clean from empty; drift check green.
+
+**Owner decisions still open:** the six thresholds ship on the defaults above
+— confirm or set them under Settings → Operations. Also worth a look: whether
+transfers should stay at info severity on the feed (they have their own paper
+trail and are high-volume) or be raised to warning.

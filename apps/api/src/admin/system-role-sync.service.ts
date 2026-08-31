@@ -12,10 +12,21 @@ import { DRIZZLE } from '../database/database.module';
  * would be missing from businesses created before it shipped — the
  * Owner of an early tenant would 403 on a brand-new feature.
  *
- * On boot: for each system role name, insert any catalog permissions
- * its rows are missing. Insert-only (never deletes), so per-business
- * customization of system roles is preserved. Custom (non-system)
- * roles are never touched.
+ * On boot, two passes:
+ *
+ * 1. Create any system role the catalog has gained since a business was
+ *    set up. Without this a new role (Operations, 2026-08-31) would
+ *    exist only for tenants created after it shipped, which is every
+ *    tenant except the ones that matter. Skipped when the business
+ *    already has a role of that name — a hand-built "Operations" is
+ *    theirs, and silently shadowing it would be worse than doing
+ *    nothing.
+ * 2. For each system role, insert any catalog permissions its rows are
+ *    missing.
+ *
+ * Both passes are insert-only (never delete), so per-business
+ * customization of system roles is preserved. Custom (non-system) roles
+ * are never modified.
  */
 @Injectable()
 export class SystemRoleSyncService implements OnModuleInit {
@@ -26,6 +37,7 @@ export class SystemRoleSyncService implements OnModuleInit {
   async onModuleInit(): Promise<void> {
     if (process.env.NODE_ENV === 'test' && process.env.SYSTEM_ROLE_SYNC !== '1') return;
     try {
+      const created = await this.createMissingRoles();
       let added = 0;
       for (const def of SYSTEM_ROLES) {
         if (def.permissions.length === 0) continue;
@@ -46,11 +58,52 @@ export class SystemRoleSyncService implements OnModuleInit {
           added += result.length;
         }
       }
-      if (added > 0) {
-        this.logger.log(`System role sync: backfilled ${added} permission row(s)`);
+      if (created > 0 || added > 0) {
+        this.logger.log(
+          `System role sync: created ${created} role(s), backfilled ${added} permission row(s)`,
+        );
       }
     } catch (err) {
       this.logger.error(`System role sync failed: ${err instanceof Error ? err.message : err}`);
     }
+  }
+
+  /**
+   * Adds catalog roles a business is missing, with their permissions.
+   * Name collision — system or custom — means skip: the business
+   * already has something answering to that name.
+   */
+  private async createMissingRoles(): Promise<number> {
+    const businesses = await this.db.select({ id: schema.businesses.id }).from(schema.businesses);
+    if (businesses.length === 0) return 0;
+    const existing = await this.db
+      .select({ businessId: schema.roles.businessId, name: schema.roles.name })
+      .from(schema.roles);
+    const taken = new Set(existing.map((r) => `${r.businessId}:${r.name}`));
+
+    let created = 0;
+    for (const business of businesses) {
+      for (const def of SYSTEM_ROLES) {
+        if (taken.has(`${business.id}:${def.name}`)) continue;
+        const [role] = await this.db
+          .insert(schema.roles)
+          .values({
+            businessId: business.id,
+            name: def.name,
+            description: def.description,
+            isSystem: true,
+          })
+          .returning({ id: schema.roles.id });
+        if (!role) continue;
+        if (def.permissions.length > 0) {
+          await this.db
+            .insert(schema.rolePermissions)
+            .values(def.permissions.map((permission) => ({ roleId: role.id, permission })))
+            .onConflictDoNothing();
+        }
+        created += 1;
+      }
+    }
+    return created;
   }
 }

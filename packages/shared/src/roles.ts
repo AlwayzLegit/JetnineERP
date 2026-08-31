@@ -1,6 +1,12 @@
 import { ALL_PERMISSIONS, SUPER_ADMIN_ONLY_PERMISSIONS, type Permission } from './permissions.js';
 
-export type SystemRoleName = 'Owner' | 'Manager' | 'Cashier' | 'Inventory Clerk' | 'Bookkeeper';
+export type SystemRoleName =
+  | 'Owner'
+  | 'Manager'
+  | 'Operations'
+  | 'Cashier'
+  | 'Inventory Clerk'
+  | 'Bookkeeper';
 
 export interface SystemRoleDefinition {
   name: SystemRoleName;
@@ -26,6 +32,63 @@ const managerExclusions = new Set<Permission>([
 const managerPermissions: Permission[] = businessPermissions.filter(
   (p) => !managerExclusions.has(p),
 );
+
+/**
+ * Operations (owner 2026-08-31): the member who watches every store's
+ * selling, every dollar in and out, and every inventory movement, then
+ * signs off on what they've read. Deliberately read-and-clear, never
+ * approve — the approval permissions (`pos.refund.approve`,
+ * `pos.cash.approve`, `orders.price_override`, `exchanges.approve`,
+ * `returns.override_window`) stay with the Manager so the person who
+ * authorizes an exception is never the person who clears it. They sell
+ * occasionally, so they carry the register and order-writing verbs, but
+ * no quota and no commission permission.
+ */
+const operationsPermissions: Permission[] = [
+  // The dashboard and its sign-off verb.
+  'ops.dashboard.view',
+  'ops.review.clear',
+
+  // The audit surfaces the feed links into.
+  'audit.view',
+  'security_overrides.view',
+
+  // Every store's sales, and every dollar in or out.
+  'sales.view',
+  'orders.view',
+  'deliveries.view',
+  'payment_plans.view',
+  'gift_cards.view',
+  'service_orders.view',
+
+  // The reports behind the money tiles.
+  'reports.sales.view',
+  'reports.inventory.view',
+  'reports.financial.view',
+  'reports.export',
+
+  // Inventory movement is audited, not performed — adjusting, receiving
+  // and transferring stay with the Inventory Clerk.
+  'products.view',
+  'inventory.view',
+  'serials.view',
+  'purchase_orders.view',
+  'vendors.view',
+
+  // So a flagged row opens onto a real customer and a named store.
+  'customers.view',
+  'locations.view',
+  'users.view',
+  'discounts.view',
+
+  // Occasional selling.
+  'pos.access',
+  'pos.transaction.create',
+  'customers.create',
+  'orders.create',
+  'orders.update',
+  'orders.deposit.take',
+];
 
 const cashierPermissions: Permission[] = [
   'pos.access',
@@ -108,6 +171,12 @@ export const SYSTEM_ROLES: SystemRoleDefinition[] = [
     name: 'Manager',
     description: 'Manages day-to-day operations except billing and destructive role/user actions',
     permissions: managerPermissions,
+  },
+  {
+    name: 'Operations',
+    description:
+      "Watches every store's sales, money in and out, and inventory movement, and signs off on what they review",
+    permissions: operationsPermissions,
   },
   {
     name: 'Cashier',

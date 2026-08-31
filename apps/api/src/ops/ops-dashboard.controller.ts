@@ -1,0 +1,793 @@
+import { BadRequestException, Controller, Get, Inject, Query } from '@nestjs/common';
+import { and, desc, eq, gte, inArray, isNull, lt, sql } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/pg-core';
+import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
+import { schema } from '@jetnine/db';
+import { CurrentTenant } from '../auth/current-user.decorator';
+import { salesScopeCond } from '../common/sales-scope';
+import { DRIZZLE } from '../database/database.module';
+import { RequirePermission, TenantScoped } from '../tenancy/decorators';
+import type { RequestTenantContext } from '../tenancy/request-context';
+import {
+  digestByActor,
+  discountPercent,
+  type ActorDigestRow,
+  type OpsThresholds,
+} from './ops-feed';
+import { OpsFeedService } from './ops-feed.service';
+
+interface StoreRow {
+  locationId: string;
+  locationName: string;
+  timezone: string;
+  writtenCents: number;
+  writtenCount: number;
+  collectedCents: number;
+  refundedCents: number;
+}
+
+interface SalespersonRow {
+  /** `m:<membershipId>` for order writers, `u:<userId>` for register sales. */
+  key: string;
+  name: string;
+  writtenCents: number;
+  writtenCount: number;
+  collectedCents: number;
+  refundedCents: number;
+  discountCents: number;
+  discountPct: number;
+}
+
+interface MoneyBlock {
+  inCents: number;
+  outCents: number;
+  netCents: number;
+  byTender: { method: string; cents: number; count: number }[];
+  out: { refundsCents: number; returnsCents: number; writeOffsCents: number };
+  exchanges: { count: number; restockingFeeCents: number };
+}
+
+interface RitualRow {
+  locationId: string;
+  locationName: string;
+  /** Store-local date the row describes. */
+  date: string;
+  drawerOpen: boolean;
+  drawerClosed: boolean;
+  drawerSuspended: boolean;
+  varianceCents: number | null;
+  closeoutRan: boolean;
+  closeoutExceptions: number;
+}
+
+interface OperationsSummary {
+  /** Store-local calendar date the "today" numbers cover. */
+  date: string;
+  stores: { id: string; name: string; timezone: string }[];
+  money: MoneyBlock;
+  salesByDay: { day: string; writtenCents: number }[];
+  byStore: StoreRow[];
+  ritual: RitualRow[];
+  counts: { feedOpen: number; critical: number };
+  thresholds: OpsThresholds;
+}
+
+interface ActivityGroup {
+  orderId: string;
+  orderNumber: string;
+  latestAt: Date;
+  events: { action: string; actorName: string | null; createdAt: Date }[];
+}
+
+/**
+ * The Operations home (owner 2026-08-31): every store's selling, every
+ * dollar in and out, and every hand-made change to money or stock —
+ * read, then signed off.
+ *
+ * Deliberately several endpoints rather than one: the summary is cheap
+ * and always rendered, while the feed, the per-salesperson table and
+ * the digest each cost real query time and are fetched independently so
+ * a slow card never holds up the page. Each is permission-gated on its
+ * own, so a 403 hides one card instead of the whole dashboard.
+ *
+ * Day boundaries follow the store's own timezone, matching the manager
+ * dashboard; imported legacy documents are excluded throughout (D8).
+ */
+@TenantScoped()
+@Controller('v1/dashboard/operations')
+export class OpsDashboardController {
+  constructor(
+    @Inject(DRIZZLE) private readonly db: PostgresJsDatabase,
+    @Inject(OpsFeedService) private readonly feed: OpsFeedService,
+  ) {}
+
+  @Get()
+  @RequirePermission('ops.dashboard.view')
+  async summary(@CurrentTenant() tenant: RequestTenantContext): Promise<OperationsSummary> {
+    const businessId = tenant.businessId!;
+    const stores = await this.stores(tenant, businessId);
+    if (stores.length === 0) {
+      throw new BadRequestException('No stores are available to this member');
+    }
+    // The roll-up needs one clock. The first non-warehouse store's
+    // timezone is the business's working day, same as the manager view.
+    const tz = stores[0]!.timezone;
+    const [dayRow] = await this.db
+      .select({ today: sql<string>`(now() AT TIME ZONE ${tz})::date::text` })
+      .from(schema.businesses)
+      .where(eq(schema.businesses.id, businessId))
+      .limit(1);
+    const today = dayRow!.today;
+    const dayStart = sql`(${today}::date::timestamp AT TIME ZONE ${tz})`;
+    const dayEnd = sql`((${today}::date + 1)::timestamp AT TIME ZONE ${tz})`;
+
+    const [money, salesByDay, byStore, ritual, feedResult] = await Promise.all([
+      this.money(tenant, businessId, dayStart, dayEnd),
+      this.salesByDay(tenant, businessId, tz),
+      this.byStore(tenant, businessId, stores, dayStart, dayEnd),
+      this.ritual(tenant, businessId, stores),
+      this.feed.build(tenant, { cap: 500 }),
+    ]);
+
+    return {
+      date: today,
+      stores: stores.map((s) => ({ id: s.id, name: s.name, timezone: s.timezone })),
+      money,
+      salesByDay,
+      byStore,
+      ritual,
+      counts: {
+        feedOpen: feedResult.totalBeforeCap,
+        critical: feedResult.rows.filter((r) => r.severity === 'critical').length,
+      },
+      thresholds: feedResult.thresholds,
+    };
+  }
+
+  /** The prioritized action feed. */
+  @Get('feed')
+  @RequirePermission('ops.dashboard.view')
+  async feedRows(
+    @CurrentTenant() tenant: RequestTenantContext,
+    @Query('days') daysStr?: string,
+    @Query('limit') limitStr?: string,
+  ) {
+    const days = Number(daysStr) > 0 ? Number(daysStr) : undefined;
+    const cap = Number(limitStr) > 0 ? Number(limitStr) : undefined;
+    const result = await this.feed.build(tenant, { days, cap });
+    return {
+      rows: result.rows,
+      total: result.totalBeforeCap,
+      thresholds: result.thresholds,
+    };
+  }
+
+  /** Grouped by who did it — the pattern a chronological list hides. */
+  @Get('digest')
+  @RequirePermission('ops.dashboard.view')
+  async digest(
+    @CurrentTenant() tenant: RequestTenantContext,
+    @Query('days') daysStr?: string,
+  ): Promise<ActorDigestRow[]> {
+    const days = Number(daysStr) > 0 ? Number(daysStr) : undefined;
+    const result = await this.feed.build(tenant, { days, cap: 500 });
+    return digestByActor(result.rows);
+  }
+
+  /** Every salesperson at every store, over the trailing window. */
+  @Get('salespeople')
+  @RequirePermission('ops.dashboard.view')
+  async salespeople(
+    @CurrentTenant() tenant: RequestTenantContext,
+    @Query('days') daysStr?: string,
+  ): Promise<SalespersonRow[]> {
+    const businessId = tenant.businessId!;
+    const days = Math.min(90, Math.max(1, Number(daysStr) || 30));
+    const since = new Date(Date.now() - days * 86_400_000);
+
+    const memberUser = alias(schema.users, 'member_user');
+    const orderRows = await this.db
+      .select({
+        totalCents: schema.orders.totalCents,
+        discountCents: schema.orders.discountCents,
+        subtotalCents: schema.orders.subtotalCents,
+        primary: schema.orders.salespersonMembershipId,
+        second: schema.orders.secondSalespersonMembershipId,
+        splitBps: schema.orders.splitBps,
+      })
+      .from(schema.orders)
+      .where(
+        and(
+          eq(schema.orders.businessId, businessId),
+          gte(schema.orders.createdAt, since),
+          sql`${schema.orders.status} NOT IN ('draft', 'quote', 'cancelled')`,
+          isNull(schema.orders.importedAt),
+          salesScopeCond(tenant, schema.orders.locationId),
+        ),
+      );
+    const saleRows = await this.db
+      .select({
+        totalCents: schema.sales.totalCents,
+        discountCents: schema.sales.discountCents,
+        subtotalCents: schema.sales.subtotalCents,
+        associateUserId: schema.sales.associateUserId,
+      })
+      .from(schema.sales)
+      .where(
+        and(
+          eq(schema.sales.businessId, businessId),
+          gte(schema.sales.createdAt, since),
+          eq(schema.sales.status, 'completed'),
+          isNull(schema.sales.importedAt),
+          salesScopeCond(tenant, schema.sales.locationId),
+        ),
+      );
+
+    const names = new Map<string, string>();
+    const members = await this.db
+      .select({
+        id: schema.memberships.id,
+        userId: schema.memberships.userId,
+        name: memberUser.name,
+        email: memberUser.email,
+      })
+      .from(schema.memberships)
+      .innerJoin(memberUser, eq(memberUser.id, schema.memberships.userId))
+      .where(eq(schema.memberships.businessId, businessId));
+    for (const m of members) {
+      names.set(`m:${m.id}`, m.name ?? m.email);
+      names.set(`u:${m.userId}`, m.name ?? m.email);
+    }
+
+    const acc = new Map<string, SalespersonRow>();
+    const bump = (key: string, patch: Partial<SalespersonRow>) => {
+      const row = acc.get(key) ?? {
+        key,
+        name: names.get(key) ?? 'Unassigned',
+        writtenCents: 0,
+        writtenCount: 0,
+        collectedCents: 0,
+        refundedCents: 0,
+        discountCents: 0,
+        discountPct: 0,
+      };
+      row.writtenCents += patch.writtenCents ?? 0;
+      row.writtenCount += patch.writtenCount ?? 0;
+      row.discountCents += patch.discountCents ?? 0;
+      acc.set(key, row);
+    };
+    // Subtotals feed the discount percentage and are never returned, so
+    // they ride alongside the rows rather than inside them.
+    const subtotals = new Map<string, number>();
+    const addSubtotal = (key: string, cents: number) =>
+      subtotals.set(key, (subtotals.get(key) ?? 0) + cents);
+
+    for (const o of orderRows) {
+      const split = o.second && o.splitBps != null ? o.splitBps : 10000;
+      if (o.primary) {
+        const key = `m:${o.primary}`;
+        const share = split / 10000;
+        bump(key, {
+          writtenCents: Math.round(o.totalCents * share),
+          writtenCount: 1,
+          discountCents: Math.round(o.discountCents * share),
+        });
+        addSubtotal(key, Math.round(o.subtotalCents * share));
+      }
+      if (o.second) {
+        const key = `m:${o.second}`;
+        const share = (10000 - split) / 10000;
+        bump(key, {
+          writtenCents: Math.round(o.totalCents * share),
+          writtenCount: 1,
+          discountCents: Math.round(o.discountCents * share),
+        });
+        addSubtotal(key, Math.round(o.subtotalCents * share));
+      }
+    }
+    for (const s of saleRows) {
+      if (!s.associateUserId) continue;
+      const key = `u:${s.associateUserId}`;
+      bump(key, {
+        writtenCents: s.totalCents,
+        writtenCount: 1,
+        discountCents: s.discountCents,
+      });
+      addSubtotal(key, s.subtotalCents);
+    }
+
+    // Refunds land on whoever rang the original sale.
+    const refundRows = await this.db
+      .select({
+        amountCents: schema.refunds.amountCents,
+        associateUserId: schema.sales.associateUserId,
+      })
+      .from(schema.refunds)
+      .innerJoin(schema.sales, eq(schema.sales.id, schema.refunds.saleId))
+      .where(
+        and(
+          eq(schema.refunds.businessId, businessId),
+          gte(schema.refunds.createdAt, since),
+          isNull(schema.sales.importedAt),
+          salesScopeCond(tenant, schema.sales.locationId),
+        ),
+      );
+    for (const r of refundRows) {
+      if (!r.associateUserId) continue;
+      const key = `u:${r.associateUserId}`;
+      const row = acc.get(key);
+      if (row) row.refundedCents += r.amountCents;
+    }
+
+    // Money actually collected, attributed the same way the document
+    // is: an order's payments to its writer, a register sale's to whoever
+    // rang it. Split orders credit the primary writer — the second
+    // salesperson's share of *written* business is already counted above,
+    // and splitting a tender again would double-count the cash.
+    const orderCollected = await this.db
+      .select({
+        membershipId: schema.orders.salespersonMembershipId,
+        cents: sql<number>`COALESCE(SUM(${schema.payments.amountCents}), 0)::int`,
+      })
+      .from(schema.payments)
+      .innerJoin(schema.orders, eq(schema.orders.id, schema.payments.orderId))
+      .where(
+        and(
+          eq(schema.payments.businessId, businessId),
+          gte(schema.payments.createdAt, since),
+          eq(schema.payments.status, 'succeeded'),
+          isNull(schema.orders.importedAt),
+          salesScopeCond(tenant, schema.orders.locationId),
+        ),
+      )
+      .groupBy(schema.orders.salespersonMembershipId);
+    for (const c of orderCollected) {
+      if (!c.membershipId) continue;
+      const row = acc.get(`m:${c.membershipId}`);
+      if (row) row.collectedCents += c.cents;
+    }
+    const saleCollected = await this.db
+      .select({
+        associateUserId: schema.sales.associateUserId,
+        cents: sql<number>`COALESCE(SUM(${schema.payments.amountCents}), 0)::int`,
+      })
+      .from(schema.payments)
+      .innerJoin(schema.sales, eq(schema.sales.id, schema.payments.saleId))
+      .where(
+        and(
+          eq(schema.payments.businessId, businessId),
+          gte(schema.payments.createdAt, since),
+          eq(schema.payments.status, 'succeeded'),
+          isNull(schema.sales.importedAt),
+          salesScopeCond(tenant, schema.sales.locationId),
+        ),
+      )
+      .groupBy(schema.sales.associateUserId);
+    for (const c of saleCollected) {
+      if (!c.associateUserId) continue;
+      const row = acc.get(`u:${c.associateUserId}`);
+      if (row) row.collectedCents += c.cents;
+    }
+
+    for (const [key, row] of acc) {
+      row.discountPct =
+        Math.round(discountPercent(row.discountCents, subtotals.get(key) ?? 0) * 10) / 10;
+    }
+    return [...acc.values()].sort((a, b) => b.writtenCents - a.writtenCents);
+  }
+
+  /** Recent order changes, grouped by order — kept from the manager view. */
+  @Get('activity')
+  @RequirePermission('ops.dashboard.view')
+  async activity(
+    @CurrentTenant() tenant: RequestTenantContext,
+    @Query('limit') limitStr?: string,
+  ): Promise<ActivityGroup[]> {
+    const businessId = tenant.businessId!;
+    const limit = Math.min(200, Math.max(1, Number(limitStr) || 60));
+    const rows = await this.db
+      .select({
+        action: schema.auditLogs.action,
+        targetId: schema.auditLogs.targetId,
+        createdAt: schema.auditLogs.createdAt,
+        actorName: schema.users.name,
+        actorEmail: schema.users.email,
+        orderNumber: schema.orders.number,
+      })
+      .from(schema.auditLogs)
+      .leftJoin(schema.users, eq(schema.users.id, schema.auditLogs.actorUserId))
+      .leftJoin(schema.orders, sql`${schema.orders.id}::text = ${schema.auditLogs.targetId}`)
+      .where(
+        and(
+          eq(schema.auditLogs.businessId, businessId),
+          eq(schema.auditLogs.targetType, 'order'),
+          salesScopeCond(tenant, schema.orders.locationId),
+        ),
+      )
+      .orderBy(desc(schema.auditLogs.createdAt))
+      .limit(limit);
+
+    const groups = new Map<string, ActivityGroup>();
+    for (const r of rows) {
+      if (!r.targetId || !r.orderNumber) continue;
+      const group = groups.get(r.targetId) ?? {
+        orderId: r.targetId,
+        orderNumber: r.orderNumber,
+        latestAt: r.createdAt,
+        events: [],
+      };
+      group.events.push({
+        action: r.action,
+        actorName: r.actorName ?? r.actorEmail,
+        createdAt: r.createdAt,
+      });
+      if (r.createdAt > group.latestAt) group.latestAt = r.createdAt;
+      groups.set(r.targetId, group);
+    }
+    return [...groups.values()].sort((a, b) => b.latestAt.getTime() - a.latestAt.getTime());
+  }
+
+  // ------------------------------------------------------------- internals
+
+  private async stores(tenant: RequestTenantContext, businessId: string) {
+    const rows = await this.db
+      .select({
+        id: schema.locations.id,
+        name: schema.locations.name,
+        timezone: schema.locations.timezone,
+        locationType: schema.locations.locationType,
+      })
+      .from(schema.locations)
+      .where(
+        and(
+          eq(schema.locations.businessId, businessId),
+          eq(schema.locations.isActive, true),
+          tenant.dataScope === 'store'
+            ? inArray(schema.locations.id, tenant.scopeLocationIds ?? [])
+            : undefined,
+        ),
+      )
+      .orderBy(schema.locations.name);
+    // Selling stores lead; a warehouse never sets the business clock.
+    return [
+      ...rows.filter((r) => r.locationType !== 'warehouse'),
+      ...rows.filter((r) => r.locationType === 'warehouse'),
+    ];
+  }
+
+  /**
+   * Today's money, all stores. "In" is every succeeded payment by
+   * tender; "out" is refunds, authorized returns and write-offs, which
+   * are three different tables and never net into the payment ledger.
+   */
+  private async money(
+    tenant: RequestTenantContext,
+    businessId: string,
+    dayStart: ReturnType<typeof sql>,
+    dayEnd: ReturnType<typeof sql>,
+  ): Promise<MoneyBlock> {
+    const locationExpr = sql`COALESCE(${schema.sales.locationId}, ${schema.orders.locationId}, ${schema.serviceOrders.locationId})`;
+    const byTender = await this.db
+      .select({
+        method: schema.payments.method,
+        cents: sql<number>`COALESCE(SUM(${schema.payments.amountCents}), 0)::int`,
+        count: sql<number>`COUNT(*)::int`,
+      })
+      .from(schema.payments)
+      .leftJoin(schema.sales, eq(schema.sales.id, schema.payments.saleId))
+      .leftJoin(schema.orders, eq(schema.orders.id, schema.payments.orderId))
+      .leftJoin(schema.serviceOrders, eq(schema.serviceOrders.id, schema.payments.serviceOrderId))
+      .where(
+        and(
+          eq(schema.payments.businessId, businessId),
+          gte(schema.payments.createdAt, dayStart),
+          lt(schema.payments.createdAt, dayEnd),
+          eq(schema.payments.status, 'succeeded'),
+          isNull(schema.sales.importedAt),
+          isNull(schema.orders.importedAt),
+          isNull(schema.serviceOrders.importedAt),
+          salesScopeCond(tenant, locationExpr),
+        ),
+      )
+      .groupBy(schema.payments.method)
+      .orderBy(desc(sql`COALESCE(SUM(${schema.payments.amountCents}), 0)`));
+
+    const [refundTotal] = await this.db
+      .select({ cents: sql<number>`COALESCE(SUM(${schema.refunds.amountCents}), 0)::int` })
+      .from(schema.refunds)
+      .innerJoin(schema.sales, eq(schema.sales.id, schema.refunds.saleId))
+      .where(
+        and(
+          eq(schema.refunds.businessId, businessId),
+          gte(schema.refunds.createdAt, dayStart),
+          lt(schema.refunds.createdAt, dayEnd),
+          isNull(schema.sales.importedAt),
+          salesScopeCond(tenant, schema.sales.locationId),
+        ),
+      );
+
+    const [returnTotal] = await this.db
+      .select({ cents: sql<number>`COALESCE(SUM(${schema.orderReturns.amountCents}), 0)::int` })
+      .from(schema.orderReturns)
+      .where(
+        and(
+          eq(schema.orderReturns.businessId, businessId),
+          gte(schema.orderReturns.authorizedAt, dayStart),
+          lt(schema.orderReturns.authorizedAt, dayEnd),
+          sql`${schema.orderReturns.status} <> 'cancelled'`,
+        ),
+      );
+
+    const [writeOffTotal] = await this.db
+      .select({ cents: sql<number>`COALESCE(SUM(${schema.writeOffs.totalCostCents}), 0)::int` })
+      .from(schema.writeOffs)
+      .where(
+        and(
+          eq(schema.writeOffs.businessId, businessId),
+          gte(schema.writeOffs.createdAt, dayStart),
+          lt(schema.writeOffs.createdAt, dayEnd),
+        ),
+      );
+
+    const [exchangeTotal] = await this.db
+      .select({
+        count: sql<number>`COUNT(*)::int`,
+        fee: sql<number>`COALESCE(SUM(${schema.exchanges.restockingFeeCents}), 0)::int`,
+      })
+      .from(schema.exchanges)
+      .where(
+        and(
+          eq(schema.exchanges.businessId, businessId),
+          gte(schema.exchanges.createdAt, dayStart),
+          lt(schema.exchanges.createdAt, dayEnd),
+        ),
+      );
+
+    const inCents = byTender.reduce((sum, t) => sum + t.cents, 0);
+    const refundsCents = refundTotal?.cents ?? 0;
+    const returnsCents = returnTotal?.cents ?? 0;
+    const writeOffsCents = writeOffTotal?.cents ?? 0;
+    const outCents = refundsCents + returnsCents + writeOffsCents;
+    return {
+      inCents,
+      outCents,
+      netCents: inCents - outCents,
+      byTender,
+      out: { refundsCents, returnsCents, writeOffsCents },
+      exchanges: { count: exchangeTotal?.count ?? 0, restockingFeeCents: exchangeTotal?.fee ?? 0 },
+    };
+  }
+
+  /** Written business per store-local day, 14 days, zero-filled. */
+  private async salesByDay(
+    tenant: RequestTenantContext,
+    businessId: string,
+    tz: string,
+  ): Promise<{ day: string; writtenCents: number }[]> {
+    const localDay = (col: unknown) => sql<string>`(${col} AT TIME ZONE ${tz})::date::text`;
+    const window = sql`(now() AT TIME ZONE ${tz})::date - 13`;
+
+    const orderRows = await this.db
+      .select({ day: localDay(schema.orders.createdAt), cents: schema.orders.totalCents })
+      .from(schema.orders)
+      .where(
+        and(
+          eq(schema.orders.businessId, businessId),
+          sql`${schema.orders.status} NOT IN ('draft', 'quote', 'cancelled')`,
+          isNull(schema.orders.importedAt),
+          sql`(${schema.orders.createdAt} AT TIME ZONE ${tz})::date >= ${window}`,
+          salesScopeCond(tenant, schema.orders.locationId),
+        ),
+      );
+    const saleRows = await this.db
+      .select({ day: localDay(schema.sales.createdAt), cents: schema.sales.totalCents })
+      .from(schema.sales)
+      .where(
+        and(
+          eq(schema.sales.businessId, businessId),
+          eq(schema.sales.status, 'completed'),
+          isNull(schema.sales.importedAt),
+          sql`(${schema.sales.createdAt} AT TIME ZONE ${tz})::date >= ${window}`,
+          salesScopeCond(tenant, schema.sales.locationId),
+        ),
+      );
+
+    const [days] = await this.db
+      .select({
+        list: sql<
+          string[]
+        >`array(SELECT ((now() AT TIME ZONE ${tz})::date - i)::text FROM generate_series(13, 0, -1) AS i)`,
+      })
+      .from(schema.businesses)
+      .where(eq(schema.businesses.id, businessId))
+      .limit(1);
+    const buckets = new Map<string, number>((days?.list ?? []).map((d) => [d, 0]));
+    for (const r of [...orderRows, ...saleRows]) {
+      if (buckets.has(r.day)) buckets.set(r.day, buckets.get(r.day)! + r.cents);
+    }
+    return [...buckets].map(([day, writtenCents]) => ({ day, writtenCents }));
+  }
+
+  private async byStore(
+    tenant: RequestTenantContext,
+    businessId: string,
+    stores: { id: string; name: string; timezone: string }[],
+    dayStart: ReturnType<typeof sql>,
+    dayEnd: ReturnType<typeof sql>,
+  ): Promise<StoreRow[]> {
+    const rows = new Map<string, StoreRow>(
+      stores.map((s) => [
+        s.id,
+        {
+          locationId: s.id,
+          locationName: s.name,
+          timezone: s.timezone,
+          writtenCents: 0,
+          writtenCount: 0,
+          collectedCents: 0,
+          refundedCents: 0,
+        },
+      ]),
+    );
+
+    const written = await this.db
+      .select({
+        locationId: schema.orders.locationId,
+        cents: sql<number>`COALESCE(SUM(${schema.orders.totalCents}), 0)::int`,
+        count: sql<number>`COUNT(*)::int`,
+      })
+      .from(schema.orders)
+      .where(
+        and(
+          eq(schema.orders.businessId, businessId),
+          gte(schema.orders.createdAt, dayStart),
+          lt(schema.orders.createdAt, dayEnd),
+          sql`${schema.orders.status} NOT IN ('draft', 'quote', 'cancelled')`,
+          isNull(schema.orders.importedAt),
+          salesScopeCond(tenant, schema.orders.locationId),
+        ),
+      )
+      .groupBy(schema.orders.locationId);
+    for (const w of written) {
+      const row = rows.get(w.locationId);
+      if (row) {
+        row.writtenCents += w.cents;
+        row.writtenCount += w.count;
+      }
+    }
+
+    const rung = await this.db
+      .select({
+        locationId: schema.sales.locationId,
+        cents: sql<number>`COALESCE(SUM(${schema.sales.totalCents}), 0)::int`,
+        count: sql<number>`COUNT(*)::int`,
+      })
+      .from(schema.sales)
+      .where(
+        and(
+          eq(schema.sales.businessId, businessId),
+          gte(schema.sales.createdAt, dayStart),
+          lt(schema.sales.createdAt, dayEnd),
+          eq(schema.sales.status, 'completed'),
+          isNull(schema.sales.importedAt),
+          salesScopeCond(tenant, schema.sales.locationId),
+        ),
+      )
+      .groupBy(schema.sales.locationId);
+    for (const s of rung) {
+      const row = rows.get(s.locationId);
+      if (row) {
+        row.writtenCents += s.cents;
+        row.writtenCount += s.count;
+      }
+    }
+
+    const collected = await this.db
+      .select({
+        locationId: sql<string>`COALESCE(${schema.sales.locationId}, ${schema.orders.locationId})`,
+        cents: sql<number>`COALESCE(SUM(${schema.payments.amountCents}), 0)::int`,
+      })
+      .from(schema.payments)
+      .leftJoin(schema.sales, eq(schema.sales.id, schema.payments.saleId))
+      .leftJoin(schema.orders, eq(schema.orders.id, schema.payments.orderId))
+      .where(
+        and(
+          eq(schema.payments.businessId, businessId),
+          gte(schema.payments.createdAt, dayStart),
+          lt(schema.payments.createdAt, dayEnd),
+          eq(schema.payments.status, 'succeeded'),
+          isNull(schema.sales.importedAt),
+          isNull(schema.orders.importedAt),
+        ),
+      )
+      .groupBy(sql`COALESCE(${schema.sales.locationId}, ${schema.orders.locationId})`);
+    for (const c of collected) {
+      const row = rows.get(c.locationId);
+      if (row) row.collectedCents += c.cents;
+    }
+
+    const refunded = await this.db
+      .select({
+        locationId: schema.sales.locationId,
+        cents: sql<number>`COALESCE(SUM(${schema.refunds.amountCents}), 0)::int`,
+      })
+      .from(schema.refunds)
+      .innerJoin(schema.sales, eq(schema.sales.id, schema.refunds.saleId))
+      .where(
+        and(
+          eq(schema.refunds.businessId, businessId),
+          gte(schema.refunds.createdAt, dayStart),
+          lt(schema.refunds.createdAt, dayEnd),
+          isNull(schema.sales.importedAt),
+        ),
+      )
+      .groupBy(schema.sales.locationId);
+    for (const r of refunded) {
+      const row = rows.get(r.locationId);
+      if (row) row.refundedCents += r.cents;
+    }
+
+    return [...rows.values()];
+  }
+
+  /**
+   * Open/close ritual, one row per store in that store's own local day.
+   * The morning glance: which drawers are open, which never closed, and
+   * whether last night's close-out actually ran.
+   */
+  private async ritual(
+    tenant: RequestTenantContext,
+    businessId: string,
+    stores: { id: string; name: string; timezone: string }[],
+  ): Promise<RitualRow[]> {
+    const out: RitualRow[] = [];
+    for (const store of stores) {
+      const [dayRow] = await this.db
+        .select({ today: sql<string>`(now() AT TIME ZONE ${store.timezone})::date::text` })
+        .from(schema.businesses)
+        .where(eq(schema.businesses.id, businessId))
+        .limit(1);
+      const date = dayRow!.today;
+      const shifts = await this.db
+        .select({
+          closedAt: schema.cashShifts.closedAt,
+          suspendedAt: schema.cashShifts.suspendedAt,
+          varianceCents: schema.cashShifts.varianceCents,
+        })
+        .from(schema.cashShifts)
+        .where(
+          and(
+            eq(schema.cashShifts.businessId, businessId),
+            eq(schema.cashShifts.locationId, store.id),
+            sql`(${schema.cashShifts.openedAt} AT TIME ZONE ${store.timezone})::date = ${date}::date`,
+            salesScopeCond(tenant, schema.cashShifts.locationId),
+          ),
+        );
+      const [closeout] = await this.db
+        .select({ exceptionCount: schema.dailyCloseouts.exceptionCount })
+        .from(schema.dailyCloseouts)
+        .where(
+          and(
+            eq(schema.dailyCloseouts.businessId, businessId),
+            eq(schema.dailyCloseouts.locationId, store.id),
+            eq(schema.dailyCloseouts.closeDate, date),
+          ),
+        )
+        .limit(1);
+
+      const variances = shifts.map((s) => s.varianceCents).filter((v): v is number => v != null);
+      out.push({
+        locationId: store.id,
+        locationName: store.name,
+        date,
+        drawerOpen: shifts.some((s) => s.closedAt == null),
+        drawerClosed: shifts.length > 0 && shifts.every((s) => s.closedAt != null),
+        drawerSuspended: shifts.some((s) => s.suspendedAt != null),
+        varianceCents: variances.length > 0 ? variances.reduce((a, b) => a + b, 0) : null,
+        closeoutRan: closeout != null,
+        closeoutExceptions: closeout?.exceptionCount ?? 0,
+      });
+    }
+    return out;
+  }
+}
