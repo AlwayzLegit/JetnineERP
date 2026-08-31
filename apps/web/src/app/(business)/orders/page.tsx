@@ -6,7 +6,15 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { PenLine, X } from 'lucide-react';
 import { api } from '@/lib/api';
 import { Money } from '@/components/money';
-import { PageHeader, Input, Select, LinkButton, LoadingRows, EmptyState } from '@/components/ui';
+import {
+  PageHeader,
+  Input,
+  Select,
+  LinkButton,
+  LoadingRows,
+  EmptyState,
+  DisplayStatusBadge,
+} from '@/components/ui';
 
 /**
  * Orders list per PLAN-POS-OPERATIONS §8: a table (Order #, Customer,
@@ -62,39 +70,30 @@ interface OrderDetail {
   payments: { id: string; amountCents: number; method: string; status: string }[];
 }
 
-const DISPLAY_TONES: Record<string, string> = {
-  Draft: 'neutral',
-  Pending: 'neutral',
-  'On PO': 'info',
-  Reserved: 'brand',
-  Scheduled: 'info',
-  'Out for Delivery': 'brand',
-  Delivered: 'success',
-  Quote: 'warning',
-  Layaway: 'warning',
-  Cancelled: 'danger',
-};
-
 function DisplayStatus({ row }: { row: ListRow }) {
-  const tone = DISPLAY_TONES[row.displayStatus] ?? 'neutral';
-  return (
-    <span className={`badge badge-${tone}`}>
-      {row.displayStatus}
-      {row.poNumber ? ` (${row.poNumber})` : ''}
-    </span>
-  );
+  return <DisplayStatusBadge displayStatus={row.displayStatus} poNumber={row.poNumber} />;
 }
 
-/** Raw lifecycle filters offered alongside free-text search. */
+/**
+ * P-013 (BA-0017): the filter speaks the same display vocabulary the
+ * badges show — every option is a badge you can see, and every badge
+ * is an option you can pick.
+ */
 const STATUS_FILTERS = [
   ['', 'All statuses'],
-  ['draft', 'Drafts'],
-  ['quote', 'Quotes'],
-  ['open', 'Open'],
-  ['partially_fulfilled', 'Partially fulfilled'],
-  ['fulfilled', 'Fulfilled'],
-  ['completed', 'Completed'],
-  ['cancelled', 'Cancelled'],
+  ['Draft', 'Draft'],
+  ['Quote', 'Quote'],
+  ['Pending', 'Pending'],
+  ['On PO', 'On PO'],
+  ['Reserved', 'Reserved'],
+  ['Scheduled', 'Scheduled'],
+  ['Out for Delivery', 'Out for Delivery'],
+  ['Delivered', 'Delivered'],
+  ['Layaway', 'Layaway'],
+  ['Awaiting Return Pickup', 'Awaiting Return Pickup'],
+  ['Returned', 'Returned'],
+  ['Exchanged', 'Exchanged'],
+  ['Cancelled', 'Cancelled'],
 ] as const;
 
 export default function OrdersPage() {
@@ -108,7 +107,7 @@ export default function OrdersPage() {
       ? new URLSearchParams(window.location.search)
       : new URLSearchParams();
   const [q, setQ] = useState(initial.get('q') ?? '');
-  const [status, setStatus] = useState(initial.get('status') ?? '');
+  const [status, setStatus] = useState(initial.get('display') ?? '');
   const [view, setView] = useState(initial.get('view') ?? '');
   const [sort, setSort] = useState(initial.get('sort') ?? '');
   const [dir, setDir] = useState(initial.get('dir') === 'desc' ? 'desc' : 'asc');
@@ -146,7 +145,7 @@ export default function OrdersPage() {
     ) => {
       const params = new URLSearchParams({ limit: '50' });
       if (query.trim()) params.set('q', query.trim());
-      if (statusFilter) params.set('status', statusFilter);
+      if (statusFilter) params.set('display', statusFilter);
       if (viewFilter) params.set('view', viewFilter);
       if (onlyMine) params.set('mine', '1');
       if (sortBy) {
@@ -169,7 +168,7 @@ export default function OrdersPage() {
     // Mirror the view state into the URL (replace — no history spam).
     const urlParams = new URLSearchParams();
     if (q.trim()) urlParams.set('q', q.trim());
-    if (status) urlParams.set('status', status);
+    if (status) urlParams.set('display', status);
     if (view) urlParams.set('view', view);
     if (mine) urlParams.set('mine', '1');
     if (sort) {
