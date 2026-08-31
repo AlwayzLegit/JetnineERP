@@ -28,6 +28,7 @@ interface RowErrorReport {
 interface Lookups {
   customerRefs: Map<string, string>;
   orderRefs: Map<string, string>;
+  saleRefs: Map<string, string>;
   locations: Map<string, string>;
   variants: Map<string, { variantId: string; productId: string; costCents: number | null }>;
 }
@@ -293,6 +294,19 @@ export class ImportService {
         });
       }
     }
+    if (entity === 'sale_line') {
+      if (typeof n.invoiceNo === 'string' && !lookups.saleRefs.has(n.invoiceNo)) {
+        errors.push({
+          field: 'invoiceNo',
+          message: `unknown invoice "${n.invoiceNo}" — commit sale headers first`,
+        });
+      }
+      // Unknown SKUs stay importable — the description is the record —
+      // but a line with neither is unprintable.
+      if (!n.sku && !n.description) {
+        errors.push({ field: 'sku', message: 'a line needs a SKU or a description' });
+      }
+    }
     return errors;
   }
 
@@ -300,14 +314,28 @@ export class ImportService {
     const lookups: Lookups = {
       customerRefs: new Map(),
       orderRefs: new Map(),
+      saleRefs: new Map(),
       locations: new Map(),
       variants: new Map(),
     };
     const wantCustomers = ['order', 'sale'].includes(entity);
     const wantOrders = entity === 'order_line';
+    const wantSales = entity === 'sale_line';
     const wantLocations = ['inventory', 'order', 'sale'].includes(entity);
-    const wantVariants = ['inventory', 'order_line'].includes(entity);
+    const wantVariants = ['inventory', 'order_line', 'sale_line'].includes(entity);
 
+    if (wantSales) {
+      const refs = await this.db
+        .select({
+          legacyId: schema.legacyRefs.legacyId,
+          jetnineId: schema.legacyRefs.jetnineId,
+        })
+        .from(schema.legacyRefs)
+        .where(
+          and(eq(schema.legacyRefs.businessId, businessId), eq(schema.legacyRefs.entity, 'sale')),
+        );
+      for (const r of refs) lookups.saleRefs.set(r.legacyId, r.jetnineId);
+    }
     if (wantCustomers || wantOrders) {
       const refs = await this.db
         .select({
@@ -439,6 +467,8 @@ export class ImportService {
         return this.commitOrderLine(businessId, batch.id, legacyId, n, ctx.lookups);
       case 'sale':
         return this.commitSale(businessId, batch.id, legacyId, n, ctx.lookups);
+      case 'sale_line':
+        return this.commitSaleLine(businessId, batch.id, legacyId, n, ctx.lookups);
       default:
         throw new BadRequestException(`Unknown entity "${batch.entity}"`);
     }
@@ -944,6 +974,52 @@ export class ImportService {
     return saleId;
   }
 
+  /**
+   * Owner 2026-08-31: attach the per-item lines to imported sale
+   * headers — receipts imported header-only showed nothing but money.
+   * A SKU that matches the catalog binds the variant; one that doesn't
+   * still imports with its description (D8: imported rows never touch
+   * stock, drawer, or commissions, so no inventory moves here).
+   */
+  private async commitSaleLine(
+    businessId: string,
+    batchId: string,
+    legacyId: string,
+    n: Record<string, unknown>,
+    lookups: Lookups,
+  ): Promise<string> {
+    const saleId = lookups.saleRefs.get(n.invoiceNo as string);
+    if (!saleId) throw new BadRequestException(`unknown invoice "${String(n.invoiceNo)}"`);
+    const variant =
+      typeof n.sku === 'string' ? lookups.variants.get(n.sku.toLowerCase()) : undefined;
+    const description = ((n.description as string) || (n.sku as string) || '').trim();
+    if (!description) throw new BadRequestException('a line needs a SKU or a description');
+
+    const quantity = n.quantity as number;
+    const unitPriceCents = n.unitPriceCents as number;
+    const values = {
+      variantId: variant?.variantId ?? null,
+      description,
+      quantity,
+      unitPriceCents,
+      totalCents: (n.totalCents as number) ?? quantity * unitPriceCents,
+    };
+    const existing = await this.refFor(businessId, 'sale_line', legacyId);
+    let id: string;
+    if (existing) {
+      await this.db.update(schema.saleLines).set(values).where(eq(schema.saleLines.id, existing));
+      id = existing;
+    } else {
+      const [created] = await this.db
+        .insert(schema.saleLines)
+        .values({ businessId, saleId, ...values })
+        .returning({ id: schema.saleLines.id });
+      id = created!.id;
+    }
+    await this.upsertRef(businessId, 'sale_line', legacyId, id, batchId);
+    return id;
+  }
+
   // --- Reads ---
 
   async getBatch(batchId: string) {
@@ -1022,6 +1098,7 @@ export class ImportService {
       'order',
       'order_line',
       'sale',
+      'sale_line',
     ].map((entity) => ({
       entity,
       source: sourceCount(entity),

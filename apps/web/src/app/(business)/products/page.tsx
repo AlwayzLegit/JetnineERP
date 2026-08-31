@@ -3,6 +3,8 @@
 import Link from 'next/link';
 import { useEffect, useState, type FormEvent } from 'react';
 import { Plus } from 'lucide-react';
+import { toast } from 'sonner';
+import { api } from '@/lib/api';
 import { CsvImport } from '@/components/csv-import';
 import { LoadMore } from '@/components/load-more';
 import { useCursorList } from '@/lib/use-cursor-list';
@@ -36,6 +38,22 @@ export default function ProductsPage() {
   function search(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     void list.load(q ? { q } : {});
+  }
+
+  // Owner 2026-08-31: delete straight from the list — same endpoint as
+  // the product page's button. The server refuses (with the exact
+  // reason) any product that still has stock or document history, so a
+  // wrong click can never gut an invoice; the refusal shows as a toast.
+  async function deleteProduct(p: ProductRow) {
+    if (!confirm(`Permanently delete ${p.name} and all its variants? This cannot be undone.`))
+      return;
+    try {
+      await api(`/v1/products/${p.id}`, { method: 'DELETE' });
+      toast.success(`${p.name} deleted`);
+      void list.load(q ? { q } : {});
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    }
   }
 
   return (
@@ -117,8 +135,24 @@ export default function ProductsPage() {
                           {p.isActive ? 'yes' : 'no'}
                         </span>
                       </td>
-                      <td style={{ textAlign: 'right' }}>
+                      <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
                         <Link href={`/products/${p.id}`}>Open</Link>
+                        <button
+                          onClick={() => void deleteProduct(p)}
+                          style={{
+                            border: 'none',
+                            background: 'none',
+                            cursor: 'pointer',
+                            color: 'var(--danger)',
+                            fontSize: 13,
+                            marginLeft: 12,
+                          }}
+                          aria-label={`Delete ${p.name}`}
+                          title="Delete this product (only when unused — no stock, no documents)"
+                          data-testid="product-row-delete"
+                        >
+                          Delete
+                        </button>
                       </td>
                     </tr>
                   ))}
