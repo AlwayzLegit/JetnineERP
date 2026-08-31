@@ -245,6 +245,7 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
     kind: 'order' | 'sale';
     splitOrders?: { id: string; number: string; requestedDate: string | null }[];
     takeWith?: { orderId: string; number: string; completed: boolean; reason: string | null };
+    bookedDeliveries?: string[];
   } | null>(null);
 
   // §7: while writing a delivery sale, show how many stops the chosen
@@ -731,6 +732,43 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
         }
       }
 
+      // Owner 2026-08-31: the delivery date BOOKS the truck. Promising a
+      // date and then re-entering it on the order page was double work —
+      // completing a delivery sale now schedules the real delivery (and
+      // one per split sibling on its own date). Reschedules happen from
+      // the order page or the calendar.
+      const bookedDeliveries: string[] = [];
+      if (mode === 'complete' && orderType !== 'quote' && fulfillment === 'delivery') {
+        const truckBound = lines.some(
+          (l) =>
+            l.lineType !== 'custom' &&
+            !['take_with', 'pickup'].includes(l.fulfillmentMethod || fulfillment),
+        );
+        const targets = [
+          ...(requestedDate && truckBound
+            ? [{ id: order.id, number: order.number, date: requestedDate }]
+            : []),
+          ...(order.splitOrders ?? [])
+            .filter((sib) => sib.requestedDate)
+            .map((sib) => ({ id: sib.id, number: sib.number, date: sib.requestedDate! })),
+        ];
+        for (const t of targets) {
+          try {
+            await api(`/v1/orders/${t.id}/deliveries`, {
+              method: 'POST',
+              // The capacity hint next to the date already warned the
+              // writer; over-cap bookings log the standard exception.
+              body: JSON.stringify({ scheduledDate: t.date, confirmOverCapacity: true }),
+            });
+            bookedDeliveries.push(`${t.number} on ${t.date}`);
+          } catch {
+            toast.error(
+              `${t.number}: could not book the delivery — schedule it from the order page.`,
+            );
+          }
+        }
+      }
+
       if (mode === 'draft') {
         toast.success(`Draft ${order.number} saved — visible store-wide`);
         resetAll();
@@ -742,6 +780,7 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
           kind: 'order',
           splitOrders: order.splitOrders,
           takeWith,
+          bookedDeliveries,
         });
       }
     }
@@ -793,6 +832,12 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
             ))}{' '}
             — one payment covers them all: money taken at the register lands on each order up to
             what it owes.
+          </p>
+        )}
+        {done.bookedDeliveries && done.bookedDeliveries.length > 0 && (
+          <p style={{ fontSize: 13 }} data-testid="booked-deliveries">
+            Delivery booked: {done.bookedDeliveries.join(', ')} — it&apos;s on the Deliveries
+            calendar. Change the date from the order page if plans move.
           </p>
         )}
         {done.takeWith && (
