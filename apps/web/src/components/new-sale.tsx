@@ -243,6 +243,7 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
     number: string;
     kind: 'order' | 'sale';
     splitOrders?: { id: string; number: string; requestedDate: string | null }[];
+    takeWith?: { orderId: string; number: string; completed: boolean; reason: string | null };
   } | null>(null);
 
   // §7: while writing a delivery sale, show how many stops the chosen
@@ -701,6 +702,34 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
       }
       if (resumedDraftId && resumedDraftId !== order.id) await cancelDraft(resumedDraftId);
 
+      // Take-with hand-over (owner 2026-08-31): completing a sale with
+      // take-with lines splits them to a -A piece and completes it when
+      // stock and money allow. Runs after payments so the money can
+      // cover the walking goods first; a failure here never loses the
+      // sale — the order page carries the same Complete button.
+      let takeWith: NonNullable<typeof done>['takeWith'];
+      if (
+        mode === 'complete' &&
+        orderType !== 'quote' &&
+        lines.some(
+          (l) => (l.fulfillmentMethod || fulfillment) === 'take_with' && l.lineType !== 'custom',
+        )
+      ) {
+        try {
+          const res = await api<{
+            takeWith?: {
+              orderId: string;
+              number: string;
+              completed: boolean;
+              reason: string | null;
+            };
+          }>(`/v1/orders/${order.id}/complete`, { method: 'POST', body: JSON.stringify({}) });
+          takeWith = res.takeWith;
+        } catch {
+          takeWith = undefined;
+        }
+      }
+
       if (mode === 'draft') {
         toast.success(`Draft ${order.number} saved — visible store-wide`);
         resetAll();
@@ -711,6 +740,7 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
           number: order.number,
           kind: 'order',
           splitOrders: order.splitOrders,
+          takeWith,
         });
       }
     }
@@ -762,6 +792,23 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
             ))}{' '}
             — one payment covers them all: money taken at the register lands on each order up to
             what it owes.
+          </p>
+        )}
+        {done.takeWith && (
+          <p style={{ fontSize: 13 }} data-testid="take-with-result">
+            {done.takeWith.completed ? (
+              <>
+                Take-with items went out on{' '}
+                <a href={`/orders/${done.takeWith.orderId}`}>{done.takeWith.number}</a> — paid and
+                completed.
+              </>
+            ) : (
+              <>
+                Take-with items split to{' '}
+                <a href={`/orders/${done.takeWith.orderId}`}>{done.takeWith.number}</a>, waiting:{' '}
+                {done.takeWith.reason ?? 'not ready yet'}. Finish it with Complete on that order.
+              </>
+            )}
           </p>
         )}
         <p className="muted" style={{ fontSize: 13 }}>

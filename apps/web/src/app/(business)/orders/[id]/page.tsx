@@ -371,6 +371,71 @@ export default function OrderDetailPage() {
     }
   }
 
+  // Take-with hand-over (owner 2026-08-31): Complete on a live order
+  // with take-with lines splits them to a -A sibling and completes it
+  // when its stock and money are in. The server never errors for a
+  // short or unpaid piece — it reports why, and the piece waits.
+  async function completeTakeWith() {
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await api<{
+        takeWith?: { number: string; completed: boolean; reason: string | null };
+      }>(`/v1/orders/${id}/complete`, { method: 'POST', body: JSON.stringify({}) });
+      if (res.takeWith?.completed) {
+        toast.success(`${res.takeWith.number} — taken with, paid, and completed.`);
+      } else if (res.takeWith) {
+        toast(`${res.takeWith.number} is waiting: ${res.takeWith.reason ?? 'not ready yet'}`);
+      }
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // "+ Recycling" (owner 2026-08-31): same button as New Sale — one
+  // untaxed fee line; each click counts one more unit on it.
+  const [recyclingFeeCents, setRecyclingFeeCents] = useState(1050);
+  useEffect(() => {
+    api<{ ops: { recyclingFeeCents?: number | null } | null }>('/v1/business/settings')
+      .then((s2) => {
+        if (s2.ops?.recyclingFeeCents != null) setRecyclingFeeCents(s2.ops.recyclingFeeCents);
+      })
+      .catch(() => undefined);
+  }, []);
+  async function addRecyclingFee() {
+    if (!order) return;
+    const fee = order.lines.find(
+      (l) => l.lineType === 'custom' && l.description === 'Recycling Fee',
+    );
+    setBusy(true);
+    try {
+      if (fee) {
+        await api(`/v1/orders/${id}/lines/${fee.id}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ quantity: fee.quantity + 1 }),
+        });
+      } else {
+        await api(`/v1/orders/${id}/lines`, {
+          method: 'POST',
+          body: JSON.stringify({
+            description: 'Recycling Fee',
+            lineType: 'custom',
+            quantity: 1,
+            unitPriceCents: recyclingFeeCents,
+          }),
+        });
+      }
+      await load();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   // Inline line editing (owner 2026-08-31: order lines look and work
   // like New Sale's). Inputs commit on blur; a failed edit reloads so
   // the boxes snap back to what the server holds.
@@ -696,6 +761,15 @@ export default function OrderDetailPage() {
                       {splitMode ? 'Cancel split' : 'Split order…'}
                     </Button>
                   )}
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    disabled={busy}
+                    onClick={() => void addRecyclingFee()}
+                    data-testid="order-add-recycling"
+                  >
+                    + Recycling (${(recyclingFeeCents / 100).toFixed(2)})
+                  </Button>
                   <Button
                     size="sm"
                     variant="secondary"
@@ -1280,31 +1354,16 @@ export default function OrderDetailPage() {
                           </span>
                         )}
                         {counterUnits > 0 && (
-                          <>
-                            <span
-                              className="muted"
-                              style={{ fontSize: 12.5, flexBasis: '100%' }}
-                              data-testid="counter-lines-hint"
-                            >
-                              {counterUnits} unit{counterUnits === 1 ? '' : 's'} marked
-                              take-with/pickup stay off the truck — hand them over here.
-                            </span>
-                            <Button
-                              variant="secondary"
-                              onClick={() =>
-                                void act('/fulfill', {
-                                  lines: counterLines.map((l) => ({
-                                    orderLineId: l.id,
-                                    quantity: l.quantity - l.qtyFulfilled,
-                                  })),
-                                })
-                              }
-                              disabled={busy}
-                              data-testid="fulfill-counter"
-                            >
-                              Hand over counter item{counterUnits === 1 ? '' : 's'} ({counterUnits})
-                            </Button>
-                          </>
+                          <span
+                            className="muted"
+                            style={{ fontSize: 12.5, flexBasis: '100%' }}
+                            data-testid="counter-lines-hint"
+                          >
+                            {counterUnits} unit{counterUnits === 1 ? '' : 's'} marked
+                            take-with/pickup stay off the truck — use{' '}
+                            <strong>Complete take-with items</strong> in the actions to hand them
+                            over.
+                          </span>
                         )}
                       </>
                     ) : (
@@ -1489,6 +1548,65 @@ export default function OrderDetailPage() {
                   Confirm order (commit stock)
                 </Button>
               )}
+              {(() => {
+                // Take-with hand-over (owner 2026-08-31): visible while
+                // any take-with unit is still owed on a live order.
+                if (!['open', 'partially_fulfilled'].includes(order.status)) return null;
+                const tw = order.lines.filter(
+                  (l) =>
+                    l.lineType !== 'direct_ship' &&
+                    (l.fulfillmentMethod ?? order.fulfillmentType) === 'take_with' &&
+                    l.quantity - l.qtyFulfilled - l.qtyReturned > 0,
+                );
+                if (tw.length === 0) return null;
+                const pureTakeWith = order.lines.every(
+                  (l) =>
+                    l.lineType === 'custom' ||
+                    (l.fulfillmentMethod ?? order.fulfillmentType) === 'take_with',
+                );
+                const shortUnits = tw
+                  .filter((l) => l.variantId && l.lineType !== 'custom')
+                  .reduce(
+                    (n, l) => n + Math.max(0, l.quantity - l.qtyFulfilled - l.qtyReserved),
+                    0,
+                  );
+                const waiting: string[] = [];
+                if (pureTakeWith) {
+                  if (shortUnits > 0)
+                    waiting.push(
+                      `${shortUnits} unit${shortUnits === 1 ? '' : 's'} not in stock at the source — a user with inventory access must adjust them in`,
+                    );
+                  if (order.balanceDueCents > 0)
+                    waiting.push(`$${(order.balanceDueCents / 100).toFixed(2)} still due`);
+                }
+                return (
+                  <>
+                    {waiting.length > 0 && (
+                      <div
+                        style={{
+                          background: '#fef3c7',
+                          color: '#92400e',
+                          fontSize: 12.5,
+                          padding: '6px 10px',
+                          borderRadius: 6,
+                        }}
+                        data-testid="take-with-waiting"
+                      >
+                        Take-with — waiting on: {waiting.join('; ')}. Then hit Complete.
+                      </div>
+                    )}
+                    <Button
+                      variant="primary"
+                      onClick={() => void completeTakeWith()}
+                      disabled={busy}
+                      data-testid="complete-take-with"
+                    >
+                      <CheckCircle2 size={14} aria-hidden />
+                      Complete take-with item{tw.length === 1 ? '' : 's'}
+                    </Button>
+                  </>
+                );
+              })()}
               {order.status === 'fulfilled' && (
                 <Button
                   variant="primary"
