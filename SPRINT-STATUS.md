@@ -3928,3 +3928,16 @@ export and need a re-export or manual entry. CSV delivered via chat;
 owner runs Settings → Import → "Closed sales history lines (per item)"
 → Validate → Commit. Validation names any invoice numbers that don't
 match the previously imported receipts.
+
+### Ops note — 2026-08-31 (password-reset links pointed at a dead Vercel preview)
+
+Owner's reset email linked to
+la-mattress-erp-git-claude-fix-latent-…-alwayzlegits-projects.vercel.app
+(NXDOMAIN). Root cause: BETTER_AUTH_URL on the Render API service was
+set to that stale branch-preview URL, and better-auth stamps its
+baseURL into every reset/verification link — sign-in never used it,
+which is why only these links were broken. Fixed: BETTER_AUTH_URL →
+https://jetnine-api.onrender.com (env merge via Render MCP; redeploy
+dep-daake1oae00c73a5cvfg live 09:20 UTC, boot 80/80). Old emailed links
+stay dead by nature — a fresh "forgot password" email carries the
+right host and lands on lamattress-erp.vercel.app/reset.
