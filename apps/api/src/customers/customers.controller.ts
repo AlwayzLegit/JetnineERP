@@ -33,6 +33,7 @@ interface CustomerRow {
   id: string;
   email: string | null;
   phone: string | null;
+  phone2: string | null;
   firstName: string | null;
   lastName: string | null;
   notes: string | null;
@@ -45,6 +46,7 @@ interface CustomerRow {
 interface CreateBody {
   email?: string | null;
   phone?: string | null;
+  phone2?: string | null;
   firstName?: string | null;
   lastName?: string | null;
   notes?: string | null;
@@ -269,6 +271,7 @@ export class CustomersController {
         businessId: tenant.businessId!,
         email: normalize(body.email),
         phone: normalize(body.phone),
+        phone2: normalize(body.phone2),
         firstName: normalize(body.firstName),
         lastName: normalize(body.lastName),
         notes: normalize(body.notes),
@@ -323,6 +326,7 @@ export class CustomersController {
     for (const key of [
       'email',
       'phone',
+      'phone2',
       'firstName',
       'lastName',
       'notes',
@@ -400,11 +404,18 @@ export class CustomersController {
       .limit(1);
     if (!me) throw new NotFoundException('Customer not found');
 
-    const digits = (me.phone ?? '').replace(/\D/g, '');
+    const digitsOf = (v: string | null) => (v ?? '').replace(/\D/g, '');
+    const myDigits = [digitsOf(me.phone), digitsOf(me.phone2)].filter((d) => d.length >= 7);
     const fullName = [me.firstName, me.lastName].filter(Boolean).join(' ').trim().toLowerCase();
+    // Either of MY numbers matching either of THEIR numbers is a hit.
     const phoneCond =
-      digits.length >= 7
-        ? sql`regexp_replace(COALESCE(${schema.customers.phone}, ''), '\\D', '', 'g') = ${digits}`
+      myDigits.length > 0
+        ? (or(
+            ...myDigits.flatMap((d) => [
+              sql`regexp_replace(COALESCE(${schema.customers.phone}, ''), '\\D', '', 'g') = ${d}`,
+              sql`regexp_replace(COALESCE(${schema.customers.phone2}, ''), '\\D', '', 'g') = ${d}`,
+            ]),
+          ) ?? sql`false`)
         : sql`false`;
     const emailCond = me.email
       ? sql`LOWER(${schema.customers.email}) = ${me.email.toLowerCase()}`
@@ -525,6 +536,7 @@ export class CustomersController {
     // Blank contact fields on the keeper backfill from the duplicate.
     const backfill: Record<string, unknown> = {};
     if (!target.phone && source.phone) backfill.phone = source.phone;
+    if (!target.phone2 && source.phone2) backfill.phone2 = source.phone2;
     if (!target.email && source.email) backfill.email = source.email;
     if (!target.firstName && source.firstName) backfill.firstName = source.firstName;
     if (!target.lastName && source.lastName) backfill.lastName = source.lastName;
@@ -621,6 +633,7 @@ const SELECT_COLS = {
   id: schema.customers.id,
   email: schema.customers.email,
   phone: schema.customers.phone,
+  phone2: schema.customers.phone2,
   firstName: schema.customers.firstName,
   lastName: schema.customers.lastName,
   notes: schema.customers.notes,

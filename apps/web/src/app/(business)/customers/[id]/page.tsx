@@ -44,6 +44,7 @@ interface Customer {
   id: string;
   email: string | null;
   phone: string | null;
+  phone2: string | null;
   firstName: string | null;
   lastName: string | null;
   notes: string | null;
@@ -215,6 +216,7 @@ export default function CustomerDetailPage() {
           lastName: blankToNull(data.get('lastName')),
           email: blankToNull(data.get('email')),
           phone: blankToNull(data.get('phone')),
+          phone2: blankToNull(data.get('phone2')),
           notes: blankToNull(data.get('notes')),
           referralSource: blankToNull(data.get('referralSource')),
           addressesJson: addresses.length > 0 ? addresses : null,
@@ -276,6 +278,9 @@ export default function CustomerDetailPage() {
           </Field>
           <Field label="Phone">
             <Input name="phone" defaultValue={c.phone ?? ''} style={{ width: '100%' }} />
+          </Field>
+          <Field label="2nd phone (optional)">
+            <Input name="phone2" defaultValue={c.phone2 ?? ''} style={{ width: '100%' }} />
           </Field>
           <Field label="How did they hear about us?">
             <Input
