@@ -476,3 +476,61 @@ describe('Duplicates + merge (handoff G4, owner-picked warn-and-merge)', () => {
     expect(missing.status).toBe(404);
   });
 });
+
+/**
+ * Owner 2026-08-31: an optional secondary phone on the customer record.
+ * It rides create/update, and both numbers count for the dedupe check.
+ */
+describe('Secondary phone (phone2)', () => {
+  it('round-trips through create and update', async () => {
+    const created = await request(app.getHttpServer())
+      .post('/v1/customers')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({
+        firstName: 'Two',
+        lastName: 'Phones',
+        phone: '(213) 555-9001',
+        phone2: '(213) 555-9002',
+      })
+      .expect(201);
+    expect(created.body.phone2).toBe('(213) 555-9002');
+
+    const patched = await request(app.getHttpServer())
+      .patch(`/v1/customers/${created.body.id}`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ phone2: '213-555-9003' })
+      .expect(200);
+    expect(patched.body.phone2).toBe('213-555-9003');
+  });
+
+  it('a duplicate is caught when its main number is my SECOND number', async () => {
+    const keeper = await request(app.getHttpServer())
+      .post('/v1/customers')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({
+        firstName: 'Second',
+        lastName: 'Line',
+        phone: '(213) 555-9100',
+        phone2: '(213) 555-9101',
+      })
+      .expect(201);
+    const other = await request(app.getHttpServer())
+      .post('/v1/customers')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ firstName: 'Spouse', lastName: 'Line', phone: '213.555.9101' })
+      .expect(201);
+
+    const res = await request(app.getHttpServer())
+      .get(`/v1/customers/${keeper.body.id}/duplicates`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .expect(200);
+    const hit = res.body.find((d: { id: string }) => d.id === other.body.id);
+    expect(hit).toBeTruthy();
+    expect(hit.matchedBy).toBe('phone');
+  });
+});
