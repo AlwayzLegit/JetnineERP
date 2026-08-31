@@ -258,6 +258,44 @@ export const ENTITY_SPECS: EntitySpec[] = [
       { name: 'method', type: 'string', headers: ['TENDER', 'PAYMENT_METHOD', 'PAY_TYPE'] },
     ],
   },
+  {
+    // Owner 2026-08-31: imported receipts showed only money — the sale
+    // export is header-per-invoice and never carried the items. This
+    // entity attaches the per-item lines to already-committed sale
+    // headers by invoice number. An unknown SKU is fine: the line keeps
+    // its description (legacy models need not exist in the catalog).
+    entity: 'sale_line',
+    label: 'Closed sales history lines (per item)',
+    legacyIdField: 'invoiceNo',
+    fields: [
+      {
+        name: 'invoiceNo',
+        type: 'string',
+        required: true,
+        headers: ['INVOICE#', 'TICKET#', 'SALE#', 'INVOICE_NO'],
+      },
+      { name: 'lineNo', type: 'int', headers: ['LINE#', 'LINE_NO', 'SEQ', 'LINE'] },
+      { name: 'sku', type: 'string', headers: ['SKU', 'ITEM#', 'MODEL#', 'ITEM_NO'] },
+      { name: 'description', type: 'string', headers: ['DESCRIPTION', 'ITEM_DESC', 'DESC'] },
+      {
+        name: 'quantity',
+        type: 'int',
+        required: true,
+        headers: ['QTY', 'QUANTITY', 'QTY_SOLD'],
+      },
+      {
+        name: 'unitPriceCents',
+        type: 'money',
+        required: true,
+        headers: ['UNIT_PRICE', 'PRICE', 'SELL_PRICE'],
+      },
+      {
+        name: 'totalCents',
+        type: 'money',
+        headers: ['EXT_PRICE', 'LINE_TOTAL', 'EXTENDED', 'EXT_AMT'],
+      },
+    ],
+  },
 ];
 
 export const entitySpec = (entity: string): EntitySpec | undefined =>
@@ -272,6 +310,11 @@ export function legacyIdFor(entity: string, n: Record<string, unknown>): string 
     if (!n.orderNo) return null;
     const line = n.lineNo != null ? String(n.lineNo) : n.sku ? String(n.sku) : null;
     return line ? `${String(n.orderNo)}#${line}` : null;
+  }
+  if (entity === 'sale_line') {
+    if (!n.invoiceNo) return null;
+    const line = n.lineNo != null ? String(n.lineNo) : n.sku ? String(n.sku) : null;
+    return line ? `${String(n.invoiceNo)}#${line}` : null;
   }
   const spec = entitySpec(entity);
   if (!spec) return null;

@@ -212,6 +212,7 @@ describe('pipeline mechanics', () => {
       'order',
       'order_line',
       'sale',
+      'sale_line',
     ]);
   });
 
@@ -416,6 +417,49 @@ NOPRICE-1,Unpriced Import Item,Accessories,12.00`;
       .from(schema.payments)
       .where(and(eq(schema.payments.businessId, businessId), eq(schema.payments.kind, 'sale')));
     expect(payments.map((p) => p.method).sort()).toEqual(['card', 'cash']);
+  });
+
+  it('imports sale LINES onto committed headers — catalog SKUs bind, unknown SKUs keep their description (owner 2026-08-31)', async () => {
+    // Header-only receipts showed nothing but money; the per-item
+    // export attaches the lines by invoice number.
+    const SALE_LINES_CSV = `INVOICE#,LINE#,SKU,DESCRIPTION,QTY,UNIT_PRICE,EXT_PRICE
+INV-1001,1,MAT-Q-FIRM,Queen Foundation,1,79.99,79.99
+INV-1001,2,LEGACY-GONE,Discontinued Frame,1,10.00,10.00
+INV-1002,1,,Delivery Charge,1,"1,542.50","1,542.50"`;
+    await runBatch('sale_line', SALE_LINES_CSV);
+
+    const sale1 = await verifyDb
+      .select()
+      .from(schema.sales)
+      .where(and(eq(schema.sales.businessId, businessId), eq(schema.sales.number, 'INV-1001')));
+    const lines1 = await verifyDb
+      .select()
+      .from(schema.saleLines)
+      .where(eq(schema.saleLines.saleId, sale1[0]!.id));
+    expect(lines1).toHaveLength(2);
+    const bound = lines1.find((l) => l.description === 'Queen Foundation');
+    expect(bound?.variantId).not.toBeNull();
+    expect(bound?.totalCents).toBe(7_999);
+    const unknown = lines1.find((l) => l.description === 'Discontinued Frame');
+    expect(unknown?.variantId).toBeNull();
+
+    // Re-commit updates in place (D7), never duplicates.
+    await runBatch('sale_line', SALE_LINES_CSV.replace('Queen Foundation', 'Queen Foundation XL'));
+    const again = await verifyDb
+      .select()
+      .from(schema.saleLines)
+      .where(eq(schema.saleLines.saleId, sale1[0]!.id));
+    expect(again).toHaveLength(2);
+    expect(again.some((l) => l.description === 'Queen Foundation XL')).toBe(true);
+
+    // A line before its header fails loudly.
+    const staged = await api().post('/v1/import/batches').send({
+      entity: 'sale_line',
+      csv: 'INVOICE#,SKU,QTY,UNIT_PRICE\nINV-9999,MAT-Q-FIRM,1,5.00',
+    });
+    const validated = await api().post(`/v1/import/batches/${staged.body.id}/validate`).send({});
+    expect(validated.body.invalidRowCount).toBe(1);
+    expect(JSON.stringify(validated.body.validationJson)).toContain('commit sale headers first');
   });
 });
 

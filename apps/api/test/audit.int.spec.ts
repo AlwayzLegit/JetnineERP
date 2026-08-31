@@ -281,12 +281,21 @@ describe('Sysadmin pack — RPT-AUDIT substrate (AUD-003/004/006, SET-007)', () 
     );
     expect(lines.length).toBe(2); // header + the one price update
 
-    const trace = await request(app.getHttpServer())
-      .get('/v1/audit-logs?action=audit.export')
-      .set('Cookie', owner.cookie)
-      .set('X-Business-Id', businessId);
-    expect(trace.status).toBe(200);
-    expect(trace.body.data.length).toBeGreaterThanOrEqual(1);
+    // The export's own audit row is written inside the request's RLS
+    // transaction, and the CSV response can flush before that commit
+    // lands — an immediate read occasionally sees nothing (CI flake
+    // 2026-08-31). Poll briefly; the row must appear.
+    let exportTraceCount = 0;
+    for (let attempt = 0; attempt < 20 && exportTraceCount === 0; attempt++) {
+      const trace = await request(app.getHttpServer())
+        .get('/v1/audit-logs?action=audit.export')
+        .set('Cookie', owner.cookie)
+        .set('X-Business-Id', businessId);
+      expect(trace.status).toBe(200);
+      exportTraceCount = trace.body.data.length;
+      if (exportTraceCount === 0) await new Promise((r) => setTimeout(r, 100));
+    }
+    expect(exportTraceCount).toBeGreaterThanOrEqual(1);
   });
 
   it('CSV export neutralizes spreadsheet formula injection', async () => {

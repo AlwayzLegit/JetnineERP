@@ -1339,6 +1339,33 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
               </Button>
               <Button
                 size="sm"
+                variant="ghost"
+                data-testid="add-declined-foundation"
+                onClick={() =>
+                  // Owner 2026-08-31: documents on the invoice that the
+                  // customer declined a new foundation — a no-charge
+                  // line, added by hand like Removal.
+                  setLines((prev) => [
+                    ...prev,
+                    {
+                      key: nextKey(),
+                      variantId: null,
+                      description: 'Client Declined New Foundation',
+                      quantity: 1,
+                      unitPriceCents: 0,
+                      lineDiscountCents: 0,
+                      lineType: 'custom',
+                      fulfillmentMethod: '',
+                      sourceLocationId: '',
+                      deliveryDate: '',
+                    },
+                  ])
+                }
+              >
+                + Declined foundation ($0)
+              </Button>
+              <Button
+                size="sm"
                 variant="primary"
                 onClick={() => setShowProductSearch(true)}
                 data-testid="add-product"

@@ -3858,3 +3858,38 @@ phone2 too. Web: New Sale's capture row gains "2nd phone (optional)"
 field; each draft chip gains an ✕ that cancels the draft after a
 confirm ("draft deleted at the register" — same cancel the
 supersede-on-complete path uses). 2 new customers-spec tests.
+
+### Checkpoint — 2026-08-31 (declined-foundation $0 line button)
+
+Owner: next to Recycling, a one-click way to document that the client
+declined a new foundation. "+ Declined foundation ($0)" now sits in the
+Items header on New Sale and in the order page's Lines card — each
+click adds a "Client Declined New Foundation" custom line at $0 (no
+price, untaxed, removable like any line), so the declination prints on
+the invoice. Web-only; the server already accepts $0 custom lines.
+
+### Checkpoint — 2026-08-31 (delete product from the Products list)
+
+Owner: delete without opening the product. Each Products row gains a
+red Delete action next to Open — same DELETE /v1/products/:id as the
+product page (server still refuses anything with stock or document
+history, with the exact reason as a toast), confirm first, list
+refreshes. Web-only.
+
+### Checkpoint — 2026-08-31 (sale_line import entity — receipts get their items back)
+
+Owner: imported sales show only money — product info missing. Root
+cause: the STORIS closed-sales import was header-per-invoice only;
+there was NO sale_line entity, so commitSale wrote the receipt + one
+payment and zero sale_lines. New import entity `sale_line` ("Closed
+sales history lines (per item)"): INVOICE#/TICKET# + LINE# + SKU/MODEL#
+
+- DESCRIPTION + QTY + UNIT_PRICE + EXT_PRICE, validated against
+  committed sale headers ("commit sale headers first"), catalog SKUs bind
+  the variant, unknown/blank SKUs still import with their description
+  (legacy models need not exist in the catalog), D7-idempotent upserts by
+  invoice#line, recon gate 1 counts it. The wizard picks it up
+  automatically (spec-driven). OPS: the owner must export the per-item
+  closed-sales file from STORIS and run Settings → Import → sale_line;
+  the header receipts already imported stay put and the lines attach by
+  invoice number. 1 new import spec test (12 pass).
