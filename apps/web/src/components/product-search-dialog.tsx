@@ -58,13 +58,72 @@ export function ProductSearchDialog({
   const [stockFilter, setStockFilter] = useState<'' | '1' | '0'>('');
   const [rows, setRows] = useState<SearchRow[]>([]);
   const [vendors, setVendors] = useState<VendorRow[]>([]);
+  // BA-0010: arrow keys move a visible highlight through the results,
+  // Enter adds the highlighted row.
+  const [hi, setHi] = useState(0);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const panelRef = useRef<HTMLDivElement | null>(null);
+
+  // BA-0011: focus returns to whatever opened the dialog when it closes.
+  useEffect(() => {
+    const opener = document.activeElement as HTMLElement | null;
+    return () => opener?.focus?.();
+  }, []);
 
   useEffect(() => {
     void api<{ data: VendorRow[] } | VendorRow[]>('/v1/vendors?limit=100')
       .then((r) => setVendors(Array.isArray(r) ? r : r.data))
       .catch(() => setVendors([]));
   }, []);
+
+  // BA-0011: focus trap — Tab wraps inside the dialog, Escape closes.
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Escape') {
+      e.stopPropagation();
+      onClose();
+      return;
+    }
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      if (rows.length > 0) {
+        e.preventDefault();
+        const next =
+          e.key === 'ArrowDown' ? Math.min(hi + 1, rows.length - 1) : Math.max(hi - 1, 0);
+        setHi(next);
+        panelRef.current
+          ?.querySelectorAll('[data-testid="product-result"]')
+          [next]?.scrollIntoView({ block: 'nearest' });
+      }
+      return;
+    }
+    // Enter adds the highlighted row only from the search box — buttons
+    // and selects keep their native Enter behavior.
+    if (
+      e.key === 'Enter' &&
+      rows[hi] &&
+      (e.target as HTMLElement).getAttribute('data-testid') === 'product-query'
+    ) {
+      e.preventDefault();
+      onAdd(rows[hi]);
+      return;
+    }
+    if (e.key === 'Tab' && panelRef.current) {
+      const focusables = Array.from(
+        panelRef.current.querySelectorAll<HTMLElement>(
+          'button, input, select, textarea, [tabindex]:not([tabindex="-1"])',
+        ),
+      ).filter((el) => !el.hasAttribute('disabled'));
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      if (!first || !last) return;
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    }
+  };
 
   useEffect(() => {
     if (timer.current) clearTimeout(timer.current);
@@ -76,7 +135,10 @@ export function ProductSearchDialog({
       params.set('locationId', locationId);
       params.set('limit', '100');
       void api<SearchRow[]>(`/v1/pos/product-search?${params.toString()}`)
-        .then(setRows)
+        .then((r) => {
+          setRows(r);
+          setHi(0);
+        })
         .catch(() => setRows([]));
     }, 250);
   }, [q, vendorId, stockFilter, locationId]);
@@ -96,14 +158,19 @@ export function ProductSearchDialog({
       onClick={onClose}
     >
       <div
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Add Product"
         style={{ width: 'min(760px, 94vw)' }}
         onClick={(e) => e.stopPropagation()}
+        onKeyDown={onKeyDown}
         data-testid="product-search-dialog"
       >
         <Card
           title="Add Product"
           actions={
-            <Button size="sm" variant="ghost" onClick={onClose}>
+            <Button size="sm" variant="ghost" onClick={onClose} aria-label="Close Add Product">
               <X size={14} aria-hidden />
             </Button>
           }
@@ -114,10 +181,15 @@ export function ProductSearchDialog({
               value={q}
               onChange={(e) => setQ(e.target.value)}
               placeholder="Search model, brand, size…"
+              aria-label="Search products"
               style={{ flex: 1, minWidth: 200 }}
               data-testid="product-query"
             />
-            <Select value={vendorId} onChange={(e) => setVendorId(e.target.value)}>
+            <Select
+              value={vendorId}
+              onChange={(e) => setVendorId(e.target.value)}
+              aria-label="Vendor filter"
+            >
               <option value="">All vendors</option>
               {vendors.map((v) => (
                 <option key={v.id} value={v.id}>
@@ -129,6 +201,7 @@ export function ProductSearchDialog({
               value={stockFilter}
               onChange={(e) => setStockFilter(e.target.value as typeof stockFilter)}
               data-testid="stock-filter"
+              aria-label="Stock filter"
             >
               <option value="">All stock</option>
               <option value="1">In stock</option>
@@ -177,11 +250,17 @@ export function ProductSearchDialog({
                 </tr>
               </thead>
               <tbody>
-                {rows.map((r) => (
+                {rows.map((r, i) => (
                   <tr
                     key={r.variantId}
                     onClick={() => onAdd(r)}
-                    style={{ cursor: 'pointer' }}
+                    onMouseEnter={() => setHi(i)}
+                    style={{
+                      cursor: 'pointer',
+                      // BA-0010: the keyboard highlight is visible.
+                      background: i === hi ? 'var(--surface-hover, rgb(0 0 0 / 0.06))' : undefined,
+                    }}
+                    aria-selected={i === hi}
                     data-testid="product-result"
                   >
                     <td>
