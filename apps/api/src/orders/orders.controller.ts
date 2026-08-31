@@ -509,6 +509,8 @@ export class OrdersController {
     @Query('view') view?: string,
     @Query('mine') mine?: string,
     @Query('locationId') locationIdFilter?: string,
+    @Query('sort') sort?: string,
+    @Query('dir') dir?: string,
   ): Promise<
     PageResponse<{
       id: string;
@@ -530,7 +532,26 @@ export class OrdersController {
     }>
   > {
     const limit = clampLimit(limitStr);
-    const cursor = decodeCursor(cursorStr);
+    // P-014 (BA-0018/BA-0024): sortable columns. Delivery date and
+    // balance due are derived values, so they sort via scalar
+    // subqueries; sorted views paginate by offset (cursor "o:<n>")
+    // instead of the created-at cursor.
+    const SORTS: Record<string, ReturnType<typeof sql>> = {
+      number: sql`${schema.orders.number}`,
+      customer: sql`(${schema.customers.firstName} || ' ' || coalesce(${schema.customers.lastName}, ''))`,
+      deliveryDate: sql`coalesce(
+        (select min(d.scheduled_date) from deliveries d
+          where d.order_id = ${schema.orders.id}
+            and d.status in ('scheduled','loaded','out_for_delivery')),
+        ${schema.orders.requestedDate})`,
+      balanceDue: sql`greatest(0, ${schema.orders.totalCents} - coalesce(
+        (select sum(p.amount_cents) from payments p
+          where p.order_id = ${schema.orders.id} and p.status = 'succeeded'), 0))`,
+    };
+    const sortExpr = sort ? SORTS[sort] : undefined;
+    const sortDesc = dir === 'desc';
+    const offset = sortExpr && cursorStr?.startsWith('o:') ? Number(cursorStr.slice(2)) || 0 : 0;
+    const cursor = sortExpr ? null : decodeCursor(cursorStr);
     const filters = [];
     if (status) filters.push(eq(schema.orders.status, status));
     // G13 saved view: "Past Due" — the most useful list in the building.
@@ -582,7 +603,15 @@ export class OrdersController {
       )
       .leftJoin(schema.users, eq(schema.users.id, schema.memberships.userId))
       .where(filters.length > 0 ? and(...filters) : undefined)
-      .orderBy(...timestampCursorOrder(schema.orders.createdAt, schema.orders.id))
+      .orderBy(
+        ...(sortExpr
+          ? [
+              sortDesc ? sql`${sortExpr} DESC NULLS LAST` : sql`${sortExpr} ASC NULLS LAST`,
+              schema.orders.id,
+            ]
+          : timestampCursorOrder(schema.orders.createdAt, schema.orders.id)),
+      )
+      .offset(offset)
       .limit(limit + 1);
 
     const pageRows = rows.slice(0, limit);
@@ -775,7 +804,12 @@ export class OrdersController {
     const last = pageRows[pageRows.length - 1];
     return {
       data: enriched,
-      nextCursor: hasMore && last ? encodeCursor(last.createdAt, last.id) : null,
+      nextCursor:
+        hasMore && last
+          ? sortExpr
+            ? `o:${offset + limit}`
+            : encodeCursor(last.createdAt, last.id)
+          : null,
     };
   }
 
@@ -4001,7 +4035,9 @@ export class OrdersController {
         .innerJoin(schema.users, eq(schema.users.id, schema.memberships.userId))
         .where(eq(schema.memberships.id, membershipId))
         .limit(1);
-      return row?.name ?? row?.email ?? null;
+      // BA-0020: an empty-string display name falls through to the email
+      // so documents never print a blank salesperson.
+      return row?.name?.trim() || row?.email || null;
     };
 
     // Scheduled Date box = the earliest trip still owed to the customer.

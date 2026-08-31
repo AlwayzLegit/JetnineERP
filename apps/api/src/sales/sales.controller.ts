@@ -208,6 +208,7 @@ export class SalesController {
     @Query('inStock') inStock?: string,
     @Query('locationId') locationId?: string,
     @Query('limit') limitStr?: string,
+    @Query('variantIds') variantIdsStr?: string,
   ): Promise<
     {
       variantId: string;
@@ -232,6 +233,13 @@ export class SalesController {
       );
     }
     if (vendorId) filters.push(eq(schema.productVariants.preferredVendorId, vendorId));
+    // BA-0021: reopened drafts re-check availability for their exact
+    // variants, so stock warnings survive the round trip.
+    const variantIds = (variantIdsStr ?? '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter((s) => /^[0-9a-f-]{36}$/i.test(s));
+    if (variantIds.length > 0) filters.push(inArray(schema.productVariants.id, variantIds));
 
     const rows = await this.db
       .select({
