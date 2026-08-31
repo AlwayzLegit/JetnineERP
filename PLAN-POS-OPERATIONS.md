@@ -195,6 +195,26 @@ tenant logo slot.
   date; print + PDF + system email.
 - **Transfer Ticket**: from/to store, lines, signature line.
 
+**Amendment (2026-08-31, S01 browser-audit batch 3, P-010/011/021):**
+
+- Invoice strip prints the salesperson's **full name** (not initials) and drops
+  the Customer # cell — there is no human-facing customer number, and a fragment
+  of the internal id fails the audit's paste-into-search test (BA-0013/BA-0030).
+- Sold To carries the customer's billing street address, ZIP included; Ship To
+  falls back to printing the billing address instead of "Same as billing"
+  (BA-0014).
+- **One definition of Merchandise**: the invoice totals box shows Merchandise
+  excluding the CA mattress recycling fee and breaks the fee out on its own
+  "Recycling" line, matching the New Sale entry screen — CA requires the fee
+  itemized on the receipt (BA-0015). Order totals are unchanged.
+- Delivery ticket excludes fee lines (`lineType = custom`) from the load list,
+  same rule as the pick list (BA-0028).
+- Delivery ticket and pick list carry a Code 39 order-number barcode; the pick
+  list adds a per-line SKU barcode (BA-0029). The §13 "barcode scanning"
+  exclusion refers to POS scanning hardware, not printed barcodes.
+- Documents print payment methods with the POS tender labels ("Cash", not
+  "cash") (BA-0041).
+
 ## 12. Dashboards, Reporting & Close
 
 - Owner/Admin morning dashboard tiles: yesterday's sales by store; sales by

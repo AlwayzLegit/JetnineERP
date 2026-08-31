@@ -323,6 +323,14 @@ interface OrderDocument {
     name: string;
     email: string | null;
     phone: string | null;
+    /** Billing address for the SOLD TO block (BA-0014/BA-0030 audit fix). */
+    address: {
+      line1: string | null;
+      line2: string | null;
+      city: string | null;
+      region: string | null;
+      postalCode: string | null;
+    } | null;
   } | null;
   salespersonName: string | null;
   secondSalespersonName: string | null;
@@ -3960,10 +3968,30 @@ export class OrdersController {
         lastName: schema.customers.lastName,
         email: schema.customers.email,
         phone: schema.customers.phone,
+        addressesJson: schema.customers.addressesJson,
       })
       .from(schema.customers)
       .where(eq(schema.customers.id, detail.customerId))
       .limit(1);
+
+    // SOLD TO billing address: the entry labeled "billing" wins, else the
+    // first address on file (entry 0 is the delivery address by the POS
+    // convention, which doubles as billing when no separate one exists).
+    const customerAddress = (() => {
+      const list = Array.isArray(customer?.addressesJson)
+        ? (customer.addressesJson as Record<string, unknown>[])
+        : [];
+      const a = list.find((x) => x?.label === 'billing') ?? list[0];
+      if (!a) return null;
+      const s = (k: string) => (typeof a[k] === 'string' && a[k] ? (a[k] as string) : null);
+      return {
+        line1: s('line1'),
+        line2: s('line2'),
+        city: s('city'),
+        region: s('region'),
+        postalCode: s('postalCode'),
+      };
+    })();
 
     const salespersonName = async (membershipId: string | null) => {
       if (!membershipId) return null;
@@ -4112,6 +4140,7 @@ export class OrdersController {
             name: [customer.firstName, customer.lastName].filter(Boolean).join(' ') || '(no name)',
             email: customer.email,
             phone: customer.phone,
+            address: customerAddress,
           }
         : null,
       salespersonName: await salespersonName(detail.salespersonMembershipId),

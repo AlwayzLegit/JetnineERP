@@ -223,6 +223,11 @@ export function AppShell({ children }: { children: ReactNode }) {
             </div>
           );
         })}
+        {/* Audit hygiene: a visible build identifier so findings can be
+            pinned to a deploy (Vercel injects the commit SHA at build). */}
+        <p className="mt-4 px-2.5 text-[10px] text-white/40">
+          Build {process.env.NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA?.slice(0, 7) ?? 'dev'}
+        </p>
       </aside>
 
       <div className="app-main md:ml-[var(--sidebar-width)]">
