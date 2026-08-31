@@ -3867,3 +3867,11 @@ Items header on New Sale and in the order page's Lines card — each
 click adds a "Client Declined New Foundation" custom line at $0 (no
 price, untaxed, removable like any line), so the declination prints on
 the invoice. Web-only; the server already accepts $0 custom lines.
+
+### Checkpoint — 2026-08-31 (delete product from the Products list)
+
+Owner: delete without opening the product. Each Products row gains a
+red Delete action next to Open — same DELETE /v1/products/:id as the
+product page (server still refuses anything with stock or document
+history, with the exact reason as a toast), confirm first, list
+refreshes. Web-only.
