@@ -3893,3 +3893,20 @@ sales history lines (per item)"): INVOICE#/TICKET# + LINE# + SKU/MODEL#
   closed-sales file from STORIS and run Settings → Import → sale_line;
   the header receipts already imported stay put and the lines attach by
   invoice number. 1 new import spec test (12 pass).
+
+### Checkpoint — 2026-08-31 (New Sale delivery date books the truck)
+
+Owner: the New Sale delivery date only set the promised date, leaving a
+second manual trip to the order page to schedule the real delivery.
+Completing a delivery sale now BOOKS it: after payments (and the
+take-with hand-over), New Sale posts the existing
+/orders/:id/deliveries endpoint for the order at its date and for each
+split-at-sale sibling at its own date (confirmOverCapacity — the
+capacity hint next to the date already warned the writer; over-cap
+bookings log the standard exception). All server guards apply
+unchanged: take-with/pickup/direct-ship lines never board, quotes and
+drafts don't book. The done screen names the booked dates; a booking
+failure toasts "schedule it from the order page" and never loses the
+sale. Order page: each scheduled/loaded delivery in the Deliveries card
+gains an inline date input (PATCH reschedule) so date changes happen
+from the order, per the owner. Web-only; e2e suite green.
