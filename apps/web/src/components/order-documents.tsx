@@ -16,7 +16,19 @@ export interface OrderDocumentPayload {
     invoiceFooterNote: string | null;
   };
   location: { name: string; orderPrefix: string | null; addressJson: unknown } | null;
-  customer: { id: string; name: string; email: string | null; phone: string | null } | null;
+  customer: {
+    id: string;
+    name: string;
+    email: string | null;
+    phone: string | null;
+    address: {
+      line1: string | null;
+      line2: string | null;
+      city: string | null;
+      region: string | null;
+      postalCode: string | null;
+    } | null;
+  } | null;
   salespersonName: string | null;
   secondSalespersonName: string | null;
   /** §10: set on exchange orders — the Original Invoice #. */
@@ -111,6 +123,133 @@ const FULFILLMENT_CODES: Record<string, string> = {
   direct_ship: 'S',
 };
 
+/**
+ * BA-0041: documents print payment methods with the same labels the
+ * POS shows, not raw enum values.
+ */
+const TENDER_LABELS: Record<string, string> = {
+  card: 'Credit card',
+  cash: 'Cash',
+  check: 'Check',
+  paypal: 'PayPal',
+  venmo: 'Venmo',
+  zelle: 'Zelle',
+  synchrony: 'Synchrony',
+  acima: 'Acima',
+  store_credit: 'Store credit',
+};
+
+export function tenderLabel(method: string): string {
+  return TENDER_LABELS[method] ?? method.replace(/_/g, ' ');
+}
+
+/**
+ * BA-0015 / P-011: fee lines that are NOT merchandise — the statutory
+ * recycling fee and the $0 declined-foundation marker ride order lines
+ * (lineType "custom"), but the totals box must show Merchandise the
+ * same way the entry screen does: goods only, fees broken out.
+ */
+const isRecyclingLine = (l: { lineType: string; description: string }) =>
+  l.lineType === 'custom' && /recycling/i.test(l.description);
+
+/**
+ * BA-0029: Code 39 barcode as inline SVG — no library, prints crisply.
+ * Encodes 0-9 A-Z space - . $ / + %; returns null when the value has a
+ * character outside the set. Each character is 9 elements (bars/spaces
+ * alternating, starting with a bar); "1" marks a wide element (3 units).
+ */
+const CODE39: Record<string, string> = {
+  '0': '000110100',
+  '1': '100100001',
+  '2': '001100001',
+  '3': '101100000',
+  '4': '000110001',
+  '5': '100110000',
+  '6': '001110000',
+  '7': '000100101',
+  '8': '100100100',
+  '9': '001100100',
+  A: '100001001',
+  B: '001001001',
+  C: '101001000',
+  D: '000011001',
+  E: '100011000',
+  F: '001011000',
+  G: '000001101',
+  H: '100001100',
+  I: '001001100',
+  J: '000011100',
+  K: '100000011',
+  L: '001000011',
+  M: '101000010',
+  N: '000010011',
+  O: '100010010',
+  P: '001010010',
+  Q: '000000111',
+  R: '100000110',
+  S: '001000110',
+  T: '000010110',
+  U: '110000001',
+  V: '011000001',
+  W: '111000000',
+  X: '010010001',
+  Y: '110010000',
+  Z: '011010000',
+  '-': '010000101',
+  '.': '110000100',
+  ' ': '011000100',
+  '*': '010010100',
+  $: '010101000',
+  '/': '010100010',
+  '+': '010001010',
+  '%': '000101010',
+};
+
+export function Barcode39({
+  value,
+  height = 34,
+  showText = true,
+}: {
+  value: string;
+  height?: number;
+  showText?: boolean;
+}) {
+  const text = `*${value.toUpperCase()}*`;
+  const bars: { x: number; w: number }[] = [];
+  let x = 0;
+  for (const ch of text) {
+    const pat = CODE39[ch];
+    if (!pat) return null;
+    for (let i = 0; i < 9; i++) {
+      const w = pat[i] === '1' ? 3 : 1;
+      if (i % 2 === 0) bars.push({ x, w });
+      x += w;
+    }
+    x += 1; // inter-character narrow gap
+  }
+  const width = x - 1;
+  return (
+    <div style={{ display: 'inline-block', textAlign: 'center' }}>
+      <svg
+        width={width * 1.4}
+        height={height}
+        viewBox={`0 0 ${width} ${height}`}
+        preserveAspectRatio="none"
+        shapeRendering="crispEdges"
+        role="img"
+        aria-label={value}
+      >
+        {bars.map((b, i) => (
+          <rect key={i} x={b.x} y={0} width={b.w} height={height} fill="#000" />
+        ))}
+      </svg>
+      {showText && (
+        <div style={{ fontSize: 9, letterSpacing: '0.12em', fontFamily: 'monospace' }}>{value}</div>
+      )}
+    </div>
+  );
+}
+
 function StoreAddress({ addressJson }: { addressJson: unknown }) {
   if (!addressJson || typeof addressJson !== 'object') return null;
   const a = addressJson as Record<string, unknown>;
@@ -142,9 +281,23 @@ const cell: React.CSSProperties = {
   verticalAlign: 'top',
 };
 
+/** Billing street block for SOLD TO (BA-0014: ZIP included). */
+function BillingAddress({ doc }: { doc: OrderDocumentPayload }) {
+  const a = doc.customer?.address;
+  if (!a || (!a.line1 && !a.city)) return null;
+  return (
+    <>
+      {a.line1 && <div>{a.line1}</div>}
+      {a.line2 && <div>{a.line2}</div>}
+      <div>{[a.city, a.region, a.postalCode].filter(Boolean).join(', ')}</div>
+    </>
+  );
+}
+
 function ShipTo({ doc }: { doc: OrderDocumentPayload }) {
   const o = doc.order;
   const hasAddress = o.addressLine1 || o.addressCity;
+  const bill = doc.customer?.address;
   return (
     <>
       <div style={{ fontWeight: 700 }}>{doc.customer?.name ?? '—'}</div>
@@ -156,6 +309,10 @@ function ShipTo({ doc }: { doc: OrderDocumentPayload }) {
             {[o.addressCity, o.addressRegion, o.addressPostalCode].filter(Boolean).join(', ')}
           </div>
         </>
+      ) : bill && (bill.line1 || bill.city) ? (
+        // BA-0014: print the real billing address, ZIP included, instead
+        // of a bare "Same as billing" pointer.
+        <BillingAddress doc={doc} />
       ) : (
         <div style={{ color: '#333' }}>Same as billing</div>
       )}
@@ -182,15 +339,13 @@ export function InvoiceDoc({ doc, printedAt }: { doc: OrderDocumentPayload; prin
         : o.status === 'quote'
           ? 'Quote'
           : 'Sales Order';
-  const initials = (name: string | null) =>
-    name
-      ? name
-          .split(/\s+/)
-          .map((w) => w[0])
-          .join('')
-          .toUpperCase()
-      : '—';
   const totalDiscount = o.discountCents + o.orderDiscountCents;
+  // BA-0015 / P-011: Merchandise on the invoice matches the entry screen
+  // — goods only, with the recycling fee broken out on its own line
+  // (CA requires the fee itemized on the receipt).
+  const gridLines =
+    fam?.lines ?? doc.lines.map((l) => ({ ...l, pieceNumber: o.number, takenWith: false }));
+  const recyclingCents = gridLines.filter(isRecyclingLine).reduce((n, l) => n + l.totalCents, 0);
   return (
     <div
       style={{
@@ -260,6 +415,7 @@ export function InvoiceDoc({ doc, printedAt }: { doc: OrderDocumentPayload; prin
         <div style={{ ...box, flex: 1, minHeight: 70 }}>
           <div style={label}>Sold To</div>
           <div style={{ fontWeight: 700 }}>{doc.customer?.name ?? '—'}</div>
+          <BillingAddress doc={doc} />
           {doc.customer?.phone && <div>Ph. {doc.customer.phone}</div>}
           {doc.customer?.email && <div>{doc.customer.email}</div>}
         </div>
@@ -273,7 +429,9 @@ export function InvoiceDoc({ doc, printedAt }: { doc: OrderDocumentPayload; prin
       <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: 10 }}>
         <thead>
           <tr>
-            {['Customer Ph.', 'Terms', 'Salesperson', 'Customer #', 'Store'].map((h) => (
+            {/* BA-0030: no "Customer #" — we have no human-facing customer
+                number, and a fragment of the internal id helps nobody. */}
+            {['Customer Ph.', 'Terms', 'Salesperson', 'Store'].map((h) => (
               <th key={h} style={{ ...cell, ...label, textAlign: 'left' }}>
                 {h}
               </th>
@@ -285,10 +443,10 @@ export function InvoiceDoc({ doc, printedAt }: { doc: OrderDocumentPayload; prin
             <td style={cell}>{doc.customer?.phone ?? '—'}</td>
             <td style={cell}>{money.balanceDueCents > 0 ? 'Balance due' : 'Paid in full'}</td>
             <td style={cell}>
-              {initials(doc.salespersonName)}
-              {doc.secondSalespersonName ? ` / ${initials(doc.secondSalespersonName)}` : ''}
+              {/* BA-0013: full names, not initials. */}
+              {doc.salespersonName ?? '—'}
+              {doc.secondSalespersonName ? ` / ${doc.secondSalespersonName}` : ''}
             </td>
-            <td style={cell}>{doc.customer ? doc.customer.id.slice(0, 8).toUpperCase() : '—'}</td>
             <td style={cell}>
               {doc.location?.orderPrefix ?? ''} {doc.location?.name ?? '—'}
             </td>
@@ -321,9 +479,7 @@ export function InvoiceDoc({ doc, printedAt }: { doc: OrderDocumentPayload; prin
           </tr>
         </thead>
         <tbody>
-          {(
-            fam?.lines ?? doc.lines.map((l) => ({ ...l, pieceNumber: o.number, takenWith: false }))
-          ).map((l, i) => (
+          {gridLines.map((l, i) => (
             <tr key={l.id}>
               <td style={cell}>{i + 1}</td>
               <td style={cell}>
@@ -366,7 +522,7 @@ export function InvoiceDoc({ doc, printedAt }: { doc: OrderDocumentPayload; prin
                   .filter((p) => p.status === 'succeeded')
                   .map((p) => (
                     <tr key={p.id}>
-                      <td style={cell}>{p.method.replace(/_/g, ' ')}</td>
+                      <td style={cell}>{tenderLabel(p.method)}</td>
                       <td style={cell}>{new Date(p.createdAt).toLocaleDateString()}</td>
                       <td style={{ ...cell, textAlign: 'right' }}>{usd(p.amountCents)}</td>
                     </tr>
@@ -377,7 +533,8 @@ export function InvoiceDoc({ doc, printedAt }: { doc: OrderDocumentPayload; prin
         </div>
         <table style={{ width: 260, borderCollapse: 'collapse', fontSize: 12 }}>
           <tbody>
-            <TotalRow label="Merchandise" value={usd(money.subtotalCents)} />
+            <TotalRow label="Merchandise" value={usd(money.subtotalCents - recyclingCents)} />
+            {recyclingCents > 0 && <TotalRow label="Recycling" value={usd(recyclingCents)} />}
             {(fam ? fam.discountCents : totalDiscount) > 0 && (
               <TotalRow
                 label="Discounts"
@@ -481,6 +638,8 @@ export function DeliveryTicketDoc({
           <div style={{ ...box, textAlign: 'center', marginBottom: 6 }}>
             <div style={label}>Order #</div>
             <div style={{ fontSize: 16, fontWeight: 700 }}>{o.number}</div>
+            {/* BA-0029: scannable order-number barcode. */}
+            <Barcode39 value={o.number} height={30} showText={false} />
           </div>
           <div style={{ display: 'flex', gap: 6 }}>
             <div style={{ ...box, flex: 1, textAlign: 'center' }}>
@@ -526,7 +685,14 @@ export function DeliveryTicketDoc({
         </thead>
         <tbody>
           {doc.lines
-            .filter((l) => (l.fulfillmentMethod ?? o.fulfillmentType) !== 'take_with')
+            // BA-0028: fee lines (recycling, declined-foundation markers)
+            // are not goods to load — same rule as the pick list. Take-with
+            // lines already left with the customer.
+            .filter(
+              (l) =>
+                l.lineType !== 'custom' &&
+                (l.fulfillmentMethod ?? o.fulfillmentType) !== 'take_with',
+            )
             .map((l) => (
               <tr key={l.id}>
                 <td style={{ ...cell, width: 40, textAlign: 'right' }}>{l.quantity}</td>

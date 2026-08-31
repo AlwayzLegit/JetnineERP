@@ -1711,7 +1711,7 @@ export default function OrderDetailPage() {
                 Cancel order
               </Button>
               <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>
-                Delivery scheduling and fulfillment arrive with the Day 3 build.
+                Schedule or reschedule delivery in Deliveries &amp; fulfillment below.
               </p>
             </div>
           )}

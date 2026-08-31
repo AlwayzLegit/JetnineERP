@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { api } from '@/lib/api';
-import { type OrderDocumentPayload } from '@/components/order-documents';
+import { Barcode39, type OrderDocumentPayload } from '@/components/order-documents';
 import { PrintToolbar } from '../../../print-toolbar';
 
 /**
@@ -50,6 +50,8 @@ export default function PickListPrintPage() {
           <div style={{ textAlign: 'right' }}>
             <div>{doc.customer?.name ?? ''}</div>
             <div style={{ fontSize: 11.5 }}>{doc.order.fulfillmentType.replace(/_/g, ' ')}</div>
+            {/* BA-0029: scannable order-number barcode. */}
+            <Barcode39 value={doc.order.number} height={30} />
           </div>
         </header>
 
@@ -73,7 +75,15 @@ export default function PickListPrintPage() {
                     <span style={{ fontWeight: 700 }}> — SPECIAL ORDER</span>
                   )}
                 </td>
-                <td style={{ padding: '10px 6px' }}>{l.model ?? '—'}</td>
+                <td style={{ padding: '10px 6px' }}>
+                  {l.model ?? '—'}
+                  {/* BA-0029: SKU barcode per line, when it encodes. */}
+                  {l.model && (
+                    <div>
+                      <Barcode39 value={l.model} height={22} showText={false} />
+                    </div>
+                  )}
+                </td>
                 <td style={{ padding: '10px 6px', fontWeight: 700 }}>{l.bin ?? '—'}</td>
                 <td style={{ padding: '10px 6px' }}>
                   <span
