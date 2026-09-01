@@ -4006,6 +4006,101 @@ finding; §11 of PLAN-POS-OPERATIONS.md amended first (doc-first).
   Remaining batches: keyboard (P-007/008), lists (P-013/014/018/019/024),
   plus BA-0017/0021/0038-copy stragglers.
 
+### Checkpoint — 2026-08-31 (S01 browser-audit batch 4: keyboard + labels — P-007/P-008)
+
+Batch 3 deployed (dep-daaule6k1f9s73euop80 live, 81/81; web via Vercel
+on the main merge). This batch makes order entry keyboard-completable
+and names every control.
+
+- BA-0010: Add Product results are keyboard-operable — ArrowUp/Down
+  move a visible highlight, Enter (from the search box) adds the
+  highlighted product, highlight follows the mouse too.
+- BA-0011: the popup is a real dialog — role=dialog + aria-modal,
+  focus trap (Tab wraps), Escape closes, and focus returns to whatever
+  opened it.
+- BA-0036: the drafts strip renders DOM-last with CSS order keeping it
+  visually on top — tab from the top of the page reaches the customer
+  search first, and the entry path owns the early tab stops. Draft
+  dismiss buttons were already named per draft.
+- BA-0009: every previously unnamed control on New Sale has a
+  programmatic name — placeholder-only inputs got matching aria-labels
+  (23 by sweep + customer search, tender method, payment amount,
+  reference, and per-line qty/price/discount/fulfillment named for
+  their item). Field-wrapped controls were already named via the
+  wrapping <label>. Visible-label-above-every-field remains a design
+  call for the S17 redesign pass — the audit's measurable (non-empty
+  accessible name on every control) now passes.
+  Remaining: lists batch (P-013/014/018/019/024), BA-0017/0021 stragglers.
+
+### Checkpoint — 2026-08-31 (S01 browser-audit batch 5: lists — P-014/016/017/018/019/024)
+
+Batch 4 merged (PR #116; web-only, ships via Vercel). This batch is the
+lists pass plus the two small stragglers.
+
+- BA-0018 (P-014): Orders list columns Order # / Customer / Delivery
+  Date / Balance Due are sortable with direction toggle and aria-sort.
+  Derived columns sort server-side via scalar subqueries (min undelivered
+  trip date coalesced to requested date; total minus succeeded payments);
+  sorted views paginate by offset cursor ("o:<n>"), unsorted keeps the
+  created-at cursor.
+- BA-0024 (P-014): q/status/view/mine/sort/dir mirror into the URL
+  (router.replace) and initialize from it — reload, bookmark, share.
+- BA-0023/0033/0034 (P-018): one dense table pattern — .table-dense +
+  .table-sticky utilities; Orders and Sales lists both scroll inside a
+  max-height card with a sticky header; the Orders line summary rides
+  inline so rows drop to ~41px; Sales rows open on click like Orders;
+  Sales dates print "Aug 31, 2026 9:14 PM" (no seconds); the duplicate
+  Open register button left the Sales header (global top bar has it).
+- BA-0025/0039 (P-019): the Orders empty state names the active filters
+  and offers Clear filters; a bad order URL renders a titled "Order not
+  found" card inside the normal frame with a back link.
+- BA-0035 (P-024): order-detail header now has ONE primary control — a
+  Documents ▾ menu (Invoice / Delivery ticket / Pick list, same
+  testids), Share stays secondary, and "← All orders" became an
+  Orders / <number> breadcrumb.
+- BA-0020 (P-016): members with empty-string names fall back to email in
+  the salesperson dropdowns and on printed documents.
+- BA-0021 (P-017): reopening a draft re-checks availability for its
+  variants (product-search gained variantIds=) so the amber
+  stock/special-order warning survives the round trip.
+  Remaining from S01: P-013 status-vocabulary unification (one display
+  status across list/detail/filter — needs the detail endpoint to carry
+  displayStatus; next slice), BA-0017 rides with it.
+
+### Checkpoint — 2026-08-31 (S01 browser-audit batch 6: one status vocabulary — P-013, the last S01 fix)
+
+Batch 5 deployed (dep-daavadad0e5s73bnb9rg live, 81/81). This closes
+BA-0017 and with it the whole actionable S01 queue. Doc-first: §8 of
+PLAN-POS-OPERATIONS.md amended — the display ladder is the ONE status
+vocabulary; raw lifecycle statuses never surface in the UI.
+
+- The ladder (Draft → Pending → On PO → Reserved → Scheduled → Out for
+  Delivery → Delivered + Quote/Layaway/Cancelled/Returned/Exchanged/
+  Awaiting Return Pickup) is extracted to one deriveDisplayStatus()
+  used by the list AND the detail endpoint — no second copy to drift.
+- GET /v1/orders/:id now returns displayStatus (+ displayPoNumber);
+  the order page badge shows it, so an order reads identically in the
+  list and on its page. Shared DisplayStatusBadge in components/ui.
+- The list filter speaks display words: /v1/orders/list-view takes
+  display= (1:1 states narrow in SQL; derived states narrow to their
+  possible lifecycle statuses and post-filter on the computed value —
+  a page may under-fill while nextCursor keeps paging). Every filter
+  option is a badge you can see; every badge is a filter you can pick.
+- e2e updated to the new vocabulary (reserved/delivered).
+
+S01 status: every S1/S2/S3/S4 finding is now fixed, by design
+(BA-0019 D12 pricing, BA-0038 draft-cancel kept per owner), ops-owned
+(owner setting list prices), or deferred to the S17 design pass
+(visible labels above every field). BA-0032 (Vercel prefetch 503s) is
+infra-level and monitored.
+
+### Checkpoint — 2026-08-31 (owner ask: remove Get started from the dashboard)
+
+The onboarding "Get started" checklist card is gone from the dashboard
+for every user. The /v1/onboarding/checklist fetch stays — it still
+powers the fresh-signup redirect to /welcome and the businessActive
+gate — only the card and its component were removed.
+
 ### Checkpoint — 2026-08-31 (Operations role + dashboard, owner amendment A5)
 
 New owner request, not a carried sprint item: a member who watches every

@@ -1,11 +1,20 @@
 'use client';
 
 import Link from 'next/link';
+import { usePathname, useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { PenLine, X } from 'lucide-react';
 import { api } from '@/lib/api';
 import { Money } from '@/components/money';
-import { PageHeader, Input, Select, LinkButton, LoadingRows, EmptyState } from '@/components/ui';
+import {
+  PageHeader,
+  Input,
+  Select,
+  LinkButton,
+  LoadingRows,
+  EmptyState,
+  DisplayStatusBadge,
+} from '@/components/ui';
 
 /**
  * Orders list per PLAN-POS-OPERATIONS §8: a table (Order #, Customer,
@@ -61,54 +70,51 @@ interface OrderDetail {
   payments: { id: string; amountCents: number; method: string; status: string }[];
 }
 
-const DISPLAY_TONES: Record<string, string> = {
-  Draft: 'neutral',
-  Pending: 'neutral',
-  'On PO': 'info',
-  Reserved: 'brand',
-  Scheduled: 'info',
-  'Out for Delivery': 'brand',
-  Delivered: 'success',
-  Quote: 'warning',
-  Layaway: 'warning',
-  Cancelled: 'danger',
-};
-
 function DisplayStatus({ row }: { row: ListRow }) {
-  const tone = DISPLAY_TONES[row.displayStatus] ?? 'neutral';
-  return (
-    <span className={`badge badge-${tone}`}>
-      {row.displayStatus}
-      {row.poNumber ? ` (${row.poNumber})` : ''}
-    </span>
-  );
+  return <DisplayStatusBadge displayStatus={row.displayStatus} poNumber={row.poNumber} />;
 }
 
-/** Raw lifecycle filters offered alongside free-text search. */
+/**
+ * P-013 (BA-0017): the filter speaks the same display vocabulary the
+ * badges show — every option is a badge you can see, and every badge
+ * is an option you can pick.
+ */
 const STATUS_FILTERS = [
   ['', 'All statuses'],
-  ['draft', 'Drafts'],
-  ['quote', 'Quotes'],
-  ['open', 'Open'],
-  ['partially_fulfilled', 'Partially fulfilled'],
-  ['fulfilled', 'Fulfilled'],
-  ['completed', 'Completed'],
-  ['cancelled', 'Cancelled'],
+  ['Draft', 'Draft'],
+  ['Quote', 'Quote'],
+  ['Pending', 'Pending'],
+  ['On PO', 'On PO'],
+  ['Reserved', 'Reserved'],
+  ['Scheduled', 'Scheduled'],
+  ['Out for Delivery', 'Out for Delivery'],
+  ['Delivered', 'Delivered'],
+  ['Layaway', 'Layaway'],
+  ['Awaiting Return Pickup', 'Awaiting Return Pickup'],
+  ['Returned', 'Returned'],
+  ['Exchanged', 'Exchanged'],
+  ['Cancelled', 'Cancelled'],
 ] as const;
 
 export default function OrdersPage() {
   const [rows, setRows] = useState<ListRow[] | null>(null);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [q, setQ] = useState('');
-  const [status, setStatus] = useState('');
-  const [view, setView] = useState('');
+  // BA-0024: search, filters and sort live in the URL — the view
+  // survives reload and can be bookmarked or sent to someone.
+  const initial =
+    typeof window !== 'undefined'
+      ? new URLSearchParams(window.location.search)
+      : new URLSearchParams();
+  const [q, setQ] = useState(initial.get('q') ?? '');
+  const [status, setStatus] = useState(initial.get('display') ?? '');
+  const [view, setView] = useState(initial.get('view') ?? '');
+  const [sort, setSort] = useState(initial.get('sort') ?? '');
+  const [dir, setDir] = useState(initial.get('dir') === 'desc' ? 'desc' : 'asc');
   // Deep-linkable from the dashboard's "My orders" card (?mine=1).
-  const [mine, setMine] = useState(
-    () =>
-      typeof window !== 'undefined' &&
-      new URLSearchParams(window.location.search).get('mine') === '1',
-  );
+  const [mine, setMine] = useState(() => initial.get('mine') === '1');
+  const router = useRouter();
+  const pathname = usePathname();
   // The store chosen at login: a member working a store sees that
   // store's orders by default (chip is clearable — data scope permits
   // more).
@@ -134,12 +140,18 @@ export default function OrdersPage() {
       onlyMine: boolean,
       locationFilter: string | null,
       cursor: string | null,
+      sortBy: string,
+      sortDir: string,
     ) => {
       const params = new URLSearchParams({ limit: '50' });
       if (query.trim()) params.set('q', query.trim());
-      if (statusFilter) params.set('status', statusFilter);
+      if (statusFilter) params.set('display', statusFilter);
       if (viewFilter) params.set('view', viewFilter);
       if (onlyMine) params.set('mine', '1');
+      if (sortBy) {
+        params.set('sort', sortBy);
+        params.set('dir', sortDir);
+      }
       if (locationFilter) params.set('locationId', locationFilter);
       if (cursor) params.set('cursor', cursor);
       return api<{ data: ListRow[]; nextCursor: string | null }>(
@@ -153,9 +165,30 @@ export default function OrdersPage() {
   // stale responses that resolve after a newer query's.
   useEffect(() => {
     const seq = ++searchSeq.current;
+    // Mirror the view state into the URL (replace — no history spam).
+    const urlParams = new URLSearchParams();
+    if (q.trim()) urlParams.set('q', q.trim());
+    if (status) urlParams.set('display', status);
+    if (view) urlParams.set('view', view);
+    if (mine) urlParams.set('mine', '1');
+    if (sort) {
+      urlParams.set('sort', sort);
+      urlParams.set('dir', dir);
+    }
+    const qs = urlParams.toString();
+    router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
     const t = setTimeout(
       () => {
-        fetchPage(q, status, view, mine, loginStore && atLoginStore ? loginStore.id : null, null)
+        fetchPage(
+          q,
+          status,
+          view,
+          mine,
+          loginStore && atLoginStore ? loginStore.id : null,
+          null,
+          sort,
+          dir,
+        )
           .then((page) => {
             if (searchSeq.current !== seq) return;
             setRows(page.data);
@@ -171,7 +204,7 @@ export default function OrdersPage() {
     );
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [q, status, view, mine, atLoginStore, loginStore, fetchPage]);
+  }, [q, status, view, mine, atLoginStore, loginStore, sort, dir, fetchPage]);
 
   async function loadMore() {
     if (!nextCursor) return;
@@ -184,6 +217,8 @@ export default function OrdersPage() {
         mine,
         loginStore && atLoginStore ? loginStore.id : null,
         nextCursor,
+        sort,
+        dir,
       );
       setRows((prev) => [...(prev ?? []), ...page.data]);
       setNextCursor(page.nextCursor);
@@ -192,6 +227,16 @@ export default function OrdersPage() {
     } finally {
       setLoadingMore(false);
     }
+  }
+
+  function toggleSort(id: string) {
+    if (sort === id) {
+      setDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSort(id);
+      setDir(id === 'balanceDue' || id === 'deliveryDate' ? 'desc' : 'asc');
+    }
+    setRows(null);
   }
 
   return (
@@ -255,18 +300,65 @@ export default function OrdersPage() {
       {error && <p style={{ color: 'var(--danger)', fontSize: 13 }}>{error}</p>}
       {!rows && !error && <LoadingRows rows={6} />}
 
-      {rows && rows.length === 0 && <EmptyState>No orders match.</EmptyState>}
+      {rows && rows.length === 0 && (
+        <EmptyState>
+          {(() => {
+            const active = [
+              q.trim() && `search “${q.trim()}”`,
+              status && `status ${STATUS_FILTERS.find(([v]) => v === status)?.[1] ?? status}`,
+              view === 'past_due' && 'past due',
+              mine && 'my orders',
+              loginStore && atLoginStore && `at ${loginStore.name}`,
+            ].filter(Boolean);
+            return active.length > 0
+              ? `No orders match ${active.join(' + ')}.`
+              : 'No orders yet — write the first one with New Sale.';
+          })()}
+          {(q.trim() || status || view || mine) && (
+            <div style={{ marginTop: 8 }}>
+              <button
+                className="btn btn-sm btn-secondary"
+                data-testid="clear-filters"
+                onClick={() => {
+                  setQ('');
+                  setStatus('');
+                  setView('');
+                  setMine(false);
+                }}
+              >
+                Clear filters
+              </button>
+            </div>
+          )}
+        </EmptyState>
+      )}
 
       {rows && rows.length > 0 && (
-        <div className="card" style={{ padding: 0, overflowX: 'auto' }}>
-          <table className="table" data-testid="orders-table">
+        <div
+          className="card"
+          style={{ padding: 0, overflow: 'auto', maxHeight: 'calc(100vh - 210px)' }}
+        >
+          <table className="table table-dense table-sticky" data-testid="orders-table">
             <thead>
               <tr>
-                <th>Order #</th>
-                <th>Customer</th>
+                <SortTh id="number" label="Order #" sort={sort} dir={dir} onSort={toggleSort} />
+                <SortTh id="customer" label="Customer" sort={sort} dir={dir} onSort={toggleSort} />
                 <th>Status</th>
-                <th>Delivery Date</th>
-                <th style={{ textAlign: 'right' }}>Balance Due</th>
+                <SortTh
+                  id="deliveryDate"
+                  label="Delivery Date"
+                  sort={sort}
+                  dir={dir}
+                  onSort={toggleSort}
+                />
+                <SortTh
+                  id="balanceDue"
+                  label="Balance Due"
+                  sort={sort}
+                  dir={dir}
+                  onSort={toggleSort}
+                  align="right"
+                />
                 <th>Salesperson</th>
               </tr>
             </thead>
@@ -280,14 +372,14 @@ export default function OrdersPage() {
                 >
                   <td style={{ fontWeight: 600, whiteSpace: 'nowrap' }}>{r.number}</td>
                   <td>{r.customerName}</td>
-                  <td>
+                  <td style={{ whiteSpace: 'nowrap' }}>
                     <DisplayStatus row={r} />
                     {r.lineSummary && r.lineSummary.units > 0 && (
-                      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
+                      <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 6 }}>
                         {r.lineSummary.fulfilled > 0 && `${r.lineSummary.fulfilled} delivered · `}
                         {r.lineSummary.reserved} of {r.lineSummary.units} reserved
                         {r.lineSummary.specialOrder > 0 && ` · ${r.lineSummary.specialOrder} SO`}
-                      </div>
+                      </span>
                     )}
                   </td>
                   <td style={{ whiteSpace: 'nowrap' }}>{r.deliveryDate ?? '—'}</td>
@@ -504,5 +596,49 @@ function SummaryRow({ label, cents, bold }: { label: string; cents: number; bold
       <span>{label}</span>
       <Money cents={cents} />
     </div>
+  );
+}
+
+/** P-014: clickable, aria-sorted column header. */
+function SortTh({
+  id,
+  label,
+  sort,
+  dir,
+  onSort,
+  align,
+}: {
+  id: string;
+  label: string;
+  sort: string;
+  dir: string;
+  onSort: (id: string) => void;
+  align?: 'right';
+}) {
+  const active = sort === id;
+  return (
+    <th
+      aria-sort={active ? (dir === 'desc' ? 'descending' : 'ascending') : undefined}
+      style={align === 'right' ? { textAlign: 'right' } : undefined}
+    >
+      <button
+        type="button"
+        onClick={() => onSort(id)}
+        data-testid={`sort-${id}`}
+        style={{
+          border: 'none',
+          background: 'none',
+          cursor: 'pointer',
+          font: 'inherit',
+          color: 'inherit',
+          textTransform: 'inherit',
+          letterSpacing: 'inherit',
+          padding: 0,
+        }}
+      >
+        {label}
+        {active ? (dir === 'desc' ? ' ▼' : ' ▲') : ''}
+      </button>
+    </th>
   );
 }

@@ -188,6 +188,44 @@ export function StatusBadge({ status, className }: { status: string; className?:
   );
 }
 
+/**
+ * P-013 (S01 audit): the ONE owner-facing order-status vocabulary —
+ * list badges, the detail page, and the filter all use these words.
+ */
+export const DISPLAY_STATUS_TONES: Record<string, string> = {
+  Draft: 'neutral',
+  Pending: 'neutral',
+  'On PO': 'info',
+  Reserved: 'brand',
+  Scheduled: 'info',
+  'Out for Delivery': 'brand',
+  Delivered: 'success',
+  Quote: 'warning',
+  Layaway: 'warning',
+  Cancelled: 'danger',
+  'Awaiting Return Pickup': 'warning',
+  Returned: 'neutral',
+  Exchanged: 'neutral',
+};
+
+export function DisplayStatusBadge({
+  displayStatus,
+  poNumber,
+  className,
+}: {
+  displayStatus: string;
+  poNumber?: string | null;
+  className?: string;
+}) {
+  const tone = DISPLAY_STATUS_TONES[displayStatus] ?? 'neutral';
+  return (
+    <span className={cx('badge', `badge-${tone}`, className)}>
+      {displayStatus}
+      {poNumber ? ` (${poNumber})` : ''}
+    </span>
+  );
+}
+
 export function EmptyState({ children }: { children: ReactNode }) {
   return <div className="empty-state">{children}</div>;
 }

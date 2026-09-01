@@ -325,6 +325,17 @@ code {
   background: var(--brand-soft);
 }
 
+/* P-018 (S01 audit): the one dense-list pattern — tighter rows and a
+   header that stays visible inside the list's scroll container. */
+.table-dense td {
+  padding: 5px 10px;
+}
+.table-sticky thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
 .table .num {
   text-align: right;
   font-variant-numeric: tabular-nums;

@@ -1,18 +1,11 @@
 'use client';
 
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { api } from '@/lib/api';
 import { Money } from '@/components/money';
-import {
-  Button,
-  EmptyState,
-  Input,
-  LinkButton,
-  LoadingRows,
-  PageHeader,
-  StatusBadge,
-} from '@/components/ui';
+import { Button, EmptyState, Input, LoadingRows, PageHeader, StatusBadge } from '@/components/ui';
 
 interface SaleRow {
   id: string;
@@ -35,6 +28,7 @@ interface SalesPageData {
 const PAGE_LIMIT = 50;
 
 export default function SalesPage() {
+  const router = useRouter();
   const [rows, setRows] = useState<SaleRow[] | null>(null);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [q, setQ] = useState('');
@@ -91,14 +85,8 @@ export default function SalesPage() {
 
   return (
     <div>
-      <PageHeader
-        title="Sales"
-        actions={
-          <LinkButton href="/pos" variant="primary">
-            Open register
-          </LinkButton>
-        }
-      />
+      {/* P-018: no duplicate "Open register" — the global top bar has it. */}
+      <PageHeader title="Sales" />
 
       <form onSubmit={search} className="mb-4 flex flex-wrap gap-2">
         {/* autoFocus is scanner-friendly: a scanned receipt barcode types
@@ -141,8 +129,8 @@ export default function SalesPage() {
                 : 'No sales yet. Ring one up at the register to see it here.'}
             </EmptyState>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="table">
+            <div style={{ overflow: 'auto', maxHeight: 'calc(100vh - 240px)' }}>
+              <table className="table table-dense table-sticky">
                 <thead>
                   <tr>
                     <th>Sale</th>
@@ -155,7 +143,11 @@ export default function SalesPage() {
                 </thead>
                 <tbody>
                   {rows.map((s) => (
-                    <tr key={s.id}>
+                    <tr
+                      key={s.id}
+                      onClick={() => router.push(`/sales/${s.id}`)}
+                      style={{ cursor: 'pointer' }}
+                    >
                       <td>
                         <code>{s.number}</code>
                       </td>
@@ -173,7 +165,17 @@ export default function SalesPage() {
                       <td className="num">
                         <Money cents={s.totalCents} />
                       </td>
-                      <td>{new Date(s.completedAt ?? s.createdAt).toLocaleString()}</td>
+                      <td style={{ whiteSpace: 'nowrap' }}>
+                        {new Date(s.completedAt ?? s.createdAt).toLocaleDateString('en-US', {
+                          month: 'short',
+                          day: 'numeric',
+                          year: 'numeric',
+                        })}{' '}
+                        {new Date(s.completedAt ?? s.createdAt).toLocaleTimeString('en-US', {
+                          hour: 'numeric',
+                          minute: '2-digit',
+                        })}
+                      </td>
                       <td>
                         <Link href={`/sales/${s.id}`}>Open</Link>
                       </td>

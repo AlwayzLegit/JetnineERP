@@ -305,6 +305,53 @@ interface OrderDetail extends OrderListRow {
   }[];
 }
 
+/**
+ * P-013 (BA-0017): the ONE owner-facing status vocabulary (§8 display
+ * ladder). List rows, the order detail page, and the status filter all
+ * derive from this ladder — never from the raw lifecycle status.
+ */
+export const DISPLAY_STATUSES = [
+  'Draft',
+  'Quote',
+  'Cancelled',
+  'Awaiting Return Pickup',
+  'Returned',
+  'Exchanged',
+  'Delivered',
+  'Layaway',
+  'Out for Delivery',
+  'Scheduled',
+  'On PO',
+  'Reserved',
+  'Pending',
+] as const;
+
+export function deriveDisplayStatus(x: {
+  status: string;
+  orderKind: string;
+  balance: number;
+  tripStatus: string | null;
+  onPo: boolean;
+  reservedShort: boolean;
+  awaitingPickup: boolean;
+  fullyReturned: boolean;
+  exchanged: boolean;
+}): string {
+  if (x.status === 'draft') return 'Draft';
+  if (x.status === 'quote') return 'Quote';
+  if (x.status === 'cancelled') return 'Cancelled';
+  if (x.awaitingPickup) return 'Awaiting Return Pickup';
+  if (x.fullyReturned) return 'Returned';
+  if (x.exchanged) return 'Exchanged';
+  if (x.status === 'completed' || x.status === 'fulfilled') return 'Delivered';
+  if (x.orderKind === 'layaway' && x.balance > 0) return 'Layaway';
+  if (x.tripStatus === 'out_for_delivery') return 'Out for Delivery';
+  if (x.tripStatus) return 'Scheduled';
+  if (x.onPo) return 'On PO';
+  if (!x.reservedShort) return 'Reserved';
+  return 'Pending';
+}
+
 /** The one-call payload the printable documents render from (§11). */
 interface OrderDocument {
   business: {
@@ -509,6 +556,9 @@ export class OrdersController {
     @Query('view') view?: string,
     @Query('mine') mine?: string,
     @Query('locationId') locationIdFilter?: string,
+    @Query('sort') sort?: string,
+    @Query('dir') dir?: string,
+    @Query('display') display?: string,
   ): Promise<
     PageResponse<{
       id: string;
@@ -530,9 +580,50 @@ export class OrdersController {
     }>
   > {
     const limit = clampLimit(limitStr);
-    const cursor = decodeCursor(cursorStr);
+    // P-014 (BA-0018/BA-0024): sortable columns. Delivery date and
+    // balance due are derived values, so they sort via scalar
+    // subqueries; sorted views paginate by offset (cursor "o:<n>")
+    // instead of the created-at cursor.
+    const SORTS: Record<string, ReturnType<typeof sql>> = {
+      number: sql`${schema.orders.number}`,
+      customer: sql`(${schema.customers.firstName} || ' ' || coalesce(${schema.customers.lastName}, ''))`,
+      deliveryDate: sql`coalesce(
+        (select min(d.scheduled_date) from deliveries d
+          where d.order_id = ${schema.orders.id}
+            and d.status in ('scheduled','loaded','out_for_delivery')),
+        ${schema.orders.requestedDate})`,
+      balanceDue: sql`greatest(0, ${schema.orders.totalCents} - coalesce(
+        (select sum(p.amount_cents) from payments p
+          where p.order_id = ${schema.orders.id} and p.status = 'succeeded'), 0))`,
+    };
+    const sortExpr = sort ? SORTS[sort] : undefined;
+    const sortDesc = dir === 'desc';
+    const offset = sortExpr && cursorStr?.startsWith('o:') ? Number(cursorStr.slice(2)) || 0 : 0;
+    const cursor = sortExpr ? null : decodeCursor(cursorStr);
     const filters = [];
     if (status) filters.push(eq(schema.orders.status, status));
+    // P-013 (BA-0017): filter by the DISPLAY vocabulary — the same words
+    // the badges show. The 1:1 states narrow in SQL; derived states
+    // narrow to their possible lifecycle statuses and post-filter on the
+    // computed display status (a page may return fewer than `limit`
+    // rows while nextCursor keeps paging).
+    const displayFilter = display && DISPLAY_STATUSES.includes(display as never) ? display : null;
+    if (displayFilter === 'Draft') filters.push(eq(schema.orders.status, 'draft'));
+    else if (displayFilter === 'Quote') filters.push(eq(schema.orders.status, 'quote'));
+    else if (displayFilter === 'Cancelled') filters.push(eq(schema.orders.status, 'cancelled'));
+    else if (displayFilter === 'Delivered')
+      filters.push(inArray(schema.orders.status, ['completed', 'fulfilled']));
+    else if (
+      displayFilter &&
+      ['Pending', 'On PO', 'Reserved', 'Scheduled', 'Out for Delivery', 'Layaway'].includes(
+        displayFilter,
+      )
+    )
+      filters.push(inArray(schema.orders.status, ['open', 'partially_fulfilled']));
+    else if (displayFilter)
+      // Returned / Exchanged / Awaiting Return Pickup can sit on any
+      // live-or-done order.
+      filters.push(sql`${schema.orders.status} not in ('draft', 'quote', 'cancelled')`);
     // G13 saved view: "Past Due" — the most useful list in the building.
     // Undelivered orders whose promised date has passed.
     if (view === 'past_due') {
@@ -582,7 +673,15 @@ export class OrdersController {
       )
       .leftJoin(schema.users, eq(schema.users.id, schema.memberships.userId))
       .where(filters.length > 0 ? and(...filters) : undefined)
-      .orderBy(...timestampCursorOrder(schema.orders.createdAt, schema.orders.id))
+      .orderBy(
+        ...(sortExpr
+          ? [
+              sortDesc ? sql`${sortExpr} DESC NULLS LAST` : sql`${sortExpr} ASC NULLS LAST`,
+              schema.orders.id,
+            ]
+          : timestampCursorOrder(schema.orders.createdAt, schema.orders.id)),
+      )
+      .offset(offset)
       .limit(limit + 1);
 
     const pageRows = rows.slice(0, limit);
@@ -742,20 +841,17 @@ export class OrdersController {
       const balance = Math.max(0, r.totalCents - (paid.get(r.id) ?? 0));
       const credit = Math.max(0, (paid.get(r.id) ?? 0) - r.totalCents);
       const trip = deliveryState.get(r.id);
-      let displayStatus: string;
-      if (r.status === 'draft') displayStatus = 'Draft';
-      else if (r.status === 'quote') displayStatus = 'Quote';
-      else if (r.status === 'cancelled') displayStatus = 'Cancelled';
-      else if (awaitingPickup.has(r.id)) displayStatus = 'Awaiting Return Pickup';
-      else if (fullyReturned.has(r.id)) displayStatus = 'Returned';
-      else if (exchangedOriginals.has(r.id)) displayStatus = 'Exchanged';
-      else if (r.status === 'completed' || r.status === 'fulfilled') displayStatus = 'Delivered';
-      else if (r.orderKind === 'layaway' && balance > 0) displayStatus = 'Layaway';
-      else if (trip?.status === 'out_for_delivery') displayStatus = 'Out for Delivery';
-      else if (trip) displayStatus = 'Scheduled';
-      else if (poByOrder.has(r.id)) displayStatus = 'On PO';
-      else if (!reservedShort.has(r.id)) displayStatus = 'Reserved';
-      else displayStatus = 'Pending';
+      const displayStatus = deriveDisplayStatus({
+        status: r.status,
+        orderKind: r.orderKind,
+        balance,
+        tripStatus: trip?.status ?? null,
+        onPo: poByOrder.has(r.id),
+        reservedShort: reservedShort.has(r.id),
+        awaitingPickup: awaitingPickup.has(r.id),
+        fullyReturned: fullyReturned.has(r.id),
+        exchanged: exchangedOriginals.has(r.id),
+      });
       return {
         id: r.id,
         number: r.number,
@@ -774,8 +870,13 @@ export class OrdersController {
     const hasMore = rows.length > limit;
     const last = pageRows[pageRows.length - 1];
     return {
-      data: enriched,
-      nextCursor: hasMore && last ? encodeCursor(last.createdAt, last.id) : null,
+      data: displayFilter ? enriched.filter((r) => r.displayStatus === displayFilter) : enriched,
+      nextCursor:
+        hasMore && last
+          ? sortExpr
+            ? `o:${offset + limit}`
+            : encodeCursor(last.createdAt, last.id)
+          : null,
     };
   }
 
@@ -1200,8 +1301,73 @@ export class OrdersController {
   async get(
     @CurrentTenant() _tenant: RequestTenantContext,
     @Param('id') id: string,
-  ): Promise<OrderDetail> {
-    return this.loadDetail(id);
+  ): Promise<OrderDetail & { displayStatus: string; displayPoNumber: string | null }> {
+    const detail = await this.loadDetail(id);
+    // P-013 (BA-0017): the detail page shows the same display status as
+    // the list — one vocabulary, derived from the same ladder.
+    const [trip] = await this.db
+      .select({ status: schema.deliveries.status })
+      .from(schema.deliveries)
+      .where(
+        and(
+          eq(schema.deliveries.orderId, id),
+          inArray(schema.deliveries.status, ['scheduled', 'loaded', 'out_for_delivery']),
+        ),
+      )
+      .orderBy(sql`case when ${schema.deliveries.status} = 'out_for_delivery' then 0 else 1 end`)
+      .limit(1);
+    const [openPo] = await this.db
+      .select({ number: schema.purchaseOrders.number })
+      .from(schema.poLineAllocations)
+      .innerJoin(schema.orderLines, eq(schema.orderLines.id, schema.poLineAllocations.orderLineId))
+      .innerJoin(
+        schema.purchaseOrderLines,
+        eq(schema.purchaseOrderLines.id, schema.poLineAllocations.poLineId),
+      )
+      .innerJoin(
+        schema.purchaseOrders,
+        eq(schema.purchaseOrders.id, schema.purchaseOrderLines.purchaseOrderId),
+      )
+      .where(
+        and(
+          eq(schema.orderLines.orderId, id),
+          sql`${schema.purchaseOrderLines.quantityOrdered} > ${schema.purchaseOrderLines.quantityReceived}`,
+        ),
+      )
+      .limit(1);
+    const [openReturn] = await this.db
+      .select({ id: schema.orderReturns.id })
+      .from(schema.orderReturns)
+      .where(and(eq(schema.orderReturns.orderId, id), eq(schema.orderReturns.status, 'authorized')))
+      .limit(1);
+    const [exchangeChild] = await this.db
+      .select({ id: schema.orders.id })
+      .from(schema.orders)
+      .where(
+        and(eq(schema.orders.originalOrderId, id), sql`${schema.orders.status} != 'cancelled'`),
+      )
+      .limit(1);
+    const fulfilledUnits = detail.lines.reduce((n, l) => n + l.qtyFulfilled, 0);
+    const returnedUnits = detail.lines.reduce((n, l) => n + l.qtyReturned, 0);
+    const reservedShort = detail.lines.some(
+      (l) => l.lineType === 'stock' && l.qtyReserved + l.qtyFulfilled < l.quantity,
+    );
+    const displayStatus = deriveDisplayStatus({
+      status: detail.status,
+      orderKind: detail.orderKind,
+      balance: detail.balanceDueCents,
+      tripStatus: trip?.status ?? null,
+      onPo: Boolean(openPo),
+      reservedShort,
+      awaitingPickup: Boolean(openReturn),
+      fullyReturned: returnedUnits > 0 && returnedUnits >= fulfilledUnits,
+      exchanged: Boolean(exchangeChild),
+    });
+    return {
+      ...detail,
+      displayStatus,
+      displayPoNumber: displayStatus === 'On PO' ? (openPo?.number ?? null) : null,
+    };
   }
 
   /**
@@ -4001,7 +4167,9 @@ export class OrdersController {
         .innerJoin(schema.users, eq(schema.users.id, schema.memberships.userId))
         .where(eq(schema.memberships.id, membershipId))
         .limit(1);
-      return row?.name ?? row?.email ?? null;
+      // BA-0020: an empty-string display name falls through to the email
+      // so documents never print a blank salesperson.
+      return row?.name?.trim() || row?.email || null;
     };
 
     // Scheduled Date box = the earliest trip still owed to the customer.
