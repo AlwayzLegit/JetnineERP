@@ -3,10 +3,11 @@
 import Link from 'next/link';
 import { Save, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { Button, Card, EmptyState, Field, Input, LoadingRows, StatusBadge } from '@/components/ui';
 import { api } from '@/lib/api';
+import { autofillFormFromZip, type ZipHit } from '@/lib/zip-lookup';
 import { downloadFile } from '@/lib/download';
 import { Money } from '@/components/money';
 
@@ -110,6 +111,12 @@ export default function CustomerDetailPage() {
   const [c, setC] = useState<Customer | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [summary, setSummary] = useState<CustomerSummary | null>(null);
+  // ZIP → city/state autofill memory per address block (delivery/billing).
+  const zipMemos = useRef<Record<'d' | 'b', { current: ZipHit | null }>>({
+    d: { current: null },
+    b: { current: null },
+  });
+  const zipMemo = (prefix: 'd' | 'b') => zipMemos.current[prefix];
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [credit, setCredit] = useState<{
@@ -329,6 +336,13 @@ export default function CustomerDetailPage() {
                     placeholder="ZIP"
                     defaultValue={a.postalCode ?? ''}
                     style={{ width: '100%' }}
+                    onChange={(e) =>
+                      autofillFormFromZip(
+                        e.currentTarget,
+                        { city: `${prefix}_city`, region: `${prefix}_region` },
+                        zipMemo(prefix),
+                      )
+                    }
                   />
                 </div>
               </div>

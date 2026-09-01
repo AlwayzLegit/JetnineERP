@@ -9,14 +9,15 @@
 
 ## 0. Owner amendments to the handoff (2026-08-25, final)
 
-| #   | Amendment                                                                                                                                                                                                                                                                                                                                           |
-| --- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| A1  | **Batch delivery-ticket printing does NOT lock orders.** Only an individual delivery-ticket print locks (§7); the batch "Print all for date" prints without locking — the lock exists to freeze a specific order that is physically on the truck.                                                                                                   |
-| A2  | **La Brea keeps its name; prefix `LB`** (the handoff's "H — Hancock Park" is superseded). Store prefixes: WH=Warehouse, SC=Studio City, WL=West LA, K=Koreatown, LB=La Brea. Imported STORIS history/stock mapped to La Brea stays attached.                                                                                                        |
-| A3  | **Single-screen New Sale supersedes the checkpoint-7 three-step wizard.** All wizard fields/logic (fulfillment methods, fees, tenders, layaway, split tickets) carry into one screen with the pinned totals panel; the step chrome goes.                                                                                                            |
-| A4  | **The legacy quick-sale register retires entirely**, including its offline mode (offline capability is dropped for v1; a future rebuild inside New Sale is a separate effort). Take-with flows through New Sale.                                                                                                                                    |
-| A6  | **Inventory Clerk is renamed Warehouse and gets its own home** (owner 2026-09-01). Same role, same permissions plus `warehouse.dashboard.view`; the sync renames existing tenants' system role in place (memberships untouched) and skips any business with its own "Warehouse" role. Dashboard spec in §12.2.                                      |
-| A5  | **Operations is a sixth role, with its own home** (owner 2026-08-31). It watches every store's selling and every dollar and unit that moves, and signs off on what it reads — read-and-clear, never approve, consistent with §13's "approval queues (dashboard visibility instead)". It sells occasionally: no quota, no commission. Detail in §12. |
+| #   | Amendment                                                                                                                                                                                                                                                                                                                                                                |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| A1  | **Batch delivery-ticket printing does NOT lock orders.** Only an individual delivery-ticket print locks (§7); the batch "Print all for date" prints without locking — the lock exists to freeze a specific order that is physically on the truck.                                                                                                                        |
+| A2  | **La Brea keeps its name; prefix `LB`** (the handoff's "H — Hancock Park" is superseded). Store prefixes: WH=Warehouse, SC=Studio City, WL=West LA, K=Koreatown, LB=La Brea. Imported STORIS history/stock mapped to La Brea stays attached.                                                                                                                             |
+| A3  | **Single-screen New Sale supersedes the checkpoint-7 three-step wizard.** All wizard fields/logic (fulfillment methods, fees, tenders, layaway, split tickets) carry into one screen with the pinned totals panel; the step chrome goes.                                                                                                                                 |
+| A4  | **The legacy quick-sale register retires entirely**, including its offline mode (offline capability is dropped for v1; a future rebuild inside New Sale is a separate effort). Take-with flows through New Sale.                                                                                                                                                         |
+| A6  | **Inventory Clerk is renamed Warehouse and gets its own home** (owner 2026-09-01). Same role, same permissions plus `warehouse.dashboard.view`; the sync renames existing tenants' system role in place (memberships untouched) and skips any business with its own "Warehouse" role. Dashboard spec in §12.2.                                                           |
+| A5  | **Operations is a sixth role, with its own home** (owner 2026-08-31). It watches every store's selling and every dollar and unit that moves, and signs off on what it reads — read-and-clear, never approve, consistent with §13's "approval queues (dashboard visibility instead)". It sells occasionally: no quota, no commission. Detail in §12.                      |
+| A7  | **Cashier gets its own home, "My Day"** (owner 2026-09-01). Permission `cashier.dashboard.view` on the Cashier role; ten cards about the signed-in seller's own day and the store they are standing in. Login still lands on New Sale (§4) — the dashboard serves selling, never replaces it. Customer address entry autofills city/state from the ZIP. Detail in §12.3. |
 
 ## 1. Locations & Order Numbering
 
@@ -62,6 +63,12 @@ Single-screen order entry — customer, products, payment all on one screen (no 
   against all stored fields, pulls the full record. Multiple matches → dropdown with
   phone + address preview. Inline "create new customer" if no match.
 - **Ship To** defaults to billing with a one-click toggle for a different address.
+- **ZIP autofill** (A7): typing a complete ZIP (US 5-digit, ZIP+4 tolerated, or a
+  Canadian postal code) fills city and state from the API's bundled table
+  (`GET /v1/geo/zip/:zip`, offline, never rate-limited). It fills only where the
+  field is empty or holds a previous autofill — a hand-typed city is never
+  overwritten. Applies to the New Sale customer, billing and ship-to blocks and
+  the customer edit page.
 - **Add Product**: popup search window with filters (vendor, size, more), results
   show product details, sortable/filterable by in stock / not in stock. Selecting
   adds the line. **No barcode scanning.**
@@ -377,6 +384,37 @@ cost · restocking fees · comfort-exchange enforcement · in-house financing ·
 holds · per-category commission rates · approval queues (dashboard visibility
 instead) · automated customer email/SMS · driver mobile app · white-glove
 itemization beyond the $0 Removal line · signature capture at POS · dark mode.
+
+### 12.3 Cashier dashboard — "My Day" (amendment A7, owner 2026-09-01)
+
+Fixed by role, like Operations and Warehouse: `cashier.dashboard.view` is the
+door (Owner/Manager inherit it and reach `/my-day` from the nav); the Cashier
+role's `/dashboard` swaps to this home. Login still lands on New Sale, and the
+page keeps New Sale one click away in its header. `GET /v1/dashboard/my-day`
+(`?locationId=` picks the store; the first non-warehouse store leads).
+
+"Mine" keys on the signed-in membership for orders (primary or second
+salesperson, split-attributed) and on the user for register sales, returns,
+exchanges and shifts. Store-level cards follow the picked store. Money rules as
+everywhere: imported legacy rows excluded (D8), balance due computed from the
+payment ledger, never stored.
+
+| #   | Card                     | What it shows                                                                                                                                                           |
+| --- | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | My day                   | Written and collected today (any store), ticket count, average ticket, vs the same weekday last week.                                                                   |
+| 2   | My drawer                | My open shift (any store): float, cash in since open (the close ritual's math), expected cash, suspended / open 12h+ flags; the picked store's last close and variance. |
+| 3   | Call-backs               | My quotes and drafts, oldest first, with phone; 3d+ in red.                                                                                                             |
+| 4   | My deliveries            | Deliveries today and tomorrow for orders I wrote: window, driver, status, phone.                                                                                        |
+| 5   | Balance due              | My live orders still owing (total − succeeded payments), due-now flagged when the requested date has arrived; total open.                                               |
+| 6   | Pickups waiting          | Pickup orders at this store, oldest first, readiness (every stock line reserved/fulfilled) and whether the order is mine.                                               |
+| 7   | Commission               | Current period accrued, pending, approved, paid; last payout and its period.                                                                                            |
+| 8   | What I can offer         | Live promo codes (active, in window, uses left) and the price-variance tiers from settings.                                                                             |
+| 9   | My returns and exchanges | Returns and exchanges I started that are not completed or cancelled.                                                                                                    |
+| 10  | Store today              | Store written today (every seller), my share, my rank this week among the store's sellers, and the leader's number.                                                     |
+
+Layout: a five-tile strip (written, collected, drawer, balance due, commission)
+then the queues two-up, then commission / offers / scoreboard three-up, then
+returns. Read-only; every row links to its document.
 
 ## 14. Build Order
 
