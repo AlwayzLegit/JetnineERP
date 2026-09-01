@@ -8,12 +8,7 @@ import { salesScopeCond } from '../common/sales-scope';
 import { DRIZZLE } from '../database/database.module';
 import { RequirePermission, TenantScoped } from '../tenancy/decorators';
 import type { RequestTenantContext } from '../tenancy/request-context';
-import {
-  digestByActor,
-  discountPercent,
-  type ActorDigestRow,
-  type OpsThresholds,
-} from './ops-feed';
+import { digestByActor, discountPercent, type ActorDigestRow } from './ops-feed';
 import { OpsFeedService } from './ops-feed.service';
 
 interface StoreRow {
@@ -68,8 +63,6 @@ interface OperationsSummary {
   salesByDay: { day: string; writtenCents: number }[];
   byStore: StoreRow[];
   ritual: RitualRow[];
-  counts: { feedOpen: number; critical: number };
-  thresholds: OpsThresholds;
 }
 
 interface ActivityGroup {
@@ -121,12 +114,15 @@ export class OpsDashboardController {
     const dayStart = sql`(${today}::date::timestamp AT TIME ZONE ${tz})`;
     const dayEnd = sql`((${today}::date + 1)::timestamp AT TIME ZONE ${tz})`;
 
-    const [money, salesByDay, byStore, ritual, feedResult] = await Promise.all([
+    // Deliberately NOT the feed: one page load already builds it twice
+    // (/feed and /digest), and the client derives its counts from the
+    // /feed response it fetches anyway. The summary stays the cheap
+    // call its header comment promises.
+    const [money, salesByDay, byStore, ritual] = await Promise.all([
       this.money(tenant, businessId, dayStart, dayEnd),
       this.salesByDay(tenant, businessId, tz),
       this.byStore(tenant, businessId, stores, dayStart, dayEnd),
       this.ritual(tenant, businessId, stores),
-      this.feed.build(tenant, { cap: 500 }),
     ]);
 
     return {
@@ -136,11 +132,6 @@ export class OpsDashboardController {
       salesByDay,
       byStore,
       ritual,
-      counts: {
-        feedOpen: feedResult.totalBeforeCap,
-        critical: feedResult.rows.filter((r) => r.severity === 'critical').length,
-      },
-      thresholds: feedResult.thresholds,
     };
   }
 
@@ -312,11 +303,14 @@ export class OpsDashboardController {
           salesScopeCond(tenant, schema.sales.locationId),
         ),
       );
+    // A refund-only associate — nothing written this window, a $900
+    // refund processed on an old sale — is exactly the outlier this
+    // table exists to expose, so the refund creates the row.
     for (const r of refundRows) {
       if (!r.associateUserId) continue;
       const key = `u:${r.associateUserId}`;
-      const row = acc.get(key);
-      if (row) row.refundedCents += r.amountCents;
+      bump(key, {});
+      acc.get(key)!.refundedCents += r.amountCents;
     }
 
     // Money actually collected, attributed the same way the document
@@ -343,8 +337,9 @@ export class OpsDashboardController {
       .groupBy(schema.orders.salespersonMembershipId);
     for (const c of orderCollected) {
       if (!c.membershipId) continue;
-      const row = acc.get(`m:${c.membershipId}`);
-      if (row) row.collectedCents += c.cents;
+      const key = `m:${c.membershipId}`;
+      bump(key, {});
+      acc.get(key)!.collectedCents += c.cents;
     }
     const saleCollected = await this.db
       .select({
@@ -365,8 +360,9 @@ export class OpsDashboardController {
       .groupBy(schema.sales.associateUserId);
     for (const c of saleCollected) {
       if (!c.associateUserId) continue;
-      const row = acc.get(`u:${c.associateUserId}`);
-      if (row) row.collectedCents += c.cents;
+      const key = `u:${c.associateUserId}`;
+      bump(key, {});
+      acc.get(key)!.collectedCents += c.cents;
     }
 
     for (const [key, row] of acc) {
@@ -506,15 +502,20 @@ export class OpsDashboardController {
         ),
       );
 
+    // The out-flows carry the same store scoping as the in-flow, or a
+    // store-scoped member's net would subtract every store's returns
+    // from only their own store's takings.
     const [returnTotal] = await this.db
       .select({ cents: sql<number>`COALESCE(SUM(${schema.orderReturns.amountCents}), 0)::int` })
       .from(schema.orderReturns)
+      .leftJoin(schema.orders, eq(schema.orders.id, schema.orderReturns.orderId))
       .where(
         and(
           eq(schema.orderReturns.businessId, businessId),
           gte(schema.orderReturns.authorizedAt, dayStart),
           lt(schema.orderReturns.authorizedAt, dayEnd),
           sql`${schema.orderReturns.status} <> 'cancelled'`,
+          salesScopeCond(tenant, schema.orders.locationId),
         ),
       );
 
@@ -526,6 +527,7 @@ export class OpsDashboardController {
           eq(schema.writeOffs.businessId, businessId),
           gte(schema.writeOffs.createdAt, dayStart),
           lt(schema.writeOffs.createdAt, dayEnd),
+          salesScopeCond(tenant, schema.writeOffs.locationId),
         ),
       );
 
@@ -535,11 +537,13 @@ export class OpsDashboardController {
         fee: sql<number>`COALESCE(SUM(${schema.exchanges.restockingFeeCents}), 0)::int`,
       })
       .from(schema.exchanges)
+      .innerJoin(schema.orders, eq(schema.orders.id, schema.exchanges.saleOrderId))
       .where(
         and(
           eq(schema.exchanges.businessId, businessId),
           gte(schema.exchanges.createdAt, dayStart),
           lt(schema.exchanges.createdAt, dayEnd),
+          salesScopeCond(tenant, schema.orders.locationId),
         ),
       );
 
@@ -734,60 +738,92 @@ export class OpsDashboardController {
    * Open/close ritual, one row per store in that store's own local day.
    * The morning glance: which drawers are open, which never closed, and
    * whether last night's close-out actually ran.
+   *
+   * Three fixed queries however many stores there are (the first pass
+   * ran 3×N): store-local dates come from Intl — the same IANA zone
+   * names Postgres uses — and the shift/closeout reads batch on the
+   * location list, bucketing per store in JS.
    */
   private async ritual(
     tenant: RequestTenantContext,
     businessId: string,
     stores: { id: string; name: string; timezone: string }[],
   ): Promise<RitualRow[]> {
-    const out: RitualRow[] = [];
-    for (const store of stores) {
-      const [dayRow] = await this.db
-        .select({ today: sql<string>`(now() AT TIME ZONE ${store.timezone})::date::text` })
-        .from(schema.businesses)
-        .where(eq(schema.businesses.id, businessId))
-        .limit(1);
-      const date = dayRow!.today;
-      const shifts = await this.db
-        .select({
-          closedAt: schema.cashShifts.closedAt,
-          suspendedAt: schema.cashShifts.suspendedAt,
-          varianceCents: schema.cashShifts.varianceCents,
-        })
-        .from(schema.cashShifts)
-        .where(
-          and(
-            eq(schema.cashShifts.businessId, businessId),
-            eq(schema.cashShifts.locationId, store.id),
-            sql`(${schema.cashShifts.openedAt} AT TIME ZONE ${store.timezone})::date = ${date}::date`,
-            salesScopeCond(tenant, schema.cashShifts.locationId),
-          ),
-        );
-      const [closeout] = await this.db
-        .select({ exceptionCount: schema.dailyCloseouts.exceptionCount })
-        .from(schema.dailyCloseouts)
-        .where(
-          and(
-            eq(schema.dailyCloseouts.businessId, businessId),
-            eq(schema.dailyCloseouts.locationId, store.id),
-            eq(schema.dailyCloseouts.closeDate, date),
-          ),
-        )
-        .limit(1);
+    const localDate = (at: Date, timeZone: string): string => {
+      try {
+        // en-CA formats as YYYY-MM-DD.
+        return new Intl.DateTimeFormat('en-CA', { timeZone }).format(at);
+      } catch {
+        return at.toISOString().slice(0, 10);
+      }
+    };
+    const now = new Date();
+    const dateBy = new Map(stores.map((s) => [s.id, localDate(now, s.timezone)]));
+    const tzBy = new Map(stores.map((s) => [s.id, s.timezone]));
+    const storeIds = stores.map((s) => s.id);
 
-      const variances = shifts.map((s) => s.varianceCents).filter((v): v is number => v != null);
-      out.push({
+    // Any store-local "today" began at most 38h ago (UTC+14 through
+    // UTC-12); one bounded fetch, then the per-store date filter in JS.
+    const shifts = await this.db
+      .select({
+        locationId: schema.cashShifts.locationId,
+        openedAt: schema.cashShifts.openedAt,
+        closedAt: schema.cashShifts.closedAt,
+        suspendedAt: schema.cashShifts.suspendedAt,
+        varianceCents: schema.cashShifts.varianceCents,
+      })
+      .from(schema.cashShifts)
+      .where(
+        and(
+          eq(schema.cashShifts.businessId, businessId),
+          inArray(schema.cashShifts.locationId, storeIds),
+          gte(schema.cashShifts.openedAt, new Date(now.getTime() - 38 * 3_600_000)),
+          salesScopeCond(tenant, schema.cashShifts.locationId),
+        ),
+      );
+    const shiftsBy = new Map<string, typeof shifts>();
+    for (const shift of shifts) {
+      const tz = tzBy.get(shift.locationId);
+      if (!tz || localDate(shift.openedAt, tz) !== dateBy.get(shift.locationId)) continue;
+      const list = shiftsBy.get(shift.locationId) ?? [];
+      list.push(shift);
+      shiftsBy.set(shift.locationId, list);
+    }
+
+    const closeouts = await this.db
+      .select({
+        locationId: schema.dailyCloseouts.locationId,
+        closeDate: schema.dailyCloseouts.closeDate,
+        exceptionCount: schema.dailyCloseouts.exceptionCount,
+      })
+      .from(schema.dailyCloseouts)
+      .where(
+        and(
+          eq(schema.dailyCloseouts.businessId, businessId),
+          inArray(schema.dailyCloseouts.locationId, storeIds),
+          inArray(schema.dailyCloseouts.closeDate, [...new Set(dateBy.values())]),
+        ),
+      );
+    const closeoutBy = new Map(
+      closeouts
+        .filter((c) => c.closeDate === dateBy.get(c.locationId))
+        .map((c) => [c.locationId, c.exceptionCount]),
+    );
+
+    return stores.map((store) => {
+      const todays = shiftsBy.get(store.id) ?? [];
+      const variances = todays.map((s) => s.varianceCents).filter((v): v is number => v != null);
+      return {
         locationId: store.id,
         locationName: store.name,
-        date,
-        drawerOpen: shifts.some((s) => s.closedAt == null),
-        drawerClosed: shifts.length > 0 && shifts.every((s) => s.closedAt != null),
-        drawerSuspended: shifts.some((s) => s.suspendedAt != null),
+        date: dateBy.get(store.id)!,
+        drawerOpen: todays.some((s) => s.closedAt == null),
+        drawerClosed: todays.length > 0 && todays.every((s) => s.closedAt != null),
+        drawerSuspended: todays.some((s) => s.suspendedAt != null),
         varianceCents: variances.length > 0 ? variances.reduce((a, b) => a + b, 0) : null,
-        closeoutRan: closeout != null,
-        closeoutExceptions: closeout?.exceptionCount ?? 0,
-      });
-    }
-    return out;
+        closeoutRan: closeoutBy.has(store.id),
+        closeoutExceptions: closeoutBy.get(store.id) ?? 0,
+      };
+    });
   }
 }

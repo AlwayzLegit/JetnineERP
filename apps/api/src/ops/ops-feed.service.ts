@@ -85,10 +85,11 @@ export class OpsFeedService {
       this.negativeStock(tenant, businessId, store),
       this.openTakeWiths(tenant, businessId, thresholds, store),
       this.drawerVariances(tenant, businessId, thresholds, since, name, store),
+      this.discounts(tenant, businessId, thresholds, since, name, store),
       this.refunds(tenant, businessId, thresholds, since, name, store),
-      this.returns(businessId, thresholds, since, name, store),
-      this.exchanges(businessId, since, name),
-      this.writeOffs(businessId, thresholds, since, name, store),
+      this.returns(tenant, businessId, thresholds, since, name, store),
+      this.exchanges(tenant, businessId, since, name, store),
+      this.writeOffs(tenant, businessId, thresholds, since, name, store),
       this.stockMovements(tenant, businessId, thresholds, since, name, store),
       this.giftCardAdjustments(businessId, since, name),
       this.securityOverrides(businessId, since, name),
@@ -104,14 +105,23 @@ export class OpsFeedService {
     return { rows: open.slice(0, cap), thresholds, totalBeforeCap: open.length };
   }
 
-  /** Subject keys already signed off in `ops_reviews`. */
-  private async clearedKeys(businessId: string, candidates: OpsFeedRow[]): Promise<Set<string>> {
-    if (candidates.length === 0) return new Set();
+  /**
+   * When each subject was last signed off in `ops_reviews`. The time
+   * matters: withoutCleared() resurfaces a subject whose occurredAt has
+   * moved past its review, so a standing condition that recurs is never
+   * hidden behind a stale sign-off.
+   */
+  private async clearedKeys(
+    businessId: string,
+    candidates: OpsFeedRow[],
+  ): Promise<Map<string, Date>> {
+    if (candidates.length === 0) return new Map();
     const ids = [...new Set(candidates.map((r) => r.subjectId))];
     const rows = await this.db
       .select({
         subjectType: schema.opsReviews.subjectType,
         subjectId: schema.opsReviews.subjectId,
+        reviewedAt: schema.opsReviews.reviewedAt,
       })
       .from(schema.opsReviews)
       .where(
@@ -120,7 +130,7 @@ export class OpsFeedService {
           inArray(schema.opsReviews.subjectId, ids),
         ),
       );
-    return new Set(rows.map((r) => `${r.subjectType}:${r.subjectId}`));
+    return new Map(rows.map((r) => [`${r.subjectType}:${r.subjectId}`, r.reviewedAt]));
   }
 
   private async locationNames(businessId: string): Promise<Map<string, string>> {
@@ -217,7 +227,7 @@ export class OpsFeedService {
         number: schema.orders.number,
         status: schema.orders.status,
         locationId: schema.orders.locationId,
-        balanceDueCents: sql<number>`${schema.orders.totalCents}::int`,
+        totalCents: sql<number>`${schema.orders.totalCents}::int`,
         createdAt: schema.orders.createdAt,
         takeWithUnits: sql<number>`SUM(CASE WHEN ${effective} = 'take_with' THEN ${schema.orderLines.qtyFulfilled} ELSE 0 END)::int`,
         methodCount: sql<number>`COUNT(DISTINCT ${effective})::int`,
@@ -245,6 +255,28 @@ export class OpsFeedService {
         sql`SUM(CASE WHEN ${effective} = 'take_with' THEN ${schema.orderLines.qtyFulfilled} ELSE 0 END) > 0`,
       );
     if (candidates.length === 0) return [];
+
+    // Balance due is derived money — computed from the payment ledger,
+    // never read off a stored column (CLAUDE.md). A half-paid split
+    // ticket's exposure is the balance, not the face value.
+    const paidRows = await this.db
+      .select({
+        orderId: schema.payments.orderId,
+        cents: sql<number>`COALESCE(SUM(${schema.payments.amountCents}), 0)::int`,
+      })
+      .from(schema.payments)
+      .where(
+        and(
+          eq(schema.payments.businessId, businessId),
+          inArray(
+            schema.payments.orderId,
+            candidates.map((c) => c.id),
+          ),
+          eq(schema.payments.status, 'succeeded'),
+        ),
+      )
+      .groupBy(schema.payments.orderId);
+    const paidBy = new Map(paidRows.map((r) => [r.orderId, r.cents]));
 
     // Second pass for the family test: an order whose lines all share
     // one method can still be half of a split, as its own document.
@@ -275,7 +307,7 @@ export class OpsFeedService {
         severity: 'critical' as const,
         kind: 'Take-with on an open ticket',
         summary: `${c.number}: ${c.takeWithUnits} unit${c.takeWithUnits === 1 ? '' : 's'} went out on a split ticket still ${c.status}`,
-        amountCents: c.balanceDueCents,
+        amountCents: Math.max(0, c.totalCents - (paidBy.get(c.id) ?? 0)),
         actorUserId: null,
         actorName: null,
         locationId: c.locationId,
@@ -309,7 +341,10 @@ export class OpsFeedService {
       .where(
         and(
           eq(schema.cashShifts.businessId, businessId),
-          gte(schema.cashShifts.openedAt, since),
+          // The signal fires at close (occurredAt = closedAt), so the
+          // window bounds that — a shift opened before the window whose
+          // count came up short yesterday still belongs on the feed.
+          sql`COALESCE(${schema.cashShifts.closedAt}, ${schema.cashShifts.openedAt}) >= ${since.toISOString()}::timestamptz`,
           or(
             sql`ABS(COALESCE(${schema.cashShifts.varianceCents}, 0)) >= ${thresholds.drawerVarianceCents}`,
             sql`${schema.cashShifts.suspendedAt} IS NOT NULL`,
@@ -340,6 +375,113 @@ export class OpsFeedService {
           clearVia: 'review' as const,
         };
       });
+  }
+
+  /**
+   * Documents discounted at or past the threshold share of subtotal.
+   * The settings registry has advertised this since the thresholds
+   * shipped; the review pass caught that nothing read it. Order-level:
+   * a deep line discount inside a shallow order is the price-variance
+   * tiers' job (G6) — this signal watches the finished document.
+   */
+  private async discounts(
+    tenant: RequestTenantContext,
+    businessId: string,
+    thresholds: OpsThresholds,
+    since: Date,
+    name: (id: string | null) => string | null,
+    store: (id: string | null) => string | null,
+  ): Promise<OpsFeedRow[]> {
+    // discountPct = 100 means "flag only full write-downs"; the SQL
+    // comparison handles it like any other value.
+    const pctBps = Math.round(thresholds.discountPct * 100);
+    const rows: OpsFeedRow[] = [];
+
+    const saleRows = await this.db
+      .select({
+        id: schema.sales.id,
+        number: schema.sales.number,
+        discountCents: schema.sales.discountCents,
+        subtotalCents: schema.sales.subtotalCents,
+        associateUserId: schema.sales.associateUserId,
+        locationId: schema.sales.locationId,
+        createdAt: schema.sales.createdAt,
+      })
+      .from(schema.sales)
+      .where(
+        and(
+          eq(schema.sales.businessId, businessId),
+          gte(schema.sales.createdAt, since),
+          eq(schema.sales.status, 'completed'),
+          isNull(schema.sales.importedAt),
+          sql`${schema.sales.subtotalCents} > 0`,
+          sql`${schema.sales.discountCents} * 10000 >= ${schema.sales.subtotalCents} * ${pctBps}`,
+          salesScopeCond(tenant, schema.sales.locationId),
+        ),
+      );
+    for (const r of saleRows) {
+      rows.push({
+        subjectType: 'discount',
+        subjectId: r.id,
+        severity: 'warning',
+        kind: 'Deep discount',
+        summary: `${r.number}: ${Math.round((r.discountCents / r.subtotalCents) * 100)}% off ($${(r.discountCents / 100).toFixed(2)})`,
+        amountCents: -r.discountCents,
+        actorUserId: r.associateUserId,
+        actorName: name(r.associateUserId),
+        locationId: r.locationId,
+        locationName: store(r.locationId),
+        href: `/sales/${r.id}`,
+        occurredAt: r.createdAt,
+        clearVia: 'review',
+      });
+    }
+
+    const orderRows = await this.db
+      .select({
+        id: schema.orders.id,
+        number: schema.orders.number,
+        discountCents: schema.orders.discountCents,
+        subtotalCents: schema.orders.subtotalCents,
+        salespersonMembershipId: schema.orders.salespersonMembershipId,
+        actorUserId: schema.memberships.userId,
+        locationId: schema.orders.locationId,
+        createdAt: schema.orders.createdAt,
+      })
+      .from(schema.orders)
+      .leftJoin(
+        schema.memberships,
+        eq(schema.memberships.id, schema.orders.salespersonMembershipId),
+      )
+      .where(
+        and(
+          eq(schema.orders.businessId, businessId),
+          gte(schema.orders.createdAt, since),
+          sql`${schema.orders.status} NOT IN ('draft', 'quote', 'cancelled')`,
+          isNull(schema.orders.importedAt),
+          sql`${schema.orders.subtotalCents} > 0`,
+          sql`${schema.orders.discountCents} * 10000 >= ${schema.orders.subtotalCents} * ${pctBps}`,
+          salesScopeCond(tenant, schema.orders.locationId),
+        ),
+      );
+    for (const r of orderRows) {
+      rows.push({
+        subjectType: 'discount',
+        subjectId: r.id,
+        severity: 'warning',
+        kind: 'Deep discount',
+        summary: `${r.number}: ${Math.round((r.discountCents / r.subtotalCents) * 100)}% off ($${(r.discountCents / 100).toFixed(2)})`,
+        amountCents: -r.discountCents,
+        actorUserId: r.actorUserId,
+        actorName: name(r.actorUserId),
+        locationId: r.locationId,
+        locationName: store(r.locationId),
+        href: `/orders/${r.id}`,
+        occurredAt: r.createdAt,
+        clearVia: 'review',
+      });
+    }
+    return rows;
   }
 
   private async refunds(
@@ -390,6 +532,7 @@ export class OpsFeedService {
   }
 
   private async returns(
+    tenant: RequestTenantContext,
     businessId: string,
     thresholds: OpsThresholds,
     since: Date,
@@ -415,6 +558,10 @@ export class OpsFeedService {
           eq(schema.orderReturns.businessId, businessId),
           gte(schema.orderReturns.authorizedAt, since),
           gte(schema.orderReturns.amountCents, thresholds.refundCents),
+          // A store-scoped member sees only their stores' returns. A
+          // no-original return has no order and thus no location — it
+          // fails closed for them, visible to all-store members only.
+          salesScopeCond(tenant, schema.orders.locationId),
         ),
       );
     return rows.map((r) => ({
@@ -440,9 +587,11 @@ export class OpsFeedService {
    * entry still held for approval raises it from info to warning.
    */
   private async exchanges(
+    tenant: RequestTenantContext,
     businessId: string,
     since: Date,
     name: (id: string | null) => string | null,
+    store: (id: string | null) => string | null,
   ): Promise<OpsFeedRow[]> {
     const rows = await this.db
       .select({
@@ -453,10 +602,18 @@ export class OpsFeedService {
         restockingFeeOverridden: schema.exchanges.restockingFeeOverridden,
         createdByUserId: schema.exchanges.createdByUserId,
         createdAt: schema.exchanges.createdAt,
+        locationId: schema.orders.locationId,
       })
       .from(schema.exchanges)
+      // Every exchange settles onto a sale order (not-null FK), which is
+      // where its store lives.
+      .innerJoin(schema.orders, eq(schema.orders.id, schema.exchanges.saleOrderId))
       .where(
-        and(eq(schema.exchanges.businessId, businessId), gte(schema.exchanges.createdAt, since)),
+        and(
+          eq(schema.exchanges.businessId, businessId),
+          gte(schema.exchanges.createdAt, since),
+          salesScopeCond(tenant, schema.orders.locationId),
+        ),
       );
     return rows.map((r) => {
       const flagged = r.restockingFeeOverridden || r.status === 'on_hold';
@@ -469,8 +626,8 @@ export class OpsFeedService {
         amountCents: r.restockingFeeCents > 0 ? r.restockingFeeCents : null,
         actorUserId: r.createdByUserId,
         actorName: name(r.createdByUserId),
-        locationId: null,
-        locationName: null,
+        locationId: r.locationId,
+        locationName: store(r.locationId),
         href: `/exchanges/${r.id}`,
         occurredAt: r.createdAt,
         clearVia: 'review' as const,
@@ -479,6 +636,7 @@ export class OpsFeedService {
   }
 
   private async writeOffs(
+    tenant: RequestTenantContext,
     businessId: string,
     thresholds: OpsThresholds,
     since: Date,
@@ -504,6 +662,7 @@ export class OpsFeedService {
           eq(schema.writeOffs.businessId, businessId),
           gte(schema.writeOffs.createdAt, since),
           gte(schema.writeOffs.totalCostCents, thresholds.overrideCents),
+          salesScopeCond(tenant, schema.writeOffs.locationId),
         ),
       );
     return rows.map((r) => ({

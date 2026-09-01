@@ -13,6 +13,7 @@ export type OpsSubjectType =
   | 'negative_stock'
   | 'take_with_open'
   | 'drawer_variance'
+  | 'discount'
   | 'refund'
   | 'return'
   | 'exchange'
@@ -140,9 +141,24 @@ export function sortFeed(rows: OpsFeedRow[]): OpsFeedRow[] {
   });
 }
 
-/** Drop rows already signed off. `cleared` holds `subjectKey` values. */
-export function withoutCleared(rows: OpsFeedRow[], cleared: ReadonlySet<string>): OpsFeedRow[] {
-  return rows.filter((r) => !cleared.has(subjectKey(r)));
+/**
+ * Drop rows already signed off. `cleared` maps `subjectKey` to when the
+ * sign-off happened, and a review only suppresses what it could have
+ * seen: a row whose `occurredAt` is NEWER than its review comes back.
+ * One-shot event subjects (a refund, an override) never move, so one
+ * sign-off hides them for good — but a standing condition keyed to a
+ * stable row, like negative stock on an `inventory_levels` id, gets a
+ * fresh `occurredAt` when it recurs and resurfaces instead of hiding
+ * behind a month-old review.
+ */
+export function withoutCleared(
+  rows: OpsFeedRow[],
+  cleared: ReadonlyMap<string, Date>,
+): OpsFeedRow[] {
+  return rows.filter((r) => {
+    const reviewedAt = cleared.get(subjectKey(r));
+    return reviewedAt === undefined || reviewedAt.getTime() < r.occurredAt.getTime();
+  });
 }
 
 export interface ActorDigestRow {

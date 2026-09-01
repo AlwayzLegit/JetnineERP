@@ -434,6 +434,15 @@ export class PurchaseOrdersController {
       .where(eq(schema.purchaseOrders.id, id))
       .limit(1);
     if (!po) throw new NotFoundException('Purchase order not found');
+    // A deleted draft still carries status 'draft', so the status check
+    // alone would let it be placed — turning an invisible, unrestorable
+    // row into a real vendor commitment. Restore it first.
+    if (po.deletedAt) {
+      throw new ConflictException({
+        message: 'This purchase order is deleted. Restore it before placing it.',
+        code: 'ALREADY_DELETED',
+      });
+    }
     if (po.status !== 'draft') {
       throw new ForbiddenException(`Cannot place a ${po.status} purchase order`);
     }
@@ -472,6 +481,12 @@ export class PurchaseOrdersController {
       .where(eq(schema.purchaseOrders.id, id))
       .limit(1);
     if (!po) throw new NotFoundException('Purchase order not found');
+    if (po.deletedAt) {
+      throw new ConflictException({
+        message: 'This purchase order is deleted. Restore it before editing it.',
+        code: 'ALREADY_DELETED',
+      });
+    }
     if (po.status !== 'draft' && po.status !== 'ordered' && po.status !== 'partially_received') {
       throw new ForbiddenException(`Cannot edit a ${po.status} purchase order`);
     }
@@ -1247,6 +1262,14 @@ export class PurchaseOrdersController {
       .where(eq(schema.purchaseOrders.id, id))
       .limit(1);
     if (!po) throw new NotFoundException('Purchase order not found');
+    // Cancelling a deleted draft would flip its status and strand it —
+    // restore only accepts drafts. Deleted rows accept exactly one verb.
+    if (po.deletedAt) {
+      throw new ConflictException({
+        message: 'This purchase order is deleted. Restore it before cancelling it.',
+        code: 'ALREADY_DELETED',
+      });
+    }
     if (po.status === 'received' || po.status === 'canceled') {
       throw new ForbiddenException(`Cannot cancel a ${po.status} purchase order`);
     }

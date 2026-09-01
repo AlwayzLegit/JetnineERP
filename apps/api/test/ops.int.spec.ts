@@ -52,6 +52,7 @@ let managerCookie = '';
 /** Ids of the fixture rows each signal should surface. */
 const fixtures = {
   negativeLevelId: '',
+  discountSaleId: '',
   splitTakeWithOrderId: '',
   refundId: '',
   adjustmentMovementId: '',
@@ -380,6 +381,71 @@ async function seedSignals() {
       acknowledgedAt: new Date(),
       acknowledgedByUserId: opsUserId,
     });
+
+    // 6. A 30%-off register sale — past the 20% default, so the
+    //    discount signal must surface it.
+    const [discounted] = await db
+      .insert(schema.sales)
+      .values({
+        businessId,
+        locationId: storeAId,
+        number: 'S-000901',
+        status: 'completed',
+        customerId,
+        associateUserId: cashierUserId,
+        subtotalCents: 100_000,
+        discountCents: 30_000,
+        taxCents: 0,
+        totalCents: 70_000,
+      })
+      .returning();
+    fixtures.discountSaleId = discounted!.id;
+    // A 10%-off control that must stay off the feed.
+    await db.insert(schema.sales).values({
+      businessId,
+      locationId: storeAId,
+      number: 'S-000902',
+      status: 'completed',
+      customerId,
+      associateUserId: cashierUserId,
+      subtotalCents: 100_000,
+      discountCents: 10_000,
+      taxCents: 0,
+      totalCents: 90_000,
+    });
+
+    // 7. A refund-only associate: the sale predates the salespeople
+    //    window, the refund is fresh. (Attribution follows who rang
+    //    the sale — the manager here.)
+    const manager = await db
+      .select({ userId: schema.memberships.userId })
+      .from(schema.memberships)
+      .innerJoin(schema.users, eq(schema.users.id, schema.memberships.userId))
+      .where(eq(schema.users.email, 'manager@ops-test.local'))
+      .limit(1);
+    const [oldSale] = await db
+      .insert(schema.sales)
+      .values({
+        businessId,
+        locationId: storeBId,
+        number: 'S-000800',
+        status: 'completed',
+        customerId,
+        associateUserId: manager[0]!.userId,
+        subtotalCents: 50_000,
+        discountCents: 0,
+        taxCents: 0,
+        totalCents: 50_000,
+        createdAt: new Date(Date.now() - 40 * 86_400_000),
+      })
+      .returning();
+    await db.insert(schema.refunds).values({
+      businessId,
+      saleId: oldSale!.id,
+      amountCents: 7_000,
+      reason: 'Late warranty credit',
+      approvedByUserId: manager[0]!.userId,
+    });
   });
 }
 
@@ -523,6 +589,15 @@ describe('the feed', () => {
     expect(has(rows, 'refund', fixtures.refundId)).toBe(true);
     expect(has(rows, 'inventory_movement', fixtures.adjustmentMovementId)).toBe(true);
     expect(has(rows, 'exception', fixtures.exceptionId)).toBe(true);
+    expect(has(rows, 'discount', fixtures.discountSaleId)).toBe(true);
+  });
+
+  it('reports a take-with ticket at its balance due, not its face value', async () => {
+    const rows = await readFeed();
+    const takeWith = rows.find((r) => r.subjectId === fixtures.splitTakeWithOrderId);
+    // $1,500 order, nothing collected: exposure is the full balance.
+    // (Derived money is computed from the payment ledger, never stored.)
+    expect(takeWith!.amountCents).toBe(150_000);
   });
 
   it('ranks negative stock and the open take-with as critical, above the rest', async () => {
@@ -554,6 +629,10 @@ describe('the feed', () => {
     expect(takeWiths).toHaveLength(1);
     // An acknowledged exception has already been read by someone.
     expect(rows.filter((r) => r.subjectType === 'exception')).toHaveLength(1);
+    // The 10%-off sale sits under the 20% default.
+    const discounts = rows.filter((r) => r.subjectType === 'discount');
+    expect(discounts).toHaveLength(1);
+    expect(discounts[0]!.subjectId).toBe(fixtures.discountSaleId);
   });
 
   it('groups the same rows by who did them', async () => {
@@ -688,6 +767,56 @@ describe('signing off', () => {
     expect(has(rows, 'inventory_movement', fixtures.adjustmentMovementId)).toBe(false);
   });
 
+  it('resurfaces a standing condition that recurs after its sign-off — and lets it be cleared again', async () => {
+    // The negative-stock row was cleared in the batch test above. A
+    // count fixes it… and a month later the same variant goes negative
+    // again: same inventory_levels id, newer updatedAt. A sign-off only
+    // hides what it could have seen.
+    await withDb((db) =>
+      db
+        .update(schema.inventoryLevels)
+        .set({ onHand: -5, updatedAt: new Date() })
+        .where(eq(schema.inventoryLevels.id, fixtures.negativeLevelId)),
+    );
+    const resurfaced = await readFeed();
+    expect(has(resurfaced, 'negative_stock', fixtures.negativeLevelId)).toBe(true);
+
+    // Clearing the recurrence refreshes the existing sign-off (upsert,
+    // not do-nothing) so the row actually goes away again.
+    const res = await request(app.getHttpServer())
+      .post('/v1/ops-reviews/bulk')
+      .set('Cookie', opsCookie)
+      .set('x-business-id', businessId)
+      .send({
+        subjects: [{ subjectType: 'negative_stock', subjectId: fixtures.negativeLevelId }],
+        note: 'Recounted after the second break',
+      })
+      .expect(201);
+    expect(res.body.alreadyCleared).toEqual([
+      { subjectType: 'negative_stock', subjectId: fixtures.negativeLevelId },
+    ]);
+    expect(has(await readFeed(), 'negative_stock', fixtures.negativeLevelId)).toBe(false);
+
+    const [review] = await withDb((db) =>
+      db
+        .select()
+        .from(schema.opsReviews)
+        .where(eq(schema.opsReviews.subjectId, fixtures.negativeLevelId)),
+    );
+    expect(review!.note).toBe('Recounted after the second break');
+  });
+
+  it('clears a discount row like any other subject', async () => {
+    expect(has(await readFeed(), 'discount', fixtures.discountSaleId)).toBe(true);
+    await request(app.getHttpServer())
+      .post('/v1/ops-reviews/bulk')
+      .set('Cookie', opsCookie)
+      .set('x-business-id', businessId)
+      .send({ subjects: [{ subjectType: 'discount', subjectId: fixtures.discountSaleId }] })
+      .expect(201);
+    expect(has(await readFeed(), 'discount', fixtures.discountSaleId)).toBe(false);
+  });
+
   it('refuses an unknown subject type and an empty batch', async () => {
     await request(app.getHttpServer())
       .post('/v1/ops-reviews/bulk')
@@ -796,9 +925,11 @@ describe('the summary', () => {
       salesByDay: unknown[];
     };
     expect(body.stores.map((s) => s.name).sort()).toEqual(['Store A', 'Store B']);
-    // The fixture sale collected $1,000; refunds today total $450.
+    // The fixture sale collected $1,000; refunds today total $520 —
+    // $400 + $50 on the fresh sale, $70 on the 40-day-old one (the
+    // refund's own date is what counts, not its sale's).
     expect(body.money.inCents).toBe(100_000);
-    expect(body.money.out.refundsCents).toBe(45_000);
+    expect(body.money.out.refundsCents).toBe(52_000);
     expect(body.money.netCents).toBe(body.money.inCents - body.money.outCents);
     expect(body.byStore).toHaveLength(2);
     expect(body.ritual).toHaveLength(2);
@@ -814,8 +945,17 @@ describe('the summary', () => {
     const rows = res.body as { name: string; writtenCents: number; refundedCents: number }[];
     const cashier = rows.find((r) => r.name === 'Cashier');
     expect(cashier).toBeDefined();
-    expect(cashier!.writtenCents).toBe(100_000);
+    // $1,000 + the $700 and $900 discounted fixtures.
+    expect(cashier!.writtenCents).toBe(260_000);
     expect(cashier!.refundedCents).toBe(45_000);
+
+    // Review finding: an associate with NO written business in the
+    // window but a fresh refund must still get a row — that outlier is
+    // what the table exists to expose.
+    const manager = rows.find((r) => r.name === 'Manager');
+    expect(manager).toBeDefined();
+    expect(manager!.writtenCents).toBe(0);
+    expect(manager!.refundedCents).toBe(7_000);
   });
 
   it('is open to a Manager too — Operations is a lens, not a lock', async () => {

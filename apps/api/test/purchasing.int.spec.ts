@@ -1962,6 +1962,34 @@ describe('CR — deleting a draft purchase order', () => {
     expect(row!.allocated).toBe(0);
   });
 
+  it('a deleted draft accepts exactly one verb — restore', async () => {
+    // Review finding: a deleted draft keeps status 'draft', so the
+    // status checks alone would let it be placed — a vendor commitment
+    // from a row that is invisible in the list and unrestorable after.
+    const draft = await makeDraft();
+    await as(ownerCookie).delete(`/v1/purchase-orders/${draft.id}`).expect(200);
+
+    const placed = await as(ownerCookie).post(`/v1/purchase-orders/${draft.id}/place`);
+    expect(placed.status).toBe(409);
+    expect(placed.body.code).toBe('ALREADY_DELETED');
+
+    const edited = await as(ownerCookie)
+      .patch(`/v1/purchase-orders/${draft.id}`)
+      .send({ notes: 'sneaky edit' });
+    expect(edited.status).toBe(409);
+    expect(edited.body.code).toBe('ALREADY_DELETED');
+
+    const cancelled = await as(ownerCookie).post(`/v1/purchase-orders/${draft.id}/cancel`);
+    expect(cancelled.status).toBe(409);
+    expect(cancelled.body.code).toBe('ALREADY_DELETED');
+
+    // Still a draft, still restorable — the row was never mutated.
+    const restored = await as(ownerCookie).post(`/v1/purchase-orders/${draft.id}/restore`);
+    expect(restored.status).toBe(201);
+    expect(restored.body.status).toBe('draft');
+    expect(restored.body.placedAt).toBeNull();
+  });
+
   it('refuses a second delete and a restore of a live PO', async () => {
     const draft = await makeDraft();
     await as(ownerCookie).delete(`/v1/purchase-orders/${draft.id}`).expect(200);

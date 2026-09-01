@@ -4226,3 +4226,36 @@ creating them is the prevention. `PLAN-POS-OPERATIONS.md` §6.2 first.
 
 No schema or API change: `place: false` was already supported by
 `POST /v1/purchase-orders`; nothing on the server needed to move.
+
+### Checkpoint — 2026-09-01 (pre-merge review pass over the branch)
+
+Full-diff review before merging to main; ten findings, all fixed, each
+with a test where one could hold it:
+
+- **A deleted draft PO could still be placed** (or edited, or cancelled)
+  — it keeps status `draft`, and the status checks were the only gate.
+  Placing one would have minted a vendor commitment invisible in the
+  list and unrestorable after. Deleted rows now accept exactly one verb:
+  restore.
+- **Store scoping was inconsistent on the ops surfaces**: write-offs,
+  returns and exchanges skipped `salesScopeCond` on the feed and in the
+  money block while their sibling signals applied it, so a store-scoped
+  member saw (and had netted against them) other stores' money out.
+  Every out-flow now carries the same scope as the in-flow.
+- **A sign-off now has a time**: the feed hides a subject only while its
+  review is newer than its `occurredAt`, so negative stock that recurs
+  after being reviewed resurfaces instead of hiding behind a month-old
+  sign-off — and re-clearing upserts the stamp so the recurrence can be
+  cleared too.
+- **Take-with exposure is the balance due**, computed from the payment
+  ledger, not the order's face value (the money convention: derived
+  money is computed, never stored).
+- **The discountPct threshold now has a signal reading it** — a
+  documents-discounted-past-threshold feed row; it was advertised in
+  the settings registry with nothing behind it.
+- **Refund-only associates get a row** in the salespeople table — the
+  refund used to require prior written business to be counted at all.
+- Drawer variances window on when the count happened, not when the
+  shift opened; the summary no longer builds the whole feed just for a
+  count (thresholds ride the /feed response); ritual() is three fixed
+  queries instead of 3×stores.

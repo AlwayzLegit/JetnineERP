@@ -78,8 +78,6 @@ interface Summary {
     closeoutRan: boolean;
     closeoutExceptions: number;
   }[];
-  counts: { feedOpen: number; critical: number };
-  thresholds: Thresholds;
 }
 
 interface SalespersonRow {
@@ -136,6 +134,8 @@ export default function OperationsDashboardView({ userName }: { userName: string
   const [error, setError] = useState<string | null>(null);
   const [feed, setFeed] = useState<FeedRow[] | null>(null);
   const [feedTotal, setFeedTotal] = useState(0);
+  // Thresholds ride on the /feed response — the summary stays cheap.
+  const [thresholds, setThresholds] = useState<Thresholds | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [clearing, setClearing] = useState(false);
   const [clearError, setClearError] = useState<string | null>(null);
@@ -145,11 +145,12 @@ export default function OperationsDashboardView({ userName }: { userName: string
 
   const loadFeed = useCallback(async () => {
     try {
-      const r = await api<{ rows: FeedRow[]; total: number }>(
+      const r = await api<{ rows: FeedRow[]; total: number; thresholds: Thresholds }>(
         '/v1/dashboard/operations/feed?limit=100',
       );
       setFeed(r.rows);
       setFeedTotal(r.total);
+      setThresholds(r.thresholds);
     } catch {
       setFeed([]);
       setFeedTotal(0);
@@ -186,10 +187,6 @@ export default function OperationsDashboardView({ userName }: { userName: string
       });
       setSelected(new Set());
       await loadFeed();
-      // The summary's open/critical counts are now stale.
-      void api<Summary>('/v1/dashboard/operations')
-        .then(setSummary)
-        .catch(() => {});
     } catch (err) {
       setClearError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -242,7 +239,7 @@ export default function OperationsDashboardView({ userName }: { userName: string
           <div style={{ padding: 14 }}>
             <EmptyState>
               Every refund, override, adjustment and drawer count in the last{' '}
-              {summary.thresholds.lookbackDays} days has been reviewed.
+              {thresholds?.lookbackDays ?? 7} days has been reviewed.
             </EmptyState>
           </div>
         ) : (

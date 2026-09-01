@@ -108,19 +108,38 @@ describe('sortFeed', () => {
 });
 
 describe('withoutCleared', () => {
+  const reviewed = new Date('2026-08-31T19:00:00Z');
+
   it('drops only the exact subject that was signed off', () => {
     const rows = [
       row({ subjectType: 'refund', subjectId: 'x' }),
       row({ subjectType: 'return', subjectId: 'x' }),
       row({ subjectType: 'refund', subjectId: 'y' }),
     ];
-    const left = withoutCleared(rows, new Set(['refund:x']));
+    const left = withoutCleared(rows, new Map([['refund:x', reviewed]]));
     expect(left.map(subjectKey)).toEqual(['return:x', 'refund:y']);
   });
 
   it('is a no-op when nothing has been cleared', () => {
     const rows = [row()];
-    expect(withoutCleared(rows, new Set())).toHaveLength(1);
+    expect(withoutCleared(rows, new Map())).toHaveLength(1);
+  });
+
+  it('resurfaces a subject that recurred after its sign-off', () => {
+    // Stock went negative, was reviewed, was fixed — and went negative
+    // again a month later: same inventory_levels id, newer occurredAt.
+    const recurrence = row({
+      subjectType: 'negative_stock',
+      subjectId: 'level-1',
+      occurredAt: new Date('2026-09-30T12:00:00Z'),
+    });
+    const left = withoutCleared([recurrence], new Map([['negative_stock:level-1', reviewed]]));
+    expect(left).toHaveLength(1);
+  });
+
+  it('keeps hiding a one-shot event reviewed after it happened', () => {
+    const event = row({ occurredAt: new Date('2026-08-31T18:00:00Z') });
+    expect(withoutCleared([event], new Map([[subjectKey(event), reviewed]]))).toHaveLength(0);
   });
 });
 

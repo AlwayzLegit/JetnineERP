@@ -14,6 +14,7 @@ const SUBJECT_TYPES = new Set([
   'negative_stock',
   'take_with_open',
   'drawer_variance',
+  'discount',
   'refund',
   'return',
   'exchange',
@@ -161,7 +162,30 @@ export class OpsReviewsController {
     }
 
     if (reviewRows.length > 0) {
-      const inserted = await this.db
+      // Which of these were signed off before? Reported back as
+      // alreadyCleared — but the write below still refreshes their
+      // stamp. The feed hides a subject only while its review is newer
+      // than its occurredAt, so a standing condition that recurred
+      // (negative stock going negative again) NEEDS the refresh: with
+      // do-nothing, a resurfaced row could never be cleared again.
+      const existing = await this.db
+        .select({
+          subjectType: schema.opsReviews.subjectType,
+          subjectId: schema.opsReviews.subjectId,
+        })
+        .from(schema.opsReviews)
+        .where(
+          and(
+            eq(schema.opsReviews.businessId, businessId),
+            inArray(
+              schema.opsReviews.subjectId,
+              reviewRows.map((s) => s.subjectId),
+            ),
+          ),
+        );
+      const existingKeys = new Set(existing.map((r) => `${r.subjectType}:${r.subjectId}`));
+
+      await this.db
         .insert(schema.opsReviews)
         .values(
           reviewRows.map((s) => ({
@@ -173,21 +197,22 @@ export class OpsReviewsController {
             note,
           })),
         )
-        .onConflictDoNothing({
+        .onConflictDoUpdate({
           target: [
             schema.opsReviews.businessId,
             schema.opsReviews.subjectType,
             schema.opsReviews.subjectId,
           ],
-        })
-        .returning({
-          subjectType: schema.opsReviews.subjectType,
-          subjectId: schema.opsReviews.subjectId,
+          set: {
+            reviewedByUserId: userId,
+            reviewedAt,
+            // A bare re-clear keeps the original note; a new note wins.
+            note: sql`COALESCE(EXCLUDED.note, ${schema.opsReviews.note})`,
+          },
         });
-      cleared += inserted.length;
-      const insertedKeys = new Set(inserted.map((r) => `${r.subjectType}:${r.subjectId}`));
       for (const s of reviewRows) {
-        if (!insertedKeys.has(`${s.subjectType}:${s.subjectId}`)) alreadyCleared.push(s);
+        if (existingKeys.has(`${s.subjectType}:${s.subjectId}`)) alreadyCleared.push(s);
+        else cleared += 1;
       }
     }
 
