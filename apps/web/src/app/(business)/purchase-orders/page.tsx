@@ -26,6 +26,9 @@ interface PoRow {
   expectedAt: string | null;
   subtotalCents: number;
   createdAt: string;
+  /** Soft-deleted draft (CR 2026-08-31); only ever set under "Show deleted". */
+  deletedAt: string | null;
+  deletedByEmail: string | null;
 }
 
 interface SuggestionLine {
@@ -49,8 +52,21 @@ export default function PurchaseOrdersPage() {
   const list = useCursorList<PoRow>('/v1/purchase-orders');
   const [suggestions, setSuggestions] = useState<SuggestionGroup[] | null>(null);
   const [drafting, setDrafting] = useState(false);
+  const [showDeleted, setShowDeleted] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { rows } = list;
+
+  const reload = (deleted = showDeleted) => list.load(deleted ? { includeDeleted: '1' } : {});
+
+  async function restore(po: PoRow) {
+    try {
+      await api(`/v1/purchase-orders/${po.id}/restore`, { method: 'POST' });
+      toast.success(`${po.number} restored.`);
+      await reload();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    }
+  }
 
   async function loadSuggestions() {
     try {
@@ -204,6 +220,29 @@ export default function PurchaseOrdersPage() {
       )}
 
       <Card style={{ padding: 0 }}>
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'flex-end',
+            padding: '10px 12px',
+            borderBottom: '1px solid var(--border)',
+          }}
+        >
+          <label
+            style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12.5 }}
+            data-testid="show-deleted-toggle"
+          >
+            <input
+              type="checkbox"
+              checked={showDeleted}
+              onChange={(e) => {
+                setShowDeleted(e.target.checked);
+                void reload(e.target.checked);
+              }}
+            />
+            Show deleted
+          </label>
+        </div>
         {rows == null ? (
           <div style={{ padding: 16 }}>
             <LoadingRows />
@@ -226,9 +265,19 @@ export default function PurchaseOrdersPage() {
                 </thead>
                 <tbody>
                   {rows.map((p) => (
-                    <tr key={p.id}>
+                    <tr
+                      key={p.id}
+                      data-testid={p.deletedAt ? 'po-row-deleted' : 'po-row'}
+                      style={p.deletedAt ? { opacity: 0.55 } : undefined}
+                    >
                       <td>
                         <code>{p.number}</code>
+                        {p.deletedAt && (
+                          <div className="muted" style={{ fontSize: 11 }}>
+                            deleted {new Date(p.deletedAt).toLocaleString()}
+                            {p.deletedByEmail ? ` by ${p.deletedByEmail}` : ''}
+                          </div>
+                        )}
                       </td>
                       <td>{p.vendorName ?? '—'}</td>
                       <td>
@@ -238,7 +287,19 @@ export default function PurchaseOrdersPage() {
                         <Money cents={p.subtotalCents} />
                       </td>
                       <td>{new Date(p.createdAt).toLocaleDateString()}</td>
-                      <td style={{ textAlign: 'right' }}>
+                      <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                        {p.deletedAt && (
+                          <>
+                            <button
+                              type="button"
+                              className="btn btn-sm btn-secondary"
+                              onClick={() => void restore(p)}
+                              data-testid={`restore-${p.number}`}
+                            >
+                              Restore
+                            </button>{' '}
+                          </>
+                        )}
                         <Link href={`/purchase-orders/${p.id}`}>Open</Link>
                       </td>
                     </tr>

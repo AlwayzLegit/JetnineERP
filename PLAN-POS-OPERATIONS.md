@@ -123,6 +123,40 @@ Single-screen order entry — customer, products, payment all on one screen (no 
 - Vendor invoices auto-match to the PO (by PO #) for approval.
 - No landed cost/freight allocation in v1.
 
+### 6.1 Deleting a draft PO (CR 2026-08-31)
+
+A draft had no exit. Retiring one meant placing it — recording a vendor commitment
+that never existed — and then cancelling, or stripping its lines and leaving a
+$0.00 shell on the list forever. The reorder panel makes drafts one click at a
+time, so the shells accumulate.
+
+- **Draft only.** Everything past Draft has told the outside world something: a
+  placed PO is a commitment and **cancels**; a received one has moved stock.
+- **Soft delete.** `deleted_at` + `deleted_by_user_id`; the row stays. PO numbers
+  are generated from a count of existing rows, so keeping the row is also what
+  stops the next PO inheriting a deleted one's number. **Gaps in the sequence are
+  expected and correct.**
+- **Hidden by default;** `includeDeleted=1` ("Show deleted") brings them back
+  greyed, with who deleted them and when, and a Restore action.
+- **Confirm against the PO number** — the dialog shows vendor, line count and
+  subtotal, and arms only once the number is typed.
+- **Releases what it holds.** Linked special-order lines are un-sourced
+  (`po_line_allocations` → `cancelled`) so they return to the buying queue. There
+  is no stock to release: a draft PO holds none — stock moves only at
+  receive/unreceive. Un-sourcing and the delete share the request's RLS
+  transaction, so both happen or neither does.
+- **Restore does NOT re-claim those lines.** They went back on the queue and may
+  have been sourced elsewhere meanwhile; re-claiming could source one line twice.
+- **Refusals**, each with its own message: not a draft ("Only drafts can be
+  deleted. Cancel this PO instead."); any line with received/inspected/accepted/
+  rejected units; a matched or approved vendor invoice; a linked sales-order line
+  already fulfilled (names the SO).
+- **Permission:** `purchase_orders.delete`, separate from `purchase_orders.create`
+  — the Inventory Clerk who raises POs cannot delete them. Owner and Manager hold
+  it; the shared POS account must not.
+- **Audit:** `purchase_order.delete` / `.restore`, surfaced in a new **Change
+  history** card on the PO page (the PO had none; sales orders already did).
+
 ## 7. Delivery & Dispatch
 
 - Dispatcher view: simple table (orders by date/route).

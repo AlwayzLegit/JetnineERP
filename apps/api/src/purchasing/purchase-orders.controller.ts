@@ -1,7 +1,9 @@
 import {
   BadRequestException,
   Body,
+  ConflictException,
   Controller,
+  Delete,
   ForbiddenException,
   Get,
   Inject,
@@ -11,8 +13,9 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/pg-core';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { schema } from '@jetnine/db';
 import {
@@ -24,6 +27,7 @@ import {
   type PageResponse,
 } from '../common/pagination';
 import { AuditService } from '../audit/audit.service';
+import { checkPoDeletable, checkPoRestorable } from './po-delete-guard';
 import { computeReorderSuggestions } from './replenishment';
 import { CostingService } from '../costing/costing.service';
 import { ExceptionsService } from '../controls/exceptions.service';
@@ -128,6 +132,9 @@ interface PoListRow {
   /** Q1 landed cost lean: whole-PO freight loaded into layer cost. */
   freightCents: number | null;
   createdAt: Date;
+  /** Set on a soft-deleted draft; null on every live PO. */
+  deletedAt: Date | null;
+  deletedByEmail: string | null;
 }
 
 interface PoLineRow {
@@ -183,19 +190,27 @@ export class PurchaseOrdersController {
     @Inject(CostingService) private readonly costing: CostingService,
   ) {}
 
+  /**
+   * `includeDeleted=1` brings soft-deleted drafts back into the list
+   * (the "Show deleted" filter); by default they are hidden, which is
+   * the whole point of deleting one.
+   */
   @Get()
   @RequirePermission('purchase_orders.view')
   async list(
     @CurrentTenant() _tenant: RequestTenantContext,
     @Query('status') status?: string,
     @Query('vendorId') vendorId?: string,
+    @Query('includeDeleted') includeDeleted?: string,
     @Query('limit') limitStr?: string,
     @Query('cursor') cursorStr?: string,
   ): Promise<PageResponse<PoListRow>> {
     const limit = clampLimit(limitStr);
+    const deleter = alias(schema.users, 'po_deleter');
     const conditions: SQL[] = [];
     if (status) conditions.push(eq(schema.purchaseOrders.status, status));
     if (vendorId) conditions.push(eq(schema.purchaseOrders.vendorId, vendorId));
+    if (includeDeleted !== '1') conditions.push(isNull(schema.purchaseOrders.deletedAt));
     const cursor = decodeCursor(cursorStr);
     if (cursor) {
       conditions.push(
@@ -216,9 +231,12 @@ export class PurchaseOrdersController {
         subtotalCents: schema.purchaseOrders.subtotalCents,
         freightCents: schema.purchaseOrders.freightCents,
         createdAt: schema.purchaseOrders.createdAt,
+        deletedAt: schema.purchaseOrders.deletedAt,
+        deletedByEmail: deleter.email,
       })
       .from(schema.purchaseOrders)
       .leftJoin(schema.vendors, eq(schema.vendors.id, schema.purchaseOrders.vendorId))
+      .leftJoin(deleter, eq(deleter.id, schema.purchaseOrders.deletedByUserId))
       .where(conditions.length ? and(...conditions) : undefined)
       .orderBy(...timestampCursorOrder(schema.purchaseOrders.createdAt, schema.purchaseOrders.id))
       .limit(limit + 1);
@@ -1248,6 +1266,178 @@ export class PurchaseOrdersController {
   }
 
   /**
+   * Delete a draft (CR 2026-08-31). Before this endpoint a draft PO had
+   * no exit: retiring one meant placing it — recording a vendor
+   * commitment that never existed — and cancelling, or stripping its
+   * lines and leaving a $0.00 shell on the list forever. The reorder
+   * panel makes drafts one click at a time, so the shells accumulate.
+   *
+   * Soft, not hard: the row stays, keeping its number spoken for. PO
+   * numbers come from a count of existing rows, so a kept row is also
+   * what stops the next PO inheriting a deleted one's number — gaps in
+   * the sequence are expected.
+   *
+   * The whole request runs inside the RLS transaction, so un-sourcing
+   * the linked special-order lines and stamping the delete either both
+   * happen or neither does. There is no stock to release: a draft PO
+   * holds none — stock moves only at receive/unreceive — so the only
+   * thing a draft holds is its allocations.
+   */
+  @Delete(':id')
+  @RequirePermission('purchase_orders.delete')
+  async remove(
+    @CurrentTenant() _tenant: RequestTenantContext,
+    @CurrentUser() actor: CurrentUserPayload,
+    @Param('id') id: string,
+  ): Promise<PoDetail> {
+    const [po] = await this.db
+      .select()
+      .from(schema.purchaseOrders)
+      .where(eq(schema.purchaseOrders.id, id))
+      .limit(1);
+    if (!po) throw new NotFoundException('Purchase order not found');
+
+    const lines = await this.db
+      .select({
+        id: schema.purchaseOrderLines.id,
+        quantityReceived: schema.purchaseOrderLines.quantityReceived,
+        quantityInspected: schema.purchaseOrderLines.quantityInspected,
+        quantityAccepted: schema.purchaseOrderLines.quantityAccepted,
+        quantityRejected: schema.purchaseOrderLines.quantityRejected,
+      })
+      .from(schema.purchaseOrderLines)
+      .where(eq(schema.purchaseOrderLines.purchaseOrderId, id));
+
+    const [invoice] = await this.db
+      .select({ number: schema.vendorInvoices.number })
+      .from(schema.vendorInvoices)
+      .where(
+        and(
+          eq(schema.vendorInvoices.purchaseOrderId, id),
+          inArray(schema.vendorInvoices.status, ['matched', 'approved']),
+        ),
+      )
+      .limit(1);
+
+    // A linked sales-order line the customer already has in hand: un-
+    // sourcing it would put a fulfilled line back on the buying queue.
+    const lineIds = lines.map((l) => l.id);
+    let fulfilledOrderNumber: string | null = null;
+    if (lineIds.length > 0) {
+      const [fulfilled] = await this.db
+        .select({ number: schema.orders.number })
+        .from(schema.poLineAllocations)
+        .innerJoin(
+          schema.orderLines,
+          eq(schema.orderLines.id, schema.poLineAllocations.orderLineId),
+        )
+        .innerJoin(schema.orders, eq(schema.orders.id, schema.orderLines.orderId))
+        .where(
+          and(
+            inArray(schema.poLineAllocations.poLineId, lineIds),
+            sql`${schema.poLineAllocations.status} <> 'cancelled'`,
+            sql`${schema.orderLines.qtyFulfilled} > 0`,
+          ),
+        )
+        .limit(1);
+      fulfilledOrderNumber = fulfilled?.number ?? null;
+    }
+
+    const refusal = checkPoDeletable({
+      status: po.status,
+      deletedAt: po.deletedAt,
+      hasReceivedUnits: lines.some(
+        (l) =>
+          l.quantityReceived > 0 ||
+          l.quantityInspected > 0 ||
+          l.quantityAccepted > 0 ||
+          l.quantityRejected > 0,
+      ),
+      matchedInvoiceNumber: invoice?.number ?? null,
+      fulfilledOrderNumber,
+    });
+    if (refusal) {
+      throw new ConflictException({ message: refusal.message, code: refusal.code });
+    }
+
+    // Return every linked special-order line to the queue as un-sourced.
+    // The queue counts allocations that are not 'cancelled', so this is
+    // what puts the line back in front of a buyer.
+    let unsourced = 0;
+    if (lineIds.length > 0) {
+      const released = await this.db
+        .update(schema.poLineAllocations)
+        .set({ status: 'cancelled', updatedAt: new Date() })
+        .where(
+          and(
+            inArray(schema.poLineAllocations.poLineId, lineIds),
+            sql`${schema.poLineAllocations.status} <> 'cancelled'`,
+          ),
+        )
+        .returning({ id: schema.poLineAllocations.id });
+      unsourced = released.length;
+    }
+
+    const deletedAt = new Date();
+    await this.db
+      .update(schema.purchaseOrders)
+      .set({ deletedAt, deletedByUserId: actor?.id ?? null, updatedAt: deletedAt })
+      .where(eq(schema.purchaseOrders.id, id));
+
+    await this.audit.log({
+      action: 'purchase_order.delete',
+      targetType: 'purchase_order',
+      targetId: id,
+      metadata: {
+        number: po.number,
+        subtotalCents: po.subtotalCents,
+        lineCount: lines.length,
+        unsourcedAllocations: unsourced,
+      },
+    });
+    return this.hydrate(id);
+  }
+
+  /**
+   * Undo a delete. The draft comes back with its original number,
+   * lines and subtotal — but its special-order allocations do not:
+   * those lines went back on the buying queue and may have been sourced
+   * elsewhere in the meantime, so re-claiming them here could source one
+   * line twice. Re-link from the queue if that is what is wanted.
+   */
+  @Post(':id/restore')
+  @RequirePermission('purchase_orders.delete')
+  async restore(
+    @CurrentTenant() _tenant: RequestTenantContext,
+    @Param('id') id: string,
+  ): Promise<PoDetail> {
+    const [po] = await this.db
+      .select()
+      .from(schema.purchaseOrders)
+      .where(eq(schema.purchaseOrders.id, id))
+      .limit(1);
+    if (!po) throw new NotFoundException('Purchase order not found');
+
+    const refusal = checkPoRestorable({ status: po.status, deletedAt: po.deletedAt });
+    if (refusal) {
+      throw new ConflictException({ message: refusal.message, code: refusal.code });
+    }
+
+    await this.db
+      .update(schema.purchaseOrders)
+      .set({ deletedAt: null, deletedByUserId: null, updatedAt: new Date() })
+      .where(eq(schema.purchaseOrders.id, id));
+
+    await this.audit.log({
+      action: 'purchase_order.restore',
+      targetType: 'purchase_order',
+      targetId: id,
+      metadata: { number: po.number },
+    });
+    return this.hydrate(id);
+  }
+
+  /**
    * §6: email the PO to the vendor from the system. Replies route to
    * the admin-set ops.poReplyTo when configured. The email body is the
    * same data the printable document renders — vendor SKU, quantities,
@@ -1326,6 +1516,7 @@ export class PurchaseOrdersController {
   }
 
   private async hydrate(id: string): Promise<PoDetail> {
+    const poDeleter = alias(schema.users, 'po_detail_deleter');
     const [po] = await this.db
       .select({
         id: schema.purchaseOrders.id,
@@ -1352,11 +1543,14 @@ export class PurchaseOrdersController {
         notes: schema.purchaseOrders.notes,
         createdByUserId: schema.purchaseOrders.createdByUserId,
         createdAt: schema.purchaseOrders.createdAt,
+        deletedAt: schema.purchaseOrders.deletedAt,
+        deletedByEmail: poDeleter.email,
       })
       .from(schema.purchaseOrders)
       .leftJoin(schema.vendors, eq(schema.vendors.id, schema.purchaseOrders.vendorId))
       .leftJoin(schema.locations, eq(schema.locations.id, schema.purchaseOrders.locationId))
       .leftJoin(schema.businesses, eq(schema.businesses.id, schema.purchaseOrders.businessId))
+      .leftJoin(poDeleter, eq(poDeleter.id, schema.purchaseOrders.deletedByUserId))
       .where(eq(schema.purchaseOrders.id, id))
       .limit(1);
     if (!po) throw new NotFoundException('Purchase order not found');

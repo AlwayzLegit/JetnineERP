@@ -4050,3 +4050,57 @@ amended first (§0 A5 + new §12.1), doc-first as the protocol requires.
 — confirm or set them under Settings → Operations. Also worth a look: whether
 transfers should stay at info severity on the feed (they have their own paper
 trail and are high-volume) or be raised to warning.
+
+### Checkpoint — 2026-08-31 (CR: delete draft purchase orders)
+
+Change request from Jet, `deletedraftpos.md`. A draft PO had no exit —
+the only way to retire one was to place it (recording a vendor
+commitment that never existed) and cancel, or leave a $0.00 shell on the
+list forever. `PLAN-POS-OPERATIONS.md` §6.1 written first, doc-first.
+
+- **Schema:** `purchase_orders.deleted_at` + `deleted_by_user_id`
+  (`0082_po_soft_delete`), plus the live-row index the default list
+  reads. Soft, so the number stays spoken for — PO numbers come from a
+  count of existing rows, so keeping the row is exactly what stops the
+  next PO inheriting a deleted one's number.
+- **API:** `DELETE /v1/purchase-orders/:id` and
+  `POST /:id/restore`, gated on a new `purchase_orders.delete`
+  permission; `?includeDeleted=1` on the list. The four refusals live in
+  `po-delete-guard.ts` as a pure function so each message is unit-tested
+  without a database.
+- **Release:** linked special-order lines are un-sourced back onto the
+  buying queue in the request's own RLS transaction. There is **no stock
+  to release** — a draft PO holds none; stock moves only at
+  receive/unreceive — so the CR's "release reserved/committed stock" step
+  needed no code, and inventing a no-op would have implied otherwise.
+  Restore deliberately does not re-claim those lines: they may have been
+  sourced elsewhere meanwhile.
+- **UI:** destructive "Delete draft" pushed to the far end of the PO
+  header (never beside Place order); confirm dialog showing vendor, line
+  count and subtotal, armed only once the number is typed; deleted banner
+  with Restore on the detail page; "Show deleted" filter with greyed rows
+  and Restore on the list. New **Change history** card on the PO page —
+  it had none, sales orders already did.
+- **Tests:** 11 unit (every refusal + restore guard), 12 integration
+  (delete/hide/restore, number never reused, all four refusals with their
+  exact messages, SO line returns to the queue, restore does not
+  re-claim, permission boundary, audit entries), 2 e2e (delete → hidden →
+  Show deleted → restore; button absent once placed). Migration applies
+  clean from empty; drift check green.
+
+**Ops, and the open decisions from the CR:**
+
+- **The shared POS account.** `purchase_orders.delete` is manager-and-
+  above by construction: Owner and Manager hold every business permission.
+  If `pos.lamattress@gmail.com` is on Owner or Manager it CAN delete POs —
+  move it to a narrower role or add a per-member override. Cashier and
+  Inventory Clerk cannot, as the CR asked.
+- **The four existing drafts** (PO-2026-000001/000002, the $0.00 Bedrock
+  shells, plus two others) are production data — delete them from the UI
+  once this ships.
+- **Should the reorder panel stop creating drafts eagerly?** Not built.
+  The CR names it as the root cause and it is the better fix: an unsaved
+  staging screen would stop most of these drafts existing. Worth deciding
+  before the shells come back.
+- **Canceled POs hideable from the list?** Out of scope per the CR; the
+  `includeDeleted` plumbing would extend to it cheaply if wanted.

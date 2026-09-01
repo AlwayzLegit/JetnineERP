@@ -41,6 +41,8 @@ export const PERMISSIONS = {
   'purchase_orders.create': 'Create purchase orders',
   'purchase_orders.receive': 'Receive against purchase orders',
   'purchase_orders.cancel': 'Cancel a purchase order',
+  'purchase_orders.delete':
+    'Delete a draft purchase order (soft delete — the number is retired, never reused)',
 
   'customers.view': 'View customers',
   'customers.create': 'Create customers',
