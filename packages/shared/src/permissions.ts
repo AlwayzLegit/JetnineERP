@@ -136,6 +136,8 @@ export const PERMISSIONS = {
   'ops.review.clear': 'Clear reviewed items off the operations feed (records who cleared them)',
   'warehouse.dashboard.view':
     'See the warehouse dashboard — inbound POs, the dock, load-out, pickups, transfers',
+  'cashier.dashboard.view':
+    'See the My Day dashboard — own sales, drawer, call-backs, balances due, commission',
 
   'reason_codes.manage': 'Manage the reason-code registry (add / deactivate / restrict codes)',
   'security_overrides.view': 'View the security-override register',
@@ -186,7 +188,11 @@ export interface PermissionGroup {
  * asserts full, duplicate-free coverage of BUSINESS_PERMISSIONS.
  */
 const GROUP_DEFS: { key: string; label: string; prefixes: string[] }[] = [
-  { key: 'pos', label: 'Point of sale', prefixes: ['pos', 'returns', 'exchanges', 'sales'] },
+  {
+    key: 'pos',
+    label: 'Point of sale',
+    prefixes: ['pos', 'returns', 'exchanges', 'sales', 'cashier'],
+  },
   { key: 'orders', label: 'Sales orders', prefixes: ['orders'] },
   { key: 'deliveries', label: 'Deliveries', prefixes: ['deliveries'] },
   { key: 'customers', label: 'Customers', prefixes: ['customers'] },

@@ -21,6 +21,7 @@ import { RevenueTrend, type TrendPoint } from './revenue-trend';
 import ManagerDashboardView from './manager-dashboard';
 import OperationsDashboardView from './operations-dashboard';
 import WarehouseDashboardView from './warehouse-dashboard';
+import MyDayDashboardView from './my-day-dashboard';
 
 interface ChecklistStep {
   key: string;
@@ -147,6 +148,8 @@ export default function DashboardClient() {
   const [opsMode, setOpsMode] = useState<boolean | null>(null);
   // Warehouse role (owner 2026-09-01): same fixed-by-role home switch.
   const [warehouseMode, setWarehouseMode] = useState<boolean | null>(null);
+  // Cashier role (owner 2026-09-01): the My Day home.
+  const [cashierMode, setCashierMode] = useState<boolean | null>(null);
 
   useEffect(() => {
     if (!session.data) return;
@@ -174,16 +177,19 @@ export default function DashboardClient() {
       managerDashboard: boolean;
       operationsDashboard: boolean;
       warehouseDashboard: boolean;
+      cashierDashboard: boolean;
     }>('/v1/business/members/me')
       .then((r) => {
         setManagerMode(r.managerDashboard);
         setOpsMode(r.operationsDashboard);
         setWarehouseMode(r.warehouseDashboard);
+        setCashierMode(r.cashierDashboard);
       })
       .catch(() => {
         setManagerMode(false);
         setOpsMode(false);
         setWarehouseMode(false);
+        setCashierMode(false);
       });
     // Sales-gated cards.
     void api<ZReport>('/v1/reports/z')
@@ -261,6 +267,10 @@ export default function DashboardClient() {
 
   if (businessActive && warehouseMode) {
     return <WarehouseDashboardView userName={session.data.user.name ?? session.data.user.email} />;
+  }
+
+  if (businessActive && cashierMode) {
+    return <MyDayDashboardView userName={session.data.user.name ?? session.data.user.email} />;
   }
 
   if (businessActive && managerMode) {
