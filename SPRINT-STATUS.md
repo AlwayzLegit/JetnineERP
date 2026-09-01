@@ -4104,3 +4104,30 @@ list forever. `PLAN-POS-OPERATIONS.md` §6.1 written first, doc-first.
   before the shells come back.
 - **Canceled POs hideable from the list?** Out of scope per the CR; the
   `includeDeleted` plumbing would extend to it cheaply if wanted.
+
+### Checkpoint — 2026-08-31 (CR follow-up: the reorder panel stops creating drafts eagerly)
+
+The root cause the CR named, and the better half of the fix: "Draft PO"
+committed a numbered record on the first click, so the drafts existed
+before anyone decided they should. Deleting them was the cure; not
+creating them is the prevention. `PLAN-POS-OPERATIONS.md` §6.2 first.
+
+- The reorder panel's button is now **Review & order**, a link to
+  `/purchase-orders/new?vendorId=…&preload=reorder`. No POST — the eager
+  `draftPo()` handler is gone.
+- The builder at `/purchase-orders/new` was already a staging screen
+  (lines in component state, one write on submit); it just needed to
+  accept the preload and offer the draft exit. It now stages every
+  suggestion for the vendor on arrival, once, and carries **Save as
+  draft** alongside **Place order** — before this it could only place,
+  which is why the draft path lived only in the eager button.
+- A `beforeunload` guard protects a staged basket from a stray reload,
+  matching the order writer's BA-0001 guard. Losing 40 staged lines and
+  losing a half-written sale are the same mistake.
+- **Tests:** 1 e2e that asserts the property that matters — the PO count
+  stays at zero through opening the builder and walking away, and only
+  becomes 1 when Save as draft is pressed. Existing PO-delete and order
+  e2e re-run green.
+
+No schema or API change: `place: false` was already supported by
+`POST /v1/purchase-orders`; nothing on the server needed to move.

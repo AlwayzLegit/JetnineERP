@@ -157,6 +157,23 @@ time, so the shells accumulate.
 - **Audit:** `purchase_order.delete` / `.restore`, surfaced in a new **Change
   history** card on the PO page (the PO had none; sales orders already did).
 
+### 6.2 The PO builder is a staging screen (CR 2026-08-31, root cause)
+
+The reorder panel used to commit a numbered draft on the first click of "Draft
+PO" — which is how the list filled with $0.00 shells that then had no exit. The
+button now reads **Review & order** and opens
+`/purchase-orders/new?vendorId=…&preload=reorder`, which stages every suggestion
+as editable lines and **writes nothing**.
+
+- The builder holds lines, quantities and costs in component state; backing out
+  costs nothing, and a `beforeunload` guard stops a stray reload binning a staged
+  basket (same guard the order writer got for BA-0001).
+- Preload runs **once**: changing vendor afterwards means the buyer is
+  hand-building, not re-seeding.
+- Two exits, both a single write: **Save as draft** (`place: false`) parks it,
+  **Place order** commits to the vendor. Before this the builder could only
+  place, so the draft path existed nowhere but the eager button.
+
 ## 7. Delivery & Dispatch
 
 - Dispatcher view: simple table (orders by date/route).

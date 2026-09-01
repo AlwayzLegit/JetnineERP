@@ -51,7 +51,6 @@ interface SuggestionGroup {
 export default function PurchaseOrdersPage() {
   const list = useCursorList<PoRow>('/v1/purchase-orders');
   const [suggestions, setSuggestions] = useState<SuggestionGroup[] | null>(null);
-  const [drafting, setDrafting] = useState(false);
   const [showDeleted, setShowDeleted] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { rows } = list;
@@ -84,34 +83,6 @@ export default function PurchaseOrdersPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function draftPo(group: SuggestionGroup) {
-    if (!group.vendorId) return;
-    setDrafting(true);
-    try {
-      const locations = await api<{ id: string }[]>('/v1/business/locations');
-      if (locations.length === 0) throw new Error('Create a location first');
-      const po = await api<{ id: string; number: string }>('/v1/purchase-orders', {
-        method: 'POST',
-        body: JSON.stringify({
-          vendorId: group.vendorId,
-          locationId: locations[0]!.id,
-          place: false,
-          lines: group.lines.map((l) => ({
-            variantId: l.variantId,
-            quantity: l.suggestedQty,
-            unitCostCents: l.unitCostCents ?? 0,
-          })),
-        }),
-      });
-      toast.success(`Draft ${po.number} created`);
-      await Promise.all([list.load(), loadSuggestions()]);
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err));
-    } finally {
-      setDrafting(false);
-    }
-  }
-
   return (
     <div>
       <PageHeader
@@ -140,7 +111,8 @@ export default function PurchaseOrdersPage() {
         >
           <p className="muted" style={{ fontSize: 12.5, marginTop: 0 }}>
             Items at or below their reorder point (available = on hand − committed, all locations).
-            Set points on each product&apos;s variants.
+            Set points on each product&apos;s variants. <strong>Review &amp; order</strong> opens
+            the builder with these lines staged — nothing is written until you save there.
           </p>
           {suggestions.map((g) => (
             <div key={g.vendorId ?? 'unassigned'} style={{ marginBottom: 14 }}>
@@ -149,15 +121,18 @@ export default function PurchaseOrdersPage() {
                   {g.vendorName ?? 'No preferred vendor set'}
                 </strong>
                 {g.vendorId ? (
-                  <Button
+                  // CR 2026-08-31: this used to POST a numbered draft on
+                  // the first click, which is how the list filled with
+                  // $0.00 shells. It now opens the staging screen with
+                  // the suggestions loaded but nothing written.
+                  <LinkButton
                     size="sm"
                     variant="primary"
-                    disabled={drafting}
-                    onClick={() => void draftPo(g)}
-                    data-testid={`draft-po-${g.vendorName}`}
+                    href={`/purchase-orders/new?vendorId=${g.vendorId}&preload=reorder`}
+                    data-testid={`review-po-${g.vendorName}`}
                   >
-                    Draft PO ({g.lines.length} item{g.lines.length === 1 ? '' : 's'})
-                  </Button>
+                    Review &amp; order ({g.lines.length} item{g.lines.length === 1 ? '' : 's'})
+                  </LinkButton>
                 ) : (
                   <span className="muted" style={{ fontSize: 12 }}>
                     <Link href="/vendors" style={{ color: 'inherit' }}>
