@@ -9,12 +9,14 @@
 
 ## 0. Owner amendments to the handoff (2026-08-25, final)
 
-| #   | Amendment                                                                                                                                                                                                                                         |
-| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| A1  | **Batch delivery-ticket printing does NOT lock orders.** Only an individual delivery-ticket print locks (§7); the batch "Print all for date" prints without locking — the lock exists to freeze a specific order that is physically on the truck. |
-| A2  | **La Brea keeps its name; prefix `LB`** (the handoff's "H — Hancock Park" is superseded). Store prefixes: WH=Warehouse, SC=Studio City, WL=West LA, K=Koreatown, LB=La Brea. Imported STORIS history/stock mapped to La Brea stays attached.      |
-| A3  | **Single-screen New Sale supersedes the checkpoint-7 three-step wizard.** All wizard fields/logic (fulfillment methods, fees, tenders, layaway, split tickets) carry into one screen with the pinned totals panel; the step chrome goes.          |
-| A4  | **The legacy quick-sale register retires entirely**, including its offline mode (offline capability is dropped for v1; a future rebuild inside New Sale is a separate effort). Take-with flows through New Sale.                                  |
+| #   | Amendment                                                                                                                                                                                                                                                                                                                                           |
+| --- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A1  | **Batch delivery-ticket printing does NOT lock orders.** Only an individual delivery-ticket print locks (§7); the batch "Print all for date" prints without locking — the lock exists to freeze a specific order that is physically on the truck.                                                                                                   |
+| A2  | **La Brea keeps its name; prefix `LB`** (the handoff's "H — Hancock Park" is superseded). Store prefixes: WH=Warehouse, SC=Studio City, WL=West LA, K=Koreatown, LB=La Brea. Imported STORIS history/stock mapped to La Brea stays attached.                                                                                                        |
+| A3  | **Single-screen New Sale supersedes the checkpoint-7 three-step wizard.** All wizard fields/logic (fulfillment methods, fees, tenders, layaway, split tickets) carry into one screen with the pinned totals panel; the step chrome goes.                                                                                                            |
+| A4  | **The legacy quick-sale register retires entirely**, including its offline mode (offline capability is dropped for v1; a future rebuild inside New Sale is a separate effort). Take-with flows through New Sale.                                                                                                                                    |
+| A6  | **Inventory Clerk is renamed Warehouse and gets its own home** (owner 2026-09-01). Same role, same permissions plus `warehouse.dashboard.view`; the sync renames existing tenants' system role in place (memberships untouched) and skips any business with its own "Warehouse" role. Dashboard spec in §12.2.                                      |
+| A5  | **Operations is a sixth role, with its own home** (owner 2026-08-31). It watches every store's selling and every dollar and unit that moves, and signs off on what it reads — read-and-clear, never approve, consistent with §13's "approval queues (dashboard visibility instead)". It sells occasionally: no quota, no commission. Detail in §12. |
 
 ## 1. Locations & Order Numbering
 
@@ -121,6 +123,57 @@ Single-screen order entry — customer, products, payment all on one screen (no 
   remainder stays open with "X of Y remaining"; PO auto-completes only when full.
 - Vendor invoices auto-match to the PO (by PO #) for approval.
 - No landed cost/freight allocation in v1.
+
+### 6.1 Deleting a draft PO (CR 2026-08-31)
+
+A draft had no exit. Retiring one meant placing it — recording a vendor commitment
+that never existed — and then cancelling, or stripping its lines and leaving a
+$0.00 shell on the list forever. The reorder panel makes drafts one click at a
+time, so the shells accumulate.
+
+- **Draft only.** Everything past Draft has told the outside world something: a
+  placed PO is a commitment and **cancels**; a received one has moved stock.
+- **Soft delete.** `deleted_at` + `deleted_by_user_id`; the row stays. PO numbers
+  are generated from a count of existing rows, so keeping the row is also what
+  stops the next PO inheriting a deleted one's number. **Gaps in the sequence are
+  expected and correct.**
+- **Hidden by default;** `includeDeleted=1` ("Show deleted") brings them back
+  greyed, with who deleted them and when, and a Restore action.
+- **Confirm against the PO number** — the dialog shows vendor, line count and
+  subtotal, and arms only once the number is typed.
+- **Releases what it holds.** Linked special-order lines are un-sourced
+  (`po_line_allocations` → `cancelled`) so they return to the buying queue. There
+  is no stock to release: a draft PO holds none — stock moves only at
+  receive/unreceive. Un-sourcing and the delete share the request's RLS
+  transaction, so both happen or neither does.
+- **Restore does NOT re-claim those lines.** They went back on the queue and may
+  have been sourced elsewhere meanwhile; re-claiming could source one line twice.
+- **Refusals**, each with its own message: not a draft ("Only drafts can be
+  deleted. Cancel this PO instead."); any line with received/inspected/accepted/
+  rejected units; a matched or approved vendor invoice; a linked sales-order line
+  already fulfilled (names the SO).
+- **Permission:** `purchase_orders.delete`, separate from `purchase_orders.create`
+  — the Inventory Clerk who raises POs cannot delete them. Owner and Manager hold
+  it; the shared POS account must not.
+- **Audit:** `purchase_order.delete` / `.restore`, surfaced in a new **Change
+  history** card on the PO page (the PO had none; sales orders already did).
+
+### 6.2 The PO builder is a staging screen (CR 2026-08-31, root cause)
+
+The reorder panel used to commit a numbered draft on the first click of "Draft
+PO" — which is how the list filled with $0.00 shells that then had no exit. The
+button now reads **Review & order** and opens
+`/purchase-orders/new?vendorId=…&preload=reorder`, which stages every suggestion
+as editable lines and **writes nothing**.
+
+- The builder holds lines, quantities and costs in component state; backing out
+  costs nothing, and a `beforeunload` guard stops a stray reload binning a staged
+  basket (same guard the order writer got for BA-0001).
+- Preload runs **once**: changing vendor afterwards means the buyer is
+  hand-building, not re-seeding.
+- Two exits, both a single write: **Save as draft** (`place: false`) parks it,
+  **Place order** commits to the vendor. Before this the builder could only
+  place, so the draft path existed nowhere but the eager button.
 
 ## 7. Delivery & Dispatch
 
@@ -234,6 +287,83 @@ tenant logo slot.
 - End-of-day close runs automatically 10:00 PM daily per store; never blocks —
   unbalanced payments / unprinted deliveries flag as exceptions to the owner
   dashboard.
+
+### 12.1 Operations dashboard (amendment A5, owner 2026-08-31)
+
+Every store, always — no store picker, and no goal or commission tile. The page
+is exception-first: the feed leads, the numbers sit under it.
+
+- **Needs you today** — one prioritized list across all stores, loudest first.
+  Critical: negative on-hand (no threshold and no time bound — stock cannot be
+  less than nothing); a take-with handed over on a **split ticket** whose order
+  never completed; a suspended drawer; a security override. Warning: refunds and
+  returns over the threshold, drawer variances, manual stock adjustments,
+  cycle-count variances, receiving reversals, write-offs, gift-card adjustments
+  and cancellations, waived restocking fees, and open exception-register rows.
+  Info: every exchange entered, as-is restocks, transfers.
+- **Sign-off, not approval.** Each row carries a checkbox and clears in bulk,
+  stamped with who cleared it and when. Rows already in the exception register
+  clear through `exception_events.acknowledged_at`; everything else is recorded
+  in `ops_reviews`, one row per subject. Clearing is idempotent. The approval
+  permissions (`pos.refund.approve`, `pos.cash.approve`, `orders.price_override`,
+  `exchanges.approve`, `returns.override_window`) stay with the Manager, so the
+  person who authorizes an exception is never the person who signs it off.
+- **Money today, all stores** — in (by tender), out (refunds, returns,
+  write-offs), net, and exchanges entered. Imported legacy documents excluded
+  per cutover decision D8.
+- **Selling** — a by-store row and a by-salesperson table (written, count,
+  collected, refunded, discount %) so every store's sales and every
+  salesperson's sales are on one page.
+- **Flagged activity by person** — the same feed grouped by who did it. A flat
+  stream hides a pattern; the roll-up makes an outlier show itself.
+- **Open & close** — per store: drawer state, variance, whether the 22:00
+  close-out ran and what it flagged.
+- **Store activity** — recent order changes grouped by order.
+
+Thresholds live in `businesses.ops_settings_json.opsReview` and are tri-state:
+absent or null means the documented default, zero is a real setting. Defaults:
+refunds ≥ $200 · discounts ≥ 20% · overrides and write-offs ≥ $100 · drawer
+variance ≥ $5 · stock adjustments ≥ 5 units · take-with open 24h · 7-day
+lookback.
+
+Routing: `/dashboard` opens on this page for the **Operations** role. Owner and
+Manager hold every business permission, `ops.dashboard.view` included, so gating
+the home on the permission would replace theirs too — they reach the same page
+at `/operations` from the nav. The permission governs access; the role governs
+which home you land on.
+
+### 12.2 Warehouse dashboard (amendment A6, owner 2026-09-01)
+
+The renamed Inventory Clerk's home: a day in the building, pinned to ONE
+location (warehouse-type locations lead the picker). No money tiles, no
+selling — the receiving pipeline and every "goods are here, close the loop"
+queue:
+
+1. **Inbound** — open POs shipping here: due date, overdue flag (the
+   call-the-vendor list), received/ordered units.
+2. **Dock in progress** — units Received or Inspected but never
+   Accepted/Rejected: goods physically in the building but not sellable,
+   with idle time per PO.
+3. **Today's truck** — stops vs the daily cap, pieces to pull, route and
+   driver, and any order whose serial-tracked lines have unpicked serials;
+   links to the printable day sheet.
+4. **Pick list — tomorrow** — tomorrow's delivery lines aggregated per
+   variant with bin location, flagged short when on-hand < pull quantity.
+5. **Customer pickups waiting** — open pickup orders: ready to stage vs
+   stock-short, age in days, 7+ days flagged.
+6. **Arrived, unscheduled** — special-order allocations received where the
+   customer's line is unfulfilled and no live delivery exists. The
+   highest-value queue on the page; it leads when non-empty.
+7. **Transfers in motion** — drafts awaiting their ticket, in-transit with
+   days elapsed, and the 30-day closed-short count.
+8. **As-is review** — pieces pending review, valued at cost, oldest first.
+9. **Counts & stock health** — open counts, last posted count date, and
+   negative on-hand at this location (count these first).
+
+Routing mirrors §12.1: `/dashboard` opens here for the **Warehouse** role;
+`/warehouse` in the nav for anyone with `warehouse.dashboard.view` (Owner
+and Manager included). Card 10 (bins/floor-sample health) was considered
+and cut by the owner.
 
 ## 13. Explicit v1 Exclusions (do not build)
 

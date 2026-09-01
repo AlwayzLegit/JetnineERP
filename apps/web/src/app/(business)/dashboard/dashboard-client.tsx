@@ -19,6 +19,8 @@ import { Money } from '@/components/money';
 import { readActiveBusinessId } from '@/lib/offline';
 import { RevenueTrend, type TrendPoint } from './revenue-trend';
 import ManagerDashboardView from './manager-dashboard';
+import OperationsDashboardView from './operations-dashboard';
+import WarehouseDashboardView from './warehouse-dashboard';
 
 interface ChecklistStep {
   key: string;
@@ -139,6 +141,12 @@ export default function DashboardClient() {
   // Per-member manager-dashboard toggle (owner decision 2026-08-30):
   // when set, the whole page swaps to the store-scoped manager view.
   const [managerMode, setManagerMode] = useState<boolean | null>(null);
+  // Operations role (owner 2026-08-31): fixed by permission rather than a
+  // per-member toggle, and it outranks the manager view — a member who is
+  // both watches every store rather than one.
+  const [opsMode, setOpsMode] = useState<boolean | null>(null);
+  // Warehouse role (owner 2026-09-01): same fixed-by-role home switch.
+  const [warehouseMode, setWarehouseMode] = useState<boolean | null>(null);
 
   useEffect(() => {
     if (!session.data) return;
@@ -162,9 +170,21 @@ export default function DashboardClient() {
 
   useEffect(() => {
     if (!businessActive) return;
-    void api<{ managerDashboard: boolean }>('/v1/business/members/me')
-      .then((r) => setManagerMode(r.managerDashboard))
-      .catch(() => setManagerMode(false));
+    void api<{
+      managerDashboard: boolean;
+      operationsDashboard: boolean;
+      warehouseDashboard: boolean;
+    }>('/v1/business/members/me')
+      .then((r) => {
+        setManagerMode(r.managerDashboard);
+        setOpsMode(r.operationsDashboard);
+        setWarehouseMode(r.warehouseDashboard);
+      })
+      .catch(() => {
+        setManagerMode(false);
+        setOpsMode(false);
+        setWarehouseMode(false);
+      });
     // Sales-gated cards.
     void api<ZReport>('/v1/reports/z')
       .then(setZ)
@@ -235,6 +255,14 @@ export default function DashboardClient() {
     );
   }
 
+  if (businessActive && opsMode) {
+    return <OperationsDashboardView userName={session.data.user.name ?? session.data.user.email} />;
+  }
+
+  if (businessActive && warehouseMode) {
+    return <WarehouseDashboardView userName={session.data.user.name ?? session.data.user.email} />;
+  }
+
   if (businessActive && managerMode) {
     return <ManagerDashboardView userName={session.data.user.name ?? session.data.user.email} />;
   }
@@ -269,8 +297,6 @@ export default function DashboardClient() {
       </div>
 
       {error && <p style={{ color: 'var(--danger)', fontSize: 13 }}>{error}</p>}
-
-      {businessActive && !checklist.complete && <ChecklistCard checklist={checklist} />}
 
       {businessActive && !salesDenied && (
         <div
@@ -634,70 +660,5 @@ function Kpi({
     </Link>
   ) : (
     inner
-  );
-}
-
-function ChecklistCard({ checklist }: { checklist: Checklist }) {
-  const doneCount = checklist.steps.filter((s) => s.done).length;
-  const total = checklist.steps.length;
-  return (
-    <Card
-      title="Get started"
-      actions={
-        <span style={{ color: 'var(--text-muted)', fontSize: 13 }}>
-          {doneCount} of {total} complete
-        </span>
-      }
-      style={{ marginBottom: 16 }}
-    >
-      <ol style={{ margin: 0, padding: 0, listStyle: 'none', display: 'grid', gap: 8 }}>
-        {checklist.steps.map((s) => (
-          <li
-            key={s.key}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 10,
-              padding: '8px 10px',
-              border: '1px solid var(--border)',
-              borderRadius: 'var(--radius-sm)',
-              background: s.done ? 'var(--success-soft)' : 'var(--surface)',
-            }}
-          >
-            <span
-              aria-hidden
-              style={{
-                display: 'inline-block',
-                width: 18,
-                height: 18,
-                borderRadius: '50%',
-                border: s.done ? '2px solid var(--success)' : '2px solid var(--border-strong)',
-                background: s.done ? 'var(--success)' : 'var(--surface)',
-                color: '#fff',
-                fontSize: 12,
-                lineHeight: '14px',
-                textAlign: 'center',
-              }}
-            >
-              {s.done ? '✓' : ''}
-            </span>
-            <span
-              style={{
-                flex: 1,
-                color: s.done ? 'var(--text-muted)' : 'var(--text)',
-                textDecoration: s.done ? 'line-through' : 'none',
-              }}
-            >
-              {s.label}
-            </span>
-            {!s.done && (
-              <Link href={s.href} style={{ textDecoration: 'none', fontSize: 13 }}>
-                Go →
-              </Link>
-            )}
-          </li>
-        ))}
-      </ol>
-    </Card>
   );
 }

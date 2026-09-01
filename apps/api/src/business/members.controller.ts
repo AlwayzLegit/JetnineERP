@@ -148,6 +148,17 @@ export class MembersController {
     scopeLocations: { id: string; name: string }[];
     hiddenNav: string[];
     managerDashboard: boolean;
+    /**
+     * Whether /dashboard opens on the Operations home. Keyed to the role
+     * name, not to `ops.dashboard.view`: Owner and Manager hold every
+     * business permission by construction, so gating on the permission
+     * would replace their home too. They still reach the page at
+     * /operations — the permission governs access, the role governs
+     * which home you land on.
+     */
+    operationsDashboard: boolean;
+    /** Same pattern for the Warehouse role's home (§12.2). */
+    warehouseDashboard: boolean;
   }> {
     let hiddenNav: string[] = [];
     let managerDashboard = false;
@@ -181,6 +192,10 @@ export class MembersController {
       scopeLocations,
       hiddenNav,
       managerDashboard,
+      operationsDashboard:
+        tenant.roleName === 'Operations' && tenant.permissions.has('ops.dashboard.view'),
+      warehouseDashboard:
+        tenant.roleName === 'Warehouse' && tenant.permissions.has('warehouse.dashboard.view'),
     };
   }
 

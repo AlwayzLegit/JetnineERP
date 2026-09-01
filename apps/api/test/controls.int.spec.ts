@@ -102,7 +102,7 @@ async function seed() {
     await makeUser('manager@ctrl-test.local', 'Manager');
     await makeUser('cashier@ctrl-test.local', 'Cashier');
     await makeUser('cashier2@ctrl-test.local', 'Cashier');
-    await makeUser('clerk@ctrl-test.local', 'Inventory Clerk');
+    await makeUser('clerk@ctrl-test.local', 'Warehouse');
 
     const [loc] = await db
       .insert(schema.locations)

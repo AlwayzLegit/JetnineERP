@@ -90,7 +90,7 @@ async function seed() {
     }
     await makeUser('owner@report-test.local', 'Owner');
     await makeUser('books@report-test.local', 'Bookkeeper');
-    await makeUser('clerk@report-test.local', 'Inventory Clerk');
+    await makeUser('clerk@report-test.local', 'Warehouse');
 
     const [loc] = await db
       .insert(schema.locations)
@@ -466,7 +466,7 @@ describe('security (acceptance 54–58, 62)', () => {
   let costReportId = '';
 
   it('#54 a user without reports.builder.run cannot reach the runner at all', async () => {
-    // Inventory Clerk holds no builder permissions.
+    // Warehouse holds no builder permissions.
     await as(clerkCookie).get('/v1/report-builder/reports').expect(403);
   });
 

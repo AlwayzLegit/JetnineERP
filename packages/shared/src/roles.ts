@@ -1,6 +1,12 @@
 import { ALL_PERMISSIONS, SUPER_ADMIN_ONLY_PERMISSIONS, type Permission } from './permissions.js';
 
-export type SystemRoleName = 'Owner' | 'Manager' | 'Cashier' | 'Inventory Clerk' | 'Bookkeeper';
+export type SystemRoleName =
+  | 'Owner'
+  | 'Manager'
+  | 'Operations'
+  | 'Cashier'
+  | 'Warehouse'
+  | 'Bookkeeper';
 
 export interface SystemRoleDefinition {
   name: SystemRoleName;
@@ -27,6 +33,63 @@ const managerPermissions: Permission[] = businessPermissions.filter(
   (p) => !managerExclusions.has(p),
 );
 
+/**
+ * Operations (owner 2026-08-31): the member who watches every store's
+ * selling, every dollar in and out, and every inventory movement, then
+ * signs off on what they've read. Deliberately read-and-clear, never
+ * approve — the approval permissions (`pos.refund.approve`,
+ * `pos.cash.approve`, `orders.price_override`, `exchanges.approve`,
+ * `returns.override_window`) stay with the Manager so the person who
+ * authorizes an exception is never the person who clears it. They sell
+ * occasionally, so they carry the register and order-writing verbs, but
+ * no quota and no commission permission.
+ */
+const operationsPermissions: Permission[] = [
+  // The dashboard and its sign-off verb.
+  'ops.dashboard.view',
+  'ops.review.clear',
+
+  // The audit surfaces the feed links into.
+  'audit.view',
+  'security_overrides.view',
+
+  // Every store's sales, and every dollar in or out.
+  'sales.view',
+  'orders.view',
+  'deliveries.view',
+  'payment_plans.view',
+  'gift_cards.view',
+  'service_orders.view',
+
+  // The reports behind the money tiles.
+  'reports.sales.view',
+  'reports.inventory.view',
+  'reports.financial.view',
+  'reports.export',
+
+  // Inventory movement is audited, not performed — adjusting, receiving
+  // and transferring stay with the Warehouse role.
+  'products.view',
+  'inventory.view',
+  'serials.view',
+  'purchase_orders.view',
+  'vendors.view',
+
+  // So a flagged row opens onto a real customer and a named store.
+  'customers.view',
+  'locations.view',
+  'users.view',
+  'discounts.view',
+
+  // Occasional selling.
+  'pos.access',
+  'pos.transaction.create',
+  'customers.create',
+  'orders.create',
+  'orders.update',
+  'orders.deposit.take',
+];
+
 const cashierPermissions: Permission[] = [
   'pos.access',
   'pos.transaction.create',
@@ -52,7 +115,16 @@ const cashierPermissions: Permission[] = [
   'service_orders.create',
 ];
 
-const inventoryClerkPermissions: Permission[] = [
+/**
+ * Warehouse (owner 2026-09-01) — the renamed Inventory Clerk, now with a
+ * home of its own: the receiving dock, the trucks, the transfer lanes,
+ * and everything §12.2's dashboard shows. SystemRoleSyncService renames
+ * an existing tenant's "Inventory Clerk" system role in place, so
+ * memberships never move.
+ */
+const warehousePermissions: Permission[] = [
+  'warehouse.dashboard.view',
+
   'products.view',
   'inventory.view',
   'inventory.adjust',
@@ -110,14 +182,21 @@ export const SYSTEM_ROLES: SystemRoleDefinition[] = [
     permissions: managerPermissions,
   },
   {
+    name: 'Operations',
+    description:
+      "Watches every store's sales, money in and out, and inventory movement, and signs off on what they review",
+    permissions: operationsPermissions,
+  },
+  {
     name: 'Cashier',
     description: 'Operates the POS register and serves customers',
     permissions: cashierPermissions,
   },
   {
-    name: 'Inventory Clerk',
-    description: 'Manages products and inventory',
-    permissions: inventoryClerkPermissions,
+    name: 'Warehouse',
+    description:
+      'Runs the dock, the trucks and the stockroom — receiving, transfers, counts, serials',
+    permissions: warehousePermissions,
   },
   {
     name: 'Bookkeeper',

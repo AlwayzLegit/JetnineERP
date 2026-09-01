@@ -2,8 +2,8 @@
 
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
-import { useParams } from 'next/navigation';
-import { Mail, PackageCheck, Printer } from 'lucide-react';
+import { useParams, useRouter } from 'next/navigation';
+import { Mail, PackageCheck, Printer, Trash2, Undo2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { api, ApiError } from '@/lib/api';
 import { SecurityOverrideDialog } from '@/components/security-override-dialog';
@@ -51,7 +51,19 @@ interface Po {
   /** PO-060: vendor ships straight to the customer in shipToJson. */
   directShip: boolean;
   shipToJson: unknown;
+  /** Soft-deleted draft (CR 2026-08-31); null on every live PO. */
+  deletedAt: string | null;
+  deletedByEmail: string | null;
   lines: PoLine[];
+}
+
+/** One row of the PO's change history, from the audit log. */
+interface AuditRow {
+  id: string;
+  action: string;
+  actorEmail: string | null;
+  changesJson: unknown;
+  createdAt: string;
 }
 
 interface VendorInvoice {
@@ -80,6 +92,9 @@ export default function PurchaseOrderDetailPage() {
   const [draft, setDraft] = useState<StageDraft>({});
   const [recvNotes, setRecvNotes] = useState('');
   const [busy, setBusy] = useState(false);
+  const [timeline, setTimeline] = useState<AuditRow[]>([]);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const router = useRouter();
 
   async function load() {
     try {
@@ -88,6 +103,13 @@ export default function PurchaseOrderDetailPage() {
       void api<VendorInvoice[]>(`/v1/vendor-invoices?purchaseOrderId=${id}`)
         .then(setInvoices)
         .catch(() => setInvoices([]));
+      // The audit log is the PO's timeline, the same way it is the
+      // order's. A 403 just leaves the card empty.
+      void api<{ data: AuditRow[] }>(
+        `/v1/audit-logs?targetType=purchase_order&targetId=${id}&limit=50`,
+      )
+        .then((r) => setTimeline(r.data))
+        .catch(() => setTimeline([]));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -213,6 +235,32 @@ export default function PurchaseOrderDetailPage() {
     }
   }
 
+  async function deleteDraft() {
+    setBusy(true);
+    try {
+      await api(`/v1/purchase-orders/${id}`, { method: 'DELETE' });
+      setConfirmDelete(false);
+      toast.success('Draft deleted.');
+      router.push('/purchase-orders');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+      setBusy(false);
+    }
+  }
+
+  async function restore() {
+    setBusy(true);
+    try {
+      await api(`/v1/purchase-orders/${id}/restore`, { method: 'POST' });
+      toast.success('Draft restored.');
+      void load();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   if (error && !po) return <p style={{ color: 'var(--danger)' }}>{error}</p>;
   if (!po) return <LoadingRows rows={5} />;
 
@@ -277,9 +325,60 @@ export default function PurchaseOrderDetailPage() {
               <Mail size={14} aria-hidden />
               Email vendor
             </Button>
+            {po.status === 'draft' && !po.deletedAt && (
+              // Deliberately last, behind a spacer: Delete and Place do
+              // opposite things and must not sit side by side.
+              <Button
+                variant="danger"
+                size="sm"
+                style={{ marginLeft: 'auto' }}
+                onClick={() => setConfirmDelete(true)}
+                disabled={busy}
+                data-testid="delete-po"
+              >
+                <Trash2 size={14} aria-hidden />
+                Delete draft
+              </Button>
+            )}
           </span>
         }
       />
+
+      {po.deletedAt && (
+        <Card style={{ marginBottom: 16, borderColor: 'var(--danger)' }}>
+          <div
+            style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}
+            data-testid="po-deleted-banner"
+          >
+            <div style={{ fontSize: 13 }}>
+              <strong>Deleted draft.</strong> Hidden from the purchase-order list since{' '}
+              {new Date(po.deletedAt).toLocaleString()}
+              {po.deletedByEmail ? ` by ${po.deletedByEmail}` : ''}. The number{' '}
+              <code>{po.number}</code> stays retired either way.
+            </div>
+            <Button
+              variant="secondary"
+              size="sm"
+              style={{ marginLeft: 'auto' }}
+              onClick={() => void restore()}
+              disabled={busy}
+              data-testid="restore-po"
+            >
+              <Undo2 size={14} aria-hidden />
+              Restore
+            </Button>
+          </div>
+        </Card>
+      )}
+
+      {confirmDelete && (
+        <DeleteDraftDialog
+          po={po}
+          busy={busy}
+          onCancel={() => setConfirmDelete(false)}
+          onConfirm={() => void deleteDraft()}
+        />
+      )}
       <PrintablePurchaseOrder po={po} />
 
       <Card title="Lines & receiving" style={{ marginBottom: 16 }}>
@@ -438,6 +537,122 @@ export default function PurchaseOrderDetailPage() {
         invoices={invoices}
         onChanged={load}
       />
+
+      <Card title="Change history" style={{ marginBottom: 16 }}>
+        {timeline.length === 0 ? (
+          <p className="muted" style={{ fontSize: 13, margin: 0 }}>
+            No events recorded.
+          </p>
+        ) : (
+          <ul style={{ margin: 0, paddingLeft: 16, fontSize: 13 }} data-testid="po-timeline">
+            {timeline.map((t) => (
+              <li key={t.id} style={{ marginBottom: 6 }}>
+                <span style={{ color: 'var(--text-secondary)' }}>
+                  {new Date(t.createdAt).toLocaleString()}
+                </span>{' '}
+                — {t.action.replace('purchase_order.', '').replace(/[._]/g, ' ')}
+                {t.actorEmail && (
+                  <span style={{ color: 'var(--text-muted)' }}> by {t.actorEmail}</span>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </Card>
+    </div>
+  );
+}
+
+/**
+ * Deleting a draft is cheap to undo but easy to do by accident on the
+ * wrong tab, so the button arms only once the PO number is typed. The
+ * dialog shows what is about to go: vendor, line count, subtotal.
+ */
+function DeleteDraftDialog({
+  po,
+  busy,
+  onCancel,
+  onConfirm,
+}: {
+  po: Po;
+  busy: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const [typed, setTyped] = useState('');
+  const armed = typed.trim().toUpperCase() === po.number.toUpperCase();
+  const linked = po.lines.reduce((n, l) => n + l.linkedOrders.length, 0);
+
+  return (
+    <div
+      role="dialog"
+      aria-modal
+      data-testid="delete-po-dialog"
+      style={{
+        position: 'fixed',
+        inset: 0,
+        zIndex: 90,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        background: 'rgba(0,0,0,0.45)',
+      }}
+      onClick={(e) => {
+        if (e.target === e.currentTarget && !busy) onCancel();
+      }}
+    >
+      <div
+        className="card"
+        style={{ width: 'min(460px, 92vw)', padding: 20, display: 'grid', gap: 12 }}
+      >
+        <strong style={{ fontSize: 15 }}>Delete draft {po.number}?</strong>
+        <div style={{ fontSize: 13, display: 'grid', gap: 3 }}>
+          <div>
+            <span className="muted">Vendor</span> {po.vendorName ?? '(unknown vendor)'}
+          </div>
+          <div>
+            <span className="muted">Lines</span> {po.lines.length}
+          </div>
+          <div>
+            <span className="muted">Subtotal</span> <Money cents={po.subtotalCents} />
+          </div>
+        </div>
+        <p style={{ fontSize: 12.5, color: 'var(--text-secondary)', margin: 0 }}>
+          The draft leaves the list and can be restored from <em>Show deleted</em>.{' '}
+          <code>{po.number}</code> is retired for good — it will never be reused.
+          {linked > 0 && (
+            <>
+              {' '}
+              {linked} linked sales-order line{linked === 1 ? '' : 's'} go back on the
+              special-orders queue as un-sourced.
+            </>
+          )}
+        </p>
+        <label style={{ display: 'grid', gap: 4, fontSize: 13 }}>
+          Type <code>{po.number}</code> to confirm
+          <Input
+            data-testid="delete-po-confirm"
+            value={typed}
+            autoFocus
+            onChange={(e) => setTyped(e.target.value)}
+            placeholder={po.number}
+          />
+        </label>
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+          <Button variant="secondary" size="sm" onClick={onCancel} disabled={busy}>
+            Keep it
+          </Button>
+          <Button
+            variant="danger"
+            size="sm"
+            onClick={onConfirm}
+            disabled={!armed || busy}
+            data-testid="delete-po-submit"
+          >
+            {busy ? 'Deleting…' : 'Delete draft'}
+          </Button>
+        </div>
+      </div>
     </div>
   );
 }
