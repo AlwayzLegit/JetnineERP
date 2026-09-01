@@ -103,7 +103,7 @@ async function seed() {
         acceptedAt: new Date(),
       });
     }
-    await makeUser('clerk@trans-test.local', 'Inventory Clerk');
+    await makeUser('clerk@trans-test.local', 'Warehouse');
     await makeUser('cashier@trans-test.local', 'Cashier');
     await makeUser('manager@trans-test.local', 'Manager');
 

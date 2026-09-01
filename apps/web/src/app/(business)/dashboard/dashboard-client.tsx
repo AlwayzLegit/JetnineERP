@@ -20,6 +20,7 @@ import { readActiveBusinessId } from '@/lib/offline';
 import { RevenueTrend, type TrendPoint } from './revenue-trend';
 import ManagerDashboardView from './manager-dashboard';
 import OperationsDashboardView from './operations-dashboard';
+import WarehouseDashboardView from './warehouse-dashboard';
 
 interface ChecklistStep {
   key: string;
@@ -144,6 +145,8 @@ export default function DashboardClient() {
   // per-member toggle, and it outranks the manager view — a member who is
   // both watches every store rather than one.
   const [opsMode, setOpsMode] = useState<boolean | null>(null);
+  // Warehouse role (owner 2026-09-01): same fixed-by-role home switch.
+  const [warehouseMode, setWarehouseMode] = useState<boolean | null>(null);
 
   useEffect(() => {
     if (!session.data) return;
@@ -167,14 +170,20 @@ export default function DashboardClient() {
 
   useEffect(() => {
     if (!businessActive) return;
-    void api<{ managerDashboard: boolean; operationsDashboard: boolean }>('/v1/business/members/me')
+    void api<{
+      managerDashboard: boolean;
+      operationsDashboard: boolean;
+      warehouseDashboard: boolean;
+    }>('/v1/business/members/me')
       .then((r) => {
         setManagerMode(r.managerDashboard);
         setOpsMode(r.operationsDashboard);
+        setWarehouseMode(r.warehouseDashboard);
       })
       .catch(() => {
         setManagerMode(false);
         setOpsMode(false);
+        setWarehouseMode(false);
       });
     // Sales-gated cards.
     void api<ZReport>('/v1/reports/z')
@@ -248,6 +257,10 @@ export default function DashboardClient() {
 
   if (businessActive && opsMode) {
     return <OperationsDashboardView userName={session.data.user.name ?? session.data.user.email} />;
+  }
+
+  if (businessActive && warehouseMode) {
+    return <WarehouseDashboardView userName={session.data.user.name ?? session.data.user.email} />;
   }
 
   if (businessActive && managerMode) {

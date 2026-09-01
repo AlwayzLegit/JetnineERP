@@ -97,7 +97,7 @@ async function seed() {
       });
     }
     await makeUser('owner@purch-test.local', 'Owner');
-    await makeUser('clerk@purch-test.local', 'Inventory Clerk');
+    await makeUser('clerk@purch-test.local', 'Warehouse');
     await makeUser('cashier@purch-test.local', 'Cashier');
     await makeUser('manager@purch-test.local', 'Manager');
 

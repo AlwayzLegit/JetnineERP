@@ -80,6 +80,7 @@ jobs:
       GL_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/jetnine_gl
       SPLITPAY_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/jetnine_splitpay
       OPS_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/jetnine_ops
+      WAREHOUSE_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/jetnine_warehouse
       REDIS_URL: redis://localhost:6379
 
     steps:
@@ -136,6 +137,7 @@ jobs:
           createdb -h localhost -U postgres jetnine_gl
           createdb -h localhost -U postgres jetnine_splitpay
           createdb -h localhost -U postgres jetnine_ops
+          createdb -h localhost -U postgres jetnine_warehouse
 
       - name: Format check
         run: pnpm format:check

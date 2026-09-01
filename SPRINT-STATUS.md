@@ -4259,3 +4259,33 @@ with a test where one could hold it:
   shift opened; the summary no longer builds the whole feed just for a
   count (thresholds ride the /feed response); ritual() is three fixed
   queries instead of 3×stores.
+
+### Checkpoint — 2026-09-01 (Warehouse role + dashboard, amendment A6)
+
+Owner ask: rename Inventory Clerk to Warehouse and give it a home —
+cards 1–9 of the proposed ten (bins health cut). `PLAN-POS-OPERATIONS.md`
+amended first (§0 A6 + §12.2).
+
+- **Rename, not replace:** `SystemRoleSyncService` gained a rename pass
+  (`RENAMED_SYSTEM_ROLES`) that renames a tenant's system "Inventory
+  Clerk" row in place — same id, memberships untouched — and skips any
+  business that already has a role named Warehouse. Runs before the
+  create pass, or create would mint the new name beside the old role.
+- **Role:** same permissions plus `warehouse.dashboard.view`;
+  `/dashboard` opens on the Warehouse home for the role (same
+  role-name gate as Operations), `/warehouse` in the nav for anyone
+  with the permission.
+- **API:** `apps/api/src/warehouse/` — summary (inbound, dock, pickups,
+  arrived-unscheduled, transfers, as-is, counts+negative), `/loadout`
+  (today's truck vs the delivery cap, unpicked-serial flags) and
+  `/picklist` (tomorrow per variant with bin + shortfall), all pinned
+  to one location, warehouse-type first.
+- **The queue that matters:** arrived-but-unscheduled — received
+  `po_line_allocations` whose customer line is unfulfilled with no live
+  delivery. It leads the page when non-empty.
+- **Tests:** 15 integration (every card from real rows, the in-place
+  rename with membership intact, the hand-built-Warehouse conflict
+  skip, permission boundary, malformed-date refusal) + 1 e2e (overdue
+  inbound PO reaches the page). All 306 tests in the eight suites that
+  referenced the old role name re-run green.
+- No schema change — the dashboard reads existing tables only.

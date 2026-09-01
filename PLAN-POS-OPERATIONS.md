@@ -15,6 +15,7 @@
 | A2  | **La Brea keeps its name; prefix `LB`** (the handoff's "H — Hancock Park" is superseded). Store prefixes: WH=Warehouse, SC=Studio City, WL=West LA, K=Koreatown, LB=La Brea. Imported STORIS history/stock mapped to La Brea stays attached.                                                                                                        |
 | A3  | **Single-screen New Sale supersedes the checkpoint-7 three-step wizard.** All wizard fields/logic (fulfillment methods, fees, tenders, layaway, split tickets) carry into one screen with the pinned totals panel; the step chrome goes.                                                                                                            |
 | A4  | **The legacy quick-sale register retires entirely**, including its offline mode (offline capability is dropped for v1; a future rebuild inside New Sale is a separate effort). Take-with flows through New Sale.                                                                                                                                    |
+| A6  | **Inventory Clerk is renamed Warehouse and gets its own home** (owner 2026-09-01). Same role, same permissions plus `warehouse.dashboard.view`; the sync renames existing tenants' system role in place (memberships untouched) and skips any business with its own "Warehouse" role. Dashboard spec in §12.2.                                      |
 | A5  | **Operations is a sixth role, with its own home** (owner 2026-08-31). It watches every store's selling and every dollar and unit that moves, and signs off on what it reads — read-and-clear, never approve, consistent with §13's "approval queues (dashboard visibility instead)". It sells occasionally: no quota, no commission. Detail in §12. |
 
 ## 1. Locations & Order Numbering
@@ -330,6 +331,39 @@ Manager hold every business permission, `ops.dashboard.view` included, so gating
 the home on the permission would replace theirs too — they reach the same page
 at `/operations` from the nav. The permission governs access; the role governs
 which home you land on.
+
+### 12.2 Warehouse dashboard (amendment A6, owner 2026-09-01)
+
+The renamed Inventory Clerk's home: a day in the building, pinned to ONE
+location (warehouse-type locations lead the picker). No money tiles, no
+selling — the receiving pipeline and every "goods are here, close the loop"
+queue:
+
+1. **Inbound** — open POs shipping here: due date, overdue flag (the
+   call-the-vendor list), received/ordered units.
+2. **Dock in progress** — units Received or Inspected but never
+   Accepted/Rejected: goods physically in the building but not sellable,
+   with idle time per PO.
+3. **Today's truck** — stops vs the daily cap, pieces to pull, route and
+   driver, and any order whose serial-tracked lines have unpicked serials;
+   links to the printable day sheet.
+4. **Pick list — tomorrow** — tomorrow's delivery lines aggregated per
+   variant with bin location, flagged short when on-hand < pull quantity.
+5. **Customer pickups waiting** — open pickup orders: ready to stage vs
+   stock-short, age in days, 7+ days flagged.
+6. **Arrived, unscheduled** — special-order allocations received where the
+   customer's line is unfulfilled and no live delivery exists. The
+   highest-value queue on the page; it leads when non-empty.
+7. **Transfers in motion** — drafts awaiting their ticket, in-transit with
+   days elapsed, and the 30-day closed-short count.
+8. **As-is review** — pieces pending review, valued at cost, oldest first.
+9. **Counts & stock health** — open counts, last posted count date, and
+   negative on-hand at this location (count these first).
+
+Routing mirrors §12.1: `/dashboard` opens here for the **Warehouse** role;
+`/warehouse` in the nav for anyone with `warehouse.dashboard.view` (Owner
+and Manager included). Card 10 (bins/floor-sample health) was considered
+and cut by the owner.
 
 ## 13. Explicit v1 Exclusions (do not build)
 

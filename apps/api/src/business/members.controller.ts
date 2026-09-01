@@ -157,6 +157,8 @@ export class MembersController {
      * which home you land on.
      */
     operationsDashboard: boolean;
+    /** Same pattern for the Warehouse role's home (§12.2). */
+    warehouseDashboard: boolean;
   }> {
     let hiddenNav: string[] = [];
     let managerDashboard = false;
@@ -192,6 +194,8 @@ export class MembersController {
       managerDashboard,
       operationsDashboard:
         tenant.roleName === 'Operations' && tenant.permissions.has('ops.dashboard.view'),
+      warehouseDashboard:
+        tenant.roleName === 'Warehouse' && tenant.permissions.has('warehouse.dashboard.view'),
     };
   }
 
