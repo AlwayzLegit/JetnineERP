@@ -622,26 +622,38 @@ describe('the Warehouse role', () => {
 });
 
 describe('the summary', () => {
-  it('pins to the warehouse location and lists the picker', async () => {
+  it('defaults to ALL locations combined, with the picker still offering each one', async () => {
     const res = await asWh('/v1/dashboard/warehouse').expect(200);
-    expect(res.body.location.name).toBe('Main Warehouse');
+    expect(res.body.location.id).toBe('all');
+    expect(res.body.location.name).toBe('All locations');
+    // Warehouse-type locations still lead the picker and set the clock.
     expect(res.body.locations[0]!.locationType).toBe('warehouse');
+
+    const single = await asWh(`/v1/dashboard/warehouse?locationId=${warehouseLocId}`).expect(200);
+    expect(single.body.location.name).toBe('Main Warehouse');
   });
 
-  it('card 1 — inbound POs for THIS location, overdue leading', async () => {
+  it('card 1 — combined view carries every location, overdue leading; picking one narrows it', async () => {
     const res = await asWh('/v1/dashboard/warehouse').expect(200);
     const inbound = res.body.inbound as {
       id: string;
       overdue: boolean;
       orderedUnits: number;
       receivedUnits: number;
+      locationName: string | null;
     }[];
-    // Ordered + partially_received at the warehouse; the store PO is out.
-    expect(inbound.length).toBeGreaterThanOrEqual(2);
+    // Warehouse POs AND the store-bound one, since this is the combined view.
+    expect(inbound.some((r) => r.locationName === 'A Store')).toBe(true);
+    expect(inbound.length).toBeGreaterThanOrEqual(3);
     expect(inbound[0]!.id).toBe(fixtures.overduePoId);
     expect(inbound[0]!.overdue).toBe(true);
     expect(inbound[0]!.orderedUnits).toBe(5);
     expect(inbound[0]!.receivedUnits).toBe(2);
+
+    // Narrowed to the warehouse, the store PO drops out again.
+    const single = await asWh(`/v1/dashboard/warehouse?locationId=${warehouseLocId}`).expect(200);
+    const narrowed = single.body.inbound as { locationName: string | null }[];
+    expect(narrowed.some((r) => r.locationName === 'A Store')).toBe(false);
   });
 
   it('card 2 — units received but never dispositioned', async () => {
@@ -671,11 +683,14 @@ describe('the summary', () => {
   });
 
   it('card 7 — transfers with direction, transit age, and ticket state', async () => {
-    const res = await asWh('/v1/dashboard/warehouse').expect(200);
-    const t = res.body.transfers as {
+    // Direction is relative to the picked location…
+    const single = await asWh(`/v1/dashboard/warehouse?locationId=${warehouseLocId}`).expect(200);
+    const t = single.body.transfers as {
       rows: {
         id: string;
         direction: string;
+        fromName: string | null;
+        toName: string | null;
         days: number | null;
         awaitingTicket: boolean;
         units: number;
@@ -688,6 +703,15 @@ describe('the summary', () => {
     expect(transit!.units).toBe(4);
     expect(t.rows.some((r) => r.awaitingTicket)).toBe(true);
     expect(t.closedShort30d).toBe(1);
+
+    // …and in the combined view both ends are inside the scope, so the
+    // row reads from → to rather than an arrow relative to nowhere.
+    const all = await asWh('/v1/dashboard/warehouse').expect(200);
+    const combined = (
+      all.body.transfers.rows as { id: string; direction: string; fromName: string | null }[]
+    ).find((r) => r.id === fixtures.transitTransferId);
+    expect(combined!.direction).toBe('internal');
+    expect(combined!.fromName).toBe('A Store');
   });
 
   it('card 8 — the as-is queue valued at cost', async () => {
@@ -710,8 +734,14 @@ describe('the truck', () => {
   it('card 3 — today’s load-out counts stops, pieces, and unpicked serials', async () => {
     const res = await asWh('/v1/dashboard/warehouse/loadout').expect(200);
     expect(res.body.date).toBe(localDay(0));
-    expect(res.body.cap).toBe(15);
+    // Combined view: the stop cap is a per-location knob, so no made-up
+    // number here — picking a location brings it back.
+    expect(res.body.cap).toBeNull();
     expect(res.body.stops).toBe(1);
+    const single = await asWh(
+      `/v1/dashboard/warehouse/loadout?locationId=${warehouseLocId}`,
+    ).expect(200);
+    expect(single.body.cap).toBe(15);
     expect(res.body.pieces).toBe(2);
     const row = res.body.rows[0] as { orderId: string; serialShort: boolean; customerName: string };
     expect(row.orderId).toBe(fixtures.loadoutOrderId);

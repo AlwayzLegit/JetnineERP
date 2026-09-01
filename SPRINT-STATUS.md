@@ -4289,3 +4289,23 @@ amended first (§0 A6 + §12.2).
   inbound PO reaches the page). All 306 tests in the eight suites that
   referenced the old role name re-run green.
 - No schema change — the dashboard reads existing tables only.
+
+### Checkpoint — 2026-09-01 (warehouse dashboard: combined all-locations default)
+
+Owner follow-up on §12.2: the Warehouse home now **defaults to all
+locations combined**, with the picker narrowing to any one.
+
+- One scope model: every card query takes a list of location ids — all
+  of them by default, one when picked — so both modes run identical SQL
+  (`inArray` throughout). `locationId=all` is the sentinel and the
+  default.
+- Combined-view semantics decided honestly rather than averaged:
+  each row names its building; transfers show "from → to" (direction is
+  meaningless when both ends are in scope — `internal`); the truck's
+  stop cap is per-location config, so the combined load-out reports
+  stops without a cap instead of inventing one; the pick list stays
+  grouped per variant PER building, because a bin only means something
+  inside its own walls.
+- Tests updated and extended: combined view includes the store-bound PO
+  the single view excludes, cap null in combined vs 15 single, transfer
+  direction relative vs internal. 15 integration + 1 e2e green.
