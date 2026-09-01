@@ -45,6 +45,8 @@ import { ReturnsModule } from './returns/returns.module';
 import { ControlsModule } from './controls/controls.module';
 import { OpsModule } from './ops/ops.module';
 import { WarehouseModule } from './warehouse/warehouse.module';
+import { GeoModule } from './geo/geo.module';
+import { CashierModule } from './cashier/cashier.module';
 import { CloseoutModule } from './closeout/closeout.module';
 import { JobsModule } from './jobs/jobs.module';
 import { GlModule } from './gl/gl.module';
@@ -105,6 +107,8 @@ import { WebhooksModule } from './webhooks/webhooks.module';
     ControlsModule,
     OpsModule,
     WarehouseModule,
+    GeoModule,
+    CashierModule,
     CloseoutModule,
     JobsModule,
     SalesModule,

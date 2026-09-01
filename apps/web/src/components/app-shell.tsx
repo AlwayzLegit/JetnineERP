@@ -39,6 +39,7 @@ import {
   type LucideIcon,
   Undo2,
   Warehouse,
+  Sunrise,
 } from 'lucide-react';
 import { ActiveBusinessBadge } from '@/components/active-business-badge';
 import { api } from '@/lib/api';
@@ -69,6 +70,7 @@ export const NAV: NavGroup[] = [
     items: [
       { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
       { href: '/pos', label: 'New Sale', icon: Monitor },
+      { href: '/my-day', label: 'My Day', icon: Sunrise },
       { href: '/orders', label: 'Orders', icon: ShoppingCart },
       { href: '/deliveries', label: 'Deliveries', icon: Truck },
       { href: '/jeopardy', label: 'At risk', icon: AlertTriangle },

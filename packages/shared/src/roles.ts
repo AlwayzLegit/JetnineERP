@@ -91,6 +91,8 @@ const operationsPermissions: Permission[] = [
 ];
 
 const cashierPermissions: Permission[] = [
+  // My Day (owner 2026-09-01, §12.3): the register's own home.
+  'cashier.dashboard.view',
   'pos.access',
   'pos.transaction.create',
   'pos.transaction.discount',

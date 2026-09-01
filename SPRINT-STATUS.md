@@ -4309,3 +4309,26 @@ locations combined**, with the picker narrowing to any one.
 - Tests updated and extended: combined view includes the store-bound PO
   the single view excludes, cap null in combined vs 15 single, transfer
   direction relative vs internal. 15 integration + 1 e2e green.
+
+### Checkpoint — 2026-09-01 (cashier "My Day" home + ZIP autofill)
+
+Owner ask: the Cashier role gets its own dashboard (all ten suggested
+cards), and customer address entry fills city/state from the ZIP.
+
+- Amendment A7 / §12.3 in PLAN-POS-OPERATIONS. New permission
+  `cashier.dashboard.view` on the Cashier role (backfilled by the boot
+  sync); `/v1/business/members/me` reports `cashierDashboard`; the
+  Cashier's `/dashboard` swaps to My Day and `/my-day` is the nav door
+  for anyone else holding the permission. Login landing unchanged.
+- `GET /v1/dashboard/my-day` (`apps/api/src/cashier`): one bundle, ten
+  sections, store picker like the manager home. "Mine" is the
+  membership (orders, split-attributed) or the user (register sales,
+  shifts, returns, exchanges); drawer math mirrors the close ritual;
+  balance due is ledger-derived; imported rows excluded.
+- ZIP autofill: `GET /v1/geo/zip/:zip` (bundled US/CA table via
+  `zipcodes`, `customers.view`, 400/404 honest), `apps/web/src/lib/zip-lookup.ts`
+  with one never-overwrite rule shared by the New Sale customer, billing
+  and ship-to blocks and the customer edit page.
+- Tests: `apps/api/test/cashier.int.spec.ts` (18: role/permission,
+  every card from real rows, the picker, the ZIP endpoint) and
+  `apps/web/e2e/my-day.spec.ts`. CI gets `jetnine_cashier`.

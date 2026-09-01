@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import { Plus, Search, X } from 'lucide-react';
 import { formatMoney } from '@jetnine/shared';
 import { api } from '@/lib/api';
+import { autofillFromZip, type ZipHit } from '@/lib/zip-lookup';
 import { ProductSearchDialog, type SearchRow } from '@/components/product-search-dialog';
 import { Money } from '@/components/money';
 import { Button, Card, Field, Input, Select } from '@/components/ui';
@@ -213,6 +214,14 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
     region: '',
     postalCode: '',
     phone: '',
+  });
+  // ZIP → city/state (owner 2026-09-01): each address block remembers
+  // what the last autofill wrote so a corrected ZIP can replace it, while
+  // a hand-typed city is never overwritten.
+  const zipMemo = useRef<{ cust: ZipHit | null; bill: ZipHit | null; ship: ZipHit | null }>({
+    cust: null,
+    bill: null,
+    ship: null,
   });
 
   // --- order meta ---
@@ -1174,7 +1183,9 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
                           placeholder="ZIP"
                           aria-label="ZIP"
                           value={newCust.postalCode}
-                          onChange={(e) => setNewCust({ ...newCust, postalCode: e.target.value })}
+                          onChange={(e) =>
+                            autofillFromZip(e.target.value, setNewCust, zipMemo.current, 'cust')
+                          }
                           style={{ flex: 1, minWidth: 0 }}
                         />
                       </div>
@@ -1226,7 +1237,9 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
                             placeholder="ZIP"
                             aria-label="ZIP"
                             value={newBill.postalCode}
-                            onChange={(e) => setNewBill({ ...newBill, postalCode: e.target.value })}
+                            onChange={(e) =>
+                              autofillFromZip(e.target.value, setNewBill, zipMemo.current, 'bill')
+                            }
                             style={{ flex: 1, minWidth: 0 }}
                           />
                         </div>
@@ -1360,7 +1373,9 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
                     placeholder="ZIP"
                     aria-label="ZIP"
                     value={ship.postalCode}
-                    onChange={(e) => setShip({ ...ship, postalCode: e.target.value })}
+                    onChange={(e) =>
+                      autofillFromZip(e.target.value, setShip, zipMemo.current, 'ship')
+                    }
                   />
                   <Input
                     placeholder="Phone at address"
