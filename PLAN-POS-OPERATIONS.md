@@ -334,10 +334,14 @@ which home you land on.
 
 ### 12.2 Warehouse dashboard (amendment A6, owner 2026-09-01)
 
-The renamed Inventory Clerk's home: a day in the building, pinned to ONE
-location (warehouse-type locations lead the picker). No money tiles, no
-selling — the receiving pipeline and every "goods are here, close the loop"
-queue:
+The renamed Inventory Clerk's home: a day in the building. **Defaults to
+ALL locations combined** (owner 2026-09-01), with the picker narrowing to
+any single location; warehouse-type locations lead both the picker and the
+clock. In the combined view every row names its building, transfers read
+"from → to" (both ends are inside the scope), and the truck's stop cap is
+omitted — it is a per-location knob, so a combined cap would be a made-up
+number. No money tiles, no selling — the receiving pipeline and every
+"goods are here, close the loop" queue:
 
 1. **Inbound** — open POs shipping here: due date, overdue flag (the
    call-the-vendor list), received/ordered units.
