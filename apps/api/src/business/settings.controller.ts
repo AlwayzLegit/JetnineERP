@@ -102,6 +102,21 @@ interface OpsSettings {
     tier1MaxCents?: number | null;
     tier2Pct?: number | null;
   } | null;
+  /**
+   * What reaches the Operations feed (owner 2026-08-31). Every field is
+   * tri-state: absent or null means the documented default in
+   * OPS_THRESHOLD_DEFAULTS, while zero is a real setting — a $0 refund
+   * threshold means "show me every refund".
+   */
+  opsReview?: {
+    refundCents?: number | null;
+    discountPct?: number | null;
+    overrideCents?: number | null;
+    drawerVarianceCents?: number | null;
+    inventoryAdjustUnits?: number | null;
+    takeWithOpenHours?: number | null;
+    lookbackDays?: number | null;
+  } | null;
 }
 
 /**
@@ -287,6 +302,15 @@ const OPS_SETTINGS_REGISTRY = [
     nullMeans: 'Defaults: 5% / $50 no-friction, 15% manager tier',
     classTags: [],
     readBy: 'Order-writer discount gate (G6)',
+  },
+  {
+    key: 'opsReview',
+    label: 'Operations feed thresholds',
+    type: 'object',
+    nullMeans:
+      'Defaults: refunds ≥ $200, discounts ≥ 20%, overrides ≥ $100, drawer variance ≥ $5, stock adjustments ≥ 5 units, take-with open 24h, 7-day lookback',
+    classTags: ['TRISTATE'],
+    readBy: 'Operations dashboard feed',
   },
 ] as const;
 
@@ -517,6 +541,22 @@ function validateOps(input: OpsSettings): OpsSettings {
       }
     }
     out.priceVariance = input.priceVariance;
+  }
+  if (input.opsReview !== undefined) {
+    if (input.opsReview !== null) {
+      for (const [key, val] of Object.entries(input.opsReview) as [
+        string,
+        number | null | undefined,
+      ][]) {
+        if (val != null && (typeof val !== 'number' || !Number.isFinite(val) || val < 0)) {
+          throw new BadRequestException(`ops.opsReview.${key} must be a non-negative number`);
+        }
+      }
+      if (input.opsReview.discountPct != null && input.opsReview.discountPct > 100) {
+        throw new BadRequestException('ops.opsReview.discountPct must be between 0 and 100');
+      }
+    }
+    out.opsReview = input.opsReview;
   }
   return out;
 }

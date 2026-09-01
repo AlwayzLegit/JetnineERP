@@ -1618,3 +1618,414 @@ describe('Sales-rate PO replenishment — run modes over live data (T-28/T-29/T-
     expect(line.quantityOrdered).toBe(5); // the buyer override, only qty > 0 written
   });
 });
+
+/**
+ * CR 2026-08-31 — "Let draft purchase orders be deleted".
+ *
+ * A draft had no exit: retiring one meant placing it (recording a vendor
+ * commitment that never existed) and cancelling, or leaving a $0.00
+ * shell on the list forever. What this proves:
+ *
+ * - Draft-only, soft, and reversible; the number is never reused.
+ * - Each of the four refusal conditions blocks with its own message.
+ * - A draft sourced from the special-orders queue returns its lines to
+ *   the queue as un-sourced.
+ * - The permission is separate from `purchase_orders.create`, so the
+ *   clerk who can raise a PO cannot delete one.
+ */
+describe('CR — deleting a draft purchase order', () => {
+  let vendorId = '';
+  let customerId = '';
+
+  function as(cookie: string) {
+    const req = () => request(app.getHttpServer());
+    const wrap = (r: request.Test) => r.set('Cookie', cookie).set('X-Business-Id', businessId);
+    return {
+      get: (url: string) => wrap(req().get(url)),
+      post: (url: string) => wrap(req().post(url)),
+      patch: (url: string) => wrap(req().patch(url)),
+      delete: (url: string) => wrap(req().delete(url)),
+    };
+  }
+
+  async function makeDraft(
+    lines?: { variantId: string; quantity: number; unitCostCents: number; orderLineId?: string }[],
+  ): Promise<{ id: string; number: string }> {
+    const res = await as(ownerCookie)
+      .post('/v1/purchase-orders')
+      .send({
+        vendorId,
+        locationId,
+        place: false,
+        lines: lines ?? [{ variantId: variantAId, quantity: 3, unitCostCents: 10_000 }],
+      });
+    expect(res.status).toBe(201);
+    expect(res.body.status).toBe('draft');
+    return { id: res.body.id, number: res.body.number };
+  }
+
+  beforeAll(async () => {
+    const res = await as(ownerCookie)
+      .post('/v1/vendors')
+      .send({ name: 'Delete-CR Supply', email: 'del@example.test' });
+    expect(res.status).toBe(201);
+    vendorId = res.body.id;
+
+    const sql = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    const db = drizzle(sql);
+    try {
+      const [cust] = await db
+        .insert(schema.customers)
+        .values({ businessId, firstName: 'Del', lastName: 'Etee' })
+        .returning();
+      customerId = cust!.id;
+    } finally {
+      await sql.end({ timeout: 5 });
+    }
+  });
+
+  it('deletes a draft, hides it from the default list, and keeps it under Show deleted', async () => {
+    const draft = await makeDraft();
+
+    const deleted = await as(ownerCookie).delete(`/v1/purchase-orders/${draft.id}`);
+    expect(deleted.status).toBe(200);
+    expect(deleted.body.deletedAt).not.toBeNull();
+    expect(deleted.body.deletedByEmail).toBe('owner@purch-test.local');
+
+    const def = await as(ownerCookie).get('/v1/purchase-orders?limit=100');
+    expect((def.body.data as { id: string }[]).some((r) => r.id === draft.id)).toBe(false);
+
+    const withDeleted = await as(ownerCookie).get('/v1/purchase-orders?includeDeleted=1&limit=100');
+    const row = (withDeleted.body.data as { id: string; deletedAt: string | null }[]).find(
+      (r) => r.id === draft.id,
+    );
+    expect(row).toBeDefined();
+    expect(row!.deletedAt).not.toBeNull();
+
+    // The detail page still opens it — that is where Restore lives.
+    const detail = await as(ownerCookie).get(`/v1/purchase-orders/${draft.id}`);
+    expect(detail.status).toBe(200);
+    expect(detail.body.number).toBe(draft.number);
+  });
+
+  it('restores a deleted draft with its number, lines and subtotal intact', async () => {
+    const draft = await makeDraft();
+    await as(ownerCookie).delete(`/v1/purchase-orders/${draft.id}`).expect(200);
+
+    const restored = await as(ownerCookie).post(`/v1/purchase-orders/${draft.id}/restore`);
+    expect(restored.status).toBe(201);
+    expect(restored.body.deletedAt).toBeNull();
+    expect(restored.body.number).toBe(draft.number);
+    expect(restored.body.status).toBe('draft');
+    expect(restored.body.lines).toHaveLength(1);
+    expect(restored.body.subtotalCents).toBe(30_000);
+
+    const def = await as(ownerCookie).get('/v1/purchase-orders?limit=100');
+    expect((def.body.data as { id: string }[]).some((r) => r.id === draft.id)).toBe(true);
+  });
+
+  it('never hands a deleted PO number to the next purchase order', async () => {
+    const doomed = await makeDraft();
+    await as(ownerCookie).delete(`/v1/purchase-orders/${doomed.id}`).expect(200);
+
+    const next = await makeDraft();
+    expect(next.number).not.toBe(doomed.number);
+
+    // The retired row keeps the number, which is what stops the reuse.
+    const all = await as(ownerCookie).get('/v1/purchase-orders?includeDeleted=1&limit=100');
+    const numbers = (all.body.data as { number: string }[]).map((r) => r.number);
+    expect(numbers).toContain(doomed.number);
+    expect(numbers.filter((n) => n === doomed.number)).toHaveLength(1);
+  });
+
+  it('refuses a placed PO, pointing at cancel instead', async () => {
+    const draft = await makeDraft();
+    await as(ownerCookie).post(`/v1/purchase-orders/${draft.id}/place`).expect(201);
+
+    const res = await as(ownerCookie).delete(`/v1/purchase-orders/${draft.id}`);
+    expect(res.status).toBe(409);
+    expect(res.body.message).toBe('Only drafts can be deleted. Cancel this PO instead.');
+    expect(res.body.code).toBe('NOT_DRAFT');
+  });
+
+  it('refuses a cancelled PO too — delete is not a tidier cancel', async () => {
+    const draft = await makeDraft();
+    await as(ownerCookie).post(`/v1/purchase-orders/${draft.id}/place`).expect(201);
+    await as(ownerCookie).post(`/v1/purchase-orders/${draft.id}/cancel`).expect(201);
+
+    const res = await as(ownerCookie).delete(`/v1/purchase-orders/${draft.id}`);
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe('NOT_DRAFT');
+  });
+
+  it('refuses a draft carrying received units', async () => {
+    const draft = await makeDraft();
+    const sql = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    const db = drizzle(sql);
+    try {
+      // Units at the dock on a PO still marked draft: the shape the
+      // guard exists for, even though the normal path places first.
+      await db
+        .update(schema.purchaseOrderLines)
+        .set({ quantityReceived: 1 })
+        .where(eq(schema.purchaseOrderLines.purchaseOrderId, draft.id));
+    } finally {
+      await sql.end({ timeout: 5 });
+    }
+
+    const res = await as(ownerCookie).delete(`/v1/purchase-orders/${draft.id}`);
+    expect(res.status).toBe(409);
+    expect(res.body.message).toBe('This PO has received units. Un-receive them first.');
+    expect(res.body.code).toBe('HAS_RECEIPTS');
+  });
+
+  it('refuses while a vendor invoice is matched to it', async () => {
+    const draft = await makeDraft();
+    const sql = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    const db = drizzle(sql);
+    try {
+      await db.insert(schema.vendorInvoices).values({
+        businessId,
+        vendorId,
+        purchaseOrderId: draft.id,
+        number: 'INV-CR-1',
+        totalCents: 30_000,
+        status: 'matched',
+      });
+    } finally {
+      await sql.end({ timeout: 5 });
+    }
+
+    const res = await as(ownerCookie).delete(`/v1/purchase-orders/${draft.id}`);
+    expect(res.status).toBe(409);
+    expect(res.body.message).toBe('A vendor invoice is matched to this PO. Unmatch it first.');
+    expect(res.body.code).toBe('INVOICE_MATCHED');
+  });
+
+  it('refuses when a sales order sourced from it is already fulfilled, and names it', async () => {
+    const sql = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    const db = drizzle(sql);
+    let orderLineId = '';
+    let orderNumber = '';
+    try {
+      const [order] = await db
+        .insert(schema.orders)
+        .values({
+          businessId,
+          locationId,
+          number: 'SO-CR-FULFILLED',
+          status: 'partially_fulfilled',
+          customerId,
+          totalCents: 50_000,
+          subtotalCents: 50_000,
+        })
+        .returning();
+      orderNumber = order!.number;
+      const [line] = await db
+        .insert(schema.orderLines)
+        .values({
+          businessId,
+          orderId: order!.id,
+          variantId: variantAId,
+          description: 'Special-order bed',
+          quantity: 1,
+          qtyFulfilled: 1,
+          lineType: 'special_order',
+          unitPriceCents: 50_000,
+          totalCents: 50_000,
+        })
+        .returning();
+      orderLineId = line!.id;
+    } finally {
+      await sql.end({ timeout: 5 });
+    }
+
+    const draft = await makeDraft([
+      { variantId: variantAId, quantity: 1, unitCostCents: 10_000, orderLineId },
+    ]);
+
+    const res = await as(ownerCookie).delete(`/v1/purchase-orders/${draft.id}`);
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe('ORDER_FULFILLED');
+    expect(res.body.message).toBe(`${orderNumber} is sourced from this PO and already fulfilled.`);
+  });
+
+  it('returns an unfulfilled special-order line to the queue as un-sourced', async () => {
+    const sql = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    const db = drizzle(sql);
+    let orderLineId = '';
+    try {
+      const [order] = await db
+        .insert(schema.orders)
+        .values({
+          businessId,
+          locationId,
+          number: 'SO-CR-QUEUED',
+          status: 'open',
+          customerId,
+          totalCents: 50_000,
+          subtotalCents: 50_000,
+        })
+        .returning();
+      const [line] = await db
+        .insert(schema.orderLines)
+        .values({
+          businessId,
+          orderId: order!.id,
+          variantId: variantAId,
+          description: 'Special-order bed',
+          quantity: 1,
+          lineType: 'special_order',
+          unitPriceCents: 50_000,
+          totalCents: 50_000,
+        })
+        .returning();
+      orderLineId = line!.id;
+    } finally {
+      await sql.end({ timeout: 5 });
+    }
+
+    const queueBefore = await as(ownerCookie).get('/v1/special-orders/queue');
+    const before = (queueBefore.body as { orderLineId: string; allocated: number }[]).find(
+      (r) => r.orderLineId === orderLineId,
+    );
+    expect(before?.allocated ?? 0).toBe(0);
+
+    const draft = await makeDraft([
+      { variantId: variantAId, quantity: 1, unitCostCents: 10_000, orderLineId },
+    ]);
+
+    // Fully sourced, so it leaves the queue entirely — the queue lists
+    // what still needs buying (`toOrder > 0`), not what was bought.
+    const sourced = await as(ownerCookie).get('/v1/special-orders/queue');
+    expect(
+      (sourced.body as { orderLineId: string }[]).some((r) => r.orderLineId === orderLineId),
+    ).toBe(false);
+
+    await as(ownerCookie).delete(`/v1/purchase-orders/${draft.id}`).expect(200);
+
+    // Deleting the draft puts it back in front of a buyer.
+    const after = await as(ownerCookie).get('/v1/special-orders/queue');
+    const row = (after.body as { orderLineId: string; allocated: number; toOrder: number }[]).find(
+      (r) => r.orderLineId === orderLineId,
+    );
+    expect(row).toBeDefined();
+    expect(row!.allocated).toBe(0);
+    expect(row!.toOrder).toBe(1);
+  });
+
+  it('does not re-claim those lines on restore — they may have been sourced elsewhere', async () => {
+    const sql = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    const db = drizzle(sql);
+    let orderLineId = '';
+    try {
+      const [order] = await db
+        .insert(schema.orders)
+        .values({
+          businessId,
+          locationId,
+          number: 'SO-CR-RESTORE',
+          status: 'open',
+          customerId,
+          totalCents: 50_000,
+          subtotalCents: 50_000,
+        })
+        .returning();
+      const [line] = await db
+        .insert(schema.orderLines)
+        .values({
+          businessId,
+          orderId: order!.id,
+          variantId: variantAId,
+          description: 'Special-order bed',
+          quantity: 1,
+          lineType: 'special_order',
+          unitPriceCents: 50_000,
+          totalCents: 50_000,
+        })
+        .returning();
+      orderLineId = line!.id;
+    } finally {
+      await sql.end({ timeout: 5 });
+    }
+
+    const draft = await makeDraft([
+      { variantId: variantAId, quantity: 1, unitCostCents: 10_000, orderLineId },
+    ]);
+    await as(ownerCookie).delete(`/v1/purchase-orders/${draft.id}`).expect(200);
+    await as(ownerCookie).post(`/v1/purchase-orders/${draft.id}/restore`).expect(201);
+
+    const queue = await as(ownerCookie).get('/v1/special-orders/queue');
+    const row = (queue.body as { orderLineId: string; allocated: number }[]).find(
+      (r) => r.orderLineId === orderLineId,
+    );
+    expect(row!.allocated).toBe(0);
+  });
+
+  it('a deleted draft accepts exactly one verb — restore', async () => {
+    // Review finding: a deleted draft keeps status 'draft', so the
+    // status checks alone would let it be placed — a vendor commitment
+    // from a row that is invisible in the list and unrestorable after.
+    const draft = await makeDraft();
+    await as(ownerCookie).delete(`/v1/purchase-orders/${draft.id}`).expect(200);
+
+    const placed = await as(ownerCookie).post(`/v1/purchase-orders/${draft.id}/place`);
+    expect(placed.status).toBe(409);
+    expect(placed.body.code).toBe('ALREADY_DELETED');
+
+    const edited = await as(ownerCookie)
+      .patch(`/v1/purchase-orders/${draft.id}`)
+      .send({ notes: 'sneaky edit' });
+    expect(edited.status).toBe(409);
+    expect(edited.body.code).toBe('ALREADY_DELETED');
+
+    const cancelled = await as(ownerCookie).post(`/v1/purchase-orders/${draft.id}/cancel`);
+    expect(cancelled.status).toBe(409);
+    expect(cancelled.body.code).toBe('ALREADY_DELETED');
+
+    // Still a draft, still restorable — the row was never mutated.
+    const restored = await as(ownerCookie).post(`/v1/purchase-orders/${draft.id}/restore`);
+    expect(restored.status).toBe(201);
+    expect(restored.body.status).toBe('draft');
+    expect(restored.body.placedAt).toBeNull();
+  });
+
+  it('refuses a second delete and a restore of a live PO', async () => {
+    const draft = await makeDraft();
+    await as(ownerCookie).delete(`/v1/purchase-orders/${draft.id}`).expect(200);
+
+    const twice = await as(ownerCookie).delete(`/v1/purchase-orders/${draft.id}`);
+    expect(twice.status).toBe(409);
+    expect(twice.body.code).toBe('ALREADY_DELETED');
+
+    const live = await makeDraft();
+    const restoreLive = await as(ownerCookie).post(`/v1/purchase-orders/${live.id}/restore`);
+    expect(restoreLive.status).toBe(409);
+    expect(restoreLive.body.code).toBe('ALREADY_DELETED');
+  });
+
+  it('keeps the delete away from the roles that raise POs', async () => {
+    const draft = await makeDraft();
+    // The clerk holds purchase_orders.create and .receive — deleting is
+    // a separate grant, and the shared POS account must not have it.
+    await as(clerkCookie).delete(`/v1/purchase-orders/${draft.id}`).expect(403);
+    await as(cashierCookie).delete(`/v1/purchase-orders/${draft.id}`).expect(403);
+    await as(clerkCookie).post(`/v1/purchase-orders/${draft.id}/restore`).expect(403);
+    // A manager can.
+    await as(managerCookie).delete(`/v1/purchase-orders/${draft.id}`).expect(200);
+  });
+
+  it('writes a visible audit entry the PO change-history reads', async () => {
+    const draft = await makeDraft();
+    await as(ownerCookie).delete(`/v1/purchase-orders/${draft.id}`).expect(200);
+    await as(ownerCookie).post(`/v1/purchase-orders/${draft.id}/restore`).expect(201);
+
+    const res = await as(ownerCookie).get(
+      `/v1/audit-logs?targetType=purchase_order&targetId=${draft.id}&limit=50`,
+    );
+    expect(res.status).toBe(200);
+    const actions = (res.body.data as { action: string }[]).map((r) => r.action);
+    expect(actions).toContain('purchase_order.delete');
+    expect(actions).toContain('purchase_order.restore');
+  });
+});

@@ -160,3 +160,46 @@ export const dailyCloseouts = pgTable(
     ),
   }),
 );
+
+/**
+ * Operations review ledger (owner 2026-08-31). The exception register
+ * above answers "what tripped a control"; this answers "who read it".
+ * Every row on the operations feed — a refund, an inventory adjustment,
+ * a take-with left open on a split ticket — can be cleared by an
+ * Operations member, and the clear is stamped here with their name and
+ * the moment they did it. Rows that ARE exception events clear through
+ * `exception_events.acknowledged_at` instead, so a subject is never
+ * recorded twice.
+ *
+ * `subject_type` + `subject_id` is deliberately loose: the feed unions
+ * a dozen tables and a foreign key per source would mean a migration
+ * every time a new signal is added. The unique index is what keeps a
+ * subject from being cleared twice.
+ */
+export const opsReviews = pgTable(
+  'ops_reviews',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    businessId: uuid('business_id')
+      .notNull()
+      .references(() => businesses.id, { onDelete: 'cascade' }),
+    /** Feed source: 'refund' | 'inventory_movement' | 'take_with_open' | … */
+    subjectType: text('subject_type').notNull(),
+    /** The source row's id. Text, not uuid — some subjects are composite. */
+    subjectId: text('subject_id').notNull(),
+    reviewedByUserId: uuid('reviewed_by_user_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+    reviewedAt: timestamp('reviewed_at', { withTimezone: true }).notNull().defaultNow(),
+    note: text('note'),
+  },
+  (t) => ({
+    businessIdx: index('ops_reviews_business_id_idx').on(t.businessId),
+    reviewedIdx: index('ops_reviews_reviewed_idx').on(t.businessId, t.reviewedAt),
+    subjectUnique: uniqueIndex('ops_reviews_subject_uniq').on(
+      t.businessId,
+      t.subjectType,
+      t.subjectId,
+    ),
+  }),
+);

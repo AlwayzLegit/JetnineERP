@@ -1,8 +1,8 @@
 'use client';
 
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
-import { useEffect, useState, type FormEvent } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { Suspense, useEffect, useRef, useState, type FormEvent } from 'react';
 import { Plus, Search } from 'lucide-react';
 import { api } from '@/lib/api';
 import { Money } from '@/components/money';
@@ -57,8 +57,26 @@ interface QueueRow {
   toOrder: number;
 }
 
-export default function NewPurchaseOrderPage() {
+/**
+ * The purchase-order staging screen.
+ *
+ * Nothing is written until a button is pressed: lines, quantities and
+ * costs live in React state, so backing out costs nothing. That is the
+ * point — `?vendorId=…&preload=reorder` sends the reorder panel here
+ * with its suggestions already staged, instead of committing a numbered
+ * draft the moment someone clicks (CR 2026-08-31, root cause of the
+ * draft pile-up).
+ *
+ * Two exits: **Save as draft** parks it for later, **Place order**
+ * commits to the vendor.
+ */
+function NewPurchaseOrderInner() {
   const router = useRouter();
+  const params = useSearchParams();
+  const preloadVendorId = params?.get('vendorId') ?? '';
+  const preloadKind = params?.get('preload') ?? '';
+  /** Guards the one-shot preload against the suggestions effect refiring. */
+  const preloaded = useRef(false);
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [locations, setLocations] = useState<LocationRow[]>([]);
   const [vendorId, setVendorId] = useState('');
@@ -107,13 +125,52 @@ export default function NewPurchaseOrderPage() {
         ]);
         setVendors(vs);
         setLocations(ls);
-        if (vs.length > 0) setVendorId(vs[0]!.id);
+        const wanted = vs.find((v) => v.id === preloadVendorId);
+        if (wanted) setVendorId(wanted.id);
+        else if (vs.length > 0) setVendorId(vs[0]!.id);
         if (ls.length > 0) setLocationId(ls[0]!.id);
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
       }
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Arriving from the reorder panel: stage every suggestion at once, so
+  // the buyer edits a filled basket rather than clicking "Add" 40 times.
+  // Once only — changing vendor afterwards means they are hand-building.
+  useEffect(() => {
+    if (preloaded.current) return;
+    if (preloadKind !== 'reorder' || !preloadVendorId) return;
+    if (vendorId !== preloadVendorId || reorder.length === 0) return;
+    preloaded.current = true;
+    setLines((prev) => {
+      const have = new Set(prev.filter((l) => !l.orderLineId).map((l) => l.variantId));
+      return [
+        ...prev,
+        ...reorder
+          .filter((s) => !have.has(s.variantId))
+          .map((s) => ({
+            variantId: s.variantId,
+            description: [s.productName, s.variantName].filter(Boolean).join(' — '),
+            quantity: s.suggestedQty,
+            unitCostStr: s.unitCostCents != null ? (s.unitCostCents / 100).toFixed(2) : '',
+          })),
+      ];
+    });
+  }, [preloadKind, preloadVendorId, vendorId, reorder]);
+
+  // Staged lines only exist in this tab; a stray reload or back button
+  // should not silently bin the basket (same guard as the order writer).
+  useEffect(() => {
+    if (lines.length === 0 || saving) return;
+    const warn = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [lines.length, saving]);
 
   async function searchVariants() {
     if (!search.trim()) {
@@ -151,8 +208,16 @@ export default function NewPurchaseOrderPage() {
     setLines((prev) => prev.filter((_, i) => i !== index));
   }
 
-  async function submit(e: FormEvent<HTMLFormElement>) {
+  function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    void save(true);
+  }
+
+  /**
+   * The only write this screen makes. `place: false` parks it as a
+   * draft; true commits the order to the vendor.
+   */
+  async function save(place: boolean) {
     setError(null);
     if (lines.length === 0) {
       setError('Add at least one line.');
@@ -163,6 +228,7 @@ export default function NewPurchaseOrderPage() {
       const body = {
         vendorId,
         locationId,
+        place,
         expectedAt: expectedAt || undefined,
         freightCents: freightStr ? Math.round(Number(freightStr) * 100) : null,
         notes: notes || null,
@@ -505,13 +571,33 @@ export default function NewPurchaseOrderPage() {
         </Card>
 
         {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
-        <div>
-          <Button type="submit" variant="primary" disabled={saving}>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+          <Button type="submit" variant="primary" disabled={saving} data-testid="place-order">
             <Plus size={14} />
             {saving ? 'Saving…' : 'Place order'}
           </Button>
+          <Button
+            type="button"
+            variant="secondary"
+            disabled={saving}
+            onClick={() => void save(false)}
+            data-testid="save-draft"
+          >
+            Save as draft
+          </Button>
+          <span className="muted" style={{ fontSize: 12 }}>
+            Nothing is saved until you press one of these — leave and this basket is gone.
+          </span>
         </div>
       </form>
     </div>
+  );
+}
+
+export default function NewPurchaseOrderPage() {
+  return (
+    <Suspense fallback={null}>
+      <NewPurchaseOrderInner />
+    </Suspense>
   );
 }

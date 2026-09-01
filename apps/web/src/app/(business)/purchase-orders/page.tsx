@@ -26,6 +26,9 @@ interface PoRow {
   expectedAt: string | null;
   subtotalCents: number;
   createdAt: string;
+  /** Soft-deleted draft (CR 2026-08-31); only ever set under "Show deleted". */
+  deletedAt: string | null;
+  deletedByEmail: string | null;
 }
 
 interface SuggestionLine {
@@ -48,9 +51,21 @@ interface SuggestionGroup {
 export default function PurchaseOrdersPage() {
   const list = useCursorList<PoRow>('/v1/purchase-orders');
   const [suggestions, setSuggestions] = useState<SuggestionGroup[] | null>(null);
-  const [drafting, setDrafting] = useState(false);
+  const [showDeleted, setShowDeleted] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { rows } = list;
+
+  const reload = (deleted = showDeleted) => list.load(deleted ? { includeDeleted: '1' } : {});
+
+  async function restore(po: PoRow) {
+    try {
+      await api(`/v1/purchase-orders/${po.id}/restore`, { method: 'POST' });
+      toast.success(`${po.number} restored.`);
+      await reload();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    }
+  }
 
   async function loadSuggestions() {
     try {
@@ -67,34 +82,6 @@ export default function PurchaseOrdersPage() {
     void loadSuggestions();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  async function draftPo(group: SuggestionGroup) {
-    if (!group.vendorId) return;
-    setDrafting(true);
-    try {
-      const locations = await api<{ id: string }[]>('/v1/business/locations');
-      if (locations.length === 0) throw new Error('Create a location first');
-      const po = await api<{ id: string; number: string }>('/v1/purchase-orders', {
-        method: 'POST',
-        body: JSON.stringify({
-          vendorId: group.vendorId,
-          locationId: locations[0]!.id,
-          place: false,
-          lines: group.lines.map((l) => ({
-            variantId: l.variantId,
-            quantity: l.suggestedQty,
-            unitCostCents: l.unitCostCents ?? 0,
-          })),
-        }),
-      });
-      toast.success(`Draft ${po.number} created`);
-      await Promise.all([list.load(), loadSuggestions()]);
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err));
-    } finally {
-      setDrafting(false);
-    }
-  }
 
   return (
     <div>
@@ -124,7 +111,8 @@ export default function PurchaseOrdersPage() {
         >
           <p className="muted" style={{ fontSize: 12.5, marginTop: 0 }}>
             Items at or below their reorder point (available = on hand − committed, all locations).
-            Set points on each product&apos;s variants.
+            Set points on each product&apos;s variants. <strong>Review &amp; order</strong> opens
+            the builder with these lines staged — nothing is written until you save there.
           </p>
           {suggestions.map((g) => (
             <div key={g.vendorId ?? 'unassigned'} style={{ marginBottom: 14 }}>
@@ -133,15 +121,18 @@ export default function PurchaseOrdersPage() {
                   {g.vendorName ?? 'No preferred vendor set'}
                 </strong>
                 {g.vendorId ? (
-                  <Button
+                  // CR 2026-08-31: this used to POST a numbered draft on
+                  // the first click, which is how the list filled with
+                  // $0.00 shells. It now opens the staging screen with
+                  // the suggestions loaded but nothing written.
+                  <LinkButton
                     size="sm"
                     variant="primary"
-                    disabled={drafting}
-                    onClick={() => void draftPo(g)}
-                    data-testid={`draft-po-${g.vendorName}`}
+                    href={`/purchase-orders/new?vendorId=${g.vendorId}&preload=reorder`}
+                    data-testid={`review-po-${g.vendorName}`}
                   >
-                    Draft PO ({g.lines.length} item{g.lines.length === 1 ? '' : 's'})
-                  </Button>
+                    Review &amp; order ({g.lines.length} item{g.lines.length === 1 ? '' : 's'})
+                  </LinkButton>
                 ) : (
                   <span className="muted" style={{ fontSize: 12 }}>
                     <Link href="/vendors" style={{ color: 'inherit' }}>
@@ -204,6 +195,29 @@ export default function PurchaseOrdersPage() {
       )}
 
       <Card style={{ padding: 0 }}>
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'flex-end',
+            padding: '10px 12px',
+            borderBottom: '1px solid var(--border)',
+          }}
+        >
+          <label
+            style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12.5 }}
+            data-testid="show-deleted-toggle"
+          >
+            <input
+              type="checkbox"
+              checked={showDeleted}
+              onChange={(e) => {
+                setShowDeleted(e.target.checked);
+                void reload(e.target.checked);
+              }}
+            />
+            Show deleted
+          </label>
+        </div>
         {rows == null ? (
           <div style={{ padding: 16 }}>
             <LoadingRows />
@@ -226,9 +240,19 @@ export default function PurchaseOrdersPage() {
                 </thead>
                 <tbody>
                   {rows.map((p) => (
-                    <tr key={p.id}>
+                    <tr
+                      key={p.id}
+                      data-testid={p.deletedAt ? 'po-row-deleted' : 'po-row'}
+                      style={p.deletedAt ? { opacity: 0.55 } : undefined}
+                    >
                       <td>
                         <code>{p.number}</code>
+                        {p.deletedAt && (
+                          <div className="muted" style={{ fontSize: 11 }}>
+                            deleted {new Date(p.deletedAt).toLocaleString()}
+                            {p.deletedByEmail ? ` by ${p.deletedByEmail}` : ''}
+                          </div>
+                        )}
                       </td>
                       <td>{p.vendorName ?? '—'}</td>
                       <td>
@@ -238,7 +262,19 @@ export default function PurchaseOrdersPage() {
                         <Money cents={p.subtotalCents} />
                       </td>
                       <td>{new Date(p.createdAt).toLocaleDateString()}</td>
-                      <td style={{ textAlign: 'right' }}>
+                      <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                        {p.deletedAt && (
+                          <>
+                            <button
+                              type="button"
+                              className="btn btn-sm btn-secondary"
+                              onClick={() => void restore(p)}
+                              data-testid={`restore-${p.number}`}
+                            >
+                              Restore
+                            </button>{' '}
+                          </>
+                        )}
                         <Link href={`/purchase-orders/${p.id}`}>Open</Link>
                       </td>
                     </tr>

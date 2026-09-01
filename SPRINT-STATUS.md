@@ -4100,3 +4100,162 @@ The onboarding "Get started" checklist card is gone from the dashboard
 for every user. The /v1/onboarding/checklist fetch stays — it still
 powers the fresh-signup redirect to /welcome and the businessActive
 gate — only the card and its component were removed.
+
+### Checkpoint — 2026-08-31 (Operations role + dashboard, owner amendment A5)
+
+New owner request, not a carried sprint item: a member who watches every
+store's selling, every dollar in and out, and every hand-made change to
+money or stock — and signs off on what they read. `PLAN-POS-OPERATIONS.md`
+amended first (§0 A5 + new §12.1), doc-first as the protocol requires.
+
+- **Role:** `Operations` added to the catalog — read-everything across
+  sales, orders, inventory, cash, audit and the override register, plus
+  the two new permissions `ops.dashboard.view` and `ops.review.clear`.
+  Deliberately without the approval permissions, so the person who
+  authorizes an exception is never the person who clears it. Sells
+  occasionally: register and order-writing verbs, no commission.
+- **Rollout to existing tenants:** `SystemRoleSyncService` previously only
+  backfilled permissions onto roles that already existed, which would have
+  left Operations invisible in every tenant created before today —
+  including production. It now also creates a missing catalog role, and
+  skips any business that already has a role of that name so a hand-built
+  "Operations" is never shadowed.
+- **Schema:** `ops_reviews` (`0081_ops_reviews`) — the sign-off ledger, one
+  row per cleared subject, unique on (business, subjectType, subjectId),
+  with RLS. Exception-register rows clear through the existing
+  `exception_events.acknowledged_at` instead, so nothing is recorded twice.
+- **API:** `apps/api/src/ops/` — `GET /v1/dashboard/operations` (summary:
+  money in/out/net by tender, 14-day written business, by-store, open/close
+  ritual, feed counts), `/feed`, `/digest`, `/salespeople`, `/activity`, and
+  `POST /v1/ops-reviews/bulk`. Split rather than one call so a slow card
+  never holds up the page and a 403 hides one card, not the dashboard.
+- **Thresholds:** `ops_settings_json.opsReview`, tri-state — null means the
+  documented default, zero is a real value ("show me every refund").
+- **UI:** `/operations`, and `/dashboard` opens there for the Operations
+  role. Feed first with bulk clear; money tiles, by-store and
+  by-salesperson tables, flagged-activity-by-person, open/close, and store
+  activity underneath.
+- **Tests:** 21 unit (thresholds, ranking, digest), 18 integration (every
+  signal class from real rows, thresholds honoured, sign-off idempotent and
+  routed to the right table, permission boundary, role rollout), 1 e2e
+  (write-down → feed → clear → still gone after reload). Migration applies
+  clean from empty; drift check green.
+
+**Owner decisions still open:** the six thresholds ship on the defaults above
+— confirm or set them under Settings → Operations. Also worth a look: whether
+transfers should stay at info severity on the feed (they have their own paper
+trail and are high-volume) or be raised to warning.
+
+### Checkpoint — 2026-08-31 (CR: delete draft purchase orders)
+
+Change request from Jet, `deletedraftpos.md`. A draft PO had no exit —
+the only way to retire one was to place it (recording a vendor
+commitment that never existed) and cancel, or leave a $0.00 shell on the
+list forever. `PLAN-POS-OPERATIONS.md` §6.1 written first, doc-first.
+
+- **Schema:** `purchase_orders.deleted_at` + `deleted_by_user_id`
+  (`0082_po_soft_delete`), plus the live-row index the default list
+  reads. Soft, so the number stays spoken for — PO numbers come from a
+  count of existing rows, so keeping the row is exactly what stops the
+  next PO inheriting a deleted one's number.
+- **API:** `DELETE /v1/purchase-orders/:id` and
+  `POST /:id/restore`, gated on a new `purchase_orders.delete`
+  permission; `?includeDeleted=1` on the list. The four refusals live in
+  `po-delete-guard.ts` as a pure function so each message is unit-tested
+  without a database.
+- **Release:** linked special-order lines are un-sourced back onto the
+  buying queue in the request's own RLS transaction. There is **no stock
+  to release** — a draft PO holds none; stock moves only at
+  receive/unreceive — so the CR's "release reserved/committed stock" step
+  needed no code, and inventing a no-op would have implied otherwise.
+  Restore deliberately does not re-claim those lines: they may have been
+  sourced elsewhere meanwhile.
+- **UI:** destructive "Delete draft" pushed to the far end of the PO
+  header (never beside Place order); confirm dialog showing vendor, line
+  count and subtotal, armed only once the number is typed; deleted banner
+  with Restore on the detail page; "Show deleted" filter with greyed rows
+  and Restore on the list. New **Change history** card on the PO page —
+  it had none, sales orders already did.
+- **Tests:** 11 unit (every refusal + restore guard), 12 integration
+  (delete/hide/restore, number never reused, all four refusals with their
+  exact messages, SO line returns to the queue, restore does not
+  re-claim, permission boundary, audit entries), 2 e2e (delete → hidden →
+  Show deleted → restore; button absent once placed). Migration applies
+  clean from empty; drift check green.
+
+**Ops, and the open decisions from the CR:**
+
+- **The shared POS account.** `purchase_orders.delete` is manager-and-
+  above by construction: Owner and Manager hold every business permission.
+  If `pos.lamattress@gmail.com` is on Owner or Manager it CAN delete POs —
+  move it to a narrower role or add a per-member override. Cashier and
+  Inventory Clerk cannot, as the CR asked.
+- **The four existing drafts** (PO-2026-000001/000002, the $0.00 Bedrock
+  shells, plus two others) are production data — delete them from the UI
+  once this ships.
+- **Should the reorder panel stop creating drafts eagerly?** Not built.
+  The CR names it as the root cause and it is the better fix: an unsaved
+  staging screen would stop most of these drafts existing. Worth deciding
+  before the shells come back.
+- **Canceled POs hideable from the list?** Out of scope per the CR; the
+  `includeDeleted` plumbing would extend to it cheaply if wanted.
+
+### Checkpoint — 2026-08-31 (CR follow-up: the reorder panel stops creating drafts eagerly)
+
+The root cause the CR named, and the better half of the fix: "Draft PO"
+committed a numbered record on the first click, so the drafts existed
+before anyone decided they should. Deleting them was the cure; not
+creating them is the prevention. `PLAN-POS-OPERATIONS.md` §6.2 first.
+
+- The reorder panel's button is now **Review & order**, a link to
+  `/purchase-orders/new?vendorId=…&preload=reorder`. No POST — the eager
+  `draftPo()` handler is gone.
+- The builder at `/purchase-orders/new` was already a staging screen
+  (lines in component state, one write on submit); it just needed to
+  accept the preload and offer the draft exit. It now stages every
+  suggestion for the vendor on arrival, once, and carries **Save as
+  draft** alongside **Place order** — before this it could only place,
+  which is why the draft path lived only in the eager button.
+- A `beforeunload` guard protects a staged basket from a stray reload,
+  matching the order writer's BA-0001 guard. Losing 40 staged lines and
+  losing a half-written sale are the same mistake.
+- **Tests:** 1 e2e that asserts the property that matters — the PO count
+  stays at zero through opening the builder and walking away, and only
+  becomes 1 when Save as draft is pressed. Existing PO-delete and order
+  e2e re-run green.
+
+No schema or API change: `place: false` was already supported by
+`POST /v1/purchase-orders`; nothing on the server needed to move.
+
+### Checkpoint — 2026-09-01 (pre-merge review pass over the branch)
+
+Full-diff review before merging to main; ten findings, all fixed, each
+with a test where one could hold it:
+
+- **A deleted draft PO could still be placed** (or edited, or cancelled)
+  — it keeps status `draft`, and the status checks were the only gate.
+  Placing one would have minted a vendor commitment invisible in the
+  list and unrestorable after. Deleted rows now accept exactly one verb:
+  restore.
+- **Store scoping was inconsistent on the ops surfaces**: write-offs,
+  returns and exchanges skipped `salesScopeCond` on the feed and in the
+  money block while their sibling signals applied it, so a store-scoped
+  member saw (and had netted against them) other stores' money out.
+  Every out-flow now carries the same scope as the in-flow.
+- **A sign-off now has a time**: the feed hides a subject only while its
+  review is newer than its `occurredAt`, so negative stock that recurs
+  after being reviewed resurfaces instead of hiding behind a month-old
+  sign-off — and re-clearing upserts the stamp so the recurrence can be
+  cleared too.
+- **Take-with exposure is the balance due**, computed from the payment
+  ledger, not the order's face value (the money convention: derived
+  money is computed, never stored).
+- **The discountPct threshold now has a signal reading it** — a
+  documents-discounted-past-threshold feed row; it was advertised in
+  the settings registry with nothing behind it.
+- **Refund-only associates get a row** in the salespeople table — the
+  refund used to require prior written business to be counted at all.
+- Drawer variances window on when the count happened, not when the
+  shift opened; the summary no longer builds the whole feed just for a
+  count (thresholds ride the /feed response); ritual() is three fixed
+  queries instead of 3×stores.

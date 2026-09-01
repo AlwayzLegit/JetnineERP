@@ -145,6 +145,7 @@ DECLARE
     'job_runs',
     'exchanges',
     'daily_closeouts',
+    'ops_reviews',
     'delivery_runs',
     'serial_units',
     'payment_plans',

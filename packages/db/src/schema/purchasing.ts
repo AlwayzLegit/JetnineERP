@@ -103,6 +103,20 @@ export const purchaseOrders = pgTable(
     createdByUserId: uuid('created_by_user_id').references(() => users.id, {
       onDelete: 'set null',
     }),
+    /**
+     * Soft delete for drafts (CR 2026-08-31). A draft PO had no exit:
+     * the only way to retire one was to place it — recording a vendor
+     * commitment that never existed — and then cancel it. Deleting
+     * stamps these two columns and keeps the row, so the number stays
+     * spoken for and can never be handed to a different order. Gaps in
+     * the sequence are expected and correct.
+     *
+     * Only drafts are ever deletable; a placed PO cancels instead.
+     */
+    deletedAt: timestamp('deleted_at', { withTimezone: true }),
+    deletedByUserId: uuid('deleted_by_user_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -114,6 +128,9 @@ export const purchaseOrders = pgTable(
     vendorIdx: index('purchase_orders_vendor_id_idx').on(t.vendorId),
     locationIdx: index('purchase_orders_location_id_idx').on(t.locationId),
     statusIdx: index('purchase_orders_status_idx').on(t.businessId, t.status),
+    // The default list excludes deleted rows, so the index it reads
+    // carries the flag.
+    liveIdx: index('purchase_orders_live_idx').on(t.businessId, t.deletedAt, t.createdAt),
   }),
 );
 
