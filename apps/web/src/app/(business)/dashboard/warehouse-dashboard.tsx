@@ -22,6 +22,7 @@ interface Summary {
     id: string;
     number: string;
     vendorName: string | null;
+    locationName: string | null;
     expectedAt: string | null;
     orderedUnits: number;
     receivedUnits: number;
@@ -31,6 +32,7 @@ interface Summary {
     id: string;
     number: string;
     vendorName: string | null;
+    locationName: string | null;
     unitsInProgress: number;
     lastActivityAt: string;
   }[];
@@ -38,6 +40,7 @@ interface Summary {
     orderId: string;
     number: string;
     customerName: string | null;
+    locationName: string | null;
     ageDays: number;
     ready: boolean;
   }[];
@@ -45,6 +48,7 @@ interface Summary {
     orderId: string;
     orderNumber: string;
     customerName: string | null;
+    locationName: string | null;
     description: string;
     quantity: number;
     arrivedAt: string;
@@ -53,8 +57,9 @@ interface Summary {
     rows: {
       id: string;
       number: string;
-      direction: 'inbound' | 'outbound';
-      otherLocationName: string | null;
+      direction: 'inbound' | 'outbound' | 'internal';
+      fromName: string | null;
+      toName: string | null;
       status: string;
       units: number;
       days: number | null;
@@ -69,21 +74,29 @@ interface Summary {
     rows: {
       id: string;
       productName: string;
+      locationName: string | null;
       quantity: number;
       condition: string | null;
       createdAt: string;
     }[];
   };
   counts: {
-    open: { id: string; countDate: string; status: string }[];
+    open: { id: string; countDate: string; status: string; locationName: string | null }[];
     lastPostedDate: string | null;
-    negative: { variantId: string; productName: string; sku: string | null; onHand: number }[];
+    negative: {
+      variantId: string;
+      productName: string;
+      sku: string | null;
+      locationName: string | null;
+      onHand: number;
+    }[];
   };
 }
 
 interface Loadout {
   date: string;
-  cap: number;
+  /** Null in the combined view — the stop cap is a per-location knob. */
+  cap: number | null;
   stops: number;
   pieces: number;
   rows: {
@@ -91,6 +104,7 @@ interface Loadout {
     orderId: string;
     orderNumber: string;
     customerName: string | null;
+    locationName: string | null;
     windowStart: string | null;
     windowEnd: string | null;
     route: string | null;
@@ -105,6 +119,8 @@ interface Picklist {
   date: string;
   rows: {
     variantId: string;
+    locationId: string;
+    locationName: string | null;
     productName: string;
     variantName: string | null;
     sku: string | null;
@@ -132,7 +148,8 @@ export default function WarehouseDashboardView({ userName }: { userName: string 
   const load = useCallback(async (loc: string | null) => {
     setError(null);
     try {
-      const qs = loc ? `?locationId=${loc}` : '';
+      // No selection = the combined view; the server defaults the same way.
+      const qs = loc ? `?locationId=${loc}` : '?locationId=all';
       const s = await api<Summary>(`/v1/dashboard/warehouse${qs}`);
       setSummary(s);
       setLocationId(s.location.id);
@@ -161,6 +178,7 @@ export default function WarehouseDashboardView({ userName }: { userName: string 
   }
   if (!summary) return <LoadingRows />;
 
+  const allMode = summary.location.id === 'all';
   const overdueCount = summary.inbound.filter((r) => r.overdue).length;
   const dockUnits = summary.dock.reduce((s, r) => s + r.unitsInProgress, 0);
   const stalePickups = summary.pickups.filter((p) => p.ageDays >= 7).length;
@@ -171,14 +189,19 @@ export default function WarehouseDashboardView({ userName }: { userName: string 
         <div>
           <h1 className="page-title">Warehouse — {userName}</h1>
           <p style={{ margin: '2px 0 0', color: 'var(--text-secondary)', fontSize: 13 }}>
-            {summary.date} at <strong>{summary.location.name}</strong>
+            {summary.date} ·{' '}
+            <strong>
+              {summary.location.id === 'all'
+                ? `All locations (${summary.locations.length})`
+                : summary.location.name}
+            </strong>
           </p>
         </div>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
           {summary.locations.length > 1 && (
             <select
               data-testid="warehouse-location-picker"
-              value={locationId ?? ''}
+              value={locationId ?? 'all'}
               onChange={(e) => {
                 setSummary(null);
                 setLoadout(null);
@@ -187,6 +210,7 @@ export default function WarehouseDashboardView({ userName }: { userName: string 
               }}
               style={{ fontSize: 13 }}
             >
+              <option value="all">All locations</option>
               {summary.locations.map((l) => (
                 <option key={l.id} value={l.id}>
                   {l.name}
@@ -222,7 +246,13 @@ export default function WarehouseDashboardView({ userName }: { userName: string 
         <Tile
           label="Load-out today"
           testid="wh-kpi-loadout"
-          main={loadout ? `${loadout.stops}/${loadout.cap}` : '—'}
+          main={
+            loadout
+              ? loadout.cap != null
+                ? `${loadout.stops}/${loadout.cap}`
+                : String(loadout.stops)
+              : '—'
+          }
           sub={loadout ? `${loadout.pieces} pieces` : 'loading…'}
         />
         <Tile
@@ -259,6 +289,11 @@ export default function WarehouseDashboardView({ userName }: { userName: string 
                 >
                   <td style={{ padding: '7px 12px', whiteSpace: 'nowrap' }}>
                     <Link href={`/orders/${r.orderId}`}>{r.orderNumber}</Link>
+                    {allMode && r.locationName && (
+                      <span className="muted" style={{ fontSize: 11, display: 'block' }}>
+                        {r.locationName}
+                      </span>
+                    )}
                   </td>
                   <td style={{ padding: '7px 12px' }}>{r.customerName ?? '—'}</td>
                   <td style={{ padding: '7px 12px', color: 'var(--text-secondary)' }}>
@@ -292,6 +327,11 @@ export default function WarehouseDashboardView({ userName }: { userName: string 
                   <tr key={r.id} style={{ borderTop: '1px solid var(--border)' }}>
                     <td style={{ padding: '7px 12px', whiteSpace: 'nowrap' }}>
                       <Link href={`/purchase-orders/${r.id}`}>{r.number}</Link>
+                      {allMode && r.locationName && (
+                        <span className="muted" style={{ fontSize: 11, display: 'block' }}>
+                          {r.locationName}
+                        </span>
+                      )}
                     </td>
                     <td style={{ padding: '7px 12px' }}>{r.vendorName ?? '—'}</td>
                     <td
@@ -337,6 +377,11 @@ export default function WarehouseDashboardView({ userName }: { userName: string 
                   <tr key={r.id} style={{ borderTop: '1px solid var(--border)' }}>
                     <td style={{ padding: '7px 12px', whiteSpace: 'nowrap' }}>
                       <Link href={`/purchase-orders/${r.id}`}>{r.number}</Link>
+                      {allMode && r.locationName && (
+                        <span className="muted" style={{ fontSize: 11, display: 'block' }}>
+                          {r.locationName}
+                        </span>
+                      )}
                     </td>
                     <td style={{ padding: '7px 12px' }}>{r.vendorName ?? '—'}</td>
                     <td
@@ -403,6 +448,7 @@ export default function WarehouseDashboardView({ userName }: { userName: string 
                     >
                       {r.pieces} pc · {r.route ?? 'no route'}
                       {r.driverName ? ` · ${r.driverName}` : ''}
+                      {allMode && r.locationName ? ` · from ${r.locationName}` : ''}
                     </td>
                     <td style={{ padding: '7px 12px', textAlign: 'right' }}>
                       <StatusBadge status={r.status} />
@@ -427,7 +473,10 @@ export default function WarehouseDashboardView({ userName }: { userName: string 
             <table style={{ width: '100%', fontSize: 12.5, borderCollapse: 'collapse' }}>
               <tbody>
                 {picklist.rows.map((r) => (
-                  <tr key={r.variantId} style={{ borderTop: '1px solid var(--border)' }}>
+                  <tr
+                    key={`${r.variantId}:${r.locationId}`}
+                    style={{ borderTop: '1px solid var(--border)' }}
+                  >
                     <td style={{ padding: '7px 12px' }}>
                       {r.productName}
                       {r.variantName ? ` — ${r.variantName}` : ''}
@@ -435,6 +484,11 @@ export default function WarehouseDashboardView({ userName }: { userName: string 
                     </td>
                     <td style={{ padding: '7px 12px', whiteSpace: 'nowrap' }}>
                       <code>{r.bin ?? 'unbinned'}</code>
+                      {allMode && r.locationName && (
+                        <span className="muted" style={{ fontSize: 11, display: 'block' }}>
+                          {r.locationName}
+                        </span>
+                      )}
                     </td>
                     <td style={{ padding: '7px 12px', textAlign: 'right', whiteSpace: 'nowrap' }}>
                       pull <strong>{r.quantity}</strong>
@@ -467,6 +521,11 @@ export default function WarehouseDashboardView({ userName }: { userName: string 
                   <tr key={r.orderId} style={{ borderTop: '1px solid var(--border)' }}>
                     <td style={{ padding: '7px 12px', whiteSpace: 'nowrap' }}>
                       <Link href={`/orders/${r.orderId}`}>{r.number}</Link>
+                      {allMode && r.locationName && (
+                        <span className="muted" style={{ fontSize: 11, display: 'block' }}>
+                          {r.locationName}
+                        </span>
+                      )}
                     </td>
                     <td style={{ padding: '7px 12px' }}>{r.customerName ?? '—'}</td>
                     <td style={{ padding: '7px 12px', color: 'var(--text-secondary)' }}>
@@ -506,8 +565,7 @@ export default function WarehouseDashboardView({ userName }: { userName: string 
                       <Link href="/transfers">{r.number}</Link>
                     </td>
                     <td style={{ padding: '7px 12px' }}>
-                      {r.direction === 'outbound' ? '→ ' : '← '}
-                      {r.otherLocationName ?? '—'}
+                      {r.fromName ?? '—'} → {r.toName ?? '—'}
                     </td>
                     <td
                       style={{
@@ -560,6 +618,7 @@ export default function WarehouseDashboardView({ userName }: { userName: string 
                     </td>
                     <td style={{ padding: '7px 12px', color: 'var(--text-secondary)' }}>
                       {r.condition ?? '—'}
+                      {allMode && r.locationName ? ` · ${r.locationName}` : ''}
                     </td>
                     <td
                       style={{
@@ -609,9 +668,10 @@ export default function WarehouseDashboardView({ userName }: { userName: string 
               first:
               <ul style={{ margin: '4px 0 0', paddingLeft: 16 }}>
                 {summary.counts.negative.map((n) => (
-                  <li key={n.variantId}>
+                  <li key={`${n.variantId}:${n.locationName ?? ''}`}>
                     {n.productName}
                     {n.sku ? ` (${n.sku})` : ''}: {n.onHand}
+                    {allMode && n.locationName ? ` — ${n.locationName}` : ''}
                   </li>
                 ))}
               </ul>

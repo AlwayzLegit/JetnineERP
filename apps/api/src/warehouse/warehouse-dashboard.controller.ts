@@ -15,10 +15,14 @@ import { DRIZZLE } from '../database/database.module';
 import { RequirePermission, TenantScoped } from '../tenancy/decorators';
 import type { RequestTenantContext } from '../tenancy/request-context';
 
+/** The picker's "everything" sentinel — also the default. */
+const ALL = 'all';
+
 interface InboundRow {
   id: string;
   number: string;
   vendorName: string | null;
+  locationName: string | null;
   expectedAt: Date | null;
   orderedUnits: number;
   receivedUnits: number;
@@ -29,6 +33,7 @@ interface DockRow {
   id: string;
   number: string;
   vendorName: string | null;
+  locationName: string | null;
   /** Received or inspected but not yet accepted/rejected. */
   unitsInProgress: number;
   lastActivityAt: Date;
@@ -38,6 +43,7 @@ interface PickupRow {
   orderId: string;
   number: string;
   customerName: string | null;
+  locationName: string | null;
   ageDays: number;
   /** Every stock line reserved or fulfilled — stageable now. */
   ready: boolean;
@@ -47,6 +53,7 @@ interface ArrivedRow {
   orderId: string;
   orderNumber: string;
   customerName: string | null;
+  locationName: string | null;
   description: string;
   quantity: number;
   arrivedAt: Date;
@@ -55,8 +62,10 @@ interface ArrivedRow {
 interface TransferRow {
   id: string;
   number: string;
-  direction: 'inbound' | 'outbound';
-  otherLocationName: string | null;
+  /** Relative to the selected scope; 'internal' when both ends are inside it. */
+  direction: 'inbound' | 'outbound' | 'internal';
+  fromName: string | null;
+  toName: string | null;
   status: string;
   units: number;
   /** in_transit only: days since it shipped (last update). */
@@ -66,6 +75,7 @@ interface TransferRow {
 
 interface WarehouseSummary {
   date: string;
+  /** id 'all' when the combined view is active (the default). */
   location: { id: string; name: string; timezone: string };
   locations: { id: string; name: string; locationType: string }[];
   inbound: InboundRow[];
@@ -80,15 +90,22 @@ interface WarehouseSummary {
     rows: {
       id: string;
       productName: string;
+      locationName: string | null;
       quantity: number;
       condition: string | null;
       createdAt: Date;
     }[];
   };
   counts: {
-    open: { id: string; countDate: string; status: string }[];
+    open: { id: string; countDate: string; status: string; locationName: string | null }[];
     lastPostedDate: string | null;
-    negative: { variantId: string; productName: string; sku: string | null; onHand: number }[];
+    negative: {
+      variantId: string;
+      productName: string;
+      sku: string | null;
+      locationName: string | null;
+      onHand: number;
+    }[];
   };
 }
 
@@ -97,6 +114,7 @@ interface LoadoutRow {
   orderId: string;
   orderNumber: string;
   customerName: string | null;
+  locationName: string | null;
   windowStart: string | null;
   windowEnd: string | null;
   route: string | null;
@@ -109,6 +127,8 @@ interface LoadoutRow {
 
 interface PicklistRow {
   variantId: string;
+  locationId: string;
+  locationName: string | null;
   productName: string;
   variantName: string | null;
   sku: string | null;
@@ -121,13 +141,22 @@ interface PicklistRow {
 
 const LIVE_DELIVERY = ['scheduled', 'out', 'out_for_delivery'];
 
+interface Scope {
+  /** 'all' or a real location id. */
+  id: string;
+  name: string;
+  /** One clock for "today": the lead (warehouse-type first) location's. */
+  timezone: string;
+  locationIds: string[];
+  locations: { id: string; name: string; locationType: string; timezone: string }[];
+}
+
 /**
- * The Warehouse home (owner 2026-09-01, §12.2): the receiving pipeline,
- * the trucks, and every "goods are here — close the loop" queue, pinned
- * to ONE location the member works (warehouse-type locations lead the
- * picker). Same shape as the other role homes: `/dashboard` opens here
- * for the Warehouse role; anyone else with the permission reaches it at
- * `/warehouse`.
+ * The Warehouse home (owner 2026-09-01, §12.2; amended 2026-09-01: the
+ * combined all-locations view is the DEFAULT, with the per-location
+ * picker still available). Every card takes a list of location ids —
+ * one entry when a location is picked, all of them otherwise — so both
+ * modes run the same queries.
  *
  * Split endpoints for the same reason the Operations home is split: the
  * summary is one bundle of small indexed reads, while the load-out and
@@ -145,27 +174,32 @@ export class WarehouseDashboardController {
     @Query('locationId') locationId?: string,
   ): Promise<WarehouseSummary> {
     const businessId = tenant.businessId!;
-    const { loc, locations } = await this.pickLocation(tenant, businessId, locationId);
+    const scope = await this.pickScope(tenant, businessId, locationId);
     const [dayRow] = await this.db
-      .select({ today: sql<string>`(now() AT TIME ZONE ${loc.timezone})::date::text` })
+      .select({ today: sql<string>`(now() AT TIME ZONE ${scope.timezone})::date::text` })
       .from(schema.businesses)
       .where(eq(schema.businesses.id, businessId))
       .limit(1);
 
+    const ids = scope.locationIds;
     const [inbound, dock, pickups, arrived, transfers, asIs, counts] = await Promise.all([
-      this.inbound(businessId, loc.id),
-      this.dock(businessId, loc.id),
-      this.pickups(businessId, loc.id),
-      this.arrived(businessId, loc.id),
-      this.transfers(businessId, loc.id),
-      this.asIs(businessId, loc.id),
-      this.counts(businessId, loc.id),
+      this.inbound(businessId, ids),
+      this.dock(businessId, ids),
+      this.pickups(businessId, ids),
+      this.arrived(businessId, ids),
+      this.transfers(businessId, ids),
+      this.asIs(businessId, ids),
+      this.counts(businessId, ids),
     ]);
 
     return {
       date: dayRow!.today,
-      location: { id: loc.id, name: loc.name, timezone: loc.timezone },
-      locations,
+      location: { id: scope.id, name: scope.name, timezone: scope.timezone },
+      locations: scope.locations.map((l) => ({
+        id: l.id,
+        name: l.name,
+        locationType: l.locationType,
+      })),
       inbound,
       dock,
       pickups,
@@ -176,7 +210,7 @@ export class WarehouseDashboardController {
     };
   }
 
-  /** Card 3 — today's truck: stops vs cap, pieces, unpicked serials. */
+  /** Card 3 — today's truck: stops (vs cap in single-location mode), pieces, unpicked serials. */
   @Get('loadout')
   @RequirePermission('warehouse.dashboard.view')
   async loadout(
@@ -185,17 +219,22 @@ export class WarehouseDashboardController {
     @Query('date') date?: string,
   ) {
     const businessId = tenant.businessId!;
-    const { loc } = await this.pickLocation(tenant, businessId, locationId);
-    const day = parseDay(date) ?? (await this.localToday(businessId, loc.timezone, 0));
-    const rows = await this.deliveryRows(businessId, loc.id, day, LIVE_DELIVERY);
+    const scope = await this.pickScope(tenant, businessId, locationId);
+    const day = parseDay(date) ?? (await this.localToday(businessId, scope.timezone, 0));
+    const rows = await this.deliveryRows(businessId, scope.locationIds, day, LIVE_DELIVERY);
 
-    const [biz] = await this.db
-      .select({ opsSettingsJson: schema.businesses.opsSettingsJson })
-      .from(schema.businesses)
-      .where(eq(schema.businesses.id, businessId))
-      .limit(1);
-    const ops = (biz?.opsSettingsJson ?? {}) as { deliveryDailyCap?: number | null };
-    const cap = ops.deliveryDailyCap && ops.deliveryDailyCap > 0 ? ops.deliveryDailyCap : 15;
+    // The daily stop cap is a per-location knob; against a combined view
+    // a single cap would be a made-up number, so it stays null there.
+    let cap: number | null = null;
+    if (scope.id !== ALL) {
+      const [biz] = await this.db
+        .select({ opsSettingsJson: schema.businesses.opsSettingsJson })
+        .from(schema.businesses)
+        .where(eq(schema.businesses.id, businessId))
+        .limit(1);
+      const ops = (biz?.opsSettingsJson ?? {}) as { deliveryDailyCap?: number | null };
+      cap = ops.deliveryDailyCap && ops.deliveryDailyCap > 0 ? ops.deliveryDailyCap : 15;
+    }
 
     return {
       date: day,
@@ -207,10 +246,11 @@ export class WarehouseDashboardController {
   }
 
   /**
-   * Card 4 — tomorrow's pull, aggregated per variant with the bin, so
-   * staging can start this afternoon. `short` compares against on-hand:
-   * these units are reserved to these orders, so reserved is not
-   * subtracted — the question is whether the goods physically exist.
+   * Card 4 — tomorrow's pull, aggregated per variant PER LOCATION (a
+   * bin only means something inside its own building), so staging can
+   * start this afternoon. `short` compares against on-hand: these units
+   * are reserved to these orders, so reserved is not subtracted — the
+   * question is whether the goods physically exist.
    */
   @Get('picklist')
   @RequirePermission('warehouse.dashboard.view')
@@ -220,12 +260,14 @@ export class WarehouseDashboardController {
     @Query('date') date?: string,
   ) {
     const businessId = tenant.businessId!;
-    const { loc } = await this.pickLocation(tenant, businessId, locationId);
-    const day = parseDay(date) ?? (await this.localToday(businessId, loc.timezone, 1));
+    const scope = await this.pickScope(tenant, businessId, locationId);
+    const day = parseDay(date) ?? (await this.localToday(businessId, scope.timezone, 1));
+    const nameBy = new Map(scope.locations.map((l) => [l.id, l.name]));
 
     const lines = await this.db
       .select({
         variantId: schema.orderLines.variantId,
+        locationId: schema.deliveries.locationId,
         productName: schema.products.name,
         variantName: schema.productVariants.name,
         sku: schema.productVariants.sku,
@@ -243,17 +285,20 @@ export class WarehouseDashboardController {
       .where(
         and(
           eq(schema.deliveries.businessId, businessId),
-          eq(schema.deliveries.locationId, loc.id),
+          inArray(schema.deliveries.locationId, scope.locationIds),
           eq(schema.deliveries.scheduledDate, day),
           inArray(schema.deliveries.status, LIVE_DELIVERY),
         ),
       );
 
-    const byVariant = new Map<string, PicklistRow>();
+    const byKey = new Map<string, PicklistRow>();
     for (const l of lines) {
       if (!l.variantId || l.lineType !== 'stock') continue;
-      const row = byVariant.get(l.variantId) ?? {
+      const key = `${l.variantId}:${l.locationId}`;
+      const row = byKey.get(key) ?? {
         variantId: l.variantId,
+        locationId: l.locationId,
+        locationName: nameBy.get(l.locationId) ?? null,
         productName: l.productName ?? '(deleted)',
         variantName: l.variantName,
         sku: l.sku,
@@ -267,12 +312,13 @@ export class WarehouseDashboardController {
       if (l.serialTracked && (l.serialUnitIds?.length ?? 0) < l.lineQuantity) {
         row.serialShort = true;
       }
-      byVariant.set(l.variantId, row);
+      byKey.set(key, row);
     }
-    if (byVariant.size > 0) {
+    if (byKey.size > 0) {
       const levels = await this.db
         .select({
           variantId: schema.inventoryLevels.variantId,
+          locationId: schema.inventoryLevels.locationId,
           onHand: schema.inventoryLevels.onHand,
           bin: schema.storageBins.code,
         })
@@ -284,20 +330,23 @@ export class WarehouseDashboardController {
         .where(
           and(
             eq(schema.inventoryLevels.businessId, businessId),
-            eq(schema.inventoryLevels.locationId, loc.id),
-            inArray(schema.inventoryLevels.variantId, [...byVariant.keys()]),
+            inArray(schema.inventoryLevels.locationId, scope.locationIds),
+            inArray(schema.inventoryLevels.variantId, [
+              ...new Set([...byKey.values()].map((r) => r.variantId)),
+            ]),
           ),
         );
       for (const level of levels) {
-        const row = byVariant.get(level.variantId);
+        const row = byKey.get(`${level.variantId}:${level.locationId}`);
         if (!row) continue;
         row.onHand = level.onHand;
         row.bin = level.bin;
       }
-      for (const row of byVariant.values()) row.short = row.onHand < row.quantity;
+      for (const row of byKey.values()) row.short = row.onHand < row.quantity;
     }
-    const rows = [...byVariant.values()].sort(
+    const rows = [...byKey.values()].sort(
       (a, b) =>
+        (a.locationName ?? '').localeCompare(b.locationName ?? '') ||
         (a.bin ?? 'zzz').localeCompare(b.bin ?? 'zzz') ||
         a.productName.localeCompare(b.productName),
     );
@@ -306,11 +355,16 @@ export class WarehouseDashboardController {
 
   // ------------------------------------------------------------- internals
 
-  private async pickLocation(
+  /**
+   * Resolve the picker value. Absent or 'all' → every location the
+   * member may see, combined (the default); a real id → that one.
+   * Warehouse-type locations lead both the ordering and the clock.
+   */
+  private async pickScope(
     tenant: RequestTenantContext,
     businessId: string,
     locationId?: string,
-  ) {
+  ): Promise<Scope> {
     const rows = await this.db
       .select({
         id: schema.locations.id,
@@ -329,16 +383,31 @@ export class WarehouseDashboardController {
         ),
       )
       .orderBy(schema.locations.name);
-    // The building this role works is usually the warehouse — lead with it.
     const ordered = [
       ...rows.filter((r) => r.locationType === 'warehouse'),
       ...rows.filter((r) => r.locationType !== 'warehouse'),
     ];
-    if (ordered.length === 0)
+    if (ordered.length === 0) {
       throw new BadRequestException('No locations are available to this member');
-    const loc = locationId ? ordered.find((l) => l.id === locationId) : ordered[0];
+    }
+    if (!locationId || locationId === ALL) {
+      return {
+        id: ALL,
+        name: 'All locations',
+        timezone: ordered[0]!.timezone,
+        locationIds: ordered.map((l) => l.id),
+        locations: ordered,
+      };
+    }
+    const loc = ordered.find((l) => l.id === locationId);
     if (!loc) throw new ForbiddenException('You are not approved for that location');
-    return { loc, locations: ordered };
+    return {
+      id: loc.id,
+      name: loc.name,
+      timezone: loc.timezone,
+      locationIds: [loc.id],
+      locations: ordered,
+    };
   }
 
   private async localToday(businessId: string, tz: string, plusDays: number): Promise<string> {
@@ -350,19 +419,21 @@ export class WarehouseDashboardController {
     return row!.day;
   }
 
-  /** Card 1 — open POs shipping here: due, overdue, and how far along. */
-  private async inbound(businessId: string, locationId: string): Promise<InboundRow[]> {
+  /** Card 1 — open POs shipping into the scope: due, overdue, progress. */
+  private async inbound(businessId: string, locationIds: string[]): Promise<InboundRow[]> {
     const rows = await this.db
       .select({
         id: schema.purchaseOrders.id,
         number: schema.purchaseOrders.number,
         vendorName: schema.vendors.name,
+        locationName: schema.locations.name,
         expectedAt: schema.purchaseOrders.expectedAt,
         orderedUnits: sql<number>`COALESCE(SUM(${schema.purchaseOrderLines.quantityOrdered}), 0)::int`,
         receivedUnits: sql<number>`COALESCE(SUM(${schema.purchaseOrderLines.quantityReceived}), 0)::int`,
       })
       .from(schema.purchaseOrders)
       .leftJoin(schema.vendors, eq(schema.vendors.id, schema.purchaseOrders.vendorId))
+      .leftJoin(schema.locations, eq(schema.locations.id, schema.purchaseOrders.locationId))
       .leftJoin(
         schema.purchaseOrderLines,
         eq(schema.purchaseOrderLines.purchaseOrderId, schema.purchaseOrders.id),
@@ -370,7 +441,7 @@ export class WarehouseDashboardController {
       .where(
         and(
           eq(schema.purchaseOrders.businessId, businessId),
-          eq(schema.purchaseOrders.locationId, locationId),
+          inArray(schema.purchaseOrders.locationId, locationIds),
           inArray(schema.purchaseOrders.status, ['ordered', 'partially_received']),
           isNull(schema.purchaseOrders.deletedAt),
         ),
@@ -379,6 +450,7 @@ export class WarehouseDashboardController {
         schema.purchaseOrders.id,
         schema.purchaseOrders.number,
         schema.vendors.name,
+        schema.locations.name,
         schema.purchaseOrders.expectedAt,
       )
       .orderBy(sql`${schema.purchaseOrders.expectedAt} ASC NULLS LAST`)
@@ -390,22 +462,23 @@ export class WarehouseDashboardController {
   }
 
   /**
-   * Card 2 — goods physically in the building but not yet sellable:
+   * Card 2 — goods physically in a building but not yet sellable:
    * received or inspected units that nobody has accepted or rejected.
    * The most expensive invisible state a warehouse has.
    */
-  private async dock(businessId: string, locationId: string): Promise<DockRow[]> {
-    const inProgress = sql<number>`COALESCE(SUM(GREATEST(${schema.purchaseOrderLines.quantityReceived} - ${schema.purchaseOrderLines.quantityAccepted} - ${schema.purchaseOrderLines.quantityRejected}, 0)), 0)::int`;
+  private async dock(businessId: string, locationIds: string[]): Promise<DockRow[]> {
     const rows = await this.db
       .select({
         id: schema.purchaseOrders.id,
         number: schema.purchaseOrders.number,
         vendorName: schema.vendors.name,
-        unitsInProgress: inProgress,
+        locationName: schema.locations.name,
+        unitsInProgress: sql<number>`COALESCE(SUM(GREATEST(${schema.purchaseOrderLines.quantityReceived} - ${schema.purchaseOrderLines.quantityAccepted} - ${schema.purchaseOrderLines.quantityRejected}, 0)), 0)::int`,
         lastActivityAt: schema.purchaseOrders.updatedAt,
       })
       .from(schema.purchaseOrders)
       .leftJoin(schema.vendors, eq(schema.vendors.id, schema.purchaseOrders.vendorId))
+      .leftJoin(schema.locations, eq(schema.locations.id, schema.purchaseOrders.locationId))
       .innerJoin(
         schema.purchaseOrderLines,
         eq(schema.purchaseOrderLines.purchaseOrderId, schema.purchaseOrders.id),
@@ -413,7 +486,7 @@ export class WarehouseDashboardController {
       .where(
         and(
           eq(schema.purchaseOrders.businessId, businessId),
-          eq(schema.purchaseOrders.locationId, locationId),
+          inArray(schema.purchaseOrders.locationId, locationIds),
           isNull(schema.purchaseOrders.deletedAt),
           sql`${schema.purchaseOrders.status} NOT IN ('canceled')`,
         ),
@@ -422,6 +495,7 @@ export class WarehouseDashboardController {
         schema.purchaseOrders.id,
         schema.purchaseOrders.number,
         schema.vendors.name,
+        schema.locations.name,
         schema.purchaseOrders.updatedAt,
       )
       .having(
@@ -432,7 +506,8 @@ export class WarehouseDashboardController {
   }
 
   /** Card 5 — pickup orders staged (or stageable) and how long waiting. */
-  private async pickups(businessId: string, locationId: string): Promise<PickupRow[]> {
+  private async pickups(businessId: string, locationIds: string[]): Promise<PickupRow[]> {
+    const pickupLoc = sql`COALESCE(${schema.orders.pickupLocationId}, ${schema.orders.locationId})`;
     const orders = await this.db
       .select({
         orderId: schema.orders.id,
@@ -440,19 +515,21 @@ export class WarehouseDashboardController {
         createdAt: schema.orders.createdAt,
         customerFirst: schema.customers.firstName,
         customerLast: schema.customers.lastName,
+        locationName: schema.locations.name,
       })
       .from(schema.orders)
       .leftJoin(schema.customers, eq(schema.customers.id, schema.orders.customerId))
+      .leftJoin(schema.locations, sql`${schema.locations.id} = ${pickupLoc}`)
       .where(
         and(
           eq(schema.orders.businessId, businessId),
           eq(schema.orders.fulfillmentType, 'pickup'),
           inArray(schema.orders.status, ['open', 'partially_fulfilled']),
           isNull(schema.orders.importedAt),
-          or(
-            eq(schema.orders.pickupLocationId, locationId),
-            and(isNull(schema.orders.pickupLocationId), eq(schema.orders.locationId, locationId)),
-          ),
+          sql`${pickupLoc} IN (${sql.join(
+            locationIds.map((id) => sql`${id}::uuid`),
+            sql`, `,
+          )})`,
         ),
       )
       .orderBy(asc(schema.orders.createdAt))
@@ -485,6 +562,7 @@ export class WarehouseDashboardController {
       orderId: o.orderId,
       number: o.number,
       customerName: [o.customerFirst, o.customerLast].filter(Boolean).join(' ') || null,
+      locationName: o.locationName,
       ageDays: Math.floor((now - o.createdAt.getTime()) / 86_400_000),
       ready: readyBy.get(o.orderId) ?? false,
     }));
@@ -495,14 +573,14 @@ export class WarehouseDashboardController {
    * next step: allocation received, line unfulfilled, and no live
    * delivery on the order. The highest-value queue on the page.
    */
-  private async arrived(businessId: string, locationId: string): Promise<ArrivedRow[]> {
+  private async arrived(businessId: string, locationIds: string[]): Promise<ArrivedRow[]> {
     const rows = await this.db
       .select({
         orderId: schema.orders.id,
         orderNumber: schema.orders.number,
-        fulfillmentType: schema.orders.fulfillmentType,
         customerFirst: schema.customers.firstName,
         customerLast: schema.customers.lastName,
+        locationName: schema.locations.name,
         description: schema.orderLines.description,
         quantity: schema.poLineAllocations.quantity,
         arrivedAt: schema.poLineAllocations.updatedAt,
@@ -519,11 +597,12 @@ export class WarehouseDashboardController {
       .innerJoin(schema.orderLines, eq(schema.orderLines.id, schema.poLineAllocations.orderLineId))
       .innerJoin(schema.orders, eq(schema.orders.id, schema.orderLines.orderId))
       .leftJoin(schema.customers, eq(schema.customers.id, schema.orders.customerId))
+      .leftJoin(schema.locations, eq(schema.locations.id, schema.purchaseOrders.locationId))
       .where(
         and(
           eq(schema.poLineAllocations.businessId, businessId),
           eq(schema.poLineAllocations.status, 'received'),
-          eq(schema.purchaseOrders.locationId, locationId),
+          inArray(schema.purchaseOrders.locationId, locationIds),
           inArray(schema.orders.status, ['open', 'partially_fulfilled']),
           sql`${schema.orderLines.qtyFulfilled} < ${schema.orderLines.quantity}`,
           sql`NOT EXISTS (SELECT 1 FROM deliveries d WHERE d.order_id = ${schema.orders.id} AND d.status IN ('scheduled', 'out', 'out_for_delivery'))`,
@@ -535,19 +614,25 @@ export class WarehouseDashboardController {
       orderId: r.orderId,
       orderNumber: r.orderNumber,
       customerName: [r.customerFirst, r.customerLast].filter(Boolean).join(' ') || null,
+      locationName: r.locationName,
       description: r.description,
       quantity: r.quantity,
       arrivedAt: r.arrivedAt,
     }));
   }
 
-  /** Card 7 — transfers touching this building, and where they stand. */
+  /** Card 7 — transfers touching the scope, and where they stand. */
   private async transfers(
     businessId: string,
-    locationId: string,
+    locationIds: string[],
   ): Promise<{ rows: TransferRow[]; closedShort30d: number }> {
+    const idSet = new Set(locationIds);
     const fromLoc = alias(schema.locations, 'from_loc');
     const toLoc = alias(schema.locations, 'to_loc');
+    const touching = or(
+      inArray(schema.stockTransfers.fromLocationId, locationIds),
+      inArray(schema.stockTransfers.toLocationId, locationIds),
+    );
     const rows = await this.db
       .select({
         id: schema.stockTransfers.id,
@@ -572,10 +657,7 @@ export class WarehouseDashboardController {
         and(
           eq(schema.stockTransfers.businessId, businessId),
           inArray(schema.stockTransfers.status, ['draft', 'in_transit']),
-          or(
-            eq(schema.stockTransfers.fromLocationId, locationId),
-            eq(schema.stockTransfers.toLocationId, locationId),
-          ),
+          touching,
         ),
       )
       .groupBy(
@@ -594,12 +676,14 @@ export class WarehouseDashboardController {
 
     const now = Date.now();
     const mapped: TransferRow[] = rows.map((r) => {
-      const outbound = r.fromLocationId === locationId;
+      const fromIn = idSet.has(r.fromLocationId);
+      const toIn = idSet.has(r.toLocationId);
       return {
         id: r.id,
         number: r.number,
-        direction: outbound ? 'outbound' : 'inbound',
-        otherLocationName: outbound ? r.toName : r.fromName,
+        direction: fromIn && toIn ? 'internal' : fromIn ? 'outbound' : 'inbound',
+        fromName: r.fromName,
+        toName: r.toName,
         status: r.status,
         units: r.units,
         days:
@@ -616,17 +700,14 @@ export class WarehouseDashboardController {
           eq(schema.stockTransfers.businessId, businessId),
           eq(schema.stockTransfers.status, 'closed_short'),
           gte(schema.stockTransfers.updatedAt, new Date(now - 30 * 86_400_000)),
-          or(
-            eq(schema.stockTransfers.fromLocationId, locationId),
-            eq(schema.stockTransfers.toLocationId, locationId),
-          ),
+          touching,
         ),
       );
     return { rows: mapped, closedShort30d: shortCount?.count ?? 0 };
   }
 
   /** Card 8 — damage waiting for a decision is silent shrink. */
-  private async asIs(businessId: string, locationId: string) {
+  private async asIs(businessId: string, locationIds: string[]) {
     const rows = await this.db
       .select({
         id: schema.asIsItems.id,
@@ -634,15 +715,17 @@ export class WarehouseDashboardController {
         condition: schema.asIsItems.condition,
         createdAt: schema.asIsItems.createdAt,
         productName: schema.products.name,
+        locationName: schema.locations.name,
         costCents: schema.productVariants.costCents,
       })
       .from(schema.asIsItems)
       .innerJoin(schema.productVariants, eq(schema.productVariants.id, schema.asIsItems.variantId))
       .innerJoin(schema.products, eq(schema.products.id, schema.productVariants.productId))
+      .leftJoin(schema.locations, eq(schema.locations.id, schema.asIsItems.locationId))
       .where(
         and(
           eq(schema.asIsItems.businessId, businessId),
-          eq(schema.asIsItems.locationId, locationId),
+          inArray(schema.asIsItems.locationId, locationIds),
           eq(schema.asIsItems.status, 'pending_review'),
         ),
       )
@@ -655,6 +738,7 @@ export class WarehouseDashboardController {
       rows: rows.slice(0, 10).map((r) => ({
         id: r.id,
         productName: r.productName ?? '(deleted)',
+        locationName: r.locationName,
         quantity: r.quantity,
         condition: r.condition,
         createdAt: r.createdAt,
@@ -663,18 +747,20 @@ export class WarehouseDashboardController {
   }
 
   /** Card 9 — count discipline + the ledger breaks only a count fixes. */
-  private async counts(businessId: string, locationId: string) {
+  private async counts(businessId: string, locationIds: string[]) {
     const open = await this.db
       .select({
         id: schema.physicalCounts.id,
         countDate: schema.physicalCounts.countDate,
         status: schema.physicalCounts.status,
+        locationName: schema.locations.name,
       })
       .from(schema.physicalCounts)
+      .leftJoin(schema.locations, eq(schema.locations.id, schema.physicalCounts.locationId))
       .where(
         and(
           eq(schema.physicalCounts.businessId, businessId),
-          eq(schema.physicalCounts.locationId, locationId),
+          inArray(schema.physicalCounts.locationId, locationIds),
           inArray(schema.physicalCounts.status, ['open', 'counting']),
         ),
       )
@@ -686,7 +772,7 @@ export class WarehouseDashboardController {
       .where(
         and(
           eq(schema.physicalCounts.businessId, businessId),
-          eq(schema.physicalCounts.locationId, locationId),
+          inArray(schema.physicalCounts.locationId, locationIds),
           eq(schema.physicalCounts.status, 'posted'),
         ),
       )
@@ -699,6 +785,7 @@ export class WarehouseDashboardController {
         onHand: schema.inventoryLevels.onHand,
         productName: schema.products.name,
         sku: schema.productVariants.sku,
+        locationName: schema.locations.name,
       })
       .from(schema.inventoryLevels)
       .innerJoin(
@@ -706,10 +793,11 @@ export class WarehouseDashboardController {
         eq(schema.productVariants.id, schema.inventoryLevels.variantId),
       )
       .innerJoin(schema.products, eq(schema.products.id, schema.productVariants.productId))
+      .leftJoin(schema.locations, eq(schema.locations.id, schema.inventoryLevels.locationId))
       .where(
         and(
           eq(schema.inventoryLevels.businessId, businessId),
-          eq(schema.inventoryLevels.locationId, locationId),
+          inArray(schema.inventoryLevels.locationId, locationIds),
           lt(schema.inventoryLevels.onHand, 0),
         ),
       )
@@ -722,6 +810,7 @@ export class WarehouseDashboardController {
         variantId: n.variantId,
         productName: n.productName ?? '(deleted)',
         sku: n.sku,
+        locationName: n.locationName,
         onHand: n.onHand,
       })),
     };
@@ -730,11 +819,12 @@ export class WarehouseDashboardController {
   /** Shared by loadout: one row per delivery with pieces + serial state. */
   private async deliveryRows(
     businessId: string,
-    locationId: string,
+    locationIds: string[],
     day: string,
     statuses: string[],
   ): Promise<LoadoutRow[]> {
     const driverUser = alias(schema.users, 'driver_user');
+    const deliveryLoc = alias(schema.locations, 'delivery_loc');
     const rows = await this.db
       .select({
         deliveryId: schema.deliveries.id,
@@ -742,6 +832,7 @@ export class WarehouseDashboardController {
         orderNumber: schema.orders.number,
         customerFirst: schema.customers.firstName,
         customerLast: schema.customers.lastName,
+        locationName: deliveryLoc.name,
         windowStart: schema.deliveries.windowStart,
         windowEnd: schema.deliveries.windowEnd,
         route: schema.deliveries.route,
@@ -753,6 +844,7 @@ export class WarehouseDashboardController {
       .from(schema.deliveries)
       .innerJoin(schema.orders, eq(schema.orders.id, schema.deliveries.orderId))
       .leftJoin(schema.customers, eq(schema.customers.id, schema.orders.customerId))
+      .leftJoin(deliveryLoc, eq(deliveryLoc.id, schema.deliveries.locationId))
       .leftJoin(schema.memberships, eq(schema.memberships.id, schema.deliveries.driverMembershipId))
       .leftJoin(driverUser, eq(driverUser.id, schema.memberships.userId))
       .leftJoin(schema.deliveryLines, eq(schema.deliveryLines.deliveryId, schema.deliveries.id))
@@ -762,7 +854,7 @@ export class WarehouseDashboardController {
       .where(
         and(
           eq(schema.deliveries.businessId, businessId),
-          eq(schema.deliveries.locationId, locationId),
+          inArray(schema.deliveries.locationId, locationIds),
           eq(schema.deliveries.scheduledDate, day),
           inArray(schema.deliveries.status, statuses),
         ),
@@ -773,6 +865,7 @@ export class WarehouseDashboardController {
         schema.orders.number,
         schema.customers.firstName,
         schema.customers.lastName,
+        deliveryLoc.name,
         schema.deliveries.windowStart,
         schema.deliveries.windowEnd,
         schema.deliveries.route,
@@ -786,6 +879,7 @@ export class WarehouseDashboardController {
       orderId: r.orderId,
       orderNumber: r.orderNumber,
       customerName: [r.customerFirst, r.customerLast].filter(Boolean).join(' ') || null,
+      locationName: r.locationName,
       windowStart: r.windowStart,
       windowEnd: r.windowEnd,
       route: r.route,
