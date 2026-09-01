@@ -99,7 +99,7 @@ async function seed() {
       });
     }
     await makeUser('owner@inv-test.local', 'Owner');
-    await makeUser('clerk@inv-test.local', 'Inventory Clerk');
+    await makeUser('clerk@inv-test.local', 'Warehouse');
     await makeUser('cashier@inv-test.local', 'Cashier');
 
     const [loc] = await db

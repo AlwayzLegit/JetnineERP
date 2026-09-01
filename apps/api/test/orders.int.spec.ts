@@ -107,7 +107,7 @@ async function seed() {
     }
     await makeUser('owner@orders-test.local', 'Owner');
     await makeUser('cashier@orders-test.local', 'Cashier');
-    await makeUser('clerk@orders-test.local', 'Inventory Clerk');
+    await makeUser('clerk@orders-test.local', 'Warehouse');
 
     const [loc] = await db
       .insert(schema.locations)
@@ -784,7 +784,7 @@ describe('Day 1 — order spine: write, deposit, reserve', () => {
   let orderId = '';
   let orderNumber = '';
 
-  it('Inventory Clerk (no orders.create) is denied order entry', async () => {
+  it('Warehouse (no orders.create) is denied order entry', async () => {
     const res = await request(app.getHttpServer())
       .post('/v1/orders')
       .set('Cookie', clerkCookie)
@@ -924,7 +924,7 @@ describe('Day 1 — order spine: write, deposit, reserve', () => {
     expect(res.body.message).toMatch(/Refund the money/);
   });
 
-  it('Inventory Clerk cannot take money on an order', async () => {
+  it('Warehouse cannot take money on an order', async () => {
     const res = await request(app.getHttpServer())
       .post(`/v1/orders/${orderId}/payments`)
       .set('Cookie', clerkCookie)

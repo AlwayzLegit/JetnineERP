@@ -44,6 +44,7 @@ import { ExchangesModule } from './exchanges/exchanges.module';
 import { ReturnsModule } from './returns/returns.module';
 import { ControlsModule } from './controls/controls.module';
 import { OpsModule } from './ops/ops.module';
+import { WarehouseModule } from './warehouse/warehouse.module';
 import { CloseoutModule } from './closeout/closeout.module';
 import { JobsModule } from './jobs/jobs.module';
 import { GlModule } from './gl/gl.module';
@@ -103,6 +104,7 @@ import { WebhooksModule } from './webhooks/webhooks.module';
     ExchangesModule,
     ControlsModule,
     OpsModule,
+    WarehouseModule,
     CloseoutModule,
     JobsModule,
     SalesModule,

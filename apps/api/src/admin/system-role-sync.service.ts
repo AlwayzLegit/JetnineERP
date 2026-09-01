@@ -28,6 +28,18 @@ import { DRIZZLE } from '../database/database.module';
  * customization of system roles is preserved. Custom (non-system) roles
  * are never modified.
  */
+/**
+ * Catalog roles that changed name. The sync renames the tenant's SYSTEM
+ * role row in place — same id, so memberships never move — instead of
+ * minting the new name alongside and stranding everyone on the old one.
+ * A business that already has ANY role under the new name (their own
+ * hand-built one included) is skipped: their name, their role.
+ */
+const RENAMED_SYSTEM_ROLES: Record<string, string> = {
+  // Owner 2026-09-01: the clerk got a dashboard and a shorter name.
+  'Inventory Clerk': 'Warehouse',
+};
+
 @Injectable()
 export class SystemRoleSyncService implements OnModuleInit {
   private readonly logger = new Logger(SystemRoleSyncService.name);
@@ -37,6 +49,7 @@ export class SystemRoleSyncService implements OnModuleInit {
   async onModuleInit(): Promise<void> {
     if (process.env.NODE_ENV === 'test' && process.env.SYSTEM_ROLE_SYNC !== '1') return;
     try {
+      const renamed = await this.renameRoles();
       const created = await this.createMissingRoles();
       let added = 0;
       for (const def of SYSTEM_ROLES) {
@@ -58,14 +71,42 @@ export class SystemRoleSyncService implements OnModuleInit {
           added += result.length;
         }
       }
-      if (created > 0 || added > 0) {
+      if (renamed > 0 || created > 0 || added > 0) {
         this.logger.log(
-          `System role sync: created ${created} role(s), backfilled ${added} permission row(s)`,
+          `System role sync: renamed ${renamed}, created ${created} role(s), backfilled ${added} permission row(s)`,
         );
       }
     } catch (err) {
       this.logger.error(`System role sync failed: ${err instanceof Error ? err.message : err}`);
     }
+  }
+
+  /** Applies RENAMED_SYSTEM_ROLES; must run before createMissingRoles,
+   * or the create pass would mint the new name next to the old role. */
+  private async renameRoles(): Promise<number> {
+    let renamed = 0;
+    for (const [oldName, newName] of Object.entries(RENAMED_SYSTEM_ROLES)) {
+      const candidates = await this.db
+        .select({ id: schema.roles.id, businessId: schema.roles.businessId })
+        .from(schema.roles)
+        .where(and(eq(schema.roles.name, oldName), eq(schema.roles.isSystem, true)));
+      if (candidates.length === 0) continue;
+      const taken = await this.db
+        .select({ businessId: schema.roles.businessId })
+        .from(schema.roles)
+        .where(eq(schema.roles.name, newName));
+      const takenBusinesses = new Set(taken.map((r) => r.businessId));
+      const def = SYSTEM_ROLES.find((r) => r.name === newName);
+      for (const role of candidates) {
+        if (takenBusinesses.has(role.businessId)) continue;
+        await this.db
+          .update(schema.roles)
+          .set({ name: newName, ...(def ? { description: def.description } : {}) })
+          .where(eq(schema.roles.id, role.id));
+        renamed += 1;
+      }
+    }
+    return renamed;
   }
 
   /**

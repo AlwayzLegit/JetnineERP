@@ -134,6 +134,8 @@ export const PERMISSIONS = {
   'ops.dashboard.view':
     'See the operations dashboard — every store\u2019s sales, money in/out, and the audit feed',
   'ops.review.clear': 'Clear reviewed items off the operations feed (records who cleared them)',
+  'warehouse.dashboard.view':
+    'See the warehouse dashboard — inbound POs, the dock, load-out, pickups, transfers',
 
   'reason_codes.manage': 'Manage the reason-code registry (add / deactivate / restrict codes)',
   'security_overrides.view': 'View the security-override register',
@@ -204,7 +206,7 @@ const GROUP_DEFS: { key: string; label: string; prefixes: string[] }[] = [
   {
     key: 'security',
     label: 'Audit & security',
-    prefixes: ['audit', 'ops', 'reason_codes', 'security_overrides'],
+    prefixes: ['audit', 'ops', 'reason_codes', 'security_overrides', 'warehouse'],
   },
   {
     key: 'integrations',

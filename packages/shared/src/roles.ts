@@ -5,7 +5,7 @@ export type SystemRoleName =
   | 'Manager'
   | 'Operations'
   | 'Cashier'
-  | 'Inventory Clerk'
+  | 'Warehouse'
   | 'Bookkeeper';
 
 export interface SystemRoleDefinition {
@@ -68,7 +68,7 @@ const operationsPermissions: Permission[] = [
   'reports.export',
 
   // Inventory movement is audited, not performed — adjusting, receiving
-  // and transferring stay with the Inventory Clerk.
+  // and transferring stay with the Warehouse role.
   'products.view',
   'inventory.view',
   'serials.view',
@@ -115,7 +115,16 @@ const cashierPermissions: Permission[] = [
   'service_orders.create',
 ];
 
-const inventoryClerkPermissions: Permission[] = [
+/**
+ * Warehouse (owner 2026-09-01) — the renamed Inventory Clerk, now with a
+ * home of its own: the receiving dock, the trucks, the transfer lanes,
+ * and everything §12.2's dashboard shows. SystemRoleSyncService renames
+ * an existing tenant's "Inventory Clerk" system role in place, so
+ * memberships never move.
+ */
+const warehousePermissions: Permission[] = [
+  'warehouse.dashboard.view',
+
   'products.view',
   'inventory.view',
   'inventory.adjust',
@@ -184,9 +193,10 @@ export const SYSTEM_ROLES: SystemRoleDefinition[] = [
     permissions: cashierPermissions,
   },
   {
-    name: 'Inventory Clerk',
-    description: 'Manages products and inventory',
-    permissions: inventoryClerkPermissions,
+    name: 'Warehouse',
+    description:
+      'Runs the dock, the trucks and the stockroom — receiving, transfers, counts, serials',
+    permissions: warehousePermissions,
   },
   {
     name: 'Bookkeeper',
