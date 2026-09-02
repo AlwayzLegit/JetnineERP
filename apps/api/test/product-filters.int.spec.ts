@@ -34,6 +34,7 @@ let locationId = '';
 let helixVendorId = '';
 let purpleVendorId = '';
 let cookie = '';
+let managerCookie = '';
 const bySku = new Map<string, string>();
 
 function withDb<T>(fn: (db: ReturnType<typeof drizzle>) => Promise<T>): Promise<T> {
@@ -119,6 +120,23 @@ async function seed() {
       status: 'active',
       acceptedAt: new Date(),
     });
+    const [m] = await db
+      .insert(schema.users)
+      .values({ email: 'manager@filters-test.local', emailVerified: true, name: 'Manager' })
+      .returning();
+    await db.insert(schema.accounts).values({
+      accountId: m!.id,
+      providerId: 'credential',
+      userId: m!.id,
+      password: passwordHash,
+    });
+    await db.insert(schema.memberships).values({
+      businessId,
+      userId: m!.id,
+      roleId: roles.get('Manager')!,
+      status: 'active',
+      acceptedAt: new Date(),
+    });
     const [loc] = await db
       .insert(schema.locations)
       .values({ businessId, name: 'Main', timezone: 'America/Los_Angeles' })
@@ -166,6 +184,27 @@ async function seed() {
         })
         .returning();
       bySku.set(item.sku, v!.id);
+      // Provenance: the Queen Twilight pair is one STORIS import + one Shopify sync.
+      const batchSource =
+        item.sku === 'HX-Q-TWI'
+          ? 'storis'
+          : item.sku === 'HELIX-SLEEP-TWILIGHT-Q-3DA9'
+            ? 'shopify'
+            : null;
+      if (batchSource) {
+        const [batch] = await db
+          .insert(schema.importBatches)
+          .values({ businessId, entity: 'product', source: batchSource, status: 'committed' })
+          .returning();
+        await db.insert(schema.legacyRefs).values({
+          businessId,
+          entity: 'product',
+          legacyId: item.sku,
+          jetnineId: p!.id,
+          source: batchSource,
+          importBatchId: batch!.id,
+        });
+      }
       if (item.onHand) {
         await db.insert(schema.inventoryLevels).values({
           businessId,
@@ -216,6 +255,7 @@ beforeAll(async () => {
   app = moduleRef.createNestApplication({ bufferLogs: true, rawBody: true });
   await app.init();
   cookie = await captureCookie('cashier@filters-test.local');
+  managerCookie = await captureCookie('manager@filters-test.local');
 }, 180_000);
 
 afterAll(async () => {
@@ -305,13 +345,48 @@ describe('duplicate products', () => {
     const [group] = res.body.groups;
     expect(group.name).toBe('Queen Helix Twilight 11.5" Firm Hybrid Mattress');
     const bySku = new Map(group.products.map((p: { sku: string }) => [p.sku, p]));
-    expect(bySku.get('HX-Q-TWI')).toMatchObject({ onHand: 1, documents: 0, deletable: false });
+    expect(bySku.get('HX-Q-TWI')).toMatchObject({
+      onHand: 1,
+      documents: 0,
+      deletable: false,
+      source: 'storis',
+      imported: true,
+    });
     expect(bySku.get('HELIX-SLEEP-TWILIGHT-Q-3DA9')).toMatchObject({
       onHand: 0,
       documents: 0,
       deletable: true,
       priceCents: 100_000,
+      source: 'shopify',
+      imported: false,
     });
+  });
+
+  it('"keep imported" needs products.update and deactivates the non-import copy', async () => {
+    await request(app.getHttpServer())
+      .post('/v1/products/duplicates/keep-imported')
+      .set('Cookie', cookie)
+      .set('x-business-id', businessId)
+      .send({})
+      .expect(403);
+    const res = await request(app.getHttpServer())
+      .post('/v1/products/duplicates/keep-imported')
+      .set('Cookie', managerCookie)
+      .set('x-business-id', businessId)
+      .send({ names: ['Queen Helix Twilight 11.5" Firm Hybrid Mattress'] })
+      .expect(201);
+    expect(res.body.kept).toBe(1);
+    expect(res.body.deactivated.map((d: { sku: string }) => d.sku)).toEqual([
+      'HELIX-SLEEP-TWILIGHT-Q-3DA9',
+    ]);
+    // Running it again finds nothing left to do.
+    const again = await request(app.getHttpServer())
+      .post('/v1/products/duplicates/keep-imported')
+      .set('Cookie', managerCookie)
+      .set('x-business-id', businessId)
+      .send({})
+      .expect(201);
+    expect(again.body.deactivated).toEqual([]);
   });
 
   it('drops a group once one of the pair is deactivated', async () => {

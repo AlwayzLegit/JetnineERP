@@ -27,6 +27,12 @@ import { DRIZZLE } from '../database/database.module';
 import { RequirePermission, TenantScoped } from '../tenancy/decorators';
 import type { RequestTenantContext } from '../tenancy/request-context';
 
+/** Connector syncs write import batches under their provider name. */
+const CONNECTOR_SOURCES = new Set(['shopify', 'woocommerce', 'wix']);
+function isFileImport(source: string | null): boolean {
+  return source != null && !CONNECTOR_SOURCES.has(source.toLowerCase());
+}
+
 interface VariantInput {
   sku?: string | null;
   name?: string | null;
@@ -195,6 +201,10 @@ export class CatalogProductsController {
         documents: number;
         /** Nothing references it — the DELETE endpoint would accept it. */
         deletable: boolean;
+        /** Import batch source that created it ('storis', 'shopify', …); null when built in the app. */
+        source: string | null;
+        /** Came from a file import (STORIS / CSV) rather than a connector sync or the app. */
+        imported: boolean;
       }[];
     }[];
     productCount: number;
@@ -222,6 +232,9 @@ export class CatalogProductsController {
         key,
         priceCents: sql<number | null>`min(${schema.productVariants.priceCents})`,
         variants: sql<number>`count(DISTINCT ${schema.productVariants.id})::int`,
+        source: sql<
+          string | null
+        >`(SELECT coalesce(b.source, r.source) FROM legacy_refs r LEFT JOIN import_batches b ON b.id = r.import_batch_id WHERE r.entity = 'product' AND r.jetnine_id = ${schema.products.id} ORDER BY r.created_at ASC LIMIT 1)`,
         onHand: sql<number>`coalesce((SELECT sum(il.on_hand) FROM inventory_levels il JOIN product_variants pv ON pv.id = il.variant_id WHERE pv.product_id = ${schema.products.id}), 0)::int`,
         reserved: sql<number>`coalesce((SELECT sum(il.reserved) FROM inventory_levels il JOIN product_variants pv ON pv.id = il.variant_id WHERE pv.product_id = ${schema.products.id}), 0)::int`,
         documents: sql<number>`(
@@ -266,9 +279,70 @@ export class CatalogProductsController {
           reserved: r.reserved,
           documents: r.documents,
           deletable: r.onHand === 0 && r.reserved === 0 && r.documents === 0,
+          source: r.source,
+          imported: isFileImport(r.source),
         })),
       }));
     return { groups, productCount: groups.reduce((n, g) => n + g.products.length, 0) };
+  }
+
+  /**
+   * "Use the one from the import" (owner 2026-09-02): in every duplicate
+   * group that has a file-imported copy (STORIS / CSV), deactivate the
+   * copies that came from a connector sync or were built in the app.
+   * Deactivate, never delete — history stays and a wrong call is one
+   * toggle away from undone. Groups with no imported copy, or with only
+   * imported copies, are left alone and reported as skipped.
+   */
+  @Post('duplicates/keep-imported')
+  @RequirePermission('products.update')
+  async keepImported(
+    @CurrentTenant() tenant: RequestTenantContext,
+    @Body() body: { names?: string[] },
+  ): Promise<{
+    deactivated: { id: string; sku: string | null; name: string; source: string | null }[];
+    kept: number;
+    skippedGroups: number;
+  }> {
+    const { groups } = await this.duplicates(tenant);
+    const wanted = body?.names?.length
+      ? new Set(body.names.map((n) => n.trim().toLowerCase()))
+      : null;
+    const deactivated: { id: string; sku: string | null; name: string; source: string | null }[] =
+      [];
+    let kept = 0;
+    let skippedGroups = 0;
+    for (const g of groups) {
+      if (wanted && !wanted.has(g.name.trim().toLowerCase())) continue;
+      const keepers = g.products.filter((x) => x.imported);
+      const others = g.products.filter((x) => !x.imported);
+      if (keepers.length === 0 || others.length === 0) {
+        skippedGroups += 1;
+        continue;
+      }
+      kept += keepers.length;
+      for (const x of others) {
+        await this.db
+          .update(schema.products)
+          .set({ isActive: false, updatedAt: new Date() })
+          .where(
+            and(eq(schema.products.businessId, tenant.businessId!), eq(schema.products.id, x.id)),
+          );
+        await this.audit.log({
+          action: 'product.update',
+          targetType: 'product',
+          targetId: x.id,
+          before: { isActive: true },
+          after: {
+            isActive: false,
+            reason: 'duplicate — kept the imported copy',
+            keptSkus: keepers.map((k) => k.sku),
+          },
+        });
+        deactivated.push({ id: x.id, sku: x.sku, name: x.name, source: x.source });
+      }
+    }
+    return { deactivated, kept, skippedGroups };
   }
 
   @Get(':id')

@@ -4391,3 +4391,11 @@ now share one name after A7's shortening.
   Open / Deactivate (hides from selling, keeps history) / Delete (only
   when nothing references it — the existing guard).
 - Covered in `product-filters.int.spec.ts` (+2).
+- Owner decision: **use the one from the import.** Each duplicate row
+  now shows its source (import batch: `storis` / CSV vs a connector sync
+  `shopify` / `woocommerce` / `wix`, or built in the app), and
+  `POST /v1/products/duplicates/keep-imported` (`products.update`,
+  optional `names[]`) deactivates the non-import copies in every group
+  that has an imported one — deactivate only, audit-logged, groups with
+  no imported copy skipped. Page: "Keep imported copy" per group and
+  "Keep imported copies everywhere".
