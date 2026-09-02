@@ -225,6 +225,31 @@ these exact words (plus Awaiting Return Pickup). The raw lifecycle statuses
 The list filter filters BY display status (`display=` on `/v1/orders/list-view`);
 the detail endpoint returns `displayStatus` derived from the same ladder.
 
+**Amendment (2026-09-02, owner — order page overhaul):** the order detail page
+is organised around "what happens next":
+
+- A next-step banner under the header says the one thing to do now (collect the
+  deposit, wait on the PO, release the short line, schedule the truck, collect
+  the balance, complete) and links to the card that does it.
+- A sticky balance strip in the sidebar carries total / paid / balance due with a
+  Take payment jump; the Money card stays the place payments are recorded.
+- Lines carry a **Stock** column: fulfilled / reserved / partial / not reserved,
+  and for a line on a purchase order the PO # with its state — "on order · due
+  <date>" while the PO is out, "accepted, reserved" once receiving flipped the
+  allocation and reserved the line. Each reserved line has its own
+  **Release** (`POST /v1/orders/:id/lines/:lineId/release`) so one item can be
+  put back without releasing the whole order.
+- A split family (take-with pieces written as `<number>-A`, …) shows as a
+  **Split orders** card under Lines: each sibling with its number, type, status,
+  lines and balance, so the delivery order and the take-with piece are read
+  together. The detail endpoint returns each sibling's `lines`.
+- **Returns** and **Exchanges** are separate cards; the detail endpoint lists
+  `exchangeOrders` (orders whose `originalOrderId` is this order).
+- Cards that do not apply yet (Deliveries with nothing to ship, Returns before
+  delivery, Exchanges, Payment plan on a non-layaway order) collapse to one line
+  with the action that opens them; the page renders a skeleton while the order
+  and locations load in parallel.
+
 ## 9. Commissions
 
 - Splits default equal across the order's salespeople; editable at entry.

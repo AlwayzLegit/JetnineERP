@@ -4464,3 +4464,25 @@ Owner ask: the Owner needs a Delete button on Members.
   Owner. Both paths audit-logged; removed members leave the roster.
 - Members list and member page: Delete (danger) for holders of the
   permission, never on their own row. `business.int.spec.ts` +3.
+
+### Checkpoint — 2026-09-02 (order page overhaul)
+
+Owner ask after the UI/UX audit: per-line release of reserved stock; Returns
+and Exchanges as their own cards; a stock-status column; sticky balance
+summary; a next-step banner; collapse cards that do not apply; skeleton +
+parallel load; the split take-with order shown under Lines; and each line
+on a PO shows the PO # — "on order" until received, then "accepted,
+reserved".
+
+- `GET /v1/orders/:id` now returns `lines[].po` (`poNumber`, `poStatus`,
+  `ordered`, `received`, `expectedAt` from `po_line_allocations`),
+  `exchangeOrders`, and `family[].lines` + `fulfillmentType` +
+  `requestedDate` for split siblings. `order-detail-extras.int.spec.ts` (4).
+- Order page: `NextStepBanner`, `BalanceStrip` (sticky, jumps to Payments),
+  `StockCell` (badges + PO link + per-line Release), `SplitOrdersCard`
+  under Lines, `ReturnsCard` / `ExchangesCard` split, `CollapsedCard` for
+  Deliveries / Returns / Exchanges / Payment plan when they do not apply,
+  `OrderSkeleton` while loading; locations fetch runs beside the order
+  fetch. E2E `orders.spec.ts` (3) + sweep layaway pass unchanged.
+- Declined by owner: per-line edit popover (3), timeline (9), keyboard
+  shortcuts (10), customer history (11), print preview (12).

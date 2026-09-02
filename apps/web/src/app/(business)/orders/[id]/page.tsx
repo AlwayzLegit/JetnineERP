@@ -14,7 +14,7 @@ import {
   Field,
   Input,
   LinkButton,
-  LoadingRows,
+  Skeleton,
   Select,
   StatusBadge,
   DisplayStatusBadge,
@@ -45,6 +45,15 @@ interface OrderLine {
   discountCents: number;
   taxCents: number;
   totalCents: number;
+  /** The PO this line rides on, when sourced through purchasing (owner 2026-09-02). */
+  po: {
+    poId: string;
+    poNumber: string;
+    poStatus: string;
+    ordered: number;
+    received: number;
+    expectedAt: string | null;
+  } | null;
 }
 interface OrderPayment {
   id: string;
@@ -82,6 +91,22 @@ interface OrderDetail {
     status: string;
     totalCents: number;
     balanceDueCents: number;
+    fulfillmentType: string;
+    requestedDate: string | null;
+    lines: {
+      id: string;
+      description: string;
+      quantity: number;
+      fulfillmentMethod: string | null;
+    }[];
+  }[];
+  /** §10 exchanges written against this order. */
+  exchangeOrders: {
+    id: string;
+    number: string;
+    status: string;
+    totalCents: number;
+    createdAt: string;
   }[];
   orderKind: string;
   originalOrderId: string | null;
@@ -232,14 +257,20 @@ export default function OrderDetailPage() {
 
   async function load() {
     try {
-      const o = await api<OrderDetail>(`/v1/orders/${id}`);
-      setOrder(o);
-      void api<{ id: string; name: string; locationType?: string }[]>('/v1/business/locations')
+      // Owner 2026-09-02 (#8): the store list does not depend on the order,
+      // so it loads alongside it; everything keyed on the order fans out
+      // the moment it lands. The skeleton below holds the layout meanwhile.
+      const locationsReq = api<{ id: string; name: string; locationType?: string }[]>(
+        '/v1/business/locations',
+      )
         .then((locs) => {
           setLocations(locs);
           setLocationNames(new Map(locs.map((l) => [l.id, l.name])));
         })
         .catch(() => undefined);
+      const o = await api<OrderDetail>(`/v1/orders/${id}`);
+      setOrder(o);
+      void locationsReq;
       void api<CustomerRow>(`/v1/customers/${o.customerId}`)
         .then(setCustomer)
         .catch(() => setCustomer(null));
@@ -461,6 +492,27 @@ export default function OrderDetailPage() {
     }
   }
 
+  // Owner 2026-09-02 (#1): release ONE line's reservation, not the whole
+  // order's. Same endpoint the Inventory page's Reserved popup uses.
+  async function releaseLine(l: OrderLine) {
+    if (
+      !confirm(
+        `Release the ${l.qtyReserved} reserved unit${l.qtyReserved === 1 ? '' : 's'} of "${l.description}" back to the shelf? The line stays on the order, unreserved.`,
+      )
+    )
+      return;
+    setBusy(true);
+    try {
+      await api(`/v1/orders/${id}/lines/${l.id}/release`, { method: 'POST' });
+      toast.success(`Released — ${l.description} is no longer holding stock.`);
+      await load();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function removeLine(l: OrderLine) {
     if (
       !confirm(
@@ -513,7 +565,7 @@ export default function OrderDetailPage() {
       </div>
     );
   }
-  if (!order) return <LoadingRows rows={5} />;
+  if (!order) return <OrderSkeleton />;
 
   const live = !order.completedAt && !order.cancelledAt;
   const depositOutstanding = Math.max(0, order.depositRequiredCents - order.paidCents);
@@ -630,11 +682,12 @@ export default function OrderDetailPage() {
           </span>
         </span>
       </div>
-      <p style={{ fontSize: 13, color: 'var(--text-secondary)', margin: '0 0 16px' }}>
+      <p style={{ fontSize: 13, color: 'var(--text-secondary)', margin: '0 0 12px' }}>
         {order.fulfillmentType}
         {order.requestedDate ? ` · promised ${order.requestedDate}` : ''} · written{' '}
         {new Date(order.createdAt).toLocaleString()}
       </p>
+      <NextStepBanner order={order} deliveries={deliveries} />
 
       {order.onOpenRun && (
         <div
@@ -915,6 +968,7 @@ export default function OrderDetailPage() {
                     <th>Disc $</th>
                     <th>Fulfillment</th>
                     <th>Inventory from</th>
+                    <th>Stock</th>
                     <th className="num">Amount</th>
                     <th />
                   </tr>
@@ -942,11 +996,6 @@ export default function OrderDetailPage() {
                             />
                           )}
                           {l.description}
-                          {l.lineType !== 'custom' && (
-                            <div className="muted" style={{ fontSize: 11.5 }}>
-                              {l.qtyReserved} reserved · {l.qtyFulfilled} fulfilled
-                            </div>
-                          )}
                         </td>
                         <td>
                           {l.lineType === 'custom' ? (
@@ -1135,6 +1184,14 @@ export default function OrderDetailPage() {
                             ) ?? '—')
                           )}
                         </td>
+                        <td>
+                          <StockCell
+                            line={l}
+                            canRelease={Boolean(live && !order.lockedAt && !order.onOpenRun)}
+                            busy={busy}
+                            onRelease={() => void releaseLine(l)}
+                          />
+                        </td>
                         <td className="num">
                           <Money cents={l.totalCents} />
                         </td>
@@ -1159,9 +1216,10 @@ export default function OrderDetailPage() {
                         </td>
                       </tr>
                       {l.lineType === 'stock' &&
+                        !l.po &&
                         l.quantity - l.qtyFulfilled - l.qtyReserved > 0 && (
                           <tr>
-                            <td colSpan={9} style={{ paddingTop: 0 }}>
+                            <td colSpan={10} style={{ paddingTop: 0 }}>
                               <div
                                 style={{
                                   background: '#fef3c7',
@@ -1185,7 +1243,9 @@ export default function OrderDetailPage() {
             </div>
           </Card>
 
-          <Card title="Payments" style={{ marginBottom: 16 }}>
+          {(order.family ?? []).length > 0 && <SplitOrdersCard order={order} />}
+
+          <Card title="Payments" style={{ marginBottom: 16 }} id="payments-card">
             {order.payments.length === 0 ? (
               <p className="muted" style={{ fontSize: 13, margin: 0 }}>
                 No money taken yet.
@@ -1309,6 +1369,7 @@ export default function OrderDetailPage() {
           {live && (
             <PaymentPlanCard
               orderId={order.id}
+              orderKind={order.orderKind}
               balanceDueCents={order.balanceDueCents}
               onChanged={load}
             />
@@ -1331,6 +1392,22 @@ export default function OrderDetailPage() {
               (n, l) => n + (l.quantity - l.qtyFulfilled),
               0,
             );
+            const truckLines = order.lines.filter(
+              (l) =>
+                l.lineType !== 'custom' &&
+                l.lineType !== 'direct_ship' &&
+                effective(l) === 'delivery',
+            );
+            // Owner 2026-09-02 (#7): a pure take-with order never rides the
+            // truck — one line instead of an empty card.
+            if (truckLines.length === 0 && counterLines.length === 0 && deliveries.length === 0) {
+              return (
+                <CollapsedCard title="Deliveries & fulfillment" testid="deliveries-collapsed">
+                  Nothing rides the truck on this order — take-with items hand over from Complete
+                  take-with on the right.
+                </CollapsedCard>
+              );
+            }
             return (
               <Card title="Deliveries & fulfillment" style={{ marginBottom: 16 }}>
                 {deliveries.length === 0 ? (
@@ -1496,6 +1573,7 @@ export default function OrderDetailPage() {
           })()}
 
           <ReturnsCard order={order} busy={busy} onChanged={load} />
+          <ExchangesCard order={order} />
 
           <OrderNotesCard orderId={order.id} />
 
@@ -1542,6 +1620,7 @@ export default function OrderDetailPage() {
         </div>
 
         <div className="min-w-0">
+          <BalanceStrip order={order} />
           <Card title="Customer" style={{ marginBottom: 16 }}>
             {customer ? (
               <p style={{ fontSize: 13, margin: 0 }}>
@@ -1811,12 +1890,14 @@ interface PlanDetail {
 /** Layaway / in-house plan (G4): create it here, take installments here. */
 function PaymentPlanCard(props: {
   orderId: string;
+  orderKind: string;
   balanceDueCents: number;
   onChanged: () => Promise<void> | void;
 }) {
   const [plan, setPlan] = useState<PlanDetail | null | undefined>(undefined);
   const [count, setCount] = useState('3');
   const [frequency, setFrequency] = useState('monthly');
+  const [expanded, setExpanded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -1872,6 +1953,39 @@ function PaymentPlanCard(props: {
   }
 
   if (plan === undefined) return null;
+
+  // Owner 2026-09-02 (#7): a regular order shows one line, not a plan
+  // form — the button still starts a plan (3 monthly) in one click.
+  if (plan === null && props.orderKind !== 'layaway' && !expanded) {
+    return (
+      <CollapsedCard
+        title="Payment plan"
+        testid="payment-plan-card"
+        actions={
+          props.balanceDueCents > 0 ? (
+            <span style={{ display: 'inline-flex', gap: 6 }}>
+              <Button size="sm" variant="ghost" onClick={() => setExpanded(true)}>
+                Options…
+              </Button>
+              <Button
+                size="sm"
+                variant="secondary"
+                disabled={busy}
+                onClick={() => void createPlan()}
+                data-testid="create-plan"
+              >
+                Start layaway plan
+              </Button>
+            </span>
+          ) : undefined
+        }
+      >
+        {props.balanceDueCents > 0
+          ? 'None — split the balance into installments if the customer wants one.'
+          : 'None.'}
+      </CollapsedCard>
+    );
+  }
 
   return (
     <Card title="Payment plan" style={{ marginBottom: 16 }} data-testid="payment-plan-card">
@@ -2053,7 +2167,15 @@ function ReturnsCard({
   const [windowOverrideOpen, setWindowOverrideOpen] = useState(false);
 
   const returnable = order.lines.filter((l) => l.qtyFulfilled - l.qtyReturned > 0);
-  if (returnable.length === 0 && !order.originalOrderId && order.paidCents === 0) return null;
+  // Owner 2026-09-02 (#7): before anything is delivered there is nothing
+  // to return — one line, not an empty form.
+  if (returnable.length === 0 && returns.length === 0 && order.paidCents === 0) {
+    return (
+      <CollapsedCard title="Returns" testid="returns-collapsed">
+        Nothing delivered yet — returns start once goods are out.
+      </CollapsedCard>
+    );
+  }
 
   function buildReturnBody() {
     return {
@@ -2145,7 +2267,7 @@ function ReturnsCard({
   }
 
   return (
-    <Card title="Returns & exchange" style={{ marginBottom: 16 }}>
+    <Card title="Returns" style={{ marginBottom: 16 }} data-testid="returns-card">
       {returns.length > 0 && (
         <table className="table" style={{ marginBottom: 12 }} data-testid="returns-table">
           <thead>
@@ -2235,18 +2357,6 @@ function ReturnsCard({
           void loadReturns();
         }}
       />
-      {order.originalOrderId && (
-        <p style={{ fontSize: 13, marginTop: 0 }}>
-          This is an <strong>Exchange Order</strong> —{' '}
-          <Link href={`/orders/${order.originalOrderId}`}>view the original invoice</Link>.
-          {(order.creditDueCents ?? 0) > 0 && (
-            <>
-              {' '}
-              Credit due to customer: <Money cents={order.creditDueCents!} />.
-            </>
-          )}
-        </p>
-      )}
       {returnable.length > 0 && (
         <>
           <table className="table" style={{ marginBottom: 8 }}>
@@ -2364,21 +2474,470 @@ function ReturnsCard({
         >
           Price adjustment
         </Button>
-        {!order.originalOrderId && (
+      </div>
+      <p className="muted" style={{ fontSize: 11.5, margin: '8px 0 0' }}>
+        Returned goods go to the As-Is queue for manager/warehouse review — never straight back to
+        sellable stock.
+      </p>
+    </Card>
+  );
+}
+
+/**
+ * Exchanges get their own card (owner 2026-09-02, #2): the exchange
+ * orders written against this invoice, the original invoice when this
+ * order is itself an exchange, and the door to write a new one.
+ */
+function ExchangesCard({
+  order,
+}: {
+  order: {
+    id: string;
+    originalOrderId: string | null;
+    creditDueCents: number;
+    exchangeOrders: OrderDetail['exchangeOrders'];
+    lines: { qtyFulfilled: number }[];
+  };
+}) {
+  const delivered = order.lines.some((l) => l.qtyFulfilled > 0);
+  const exchanges = order.exchangeOrders ?? [];
+  if (!order.originalOrderId && exchanges.length === 0 && !delivered) {
+    return (
+      <CollapsedCard title="Exchanges" testid="exchanges-collapsed">
+        None — an exchange can be written once goods are delivered.
+      </CollapsedCard>
+    );
+  }
+  return (
+    <Card
+      title="Exchanges"
+      style={{ marginBottom: 16 }}
+      data-testid="exchanges-card"
+      actions={
+        !order.originalOrderId && delivered ? (
           <LinkButton
             href={`/exchanges/new?originalOrderId=${order.id}`}
             variant="secondary"
+            size="sm"
             data-testid="write-exchange"
           >
             Write exchange
           </LinkButton>
-        )}
-      </div>
+        ) : undefined
+      }
+    >
+      {order.originalOrderId && (
+        <p style={{ fontSize: 13, margin: '0 0 8px' }}>
+          This is an <strong>Exchange Order</strong> —{' '}
+          <Link href={`/orders/${order.originalOrderId}`}>view the original invoice</Link>.
+          {order.creditDueCents > 0 && (
+            <>
+              {' '}
+              Credit due to customer: <Money cents={order.creditDueCents} />.
+            </>
+          )}
+        </p>
+      )}
+      {exchanges.length === 0 ? (
+        !order.originalOrderId && (
+          <p className="muted" style={{ fontSize: 13, margin: 0 }}>
+            No exchange written against this invoice.
+          </p>
+        )
+      ) : (
+        <table className="table" data-testid="exchanges-table">
+          <thead>
+            <tr>
+              <th>Exchange order</th>
+              <th>Status</th>
+              <th>Written</th>
+              <th className="num">Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            {exchanges.map((x) => (
+              <tr key={x.id}>
+                <td>
+                  <Link href={`/orders/${x.id}`}>
+                    <strong>{x.number}</strong>
+                  </Link>
+                </td>
+                <td>
+                  <StatusBadge status={x.status} />
+                </td>
+                <td style={{ fontSize: 13 }}>{new Date(x.createdAt).toLocaleDateString()}</td>
+                <td className="num">
+                  <Money cents={x.totalCents} />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
       <p className="muted" style={{ fontSize: 11.5, margin: '8px 0 0' }}>
-        Returned goods go to the As-Is queue for manager/warehouse review — never straight back to
-        sellable stock. Exchanges net the return credit against the replacement in one settlement
-        (restocking fee per Settings).
+        An exchange nets the return credit against the replacement in one settlement (restocking fee
+        per Settings).
       </p>
     </Card>
+  );
+}
+
+/** A card that does not apply right now, kept to one line (owner 2026-09-02, #7). */
+function CollapsedCard({
+  title,
+  testid,
+  children,
+  actions,
+}: {
+  title: string;
+  testid: string;
+  children: React.ReactNode;
+  actions?: React.ReactNode;
+}) {
+  return (
+    <div
+      className="card"
+      data-testid={testid}
+      style={{
+        marginBottom: 16,
+        padding: '8px 14px',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 10,
+        flexWrap: 'wrap',
+      }}
+    >
+      <span style={{ fontWeight: 600, fontSize: 13 }}>{title}</span>
+      <span className="muted" style={{ fontSize: 12.5, flex: 1 }}>
+        {children}
+      </span>
+      {actions}
+    </div>
+  );
+}
+
+/**
+ * Stock state per line (owner 2026-09-02, #4 + PO ask): one badge that
+ * says fulfilled / reserved / partial / not reserved, the PO the line is
+ * waiting on and whether receiving has accepted it, and a per-line
+ * Release for what is held.
+ */
+function StockCell({
+  line: l,
+  canRelease,
+  busy,
+  onRelease,
+}: {
+  line: OrderLine;
+  canRelease: boolean;
+  busy: boolean;
+  onRelease: () => void;
+}) {
+  if (l.lineType === 'custom') {
+    return (
+      <span className="muted" style={{ fontSize: 12 }}>
+        —
+      </span>
+    );
+  }
+  const open = l.quantity - l.qtyFulfilled;
+  const state =
+    l.lineType === 'direct_ship'
+      ? { label: 'vendor ships', cls: 'badge-neutral' }
+      : open <= 0
+        ? { label: 'fulfilled', cls: 'badge-success' }
+        : l.qtyReserved >= open
+          ? { label: 'reserved', cls: 'badge-success' }
+          : l.qtyReserved > 0
+            ? { label: `${l.qtyReserved}/${open} reserved`, cls: 'badge-warning' }
+            : { label: 'not reserved', cls: 'badge-danger' };
+  return (
+    <div style={{ fontSize: 12, display: 'grid', gap: 2 }} data-testid="order-line-stock">
+      <span>
+        <span className={`badge ${state.cls}`}>{state.label}</span>
+        {l.qtyFulfilled > 0 && open > 0 && (
+          <span className="muted"> · {l.qtyFulfilled} fulfilled</span>
+        )}
+      </span>
+      {l.po && (
+        <span data-testid="order-line-po" style={{ whiteSpace: 'nowrap' }}>
+          <Link href={`/purchase-orders/${l.po.poId}`}>{l.po.poNumber}</Link>
+          <span className="muted">
+            {' · '}
+            {l.po.received > 0 && l.qtyReserved > 0
+              ? l.po.ordered > 0
+                ? `${l.po.received} accepted, reserved · ${l.po.ordered} still on order`
+                : 'accepted, reserved'
+              : l.po.expectedAt
+                ? `on order · due ${new Date(l.po.expectedAt).toLocaleDateString()}`
+                : 'on order'}
+          </span>
+        </span>
+      )}
+      {canRelease && l.qtyReserved > 0 && (
+        <button
+          type="button"
+          onClick={onRelease}
+          disabled={busy}
+          style={{
+            border: 'none',
+            background: 'none',
+            cursor: 'pointer',
+            color: 'var(--text-secondary)',
+            fontSize: 11.5,
+            padding: 0,
+            textAlign: 'left',
+            textDecoration: 'underline',
+          }}
+          data-testid="order-line-release"
+        >
+          Release {l.qtyReserved} reserved
+        </button>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Split family (owner 2026-09-02, #8): when a take-with item split off
+ * its own order, show every piece with what it carries, right under the
+ * lines it came from.
+ */
+function SplitOrdersCard({ order }: { order: OrderDetail }) {
+  return (
+    <Card
+      title="Split orders"
+      style={{ marginBottom: 16, padding: 0 }}
+      data-testid="split-orders-card"
+    >
+      <table className="table">
+        <thead>
+          <tr>
+            <th>Order</th>
+            <th>Fulfillment</th>
+            <th>Items</th>
+            <th>Status</th>
+            <th className="num">Balance due</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr style={{ background: 'var(--surface-muted, transparent)' }}>
+            <td>
+              <strong>{order.number}</strong>
+              <span className="muted" style={{ fontSize: 11, display: 'block' }}>
+                this order
+              </span>
+            </td>
+            <td style={{ fontSize: 13 }}>
+              {order.fulfillmentType.replace(/_/g, ' ')}
+              {order.requestedDate ? ` · ${order.requestedDate}` : ''}
+            </td>
+            <td style={{ fontSize: 12.5 }}>
+              {order.lines
+                .filter((l) => l.lineType !== 'custom')
+                .map((l) => `${l.quantity} × ${l.description}`)
+                .join(', ')}
+            </td>
+            <td>
+              <StatusBadge status={order.status} />
+            </td>
+            <td className="num">
+              <Money cents={order.balanceDueCents} />
+            </td>
+          </tr>
+          {order.family.map((f) => (
+            <tr key={f.id}>
+              <td>
+                <Link href={`/orders/${f.id}`}>
+                  <strong>{f.number}</strong>
+                </Link>
+              </td>
+              <td style={{ fontSize: 13 }}>
+                {f.fulfillmentType.replace(/_/g, ' ')}
+                {f.requestedDate ? ` · ${f.requestedDate}` : ''}
+              </td>
+              <td style={{ fontSize: 12.5 }}>
+                {f.lines.map((l) => `${l.quantity} × ${l.description}`).join(', ') || '—'}
+              </td>
+              <td>
+                <StatusBadge status={f.status} />
+              </td>
+              <td className="num">
+                <Money cents={f.balanceDueCents} />
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </Card>
+  );
+}
+
+/**
+ * Next step (owner 2026-09-02, #6): one line computed from state, so the
+ * page reads as a checklist instead of a search.
+ */
+function NextStepBanner({ order, deliveries }: { order: OrderDetail; deliveries: DeliveryRow[] }) {
+  if (order.completedAt || order.cancelledAt) return null;
+  const effective = (l: OrderLine) => l.fulfillmentMethod ?? order.fulfillmentType;
+  const steps: { text: string; tone: 'danger' | 'warning' | 'success' | 'info' }[] = [];
+  if (order.status === 'draft')
+    steps.push({ text: 'Confirm the order to make it a live sale.', tone: 'info' });
+  else if (order.status === 'quote')
+    steps.push({ text: 'Confirm the order to commit stock.', tone: 'info' });
+  const stockLines = order.lines.filter((l) => l.lineType === 'stock');
+  const notReserved = stockLines.filter(
+    (l) => !l.po && l.quantity - l.qtyFulfilled - l.qtyReserved > 0,
+  );
+  if (notReserved.length > 0)
+    steps.push({
+      text: `${notReserved.length} line${notReserved.length === 1 ? '' : 's'} not reserved — not in stock at the source.`,
+      tone: 'danger',
+    });
+  const onPo = order.lines.filter((l) => l.po && l.po.ordered > 0);
+  if (onPo.length > 0)
+    steps.push({
+      text: `Waiting on ${[...new Set(onPo.map((l) => l.po!.poNumber))].join(', ')} for ${onPo.length} line${onPo.length === 1 ? '' : 's'}.`,
+      tone: 'warning',
+    });
+  const truckLines = order.lines.filter(
+    (l) =>
+      l.lineType !== 'custom' &&
+      l.lineType !== 'direct_ship' &&
+      effective(l) === 'delivery' &&
+      l.quantity - l.qtyFulfilled > 0,
+  );
+  const scheduled = deliveries.some(
+    (d) => !['cancelled', 'delivered', 'failed'].includes(d.status),
+  );
+  if (['open', 'partially_fulfilled'].includes(order.status) && truckLines.length > 0 && !scheduled)
+    steps.push({ text: 'Schedule the delivery.', tone: 'warning' });
+  if (
+    order.balanceDueCents > 0 &&
+    ['open', 'partially_fulfilled'].includes(order.status) &&
+    (scheduled || truckLines.length === 0)
+  )
+    steps.push({
+      text: `Collect the balance due before ${truckLines.length > 0 ? 'delivery' : 'hand-over'}.`,
+      tone: 'warning',
+    });
+  if (order.status === 'fulfilled')
+    steps.push(
+      order.balanceDueCents > 0
+        ? { text: 'Delivered — collect the balance, then complete the order.', tone: 'warning' }
+        : { text: 'Delivered and paid — ready to complete.', tone: 'success' },
+    );
+  if (steps.length === 0 && ['open', 'partially_fulfilled'].includes(order.status))
+    steps.push({
+      text: 'Stock reserved, delivery on the books, money in — nothing waiting on you.',
+      tone: 'success',
+    });
+  if (steps.length === 0) return null;
+  const palette = {
+    danger: { bg: '#fee2e2', fg: '#991b1b' },
+    warning: { bg: '#fef3c7', fg: '#92400e' },
+    success: { bg: '#dcfce7', fg: '#166534' },
+    info: { bg: '#dbeafe', fg: '#1e40af' },
+  }[steps[0]!.tone];
+  return (
+    <div
+      data-testid="next-step"
+      style={{
+        background: palette.bg,
+        color: palette.fg,
+        borderRadius: 8,
+        padding: '8px 12px',
+        marginBottom: 14,
+        fontSize: 13,
+        display: 'flex',
+        gap: 10,
+        flexWrap: 'wrap',
+        alignItems: 'center',
+      }}
+    >
+      <strong>Next:</strong>
+      <span>{steps[0]!.text}</span>
+      {steps.slice(1, 3).map((st) => (
+        <span key={st.text} style={{ opacity: 0.85 }}>
+          · {st.text}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+/** Sticky money strip for the sidebar (owner 2026-09-02, #5). */
+function BalanceStrip({ order }: { order: OrderDetail }) {
+  const owing = order.balanceDueCents > 0;
+  return (
+    <div
+      data-testid="balance-strip"
+      className="card"
+      style={{
+        position: 'sticky',
+        top: 12,
+        zIndex: 5,
+        marginBottom: 16,
+        padding: '10px 14px',
+        borderLeft: `4px solid ${owing ? 'var(--danger)' : 'var(--success)'}`,
+      }}
+    >
+      <div style={{ display: 'flex', gap: 14, alignItems: 'baseline', flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600 }}>
+          Total <Money cents={order.totalCents} />
+        </span>
+        <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600 }}>
+          Paid <Money cents={order.paidCents} />
+        </span>
+        <span
+          style={{
+            marginLeft: 'auto',
+            fontSize: 16,
+            fontWeight: 700,
+            color: owing ? 'var(--danger)' : 'var(--success)',
+          }}
+        >
+          {owing ? 'Due ' : 'Paid in full '}
+          {owing && <Money cents={order.balanceDueCents} />}
+        </span>
+      </div>
+      {owing && !order.completedAt && !order.cancelledAt && (
+        <button
+          type="button"
+          className="btn btn-primary btn-sm"
+          style={{ marginTop: 8, width: '100%' }}
+          data-testid="balance-strip-pay"
+          onClick={() =>
+            document
+              .getElementById('payments-card')
+              ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+          }
+        >
+          Take payment
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** Page skeleton that holds the two-column layout while the order loads (#8). */
+function OrderSkeleton() {
+  return (
+    <div data-testid="order-skeleton">
+      <Skeleton style={{ height: 28, width: 260, marginBottom: 8 }} />
+      <Skeleton style={{ height: 14, width: 340, marginBottom: 16 }} />
+      <div className="grid gap-4 lg:grid-cols-[2fr_1fr]">
+        <div className="min-w-0">
+          <Skeleton style={{ height: 220, marginBottom: 16 }} />
+          <Skeleton style={{ height: 140, marginBottom: 16 }} />
+          <Skeleton style={{ height: 120 }} />
+        </div>
+        <div className="min-w-0">
+          <Skeleton style={{ height: 70, marginBottom: 16 }} />
+          <Skeleton style={{ height: 110, marginBottom: 16 }} />
+          <Skeleton style={{ height: 180 }} />
+        </div>
+      </div>
+    </div>
   );
 }
