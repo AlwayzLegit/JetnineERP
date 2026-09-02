@@ -10,7 +10,7 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
-import { and, desc, eq, ilike, inArray, or, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, ilike, inArray, lt, or, sql } from 'drizzle-orm';
 import { assertSellingScope, salesScopeCond } from '../common/sales-scope';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { schema } from '@jetnine/db';
@@ -38,6 +38,7 @@ import { WebhookDispatcher } from '../webhooks/webhook-dispatcher.service';
 import { computeTotals, reconstructOrderDiscountShares, refundUnitCents } from './totals';
 import { PriceVarianceService } from '../controls/price-variance.service';
 import type { OverrideCredentials } from '../controls/security-override.service';
+import { parseDayRange, utcBounds } from '../common/date-range';
 
 interface LookupRow {
   variantId: string;
@@ -507,13 +508,19 @@ export class SalesController {
     @Query('limit') limitStr?: string,
     @Query('cursor') cursorStr?: string,
     @Query('associateUserId') associateUserId?: string,
+    @Query('start') startQ?: string,
+    @Query('end') endQ?: string,
   ): Promise<PageResponse<SaleListRow>> {
     const limit = clampPageLimit(limitStr);
     const cursor = decodeCursor(cursorStr);
+    const window = parseDayRange(startQ, endQ);
+    const bounds = window ? utcBounds(window) : null;
     const filters: (ReturnType<typeof and> | undefined)[] = [
       cursor ? timestampCursorWhere(schema.sales.createdAt, schema.sales.id, cursor) : undefined,
       salesScopeCond(tenant, schema.sales.locationId),
       associateUserId ? eq(schema.sales.associateUserId, associateUserId) : undefined,
+      bounds ? gte(schema.sales.createdAt, bounds.from) : undefined,
+      bounds ? lt(schema.sales.createdAt, bounds.toExclusive) : undefined,
     ];
     const query = q?.trim();
     if (query) {

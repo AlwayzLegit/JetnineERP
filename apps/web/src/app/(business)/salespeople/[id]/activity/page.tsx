@@ -4,8 +4,10 @@ import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { api } from '@/lib/api';
+import { localToday, type DateRange } from '@/lib/date-range';
 import { Money } from '@/components/money';
-import { Button, Card, EmptyState, Input, Skeleton } from '@/components/ui';
+import { Card, EmptyState, Skeleton } from '@/components/ui';
+import { DateRangePicker, useUrlDateRange } from '@/components/date-range-picker';
 
 /**
  * View Salesperson Activity (owner 2026-09-02, STORIS-style): one member,
@@ -94,20 +96,16 @@ function fmtDate(d: string | null | undefined): string {
   return m && day && y ? `${m}/${day}/${y}` : d;
 }
 
-function localToday(): string {
-  const d = new Date();
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-}
-
 export default function SalespersonActivityPage() {
   const params = useParams<{ id: string }>();
   const id = (params?.id ?? '') as string;
   const [data, setData] = useState<Activity | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<TabKey>('general');
-  const [from, setFrom] = useState('');
-  const [to, setTo] = useState('');
+  // Completed / Canceled window, carried in the URL as `window.range` /
+  // `window.start` / `window.end`. Named `windowRange` (not `window`) so
+  // the global stays reachable below.
+  const [windowRange, setWindowRange, windowReady] = useUrlDateRange('last30', { key: 'window' });
 
   useEffect(() => {
     const initial = new URLSearchParams(window.location.search).get('tab');
@@ -115,26 +113,43 @@ export default function SalespersonActivityPage() {
   }, []);
 
   const load = useCallback(
-    async (range?: { from: string; to: string }) => {
-      if (!id) return;
+    async (range?: { from: string; to: string }): Promise<Activity | null> => {
+      if (!id) return null;
       const qs = new URLSearchParams({ today: localToday() });
       if (range?.from) qs.set('from', range.from);
       if (range?.to) qs.set('to', range.to);
       try {
         const d = await api<Activity>(`/v1/salespeople/${id}/activity?${qs.toString()}`);
         setData(d);
-        setFrom(d.range.from);
-        setTo(d.range.to);
+        return d;
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
+        return null;
       }
     },
     [id],
   );
 
+  // First load: if the URL names a window, use it; otherwise let the API
+  // pick its own default (first of last month → end of this month) and seed
+  // the picker from the response so the button reads what the tables show.
   useEffect(() => {
-    void load();
-  }, [load]);
+    if (!windowReady) return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.has('window.range') || params.has('window.start')) {
+      void load({ from: windowRange.start, to: windowRange.end });
+    } else {
+      void load().then((d) => {
+        if (d) setWindowRange({ preset: 'custom', start: d.range.from, end: d.range.to });
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- run once the URL has been read
+  }, [windowReady, load]);
+
+  function pickWindow(next: DateRange) {
+    setWindowRange(next);
+    void load({ from: next.start, to: next.end });
+  }
 
   function pick(next: TabKey) {
     setTab(next);
@@ -155,30 +170,8 @@ export default function SalespersonActivityPage() {
   }
   const s = data.salesperson;
   const rangeBar = (
-    <div
-      style={{ display: 'flex', gap: 12, alignItems: 'end', flexWrap: 'wrap', marginBottom: 12 }}
-    >
-      <label style={{ display: 'grid', gap: 4 }}>
-        <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Start date</span>
-        <Input
-          type="date"
-          value={from}
-          onChange={(e) => setFrom(e.target.value)}
-          data-testid="sp-from"
-        />
-      </label>
-      <label style={{ display: 'grid', gap: 4 }}>
-        <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>End date</span>
-        <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} data-testid="sp-to" />
-      </label>
-      <Button
-        variant="secondary"
-        size="sm"
-        onClick={() => void load({ from, to })}
-        data-testid="sp-apply"
-      >
-        Apply
-      </Button>
+    <div style={{ display: 'flex', flexWrap: 'wrap', marginBottom: 12 }}>
+      <DateRangePicker value={windowRange} onChange={pickWindow} align="left" testid="sp-range" />
     </div>
   );
 

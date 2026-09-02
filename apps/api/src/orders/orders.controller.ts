@@ -14,7 +14,7 @@ import {
   Query,
 } from '@nestjs/common';
 import { randomBytes } from 'node:crypto';
-import { and, desc, eq, inArray, isNull, lt, or, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, isNull, lt, or, sql } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { schema } from '@jetnine/db';
 import { AuditService } from '../audit/audit.service';
@@ -57,6 +57,7 @@ import {
   type OrderStatus,
 } from './order-math';
 import { OrdersService } from './orders.service';
+import { parseDayRange, utcBounds } from '../common/date-range';
 
 /**
  * Fallback deposit policy: a quarter down, per the plan's example. Made a
@@ -500,12 +501,22 @@ export class OrdersController {
     @Query('salespersonMembershipId') salespersonMembershipId?: string,
     @Query('mine') mine?: string,
     @Query('locationId') locationIdFilter?: string,
+    @Query('start') startQ?: string,
+    @Query('end') endQ?: string,
   ): Promise<PageResponse<OrderListRow>> {
     const limit = clampLimit(limitStr);
     const cursor = decodeCursor(cursorStr);
     const filters = [];
     const scope = salesScopeCond(tenant, schema.orders.locationId);
     if (scope) filters.push(scope);
+    const window = parseDayRange(startQ, endQ);
+    if (window) {
+      const b = utcBounds(window);
+      filters.push(
+        gte(schema.orders.createdAt, b.from),
+        lt(schema.orders.createdAt, b.toExclusive),
+      );
+    }
     if (status) filters.push(eq(schema.orders.status, status));
     if (customerId) filters.push(eq(schema.orders.customerId, customerId));
     // Exact document-number recall (the exchange writer's original-order
@@ -582,6 +593,8 @@ export class OrdersController {
     @Query('sort') sort?: string,
     @Query('dir') dir?: string,
     @Query('display') display?: string,
+    @Query('start') startQ?: string,
+    @Query('end') endQ?: string,
   ): Promise<
     PageResponse<{
       id: string;
@@ -625,6 +638,14 @@ export class OrdersController {
     const cursor = sortExpr ? null : decodeCursor(cursorStr);
     const filters = [];
     if (status) filters.push(eq(schema.orders.status, status));
+    const window = parseDayRange(startQ, endQ);
+    if (window) {
+      const b = utcBounds(window);
+      filters.push(
+        gte(schema.orders.createdAt, b.from),
+        lt(schema.orders.createdAt, b.toExclusive),
+      );
+    }
     // P-013 (BA-0017): filter by the DISPLAY vocabulary — the same words
     // the badges show. The 1:1 states narrow in SQL; derived states
     // narrow to their possible lifecycle statuses and post-filter on the

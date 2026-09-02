@@ -8,7 +8,7 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
-import { and, inArray, eq, gte, isNull, sql } from 'drizzle-orm';
+import { and, inArray, eq, gte, isNull, lt, sql } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
@@ -26,6 +26,7 @@ import {
 import { DRIZZLE } from '../database/database.module';
 import { RequirePermission, TenantScoped } from '../tenancy/decorators';
 import type { RequestTenantContext } from '../tenancy/request-context';
+import { parseDayRange, utcBounds } from '../common/date-range';
 
 interface ExceptionRow {
   id: string;
@@ -176,9 +177,16 @@ export class ExceptionsController {
   async digest(
     @CurrentTenant() tenant: RequestTenantContext,
     @Query('days') daysStr?: string,
+    @Query('start') startQ?: string,
+    @Query('end') endQ?: string,
   ): Promise<DigestRow[]> {
+    // `start`/`end` (picker window) win over the legacy trailing `days`.
+    const window = parseDayRange(startQ, endQ);
     const days = Math.min(90, Math.max(1, Number(daysStr) || 7));
-    const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+    const since = window
+      ? utcBounds(window).from
+      : new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+    const until = window ? utcBounds(window).toExclusive : null;
     const rows = await this.db
       .select({
         actorUserId: schema.exceptionEvents.actorUserId,
@@ -192,6 +200,7 @@ export class ExceptionsController {
         and(
           eq(schema.exceptionEvents.businessId, tenant.businessId!),
           gte(schema.exceptionEvents.createdAt, since),
+          until ? lt(schema.exceptionEvents.createdAt, until) : undefined,
         ),
       )
       .groupBy(schema.exceptionEvents.actorUserId, schema.users.email, schema.exceptionEvents.type);

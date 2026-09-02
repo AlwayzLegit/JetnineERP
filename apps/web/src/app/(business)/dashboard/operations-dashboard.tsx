@@ -1,10 +1,12 @@
 'use client';
 
 import Link from 'next/link';
-import { Fragment, useCallback, useEffect, useState } from 'react';
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import { Button, Card, EmptyState, LinkButton, LoadingRows } from '@/components/ui';
+import { DateRangePicker, useUrlDateRange } from '@/components/date-range-picker';
 import { Money } from '@/components/money';
 import { api } from '@/lib/api';
+import { formatRange, presetLabel, type DateRange } from '@/lib/date-range';
 
 /**
  * The Operations home (owner 2026-08-31).
@@ -71,6 +73,8 @@ interface StoreRow {
 
 interface Summary {
   date: string;
+  /** The window the money block and byStore were scoped to (echoed by the API). */
+  range: { start: string; end: string };
   stores: { id: string; name: string; timezone: string }[];
   money: {
     inCents: number;
@@ -135,6 +139,13 @@ function subjectKey(r: { subjectType: string; subjectId: string }): string {
   return `${r.subjectType}:${r.subjectId}`;
 }
 
+/** "today" / "last 7 days" / "Aug 4 – Sep 2, 2026" — for use inside a heading. */
+function windowLabel(range: DateRange): string {
+  if (range.preset === 'today') return 'today';
+  const label = presetLabel(range.preset);
+  return label === 'Custom' ? formatRange(range) : label.toLowerCase();
+}
+
 function ago(iso: string): string {
   const mins = Math.floor((Date.now() - new Date(iso).getTime()) / 60_000);
   if (mins < 1) return 'just now';
@@ -157,6 +168,12 @@ export default function OperationsDashboardView({ userName }: { userName: string
   const [salespeople, setSalespeople] = useState<SalespersonRow[] | null>(null);
   const [digest, setDigest] = useState<DigestRow[] | null>(null);
   const [activity, setActivity] = useState<ActivityGroup[] | null>(null);
+  // Page window (owner 2026-09-02): scopes the money block and "By store";
+  // the salesperson card carries its own window. Both live in the URL.
+  const [range, setRange, rangeReady] = useUrlDateRange('today');
+  const [spRange, setSpRange, spReady] = useUrlDateRange('last30', { key: 'salespeople' });
+  const summarySeq = useRef(0);
+  const spSeq = useRef(0);
 
   const loadFeed = useCallback(async () => {
     try {
@@ -172,14 +189,41 @@ export default function OperationsDashboardView({ userName }: { userName: string
     }
   }, []);
 
+  // Summary follows the page window; a sequence counter drops a stale
+  // response that resolves after a newer window's.
   useEffect(() => {
-    void api<Summary>('/v1/dashboard/operations')
-      .then(setSummary)
-      .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)));
+    if (!rangeReady) return;
+    const seq = ++summarySeq.current;
+    void api<Summary>(`/v1/dashboard/operations?start=${range.start}&end=${range.end}`)
+      .then((s) => {
+        if (summarySeq.current !== seq) return;
+        setSummary(s);
+      })
+      .catch((err: unknown) => {
+        if (summarySeq.current !== seq) return;
+        setError(err instanceof Error ? err.message : String(err));
+      });
+  }, [rangeReady, range.start, range.end]);
+
+  useEffect(() => {
+    if (!spReady) return;
+    const seq = ++spSeq.current;
+    setSalespeople(null);
+    void api<SalespersonRow[]>(
+      `/v1/dashboard/operations/salespeople?start=${spRange.start}&end=${spRange.end}`,
+    )
+      .then((rows) => {
+        if (spSeq.current !== seq) return;
+        setSalespeople(rows);
+      })
+      .catch(() => {
+        if (spSeq.current !== seq) return;
+        setSalespeople(null);
+      });
+  }, [spReady, spRange.start, spRange.end]);
+
+  useEffect(() => {
     void loadFeed();
-    void api<SalespersonRow[]>('/v1/dashboard/operations/salespeople?days=30')
-      .then(setSalespeople)
-      .catch(() => setSalespeople(null));
     void api<DigestRow[]>('/v1/dashboard/operations/digest')
       .then(setDigest)
       .catch(() => setDigest(null));
@@ -230,7 +274,8 @@ export default function OperationsDashboardView({ userName }: { userName: string
             {summary.stores.length === 1 ? '' : 's'}
           </p>
         </div>
-        <div style={{ marginLeft: 'auto' }}>
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+          <DateRangePicker value={range} onChange={setRange} align="right" testid="ops-range" />
           <LinkButton size="sm" variant="primary" href="/orders/new">
             New Sale
           </LinkButton>
@@ -383,8 +428,8 @@ export default function OperationsDashboardView({ userName }: { userName: string
         )}
       </Card>
 
-      {/* ---- Money today, all stores ---- */}
-      <h3 style={{ margin: '0 0 8px', fontSize: 14 }}>Money today — every store</h3>
+      {/* ---- Money in the window, all stores ---- */}
+      <h3 style={{ margin: '0 0 8px', fontSize: 14 }}>Money — {windowLabel(range)}, every store</h3>
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4" style={{ marginBottom: 16 }}>
         <Tile
           label="Money in"
@@ -416,7 +461,11 @@ export default function OperationsDashboardView({ userName }: { userName: string
       <div className="grid gap-3 lg:grid-cols-2" style={{ marginBottom: 16 }}>
         <Card title="Money in by tender">
           {money.byTender.length === 0 ? (
-            <EmptyState>Nothing collected yet today.</EmptyState>
+            <EmptyState>
+              {range.preset === 'today'
+                ? 'Nothing collected yet today.'
+                : 'Nothing collected in the window.'}
+            </EmptyState>
           ) : (
             <table style={{ width: '100%', fontSize: 12.5 }}>
               <tbody>
@@ -439,13 +488,29 @@ export default function OperationsDashboardView({ userName }: { userName: string
       </div>
 
       {/* ---- Every store, every salesperson ---- */}
-      <h3 style={{ margin: '0 0 8px', fontSize: 14 }}>Selling</h3>
+      <h3 style={{ margin: '0 0 8px', fontSize: 14 }}>Selling — {windowLabel(range)}</h3>
       <div className="grid gap-3" style={{ marginBottom: 16 }}>
-        <Card title="By store — today" style={{ padding: 0 }}>
+        <Card title={`By store — ${windowLabel(range)}`} style={{ padding: 0 }}>
           <StoreTable rows={summary.byStore} />
         </Card>
 
-        <Card title="By salesperson — last 30 days" style={{ padding: 0 }}>
+        <Card
+          title={`By salesperson — ${windowLabel(spRange)}`}
+          style={{ padding: 0 }}
+          actions={
+            // The card has no padding (its table runs edge to edge), so the
+            // picker carries its own inset from the right border.
+            <span style={{ display: 'inline-flex', marginRight: 12 }}>
+              <DateRangePicker
+                compact
+                align="right"
+                value={spRange}
+                onChange={setSpRange}
+                testid="ops-salespeople-range"
+              />
+            </span>
+          }
+        >
           {salespeople == null ? (
             <div style={{ padding: 12 }}>
               <LoadingRows rows={3} />

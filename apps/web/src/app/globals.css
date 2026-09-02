@@ -829,3 +829,171 @@ code {
 .btn-link:hover {
   text-decoration: underline;
 }
+
+/* ---- Date range picker (Shopify-style) ---- */
+.drp {
+  position: relative;
+  display: inline-block;
+}
+.drp-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+.drp-trigger.is-compact {
+  padding: 4px 8px;
+  font-size: 12px;
+  gap: 6px;
+}
+.drp-icon {
+  color: var(--text-muted);
+}
+.drp-label {
+  font-weight: 600;
+}
+.drp-dates {
+  color: var(--text-secondary);
+}
+.drp-panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  z-index: 60;
+  display: grid;
+  grid-template-columns: 176px minmax(0, 1fr);
+  width: min(720px, calc(100vw - 32px));
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.16);
+  overflow: hidden;
+}
+.drp-panel.is-right {
+  right: 0;
+}
+.drp-panel.is-left {
+  left: 0;
+}
+.drp-presets {
+  list-style: none;
+  margin: 0;
+  padding: 8px;
+  border-right: 1px solid var(--border);
+  max-height: 420px;
+  overflow-y: auto;
+  background: color-mix(in srgb, var(--surface) 92%, var(--text-muted) 8%);
+}
+.drp-sep {
+  height: 1px;
+  margin: 6px 4px;
+  background: var(--border);
+}
+.drp-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 7px 10px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.drp-item:hover {
+  background: color-mix(in srgb, var(--brand) 10%, transparent);
+}
+.drp-item.is-active {
+  background: var(--brand);
+  color: #fff;
+}
+.drp-main {
+  display: grid;
+  gap: 10px;
+  padding: 12px 14px 12px;
+  min-width: 0;
+}
+.drp-last {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+.drp-last-n {
+  width: 72px;
+}
+.drp-last-unit {
+  width: 110px;
+}
+.drp-include {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 4px;
+  font-size: 13px;
+}
+.drp-calendar {
+  --rdp-accent-color: var(--brand);
+  --rdp-accent-background-color: color-mix(in srgb, var(--brand) 14%, transparent);
+  --rdp-range_start-color: #fff;
+  --rdp-range_end-color: #fff;
+  --rdp-day-height: 34px;
+  --rdp-day-width: 34px;
+  --rdp-day_button-height: 32px;
+  --rdp-day_button-width: 32px;
+  --rdp-day_button-border-radius: 8px;
+  --rdp-selected-border: 2px solid var(--brand);
+  font-size: 13px;
+  margin: 0 auto;
+}
+.drp-calendar .rdp-months {
+  gap: 20px;
+}
+.drp-calendar .rdp-range_start .rdp-day_button,
+.drp-calendar .rdp-range_end .rdp-day_button {
+  background: var(--brand);
+  color: #fff;
+}
+.drp-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+.drp-summary {
+  font-size: 13px;
+  font-weight: 600;
+}
+.drp-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.drp-custom-dates {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.drp-custom-dates .input {
+  width: 138px;
+  padding: 4px 8px;
+  font-size: 12px;
+}
+@media (max-width: 640px) {
+  .drp-panel {
+    grid-template-columns: 1fr;
+    width: calc(100vw - 24px);
+  }
+  .drp-presets {
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    max-height: 160px;
+  }
+}

@@ -4,6 +4,7 @@ import { alias } from 'drizzle-orm/pg-core';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { schema } from '@jetnine/db';
 import { CurrentTenant } from '../auth/current-user.decorator';
+import { parseDayRange, tzDayEndExclusive, tzDayStart, utcBounds } from '../common/date-range';
 import { salesScopeCond } from '../common/sales-scope';
 import { DRIZZLE } from '../database/database.module';
 import { RequirePermission, TenantScoped } from '../tenancy/decorators';
@@ -79,6 +80,8 @@ interface RitualRow {
 interface OperationsSummary {
   /** Store-local calendar date the "today" numbers cover. */
   date: string;
+  /** The window `money` and `byStore` cover (defaults to today → today). */
+  range: { start: string; end: string };
   stores: { id: string; name: string; timezone: string }[];
   money: MoneyBlock;
   salesByDay: { day: string; writtenCents: number }[];
@@ -117,7 +120,11 @@ export class OpsDashboardController {
 
   @Get()
   @RequirePermission('ops.dashboard.view')
-  async summary(@CurrentTenant() tenant: RequestTenantContext): Promise<OperationsSummary> {
+  async summary(
+    @CurrentTenant() tenant: RequestTenantContext,
+    @Query('start') startQ?: string,
+    @Query('end') endQ?: string,
+  ): Promise<OperationsSummary> {
     const businessId = tenant.businessId!;
     const stores = await this.stores(tenant, businessId);
     if (stores.length === 0) {
@@ -132,8 +139,12 @@ export class OpsDashboardController {
       .where(eq(schema.businesses.id, businessId))
       .limit(1);
     const today = dayRow!.today;
-    const dayStart = sql`(${today}::date::timestamp AT TIME ZONE ${tz})`;
-    const dayEnd = sql`((${today}::date + 1)::timestamp AT TIME ZONE ${tz})`;
+    // Owner 2026-09-02: the Selling and Money blocks follow the picker's
+    // window (store-local days); the ritual and the 14-day chart stay on
+    // today. No window → today, as before.
+    const range = parseDayRange(startQ, endQ) ?? { start: today, end: today };
+    const dayStart = tzDayStart(range.start, tz);
+    const dayEnd = tzDayEndExclusive(range.end, tz);
 
     // Deliberately NOT the feed: one page load already builds it twice
     // (/feed and /digest), and the client derives its counts from the
@@ -148,6 +159,7 @@ export class OpsDashboardController {
 
     return {
       date: today,
+      range,
       stores: stores.map((s) => ({ id: s.id, name: s.name, timezone: s.timezone })),
       money,
       salesByDay,
@@ -192,10 +204,15 @@ export class OpsDashboardController {
   async salespeople(
     @CurrentTenant() tenant: RequestTenantContext,
     @Query('days') daysStr?: string,
+    @Query('start') startQ?: string,
+    @Query('end') endQ?: string,
   ): Promise<SalespersonRow[]> {
     const businessId = tenant.businessId!;
+    // `start`/`end` (picker window) win over the legacy trailing `days`.
+    const window = parseDayRange(startQ, endQ);
     const days = Math.min(90, Math.max(1, Number(daysStr) || 30));
-    const since = new Date(Date.now() - days * 86_400_000);
+    const since = window ? utcBounds(window).from : new Date(Date.now() - days * 86_400_000);
+    const until = window ? utcBounds(window).toExclusive : null;
 
     const memberUser = alias(schema.users, 'member_user');
     const orderRows = await this.db
@@ -212,6 +229,7 @@ export class OpsDashboardController {
         and(
           eq(schema.orders.businessId, businessId),
           gte(schema.orders.createdAt, since),
+          until ? lt(schema.orders.createdAt, until) : undefined,
           sql`${schema.orders.status} NOT IN ('draft', 'quote', 'cancelled')`,
           isNull(schema.orders.importedAt),
           salesScopeCond(tenant, schema.orders.locationId),
@@ -229,6 +247,7 @@ export class OpsDashboardController {
         and(
           eq(schema.sales.businessId, businessId),
           gte(schema.sales.createdAt, since),
+          until ? lt(schema.sales.createdAt, until) : undefined,
           eq(schema.sales.status, 'completed'),
           isNull(schema.sales.importedAt),
           salesScopeCond(tenant, schema.sales.locationId),
@@ -320,6 +339,7 @@ export class OpsDashboardController {
         and(
           eq(schema.refunds.businessId, businessId),
           gte(schema.refunds.createdAt, since),
+          until ? lt(schema.refunds.createdAt, until) : undefined,
           isNull(schema.sales.importedAt),
           salesScopeCond(tenant, schema.sales.locationId),
         ),
@@ -350,6 +370,7 @@ export class OpsDashboardController {
         and(
           eq(schema.payments.businessId, businessId),
           gte(schema.payments.createdAt, since),
+          until ? lt(schema.payments.createdAt, until) : undefined,
           eq(schema.payments.status, 'succeeded'),
           isNull(schema.orders.importedAt),
           salesScopeCond(tenant, schema.orders.locationId),
@@ -373,6 +394,7 @@ export class OpsDashboardController {
         and(
           eq(schema.payments.businessId, businessId),
           gte(schema.payments.createdAt, since),
+          until ? lt(schema.payments.createdAt, until) : undefined,
           eq(schema.payments.status, 'succeeded'),
           isNull(schema.sales.importedAt),
           salesScopeCond(tenant, schema.sales.locationId),
