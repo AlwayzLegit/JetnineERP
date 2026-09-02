@@ -88,6 +88,7 @@ jobs:
       ORDER_DETAIL_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/jetnine_order_detail
       CUSTOMER_ACTIVITY_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/jetnine_customer_activity
       SALESPERSON_ACTIVITY_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/jetnine_salesperson_activity
+      CASH_DRAWER_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/jetnine_cash_drawer
       REDIS_URL: redis://localhost:6379
 
     steps:
@@ -152,6 +153,7 @@ jobs:
           createdb -h localhost -U postgres jetnine_order_detail
           createdb -h localhost -U postgres jetnine_customer_activity
           createdb -h localhost -U postgres jetnine_salesperson_activity
+          createdb -h localhost -U postgres jetnine_cash_drawer
 
       - name: Format check
         run: pnpm format:check

@@ -385,8 +385,11 @@ export default function ReportsPage() {
         title="Reports"
         actions={<DateRangePicker value={range} onChange={setRange} testid="reports-range" />}
       />
-      <p style={{ marginTop: -6, marginBottom: 14, fontSize: 13 }}>
+      <p style={{ marginTop: -6, marginBottom: 14, fontSize: 13 }} className="flex flex-wrap gap-4">
         <a href="/reports/merchandising">Merchandising activity (buyer&apos;s report) →</a>
+        <a href="/reports/cash-drawer-balancing" data-testid="reports-cash-drawer-link">
+          Cash drawer balancing totals →
+        </a>
       </p>
       {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
 

@@ -4612,3 +4612,18 @@ one page needs individual windows.
   Audit, dashboard trend, Operations (page + salesperson card),
   Exceptions digest, Orders, Sales. E2E orders / operations / my-day
   pass. PLAN §12.7 (A11).
+
+### Checkpoint — 2026-09-02 (Report Cash Drawer Balancing Totals)
+
+Owner ask: the STORIS "Report Cash Drawer Balancing Totals" (parameter
+screen + sample PDF) — "create this too".
+
+- API `GET /v1/reports/cash-drawer-balancing` (balance date + start/end
+  time in store tz, Balance By drawer/operator/store, store / operator /
+  drawer filters, balanced/unbalanced drawer reference, CSV): group →
+  pay class → payment type register with the STORIS columns, subtotals,
+  grand total, Cash Drawer Reconciliation (cash + check = deposit) and
+  drawer counts. `cash-drawer-balancing.int.spec.ts` (6 tests, new CI db
+  `jetnine_cash_drawer`).
+- Web `/reports/cash-drawer-balancing` with the STORIS parameter card,
+  linked from Reports. PLAN §12.8 (A12).

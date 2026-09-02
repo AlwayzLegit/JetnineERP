@@ -521,6 +521,43 @@ holds · per-category commission rates · approval queues (dashboard visibility
 instead) · automated customer email/SMS · driver mobile app · white-glove
 itemization beyond the $0 Removal line · signature capture at POS · dark mode.
 
+### 12.8 Report Cash Drawer Balancing Totals (amendment A12, owner 2026-09-02)
+
+Owner ask (STORIS AR.317 parameter screen + sample output): "create this too".
+
+- **Endpoint** `GET /v1/reports/cash-drawer-balancing` (`reports.sales.view`,
+  selling scope): `start`/`end` (balance date, default today), `startTime`/
+  `endTime` (HH:MM in the store's timezone, ending time inclusive to the
+  minute, default 00:00–23:59), `balanceBy=drawer|operator|store` (default
+  store), `locationId`, `operatorId` (user), `drawerId` (shift id or its
+  8-character drawer number), `drawerState=all|balanced|unbalanced`,
+  `format=csv`.
+- **Register** (the STORIS body): every succeeded payment in the window,
+  grouped Balance-By group → pay class (1 CASH, 2 CHECK, 3 CREDIT, 4
+  FINANCING, 5 GIFT CARD, 6 STORE CREDIT, 9 OTHER) → payment type (method,
+  plus processor / financing provider), with customer code + name, reference
+  (document number, linked), gift cert. / check no. / processor ref, amount,
+  reference subtotal (all money on that document in the window), time,
+  drawer number, operator initials; subtotals at each level, group total,
+  grand total.
+- **Cash Drawer Reconciliation** per group and grand: CASH, CHECK, Total
+  Deposit (= cash + check).
+- **Drawer counts** per group: the shifts under that heading (float,
+  expected, counted, over/short, in-tolerance against
+  `ops.cashBalancing.toleranceCents`).
+- **Mapping decisions**: a drawer is a cash shift; a payment belongs to the
+  shift open at its store when it was taken (the operator's own shift when
+  several are open); operator = register-sale associate or order
+  salesperson; "Balanced drawer reference" = closed (counted) drawers,
+  "UnBalanced" = still open or no drawer. Imported legacy documents are
+  excluded (D8). Refunds are not attributed to a tender and stay off this
+  register (the Z-report carries them).
+- **UI** `/reports/cash-drawer-balancing`, linked from Reports: the STORIS
+  parameter card (date range picker, starting/ending time, Balance By,
+  store, operator, drawer, drawer reference), Run, Print, Export CSV; URL
+  carries the parameters.
+- Tests: `cash-drawer-balancing.int.spec.ts` (6).
+
 ### 12.3 Cashier dashboard — "My Day" (amendment A7, owner 2026-09-01)
 
 Fixed by role, like Operations and Warehouse: `cashier.dashboard.view` is the
