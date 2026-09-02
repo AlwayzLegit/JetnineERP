@@ -498,13 +498,17 @@ export default function OperationsDashboardView({ userName }: { userName: string
           title={`By salesperson — ${windowLabel(spRange)}`}
           style={{ padding: 0 }}
           actions={
-            <DateRangePicker
-              compact
-              align="right"
-              value={spRange}
-              onChange={setSpRange}
-              testid="ops-salespeople-range"
-            />
+            // The card has no padding (its table runs edge to edge), so the
+            // picker carries its own inset from the right border.
+            <span style={{ display: 'inline-flex', marginRight: 12 }}>
+              <DateRangePicker
+                compact
+                align="right"
+                value={spRange}
+                onChange={setSpRange}
+                testid="ops-salespeople-range"
+              />
+            </span>
           }
         >
           {salespeople == null ? (
