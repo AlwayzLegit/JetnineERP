@@ -4332,3 +4332,17 @@ cards), and customer address entry fills city/state from the ZIP.
 - Tests: `apps/api/test/cashier.int.spec.ts` (18: role/permission,
   every card from real rows, the picker, the ZIP endpoint) and
   `apps/web/e2e/my-day.spec.ts`. CI gets `jetnine_cashier`.
+
+### Checkpoint — 2026-09-01 (Helix mattress names)
+
+Owner ask: shorten every Helix mattress to "<size> <mattress> <firmness>",
+e.g. `Twin Helix Twilight 11.5" Firm Hybrid Mattress`.
+
+- The names came from the Shopify sync as one product per Shopify
+  variant, `"<title> — <size> / <cover> / <support>"`, all in
+  `products.name`. Data migration `0083_helix_mattress_names` rewrites
+  them in place (idempotent; non-mattress Helix items and already-short
+  names untouched; SKUs, prices, stock and historical line descriptions
+  unchanged; `search_tsv` is generated and follows).
+- The Shopify connector applies the same rule (`helixMattressName`) so a
+  re-sync never writes the long names back. Unit-tested.
