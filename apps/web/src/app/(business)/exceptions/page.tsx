@@ -1,5 +1,7 @@
 'use client';
 
+import Link from 'next/link';
+
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { api } from '@/lib/api';
@@ -31,6 +33,8 @@ interface ExceptionRow {
   acknowledgedAt: string | null;
   acknowledgedByEmail: string | null;
   createdAt: string;
+  orderId: string | null;
+  orderNumber: string | null;
 }
 
 interface DigestRow {
@@ -129,6 +133,7 @@ export default function ExceptionsPage() {
                       <th>When</th>
                       <th>Type</th>
                       <th>Who</th>
+                      <th>Order</th>
                       <th>What</th>
                       <th>Severity</th>
                       <th />
@@ -142,6 +147,15 @@ export default function ExceptionsPage() {
                         </td>
                         <td>{TYPE_LABELS[r.type] ?? r.type.replace(/_/g, ' ')}</td>
                         <td>{r.actorEmail ?? 'system'}</td>
+                        <td style={{ whiteSpace: 'nowrap' }}>
+                          {r.orderId && r.orderNumber ? (
+                            <Link href={`/orders/${r.orderId}`} data-testid="exception-order">
+                              {r.orderNumber}
+                            </Link>
+                          ) : (
+                            '—'
+                          )}
+                        </td>
                         <td>{r.summary}</td>
                         <td>
                           <StatusBadge status={r.severity} />

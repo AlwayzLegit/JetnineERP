@@ -11,6 +11,24 @@ import type { RequestTenantContext } from '../tenancy/request-context';
 import { digestByActor, discountPercent, type ActorDigestRow } from './ops-feed';
 import { OpsFeedService } from './ops-feed.service';
 
+/**
+ * One document written today at a store (owner 2026-09-02): the order or
+ * register sale behind the store's Written number, with its cost and
+ * profit. Cost is the standard cost of the lines (variant cost × qty);
+ * profit is merchandise (subtotal − discounts) − cost — tax, delivery and
+ * fees are not profit.
+ */
+interface StoreDocument {
+  id: string;
+  kind: 'order' | 'sale';
+  number: string;
+  customerName: string | null;
+  writtenCents: number;
+  merchandiseCents: number;
+  costCents: number;
+  profitCents: number;
+}
+
 interface StoreRow {
   locationId: string;
   locationName: string;
@@ -19,6 +37,9 @@ interface StoreRow {
   writtenCount: number;
   collectedCents: number;
   refundedCents: number;
+  costCents: number;
+  profitCents: number;
+  documents: StoreDocument[];
 }
 
 interface SalespersonRow {
@@ -630,6 +651,9 @@ export class OpsDashboardController {
           writtenCount: 0,
           collectedCents: 0,
           refundedCents: 0,
+          costCents: 0,
+          profitCents: 0,
+          documents: [],
         },
       ]),
     );
@@ -729,6 +753,124 @@ export class OpsDashboardController {
     for (const r of refunded) {
       const row = rows.get(r.locationId);
       if (row) row.refundedCents += r.cents;
+    }
+
+    // Per-document breakdown under each store: written, cost, profit.
+    const orderDocs = await this.db
+      .select({
+        id: schema.orders.id,
+        locationId: schema.orders.locationId,
+        number: schema.orders.number,
+        firstName: schema.customers.firstName,
+        lastName: schema.customers.lastName,
+        totalCents: schema.orders.totalCents,
+        subtotalCents: schema.orders.subtotalCents,
+        discountCents: schema.orders.discountCents,
+        createdAt: schema.orders.createdAt,
+      })
+      .from(schema.orders)
+      .leftJoin(schema.customers, eq(schema.customers.id, schema.orders.customerId))
+      .where(
+        and(
+          eq(schema.orders.businessId, businessId),
+          gte(schema.orders.createdAt, dayStart),
+          lt(schema.orders.createdAt, dayEnd),
+          sql`${schema.orders.status} NOT IN ('draft', 'quote', 'cancelled')`,
+          isNull(schema.orders.importedAt),
+          salesScopeCond(tenant, schema.orders.locationId),
+        ),
+      )
+      .orderBy(desc(schema.orders.createdAt));
+    const orderCost = new Map<string, number>();
+    if (orderDocs.length > 0) {
+      const costs = await this.db
+        .select({
+          orderId: schema.orderLines.orderId,
+          cents: sql<number>`COALESCE(SUM(${schema.orderLines.quantity} * COALESCE(${schema.productVariants.costCents}, 0)), 0)::int`,
+        })
+        .from(schema.orderLines)
+        .leftJoin(
+          schema.productVariants,
+          eq(schema.productVariants.id, schema.orderLines.variantId),
+        )
+        .where(
+          inArray(
+            schema.orderLines.orderId,
+            orderDocs.map((o) => o.id),
+          ),
+        )
+        .groupBy(schema.orderLines.orderId);
+      for (const c of costs) orderCost.set(c.orderId, c.cents);
+    }
+    const saleDocs = await this.db
+      .select({
+        id: schema.sales.id,
+        locationId: schema.sales.locationId,
+        number: schema.sales.number,
+        firstName: schema.customers.firstName,
+        lastName: schema.customers.lastName,
+        totalCents: schema.sales.totalCents,
+        subtotalCents: schema.sales.subtotalCents,
+        discountCents: schema.sales.discountCents,
+        createdAt: schema.sales.createdAt,
+      })
+      .from(schema.sales)
+      .leftJoin(schema.customers, eq(schema.customers.id, schema.sales.customerId))
+      .where(
+        and(
+          eq(schema.sales.businessId, businessId),
+          gte(schema.sales.createdAt, dayStart),
+          lt(schema.sales.createdAt, dayEnd),
+          eq(schema.sales.status, 'completed'),
+          isNull(schema.sales.importedAt),
+          salesScopeCond(tenant, schema.sales.locationId),
+        ),
+      )
+      .orderBy(desc(schema.sales.createdAt));
+    const saleCost = new Map<string, number>();
+    if (saleDocs.length > 0) {
+      const costs = await this.db
+        .select({
+          saleId: schema.saleLines.saleId,
+          cents: sql<number>`COALESCE(SUM(${schema.saleLines.quantity} * COALESCE(${schema.productVariants.costCents}, 0)), 0)::int`,
+        })
+        .from(schema.saleLines)
+        .leftJoin(schema.productVariants, eq(schema.productVariants.id, schema.saleLines.variantId))
+        .where(
+          inArray(
+            schema.saleLines.saleId,
+            saleDocs.map((o) => o.id),
+          ),
+        )
+        .groupBy(schema.saleLines.saleId);
+      for (const c of costs) saleCost.set(c.saleId, c.cents);
+    }
+    const push = (
+      kind: 'order' | 'sale',
+      d: (typeof orderDocs)[number],
+      costCents: number,
+    ): void => {
+      const row = rows.get(d.locationId);
+      if (!row) return;
+      const merchandiseCents = d.subtotalCents - d.discountCents;
+      const doc: StoreDocument = {
+        id: d.id,
+        kind,
+        number: d.number,
+        customerName: [d.firstName, d.lastName].filter(Boolean).join(' ') || null,
+        writtenCents: d.totalCents,
+        merchandiseCents,
+        costCents,
+        profitCents: merchandiseCents - costCents,
+      };
+      row.documents.push(doc);
+      row.costCents += costCents;
+      row.profitCents += doc.profitCents;
+    };
+    for (const d of orderDocs) push('order', d, orderCost.get(d.id) ?? 0);
+    for (const d of saleDocs) push('sale', d, saleCost.get(d.id) ?? 0);
+    for (const row of rows.values()) {
+      row.documents.sort((a, b) => b.writtenCents - a.writtenCents);
     }
 
     return [...rows.values()];

@@ -4532,3 +4532,29 @@ Layaways, Carts, Quotes, Leads.
 - Web: `/salespeople/:id/activity` (left nav, `?tab=`, date window on
   completed / canceled), `/salespeople/activity` lookup, "View activity"
   per row and a header button on Salespeople. PLAN §12.5 (A9).
+
+### Checkpoint — 2026-09-02 (exception register links to the order)
+
+Owner ask: an order-number column on the Exception register that opens
+the order.
+
+- `GET /v1/exceptions` rows carry `orderId` / `orderNumber`, resolved
+  from the event's entity: orders directly, returns through their order,
+  exchanges through the exchange order written. `controls.int.spec.ts`
+  asserts it on the unlock event.
+- Exceptions page: new **Order** column between Who and What, linking to
+  `/orders/:id`.
+
+### Checkpoint — 2026-09-02 (Operations: by-store orders with cost and profit)
+
+Owner ask: under Selling → "By store — today", each store expands to the
+actual orders with written amount, cost and profit.
+
+- `GET /v1/dashboard/operations` `byStore[]` rows carry `costCents`,
+  `profitCents` and `documents[]` (orders + register sales written today:
+  number, customer, written, merchandise, cost, profit). Cost is the
+  standard cost of the lines (variant cost × qty); profit is merchandise
+  (subtotal − discounts) − cost — tax, delivery and fees excluded.
+  `ops.int.spec.ts` checks the pieces add up to the row.
+- Operations dashboard: store rows are collapsible; the sub-rows link to
+  the order or sale. Store row gains Cost and Profit columns.
