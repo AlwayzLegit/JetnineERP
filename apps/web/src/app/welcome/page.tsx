@@ -1,12 +1,22 @@
 'use client';
 
-import Link from 'next/link';
-import { Building2 } from 'lucide-react';
+import { Building2, ChevronRight } from 'lucide-react';
 import { useRouter } from 'next/navigation';
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useState } from 'react';
+import { toast } from 'sonner';
+import { z } from 'zod';
 import { CURRENCY_LABELS, SUPPORTED_CURRENCIES, type CurrencyCode } from '@jetnine/shared';
-import { Button, Field, Input, Select, Skeleton } from '@/components/ui';
-import { api } from '@/lib/api';
+import { AuthCard, AuthLink, AuthShell } from '@/components/auth/auth-shell';
+import {
+  Form,
+  FormRootError,
+  SelectField,
+  SubmitButton,
+  TextField,
+  useZodForm,
+} from '@/components/form/form';
+import { Button, Skeleton } from '@/components/ui';
+import { api, ApiError } from '@/lib/api';
 
 interface MembershipSummary {
   businessId: string;
@@ -17,22 +27,21 @@ interface MembershipSummary {
 }
 
 /**
- * Landing for a freshly-signed-up user. Three branches:
+ * Landing for a freshly-signed-up user (rebuilt 2026-09-02 on the form
+ * kit). Three branches:
  *
- *   1. They already have memberships → render a picker; selecting
- *      one sets the active-business cookie and bounces to /dashboard.
- *   2. They have zero memberships → render the create-your-business
- *      form. Submitting calls POST /v1/onboarding/business and lands
- *      them in their new business as Owner.
- *   3. Loading or signed-out → tiny placeholders.
+ *   1. They already have memberships → a picker; choosing one sets the
+ *      active-business cookie and lands on /dashboard.
+ *   2. They have zero memberships → the create-your-business form, a
+ *      three-step stepper so they know where they are. Submitting calls
+ *      POST /v1/onboarding/business and lands them in it as Owner.
+ *   3. Loading → skeleton.
  */
 export default function WelcomePage() {
   const router = useRouter();
   const [memberships, setMemberships] = useState<MembershipSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
-  const [slug, setSlug] = useState('');
-  const [slugTouched, setSlugTouched] = useState(false);
 
   useEffect(() => {
     void (async () => {
@@ -53,179 +62,223 @@ export default function WelcomePage() {
       });
       router.push('/dashboard');
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      toast.error(err instanceof Error ? err.message : String(err));
     }
   }
 
-  async function createBusiness(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    setError(null);
-    setCreating(true);
-    try {
-      const data = new FormData(e.currentTarget);
-      const created = await api<{ businessId: string }>('/v1/onboarding/business', {
-        method: 'POST',
-        body: JSON.stringify({
-          name: String(data.get('name') ?? ''),
-          slug: slugify(String(data.get('slug') ?? '') || String(data.get('name') ?? '')),
-          currencyCode: String(data.get('currencyCode') ?? 'USD'),
-          defaultTaxRateBps: Math.round(Number(data.get('taxRate') ?? 0) * 100),
-        }),
-      });
-      // Set the new business as active so the dashboard's first
-      // render lands inside it.
-      await api('/v1/auth/active-business', {
-        method: 'POST',
-        body: JSON.stringify({ businessId: created.businessId }),
-      });
-      router.push('/dashboard');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-      setCreating(false);
-    }
-  }
-
+  let body: React.ReactNode;
   if (memberships == null && !error) {
-    return (
-      <Wrapper>
-        <div style={{ display: 'grid', gap: 10 }}>
-          <Skeleton style={{ height: 28, width: 220 }} />
-          <Skeleton style={{ height: 48 }} />
-          <Skeleton style={{ height: 48 }} />
-        </div>
-      </Wrapper>
+    body = (
+      <div style={{ display: 'grid', gap: 10 }}>
+        <Skeleton style={{ height: 28, width: 220 }} />
+        <Skeleton style={{ height: 48 }} />
+        <Skeleton style={{ height: 48 }} />
+      </div>
     );
-  }
-
-  if (memberships && memberships.length > 0) {
-    return (
-      <Wrapper>
-        <h1 style={h1}>Pick a business</h1>
-        <p style={muted}>You belong to {memberships.length} businesses. Pick one to continue.</p>
-        <div style={{ display: 'grid', gap: 8, marginTop: 16 }}>
+  } else if (error && memberships == null) {
+    body = (
+      <AuthCard title="Something went wrong" subtitle={error}>
+        <Button variant="primary" onClick={() => window.location.reload()}>
+          Try again
+        </Button>
+      </AuthCard>
+    );
+  } else if (memberships && memberships.length > 0 && !creating) {
+    body = (
+      <AuthCard
+        title="Pick a business"
+        subtitle={`You belong to ${memberships.length} ${memberships.length === 1 ? 'business' : 'businesses'}. Choose one to continue.`}
+        footer={
+          <span>
+            Need a new one?{' '}
+            <button type="button" className="btn-link" onClick={() => setCreating(true)}>
+              Create a new business
+            </button>
+          </span>
+        }
+      >
+        <div className="choice-list" data-testid="business-picker">
           {memberships.map((m) => (
             <button
               key={m.businessId}
+              type="button"
+              className="choice"
               onClick={() => void pick(m.businessId)}
-              style={rowBtn}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.borderColor = 'var(--brand)';
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.borderColor = 'var(--border-strong)';
-              }}
+              data-testid="business-choice"
             >
-              <strong>{m.businessName}</strong>
-              <div style={{ color: 'var(--text-muted)', fontSize: 12 }}>
-                <code>{m.businessSlug}</code> · {m.roleName}
-              </div>
+              <span>
+                <strong>{m.businessName}</strong>
+                <span style={{ display: 'block', color: 'var(--text-muted)', fontSize: 12 }}>
+                  <code>{m.businessSlug}</code> · {m.roleName}
+                </span>
+              </span>
+              <ChevronRight size={16} aria-hidden style={{ color: 'var(--text-muted)' }} />
             </button>
           ))}
         </div>
-        <p style={{ marginTop: 24, fontSize: 13 }}>
-          Need a new one?{' '}
-          <LinkishButton onClick={() => setMemberships([])}>Create a new business</LinkishButton>.
-        </p>
-      </Wrapper>
+      </AuthCard>
+    );
+  } else {
+    body = (
+      <CreateBusiness
+        onBack={memberships && memberships.length > 0 ? () => setCreating(false) : undefined}
+      />
     );
   }
 
-  // memberships is empty (or hidden) → create form.
   return (
-    <Wrapper>
-      <h1 style={h1}>Welcome to LA Mattress ERP</h1>
-      <p style={muted}>Set up your business in under a minute. You can change everything later.</p>
+    <AuthShell wide>
+      {body}
+      {/* Business-less users land here (dashboard redirects them), so
+          this page needs its own way out of the account. */}
+      <div
+        style={{
+          marginTop: 18,
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+        }}
+      >
+        <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+          Got an invite link? <AuthLink href="/accept-invite">Accept invite</AuthLink>
+        </span>
+        <SignOutButton />
+      </div>
+    </AuthShell>
+  );
+}
 
-      {error && <p style={{ color: 'var(--danger)', fontSize: 13 }}>{error}</p>}
+const schema = z.object({
+  name: z
+    .string()
+    .trim()
+    .min(2, 'Enter the business name.')
+    .max(80, 'Keep it under 80 characters.'),
+  slug: z
+    .string()
+    .trim()
+    .min(1, 'Enter a URL slug.')
+    .max(64, 'Keep it under 64 characters.')
+    .regex(/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/, 'Lowercase letters, numbers and hyphens only.'),
+  currencyCode: z.string().min(3, 'Pick a currency.'),
+  taxRate: z.coerce
+    .number({ message: 'Enter a number.' })
+    .min(0, 'Cannot be negative.')
+    .max(100, 'Cannot exceed 100%.'),
+});
+type Values = z.output<typeof schema>;
 
-      <form onSubmit={createBusiness} className="card" style={{ display: 'grid', gap: 12 }}>
-        <Field label="Business name *">
-          <Input
-            name="name"
-            required
-            placeholder="Acme Coffee"
-            style={{ width: '100%' }}
-            onChange={(e) => {
-              if (!slugTouched) setSlug(slugify(e.target.value));
-            }}
-          />
-        </Field>
-        <Field label="URL slug *">
-          <Input
-            name="slug"
-            required
-            value={slug}
-            onChange={(e) => {
-              setSlugTouched(true);
-              setSlug(slugify(e.target.value, { keepTrailingHyphen: true }));
-            }}
-            onBlur={(e) => setSlug(slugify(e.target.value))}
-            placeholder="acme-coffee"
-            style={{ width: '100%' }}
-          />
-          <span style={hint}>
-            Follows the name automatically — lowercase letters, numbers, hyphens.
-          </span>
-        </Field>
-        <Field label="Currency">
-          <Select name="currencyCode" defaultValue="USD" style={{ width: '100%' }}>
+function CreateBusiness({ onBack }: { onBack?: () => void }) {
+  const router = useRouter();
+  const form = useZodForm(schema, { name: '', slug: '', currencyCode: 'USD', taxRate: 0 });
+  const [slugTouched, setSlugTouched] = useState(false);
+  const name = form.watch('name');
+  const slug = form.watch('slug');
+
+  useEffect(() => {
+    if (!slugTouched) form.setValue('slug', slugify(name ?? ''), { shouldValidate: !!name });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [name, slugTouched]);
+
+  return (
+    <AuthCard
+      title="Set up your business"
+      subtitle="Under a minute. Everything here can be changed later in Settings."
+      footer={
+        onBack ? (
+          <button type="button" className="btn-link" onClick={onBack}>
+            ← Back to the picker
+          </button>
+        ) : undefined
+      }
+    >
+      <ol className="stepper" aria-label="Setup progress">
+        <li className="step done">
+          <span className="step-dot">✓</span> Account
+        </li>
+        <li className="step active">
+          <span className="step-dot">2</span> Business
+        </li>
+        <li className="step">
+          <span className="step-dot">3</span> First store
+        </li>
+      </ol>
+      <Form<Values>
+        form={form}
+        onSubmit={async (values) => {
+          try {
+            const created = await api<{ businessId: string }>('/v1/onboarding/business', {
+              method: 'POST',
+              body: JSON.stringify({
+                name: values.name,
+                slug: values.slug,
+                currencyCode: values.currencyCode,
+                defaultTaxRateBps: Math.round(values.taxRate * 100),
+              }),
+            });
+            // Make the new business active so the dashboard's first render lands inside it.
+            await api('/v1/auth/active-business', {
+              method: 'POST',
+              body: JSON.stringify({ businessId: created.businessId }),
+            });
+            toast.success(`${values.name} is ready. Next: add your first store.`);
+            router.push('/dashboard');
+          } catch (err) {
+            if (err instanceof ApiError && err.status === 409) {
+              form.setError('slug', { message: 'That slug is taken. Try another.' });
+              return;
+            }
+            throw err;
+          }
+        }}
+      >
+        <TextField<Values>
+          name="name"
+          label="Business name"
+          autoFocus
+          placeholder="LA Mattress Stores"
+          autoComplete="organization"
+        />
+        <TextField<Values>
+          name="slug"
+          label="URL slug"
+          placeholder="la-mattress-stores"
+          hint={
+            slug
+              ? `Your address will be app.jetnine.com/${slug}. Lowercase letters, numbers, hyphens.`
+              : 'Follows the name automatically. Lowercase letters, numbers, hyphens.'
+          }
+          onChange={(e) => {
+            setSlugTouched(true);
+            form.setValue('slug', slugify(e.target.value, { keepTrailingHyphen: true }));
+          }}
+          onBlur={(e) => form.setValue('slug', slugify(e.target.value), { shouldValidate: true })}
+        />
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <SelectField<Values> name="currencyCode" label="Currency">
             {SUPPORTED_CURRENCIES.map((c: CurrencyCode) => (
               <option key={c} value={c}>
                 {c} — {CURRENCY_LABELS[c]}
               </option>
             ))}
-          </Select>
-        </Field>
-        <Field label="Default tax rate (%)">
-          <Input
+          </SelectField>
+          <TextField<Values>
             name="taxRate"
+            label="Default tax rate (%)"
             type="number"
             step="0.01"
             min={0}
-            defaultValue="0"
-            style={{ width: '100%' }}
+            inputMode="decimal"
+            hint="Override per product or per store later."
           />
-          <span style={hint}>
-            You can override per-product (tax classes) or per-location later. Leave 0 if your
-            jurisdiction is tax-exempt.
-          </span>
-        </Field>
-        <Button
-          type="submit"
-          variant="primary"
-          disabled={creating}
-          style={{ width: 'fit-content' }}
-        >
-          <Building2 size={14} aria-hidden />
-          {creating ? 'Creating…' : 'Create business'}
-        </Button>
-      </form>
-
-      {memberships && memberships.length > 0 && (
-        <p style={{ marginTop: 16, fontSize: 13 }}>
-          <LinkishButton onClick={() => setMemberships(memberships)}>
-            ← Back to picker
-          </LinkishButton>
-        </p>
-      )}
-
-      <p style={{ marginTop: 24, fontSize: 12, color: 'var(--text-muted)' }}>
-        Already received an invite link? <Link href="/accept-invite">Accept invite</Link>
-      </p>
-    </Wrapper>
-  );
-}
-
-function Wrapper({ children }: { children: React.ReactNode }) {
-  return (
-    <main className="mx-auto max-w-[520px] px-4 py-8 sm:py-16">
-      {children}
-      {/* Business-less users land here (dashboard redirects them), so
-          this page needs its own way out of the account. */}
-      <p style={{ marginTop: 24 }}>
-        <SignOutButton />
-      </p>
-    </main>
+        </div>
+        <FormRootError testid="onboarding-error" />
+        <SubmitButton pendingLabel="Creating…" className="w-full">
+          <Building2 size={14} aria-hidden style={{ marginRight: 6 }} />
+          Create business
+        </SubmitButton>
+      </Form>
+    </AuthCard>
   );
 }
 
@@ -244,43 +297,6 @@ function SignOutButton() {
     </Button>
   );
 }
-
-function LinkishButton({ onClick, children }: { onClick: () => void; children: React.ReactNode }) {
-  return (
-    <button
-      onClick={onClick}
-      style={{
-        background: 'none',
-        border: 'none',
-        padding: 0,
-        color: 'var(--brand)',
-        textDecoration: 'underline',
-        cursor: 'pointer',
-        fontSize: 13,
-        fontFamily: 'inherit',
-      }}
-    >
-      {children}
-    </button>
-  );
-}
-
-const h1 = { fontSize: 24, margin: '0 0 8px' } as const;
-const muted = { color: 'var(--text-secondary)', fontSize: 14, margin: '0 0 16px' } as const;
-const rowBtn = {
-  padding: '12px 16px',
-  background: 'var(--surface)',
-  border: '1px solid var(--border-strong)',
-  borderRadius: 'var(--radius)',
-  boxShadow: 'var(--shadow-sm)',
-  cursor: 'pointer',
-  fontSize: 14,
-  fontFamily: 'inherit',
-  color: 'var(--text)',
-  textAlign: 'left' as const,
-  transition: 'border-color 0.12s ease',
-} as const;
-const hint = { color: 'var(--text-muted)', fontSize: 11, marginTop: 2, display: 'block' } as const;
 
 /**
  * Whatever a person types becomes a valid slug instead of a 400 from the
