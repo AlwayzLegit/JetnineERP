@@ -1,19 +1,56 @@
 'use client';
 
-import Link from 'next/link';
+import { useEffect, useState } from 'react';
+import { AuthLink, AuthOutcome } from '@/components/auth/auth-shell';
+import { LinkButton } from '@/components/ui';
+import { authErrorMessage } from '@/lib/auth-errors';
 
-// better-auth's verification link points directly at the API endpoint
-// (`/api/auth/verify-email?token=...&callbackURL=...`). After verifying it
-// redirects to callbackURL on the web app, which is this page when no other
-// callback is set. We just confirm and offer a sign-in link.
+/**
+ * better-auth's verification link points at the API
+ * (`/api/auth/verify-email?token=…&callbackURL=/verify`). After verifying
+ * it redirects here; an invalid or expired link comes back with `?error=`.
+ */
 export default function VerifyPage() {
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    const err = new URLSearchParams(window.location.search).get('error');
+    if (err)
+      setError(authErrorMessage({ code: err.toUpperCase() }, 'This link is no longer valid.'));
+  }, []);
+
+  if (error) {
+    return (
+      <AuthOutcome
+        tone="error"
+        title="That link did not work"
+        testid="auth-error"
+        actions={
+          <LinkButton href="/login" variant="primary">
+            Go to sign in
+          </LinkButton>
+        }
+      >
+        {error} Sign in and we will offer to send a fresh verification email.
+      </AuthOutcome>
+    );
+  }
+
   return (
-    <div>
-      <h2 style={{ fontSize: 18, margin: '0 0 12px' }}>Email verified</h2>
-      <p style={{ fontSize: 14, color: 'var(--text-secondary)', margin: '0 0 16px' }}>
-        Your email has been confirmed. You can now sign in.
+    <AuthOutcome
+      tone="success"
+      title="Email verified"
+      testid="auth-success"
+      actions={
+        <LinkButton href="/login?verified=1" variant="primary">
+          Sign in
+        </LinkButton>
+      }
+    >
+      Your email is confirmed. Sign in to set up your store or join one.
+      <p className="auth-note">
+        Invited by a manager? <AuthLink href="/accept-invite">Accept the invitation</AuthLink>{' '}
+        instead.
       </p>
-      <Link href="/login">Go to sign-in</Link>
-    </div>
+    </AuthOutcome>
   );
 }
