@@ -55,7 +55,14 @@ export default function PurchaseOrdersPage() {
   const [error, setError] = useState<string | null>(null);
   const { rows } = list;
 
-  const reload = (deleted = showDeleted) => list.load(deleted ? { includeDeleted: '1' } : {});
+  // Vendor door (owner 2026-09-02): /purchase-orders?vendorId=…&vendor=Name
+  // from the vendors page's "on PO" count.
+  const [vendor, setVendor] = useState<{ id: string; name: string } | null>(null);
+  const reload = (deleted = showDeleted, v = vendor) =>
+    list.load({
+      ...(deleted ? { includeDeleted: '1' } : {}),
+      ...(v ? { vendorId: v.id } : {}),
+    });
 
   async function restore(po: PoRow) {
     try {
@@ -78,7 +85,11 @@ export default function PurchaseOrdersPage() {
     }
   }
   useEffect(() => {
-    void list.load();
+    const sp = new URLSearchParams(window.location.search);
+    const vendorId = sp.get('vendorId');
+    const v = vendorId ? { id: vendorId, name: sp.get('vendor') ?? 'vendor' } : null;
+    setVendor(v);
+    void reload(showDeleted, v);
     void loadSuggestions();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -199,10 +210,29 @@ export default function PurchaseOrdersPage() {
           style={{
             display: 'flex',
             justifyContent: 'flex-end',
+            alignItems: 'center',
+            gap: 14,
             padding: '10px 12px',
             borderBottom: '1px solid var(--border)',
           }}
         >
+          {vendor && (
+            <span style={{ fontSize: 12.5, marginRight: 'auto' }} data-testid="po-vendor-chip">
+              Vendor: <strong>{vendor.name}</strong>{' '}
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                style={{ padding: '0 6px', fontSize: 12 }}
+                onClick={() => {
+                  setVendor(null);
+                  window.history.replaceState(null, '', '/purchase-orders');
+                  void reload(showDeleted, null);
+                }}
+              >
+                clear
+              </button>
+            </span>
+          )}
           <label
             style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12.5 }}
             data-testid="show-deleted-toggle"

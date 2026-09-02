@@ -3,6 +3,8 @@ import {
   Body,
   ConflictException,
   Controller,
+  Delete,
+  ForbiddenException,
   Get,
   Inject,
   NotFoundException,
@@ -11,7 +13,7 @@ import {
   Post,
   Put,
 } from '@nestjs/common';
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, ne, sql } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { schema } from '@jetnine/db';
 import { BUSINESS_PERMISSIONS, type Permission } from '@jetnine/shared';
@@ -111,7 +113,14 @@ export class MembersController {
       .from(schema.memberships)
       .innerJoin(schema.users, eq(schema.users.id, schema.memberships.userId))
       .innerJoin(schema.roles, eq(schema.roles.id, schema.memberships.roleId))
-      .where(eq(schema.memberships.businessId, tenant.businessId!));
+      .where(
+        and(
+          eq(schema.memberships.businessId, tenant.businessId!),
+          // Removed members (owner 2026-09-02) keep their row for history
+          // but leave the roster.
+          ne(schema.memberships.status, 'removed'),
+        ),
+      );
     const scopes = await this.db
       .select({
         membershipId: schema.membershipLocationScopes.membershipId,
@@ -161,6 +170,7 @@ export class MembersController {
     warehouseDashboard: boolean;
     /** And the Cashier's My Day (§12.3). */
     cashierDashboard: boolean;
+    canDeleteMembers: boolean;
   }> {
     let hiddenNav: string[] = [];
     let managerDashboard = false;
@@ -200,6 +210,8 @@ export class MembersController {
         tenant.roleName === 'Warehouse' && tenant.permissions.has('warehouse.dashboard.view'),
       cashierDashboard:
         tenant.roleName === 'Cashier' && tenant.permissions.has('cashier.dashboard.view'),
+      /** Owner 2026-09-02: the Members page shows Delete only to who may. */
+      canDeleteMembers: tenant.permissions.has('users.delete'),
     };
   }
 
@@ -506,6 +518,102 @@ export class MembersController {
     });
 
     return { disabled: true };
+  }
+
+  /**
+   * Delete a member (owner 2026-09-02). Two outcomes, one button: a
+   * membership nothing refers to yet (a mistaken invite, a never-used
+   * seat) is deleted outright; one that has written orders, driven
+   * deliveries, earned commission or left notes is removed from the
+   * roster and locked out, but its row stays so every document keeps
+   * its name. Never yourself, never the last active Owner.
+   */
+  @Delete(':id')
+  @RequirePermission('users.delete')
+  async remove(
+    @CurrentTenant() tenant: RequestTenantContext,
+    @Param('id') membershipId: string,
+  ): Promise<{ removed: true; mode: 'deleted' | 'archived' }> {
+    const [existing] = await this.db
+      .select({
+        id: schema.memberships.id,
+        userId: schema.memberships.userId,
+        status: schema.memberships.status,
+        roleName: schema.roles.name,
+      })
+      .from(schema.memberships)
+      .innerJoin(schema.roles, eq(schema.roles.id, schema.memberships.roleId))
+      .where(
+        and(
+          eq(schema.memberships.id, membershipId),
+          eq(schema.memberships.businessId, tenant.businessId!),
+        ),
+      )
+      .limit(1);
+    if (!existing) throw new NotFoundException('Membership not found');
+    if (existing.id === tenant.membershipId) {
+      throw new BadRequestException('You cannot delete your own membership');
+    }
+    if (existing.roleName === 'Owner') {
+      const [owners] = await this.db
+        .select({ n: sql<number>`count(*)::int` })
+        .from(schema.memberships)
+        .innerJoin(schema.roles, eq(schema.roles.id, schema.memberships.roleId))
+        .where(
+          and(
+            eq(schema.memberships.businessId, tenant.businessId!),
+            eq(schema.roles.name, 'Owner'),
+            eq(schema.memberships.status, 'active'),
+            ne(schema.memberships.id, membershipId),
+          ),
+        );
+      if ((owners?.n ?? 0) === 0) {
+        throw new ForbiddenException('The business needs at least one active Owner');
+      }
+    }
+
+    // Anything that names this membership: attribution and money that
+    // must survive the person leaving.
+    const [refs] = (await this.db.execute(sql`
+      SELECT
+        (SELECT count(*) FROM orders WHERE salesperson_membership_id = ${membershipId} OR second_salesperson_membership_id = ${membershipId})
+        + (SELECT count(*) FROM deliveries WHERE driver_membership_id = ${membershipId})
+        + (SELECT count(*) FROM delivery_runs WHERE driver_membership_id = ${membershipId})
+        + (SELECT count(*) FROM service_orders WHERE technician_membership_id = ${membershipId})
+        + (SELECT count(*) FROM commission_entries WHERE membership_id = ${membershipId})
+        + (SELECT count(*) FROM order_notes WHERE author_membership_id = ${membershipId})
+        + (SELECT count(*) FROM order_returns WHERE created_by_user_id = ${existing.userId})
+        + (SELECT count(*) FROM sales WHERE associate_user_id = ${existing.userId})
+        AS n`)) as unknown as { n: string | number }[];
+    const history = Number(refs?.n ?? 0);
+
+    if (history > 0) {
+      await this.db
+        .update(schema.memberships)
+        .set({ status: 'removed' })
+        .where(eq(schema.memberships.id, membershipId));
+      await this.db
+        .delete(schema.membershipLocationScopes)
+        .where(eq(schema.membershipLocationScopes.membershipId, membershipId));
+      await this.audit.log({
+        action: 'membership.remove',
+        targetType: 'membership',
+        targetId: membershipId,
+        before: { status: existing.status, roleName: existing.roleName },
+        after: { status: 'removed', history },
+      });
+      return { removed: true, mode: 'archived' };
+    }
+
+    await this.db.delete(schema.memberships).where(eq(schema.memberships.id, membershipId));
+    await this.audit.log({
+      action: 'membership.delete',
+      targetType: 'membership',
+      targetId: membershipId,
+      before: { status: existing.status, roleName: existing.roleName, userId: existing.userId },
+      after: null,
+    });
+    return { removed: true, mode: 'deleted' };
   }
 
   /**

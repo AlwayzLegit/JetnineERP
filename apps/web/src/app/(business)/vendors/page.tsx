@@ -25,6 +25,42 @@ interface Vendor {
   notes: string | null;
   isActive: boolean;
   createdAt: string;
+  stats: {
+    productsCarried: number;
+    inStockProducts: number;
+    inStockUnits: number;
+    onPoUnits: number;
+    openPos: number;
+  };
+}
+
+/** A count that opens the page filtered to this vendor (owner 2026-09-02). */
+function CountLink({
+  n,
+  href,
+  sub,
+  testid,
+}: {
+  n: number;
+  href: string;
+  sub?: string;
+  testid: string;
+}) {
+  if (n === 0) {
+    return (
+      <span style={{ color: 'var(--text-muted)' }} data-testid={testid}>
+        0
+      </span>
+    );
+  }
+  return (
+    <Link href={href} data-testid={testid} style={{ fontWeight: 600 }}>
+      {n}
+      {sub && (
+        <span style={{ color: 'var(--text-muted)', fontWeight: 400, fontSize: 11.5 }}> {sub}</span>
+      )}
+    </Link>
+  );
 }
 
 export default function VendorsPage() {
@@ -147,6 +183,9 @@ export default function VendorsPage() {
                   <th>Contact</th>
                   <th>Email</th>
                   <th>Phone</th>
+                  <th className="num">Products</th>
+                  <th className="num">In inventory</th>
+                  <th className="num">On PO</th>
                   <th>Status</th>
                   <th>&nbsp;</th>
                 </tr>
@@ -160,6 +199,29 @@ export default function VendorsPage() {
                     <td>{v.contactName ?? '—'}</td>
                     <td>{v.email ?? '—'}</td>
                     <td>{v.phone ?? '—'}</td>
+                    <td className="num">
+                      <CountLink
+                        n={v.stats.productsCarried}
+                        href={`/products?vendorId=${v.id}&vendor=${encodeURIComponent(v.name)}`}
+                        testid="vendor-products"
+                      />
+                    </td>
+                    <td className="num">
+                      <CountLink
+                        n={v.stats.inStockProducts}
+                        sub={`· ${v.stats.inStockUnits} units`}
+                        href={`/inventory?vendorId=${v.id}&vendor=${encodeURIComponent(v.name)}&locationId=all`}
+                        testid="vendor-in-stock"
+                      />
+                    </td>
+                    <td className="num">
+                      <CountLink
+                        n={v.stats.onPoUnits}
+                        sub={`· ${v.stats.openPos} PO${v.stats.openPos === 1 ? '' : 's'}`}
+                        href={`/purchase-orders?vendorId=${v.id}&vendor=${encodeURIComponent(v.name)}`}
+                        testid="vendor-on-po"
+                      />
+                    </td>
                     <td>
                       <StatusBadge status={v.isActive ? 'active' : 'inactive'} />
                     </td>

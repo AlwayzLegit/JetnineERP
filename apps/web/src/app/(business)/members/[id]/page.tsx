@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { toast } from 'sonner';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import type { Permission } from '@jetnine/shared';
 import {
   Button,
@@ -70,6 +70,7 @@ interface MemberAccess {
 export default function MemberDetailPage() {
   const params = useParams<{ id: string }>();
   const id = (params?.id ?? '') as string;
+  const router = useRouter();
 
   const [member, setMember] = useState<Member | null>(null);
   const [roles, setRoles] = useState<Role[]>([]);
@@ -118,6 +119,26 @@ export default function MemberDetailPage() {
       [...roleSet].filter((p) => !value.has(p)).length,
     [value, roleSet],
   );
+
+  // Owner 2026-09-02: Delete shows only to who holds users.delete, never on self.
+  const [canDelete, setCanDelete] = useState(false);
+  useEffect(() => {
+    void api<{ membershipId: string | null; canDeleteMembers: boolean }>('/v1/business/members/me')
+      .then((r) => setCanDelete(r.canDeleteMembers && r.membershipId !== id))
+      .catch(() => setCanDelete(false));
+  }, [id]);
+
+  async function removeMember() {
+    try {
+      const r = await api<{ mode: 'deleted' | 'archived' }>(`/v1/business/members/${id}`, {
+        method: 'DELETE',
+      });
+      toast.success(r.mode === 'deleted' ? 'Member deleted.' : 'Member removed — history kept.');
+      router.push('/members');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    }
+  }
 
   async function patchMember(body: Record<string, unknown>, okMessage: string) {
     try {
@@ -220,6 +241,24 @@ export default function MemberDetailPage() {
             {member.status === 'invited' && (
               <Button size="sm" variant="secondary" onClick={() => void resend()}>
                 Resend invite
+              </Button>
+            )}
+            {canDelete && (
+              <Button
+                size="sm"
+                variant="danger"
+                data-testid="member-delete"
+                onClick={() => {
+                  if (
+                    confirm(
+                      `Delete ${member.name || member.email} from this business? They lose access now. Anything they wrote stays on record under their name.`,
+                    )
+                  ) {
+                    void removeMember();
+                  }
+                }}
+              >
+                Delete
               </Button>
             )}
             {member.status !== 'disabled' ? (
