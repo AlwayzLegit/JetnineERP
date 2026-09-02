@@ -4346,3 +4346,18 @@ e.g. `Twin Helix Twilight 11.5" Firm Hybrid Mattress`.
   unchanged; `search_tsv` is generated and follows).
 - The Shopify connector applies the same rule (`helixMattressName`) so a
   re-sync never writes the long names back. Unit-tested.
+
+### Checkpoint — 2026-09-01 (order notes)
+
+Owner ask: a section on every order where all users can leave notes.
+
+- Amendment A8. `order_notes` (0084): order, author membership, body,
+  time; RLS like every tenant table.
+- `GET/POST /v1/orders/:id/notes` gated on `orders.view` (every system
+  role holds it), store-scoped members fenced by `salesScopeCond`;
+  append-only; each add is an `order.note.add` audit entry so it shows
+  in the order's change history.
+- Notes card on the order page above Change history: textarea +
+  Add note (Ctrl/⌘+Enter), newest first with "You" / author name and
+  time. `apps/api/test/order-notes.int.spec.ts` (7). CI gets
+  `jetnine_order_notes`.
