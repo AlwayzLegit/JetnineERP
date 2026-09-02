@@ -934,6 +934,35 @@ describe('the summary', () => {
     expect(body.byStore).toHaveLength(2);
     expect(body.ritual).toHaveLength(2);
     expect(body.salesByDay).toHaveLength(14);
+
+    // Owner 2026-09-02: each store carries the documents behind its
+    // Written number with cost and profit; the pieces add up to the row.
+    const stores = body.byStore as {
+      writtenCents: number;
+      writtenCount: number;
+      costCents: number;
+      profitCents: number;
+      documents: {
+        kind: string;
+        number: string;
+        writtenCents: number;
+        merchandiseCents: number;
+        costCents: number;
+        profitCents: number;
+      }[];
+    }[];
+    for (const st of stores) {
+      expect(st.documents).toHaveLength(st.writtenCount);
+      expect(st.documents.reduce((a, d) => a + d.writtenCents, 0)).toBe(st.writtenCents);
+      expect(st.documents.reduce((a, d) => a + d.costCents, 0)).toBe(st.costCents);
+      expect(st.documents.reduce((a, d) => a + d.profitCents, 0)).toBe(st.profitCents);
+      for (const d of st.documents) {
+        expect(['order', 'sale']).toContain(d.kind);
+        expect(d.number).toMatch(/\S/);
+        expect(d.profitCents).toBe(d.merchandiseCents - d.costCents);
+      }
+    }
+    expect(stores.some((st) => st.documents.length > 0)).toBe(true);
   });
 
   it('attributes written business and refunds to each salesperson', async () => {

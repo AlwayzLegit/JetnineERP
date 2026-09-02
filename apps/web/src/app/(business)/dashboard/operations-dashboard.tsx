@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useCallback, useEffect, useState } from 'react';
+import { Fragment, useCallback, useEffect, useState } from 'react';
 import { Button, Card, EmptyState, LinkButton, LoadingRows } from '@/components/ui';
 import { Money } from '@/components/money';
 import { api } from '@/lib/api';
@@ -47,6 +47,28 @@ interface Thresholds {
   lookbackDays: number;
 }
 
+interface StoreDocument {
+  id: string;
+  kind: 'order' | 'sale';
+  number: string;
+  customerName: string | null;
+  writtenCents: number;
+  merchandiseCents: number;
+  costCents: number;
+  profitCents: number;
+}
+interface StoreRow {
+  locationId: string;
+  locationName: string;
+  writtenCents: number;
+  writtenCount: number;
+  collectedCents: number;
+  refundedCents: number;
+  costCents: number;
+  profitCents: number;
+  documents: StoreDocument[];
+}
+
 interface Summary {
   date: string;
   stores: { id: string; name: string; timezone: string }[];
@@ -59,14 +81,7 @@ interface Summary {
     exchanges: { count: number; restockingFeeCents: number };
   };
   salesByDay: { day: string; writtenCents: number }[];
-  byStore: {
-    locationId: string;
-    locationName: string;
-    writtenCents: number;
-    writtenCount: number;
-    collectedCents: number;
-    refundedCents: number;
-  }[];
+  byStore: StoreRow[];
   ritual: {
     locationId: string;
     locationName: string;
@@ -427,19 +442,7 @@ export default function OperationsDashboardView({ userName }: { userName: string
       <h3 style={{ margin: '0 0 8px', fontSize: 14 }}>Selling</h3>
       <div className="grid gap-3" style={{ marginBottom: 16 }}>
         <Card title="By store — today" style={{ padding: 0 }}>
-          <ScrollTable
-            head={['Store', 'Written', 'Orders', 'Collected', 'Refunded']}
-            align={['left', 'right', 'right', 'right', 'right']}
-            rows={summary.byStore.map((s) => [
-              s.locationName,
-              usd(s.writtenCents),
-              String(s.writtenCount),
-              usd(s.collectedCents),
-              s.refundedCents > 0 ? usd(s.refundedCents) : '—',
-            ])}
-            empty="No stores yet."
-            testid="ops-by-store"
-          />
+          <StoreTable rows={summary.byStore} />
         </Card>
 
         <Card title="By salesperson — last 30 days" style={{ padding: 0 }}>
@@ -619,6 +622,147 @@ function Tile({
         {main}
       </div>
       <div style={{ fontSize: 11.5, color: 'var(--text-secondary)', marginTop: 2 }}>{sub}</div>
+    </div>
+  );
+}
+
+/**
+ * By store — today, with each store expandable to the orders and register
+ * sales behind its Written number (owner 2026-09-02): order #, written,
+ * cost, profit. Cost is standard cost of the lines; profit is merchandise
+ * minus cost (tax, delivery and fees excluded).
+ */
+function StoreTable({ rows }: { rows: StoreRow[] }) {
+  const [open, setOpen] = useState<Record<string, boolean>>({});
+  if (rows.length === 0) {
+    return (
+      <div style={{ padding: 14 }}>
+        <EmptyState>No stores yet.</EmptyState>
+      </div>
+    );
+  }
+  const th = (label: string, right = false) => (
+    <th
+      key={label}
+      style={{
+        padding: '7px 12px',
+        textAlign: right ? 'right' : 'left',
+        fontSize: 11,
+        color: 'var(--text-muted)',
+        fontWeight: 600,
+      }}
+    >
+      {label}
+    </th>
+  );
+  const td = (content: React.ReactNode, right = false, extra?: React.CSSProperties) => (
+    <td
+      style={{
+        padding: '7px 12px',
+        textAlign: right ? 'right' : 'left',
+        fontVariantNumeric: right ? 'tabular-nums' : undefined,
+        whiteSpace: 'nowrap',
+        ...extra,
+      }}
+    >
+      {content}
+    </td>
+  );
+  return (
+    <div style={{ maxHeight: 420, overflowY: 'auto' }} data-testid="ops-by-store">
+      <table style={{ width: '100%', fontSize: 12.5, borderCollapse: 'collapse' }}>
+        <thead>
+          <tr>
+            {th('Store')}
+            {th('Written', true)}
+            {th('Orders', true)}
+            {th('Cost', true)}
+            {th('Profit', true)}
+            {th('Collected', true)}
+            {th('Refunded', true)}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((s) => {
+            const expandable = s.documents.length > 0;
+            const isOpen = !!open[s.locationId];
+            return (
+              <Fragment key={s.locationId}>
+                <tr
+                  style={{
+                    borderTop: '1px solid var(--border)',
+                    cursor: expandable ? 'pointer' : undefined,
+                  }}
+                  onClick={() =>
+                    expandable && setOpen((o) => ({ ...o, [s.locationId]: !o[s.locationId] }))
+                  }
+                  data-testid="ops-store-row"
+                  aria-expanded={expandable ? isOpen : undefined}
+                >
+                  {td(
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                      <span
+                        aria-hidden
+                        style={{
+                          display: 'inline-block',
+                          width: 12,
+                          color: 'var(--text-muted)',
+                          visibility: expandable ? 'visible' : 'hidden',
+                        }}
+                      >
+                        {isOpen ? '▾' : '▸'}
+                      </span>
+                      {s.locationName}
+                    </span>,
+                  )}
+                  {td(usd(s.writtenCents), true)}
+                  {td(String(s.writtenCount), true)}
+                  {td(s.writtenCount > 0 ? usd(s.costCents) : '—', true)}
+                  {td(s.writtenCount > 0 ? usd(s.profitCents) : '—', true, {
+                    color: s.profitCents < 0 ? 'var(--danger)' : undefined,
+                  })}
+                  {td(usd(s.collectedCents), true)}
+                  {td(s.refundedCents > 0 ? usd(s.refundedCents) : '—', true)}
+                </tr>
+                {isOpen &&
+                  s.documents.map((d) => (
+                    <tr
+                      key={d.id}
+                      style={{ background: 'var(--surface-2, rgba(0,0,0,0.03))' }}
+                      data-testid="ops-store-doc"
+                    >
+                      {td(
+                        <span style={{ paddingLeft: 26, display: 'inline-flex', gap: 8 }}>
+                          <Link
+                            href={d.kind === 'sale' ? `/sales/${d.id}` : `/orders/${d.id}`}
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            {d.number}
+                          </Link>
+                          <span style={{ color: 'var(--text-muted)' }}>
+                            {d.customerName ?? (d.kind === 'sale' ? 'Register sale' : 'Walk-in')}
+                          </span>
+                        </span>,
+                      )}
+                      {td(usd(d.writtenCents), true)}
+                      {td('', true)}
+                      {td(usd(d.costCents), true)}
+                      {td(usd(d.profitCents), true, {
+                        color: d.profitCents < 0 ? 'var(--danger)' : undefined,
+                      })}
+                      {td('', true)}
+                      {td('', true)}
+                    </tr>
+                  ))}
+              </Fragment>
+            );
+          })}
+        </tbody>
+      </table>
+      <p style={{ margin: 0, padding: '6px 12px 10px', fontSize: 11, color: 'var(--text-muted)' }}>
+        Click a store to see its orders. Cost is the standard cost of the lines; profit is
+        merchandise minus cost — tax, delivery and fees are not counted.
+      </p>
     </div>
   );
 }
