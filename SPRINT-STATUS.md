@@ -4594,3 +4594,21 @@ Owner ask: give the POS a favicon using the LA Mattress logo.
   no logo is set, the bundled mark stays. lamattress.com is not reachable
   from the build environment, so the real logo file is not bundled; the
   runtime swap uses the configured one.
+
+### Checkpoint — 2026-09-02 (Shopify-style date range picker)
+
+Owner ask: a dynamic time picker like Shopify everywhere relevant, to
+check past data; one shared picker, with per-section instances where
+one page needs individual windows.
+
+- `lib/date-range.ts` (presets incl. rolling last-N units, quarters,
+  all-time; URL round-trip, keyed; 5 unit tests) +
+  `components/date-range-picker.tsx` (react-day-picker two-month
+  calendar, preset rail, Cancel / Apply, compact mode).
+- API `start` / `end` (`common/date-range.ts`) on ops summary +
+  salespeople, exceptions digest, orders list / list-view, sales list;
+  `ops.int.spec.ts` (22) and `orders.int.spec.ts` (101) cover it.
+- Pages: Reports, Salespeople, salesperson activity, customer A/R,
+  Audit, dashboard trend, Operations (page + salesperson card),
+  Exceptions digest, Orders, Sales. E2E orders / operations / my-day
+  pass. PLAN §12.7 (A11).

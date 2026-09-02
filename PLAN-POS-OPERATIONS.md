@@ -488,6 +488,30 @@ properly." Decisions:
 - Error copy comes from `lib/auth-errors.ts` (better-auth codes → sentences;
   429 → "Too many attempts").
 
+### 12.7 Date range picker everywhere (amendment A11, owner 2026-09-02)
+
+One shared Shopify-style picker (`components/date-range-picker.tsx`,
+`lib/date-range.ts`) on every screen that scopes data by date: a button
+reading "Last 7 days · Aug 27 – Sep 2, 2026" opens presets (Today,
+Yesterday, Last N days/weeks/months with "include today", period to date,
+previous week/month/quarter/year, calendar quarters, custom) beside a
+two-month calendar with drag-to-select, and Cancel / Apply. Ranges are
+inclusive `YYYY-MM-DD` and live in the URL (`?range=last30` or
+`?start&end`), so a view can be bookmarked and reloaded. A page may carry
+several pickers, each keyed (`salespeople.range`, `digest.range`, …) so a
+section keeps its own window ("individual time filters on certain data").
+
+Wired: Reports (all range reports + CSV), Salespeople, salesperson activity
+(completed / canceled window), customer activity (open A/R), Audit (since /
+until, "All time"), home dashboard revenue trend, Operations (money + by
+store, plus the salesperson card's own window), Exceptions digest, Orders
+and Sales lists ("All time" default, created date). API: `start` / `end`
+on `/v1/dashboard/operations`, `/operations/salespeople`,
+`/v1/exceptions/digest`, `/v1/orders`, `/v1/orders/list-view`, `/v1/sales`
+(`apps/api/src/common/date-range.ts`; a malformed window is ignored, never
+a 400). Ops summary day bounds are store-local; lists use UTC days like the
+reports.
+
 ## 13. Explicit v1 Exclusions (do not build)
 
 Barcode scanning · bundle/kit pricing · MSRP display · coupon-code validation ·
