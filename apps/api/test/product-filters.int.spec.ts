@@ -33,6 +33,7 @@ let businessId = '';
 let locationId = '';
 let helixVendorId = '';
 let purpleVendorId = '';
+let poId = '';
 let cookie = '';
 let managerCookie = '';
 const bySku = new Map<string, string>();
@@ -151,6 +152,19 @@ async function seed() {
       .returning();
     helixVendorId = vendors[0]!.id;
     purpleVendorId = vendors[1]!.id;
+    // An open Helix PO: 5 ordered, 2 received → 3 still to come.
+    const [po] = await db
+      .insert(schema.purchaseOrders)
+      .values({
+        businessId,
+        vendorId: helixVendorId,
+        locationId,
+        number: 'PO-VF-001',
+        status: 'partially_received',
+        subtotalCents: 0,
+      })
+      .returning();
+    poId = po!.id;
     const [purpleBrand] = await db
       .insert(schema.brands)
       .values({ businessId, name: 'Purple' })
@@ -203,6 +217,17 @@ async function seed() {
           jetnineId: p!.id,
           source: batchSource,
           importBatchId: batch!.id,
+        });
+      }
+      if (item.sku === 'HX-TW-DUSK') {
+        await db.insert(schema.purchaseOrderLines).values({
+          businessId,
+          purchaseOrderId: poId,
+          variantId: v!.id,
+          quantityOrdered: 5,
+          quantityReceived: 2,
+          unitCostCents: 40_000,
+          lineTotalCents: 200_000,
         });
       }
       if (item.onHand) {
@@ -417,3 +442,45 @@ async function productIdForVariant(variantId: string): Promise<string> {
     return v!.productId;
   });
 }
+
+describe('vendor counts and doors', () => {
+  const get = (path: string) =>
+    request(app.getHttpServer())
+      .get(path)
+      .set('Cookie', managerCookie)
+      .set('x-business-id', businessId);
+
+  it('counts what we carry, what is in stock, and what is on PO per vendor', async () => {
+    const res = await get('/v1/vendors').expect(200);
+    const byName = new Map(res.body.map((v: { name: string }) => [v.name, v]));
+    // Helix: the five named mattresses + the base (preferred vendor); one of
+    // the six is the Twilight duplicate deactivated by keep-imported above.
+    expect((byName.get('Helix') as { stats: unknown }).stats).toEqual({
+      productsCarried: 6,
+      inStockProducts: 2,
+      inStockUnits: 4,
+      onPoUnits: 3,
+      openPos: 1,
+    });
+    expect((byName.get('Purple') as { stats: unknown }).stats).toEqual({
+      productsCarried: 2,
+      inStockProducts: 1,
+      inStockUnits: 2,
+      onPoUnits: 0,
+      openPos: 0,
+    });
+  });
+
+  it('the inventory and products pages take the same vendor filter', async () => {
+    const inv = await get(`/v1/inventory/levels?vendorId=${helixVendorId}`).expect(200);
+    expect(inv.body.map((r: { variantSku: string }) => r.variantSku).sort()).toEqual([
+      'HX-Q-TWI-V',
+      'HX-TW-DUSK-V',
+    ]);
+    const prods = await get(`/v1/products?vendorId=${purpleVendorId}&limit=50`).expect(200);
+    expect(prods.body.data.map((r: { sku: string }) => r.sku).sort()).toEqual([
+      'PR-K-XF',
+      'PR-Q-REST',
+    ]);
+  });
+});

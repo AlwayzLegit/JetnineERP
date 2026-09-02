@@ -28,16 +28,28 @@ interface ProductRow {
 export default function ProductsPage() {
   const list = useCursorList<ProductRow>('/v1/products');
   const [q, setQ] = useState('');
+  // Vendor door (owner 2026-09-02): /products?vendorId=…&vendor=Name from
+  // the vendors page's "products we carry" count.
+  const [vendor, setVendor] = useState<{ id: string; name: string } | null>(null);
   const { rows, error } = list;
 
+  const params = (query: string, v = vendor) => ({
+    ...(query ? { q: query } : {}),
+    ...(v ? { vendorId: v.id } : {}),
+  });
+
   useEffect(() => {
-    void list.load();
+    const sp = new URLSearchParams(window.location.search);
+    const vendorId = sp.get('vendorId');
+    const v = vendorId ? { id: vendorId, name: sp.get('vendor') ?? 'vendor' } : null;
+    setVendor(v);
+    void list.load(params('', v));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   function search(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    void list.load(q ? { q } : {});
+    void list.load(params(q));
   }
 
   // Owner 2026-08-31: delete straight from the list — same endpoint as
@@ -50,7 +62,7 @@ export default function ProductsPage() {
     try {
       await api(`/v1/products/${p.id}`, { method: 'DELETE' });
       toast.success(`${p.name} deleted`);
-      void list.load(q ? { q } : {});
+      void list.load(params(q));
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err));
     }
@@ -95,13 +107,30 @@ export default function ProductsPage() {
           variant="secondary"
           onClick={() => {
             setQ('');
-            void list.load();
+            void list.load(params(''));
           }}
         >
           Clear
         </Button>
       </form>
 
+      {vendor && (
+        <p style={{ fontSize: 13, margin: '0 0 8px' }} data-testid="products-vendor-chip">
+          Showing products from <strong>{vendor.name}</strong>{' '}
+          <button
+            type="button"
+            className="btn btn-ghost btn-sm"
+            style={{ padding: '0 6px', fontSize: 12 }}
+            onClick={() => {
+              setVendor(null);
+              window.history.replaceState(null, '', '/products');
+              void list.load(params(q, null));
+            }}
+          >
+            clear
+          </button>
+        </p>
+      )}
       {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
       <Card style={{ padding: 0 }}>
         {rows == null ? (
@@ -172,7 +201,7 @@ export default function ProductsPage() {
           Import products from a CSV file
         </summary>
         <div style={{ marginTop: 8 }}>
-          <CsvImport entity="product" onCommitted={() => list.load(q ? { q } : {})} />
+          <CsvImport entity="product" onCommitted={() => list.load(params(q))} />
         </div>
       </details>
     </div>

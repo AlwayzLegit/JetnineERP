@@ -58,6 +58,7 @@ const ADJUST_REASONS = ['count_correction', 'damage', 'theft', 'other'] as const
 
 export default function InventoryPage() {
   const [locations, setLocations] = useState<Location[]>([]);
+  const [vendor, setVendor] = useState<{ id: string; name: string } | null>(null);
   const [locationId, setLocationId] = useState<string>('');
   const [levels, setLevels] = useState<Level[] | null>(null);
   const [bins, setBins] = useState<Bin[]>([]);
@@ -105,19 +106,31 @@ export default function InventoryPage() {
       const rows = await api<Location[]>('/v1/business/locations');
       const active = rows.filter((l) => l.isActive);
       setLocations(active);
+      // Vendor door (owner 2026-09-02): /inventory?vendorId=…&locationId=all
+      // from the vendors page's "in inventory" count.
+      const sp = new URLSearchParams(window.location.search);
+      const vendorId = sp.get('vendorId');
+      if (vendorId) setVendor({ id: vendorId, name: sp.get('vendor') ?? 'vendor' });
+      const wanted = sp.get('locationId');
+      if (wanted === 'all' || (wanted && active.some((l) => l.id === wanted))) {
+        setLocationId(wanted);
+        return;
+      }
       if (active[0] && !locationId) setLocationId(active[0].id);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
   }
 
-  async function loadLevels(loc: string, query = q) {
+  async function loadLevels(loc: string, query = q, v: { id: string } | null = vendor) {
     if (!loc) return;
     try {
-      const params = new URLSearchParams({ locationId: loc });
+      // 'all' is the combined view: no location filter, bins stay per store.
+      const params = new URLSearchParams(loc === 'all' ? {} : { locationId: loc });
       if (query.trim()) params.set('q', query.trim());
+      if (v) params.set('vendorId', v.id);
       setLevels(await api<Level[]>(`/v1/inventory/levels?${params.toString()}`));
-      setBins(await api<Bin[]>(`/v1/inventory/bins?locationId=${loc}`));
+      setBins(loc === 'all' ? [] : await api<Bin[]>(`/v1/inventory/bins?locationId=${loc}`));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -256,12 +269,30 @@ export default function InventoryPage() {
           onChange={(e) => setLocationId(e.target.value)}
         >
           <option value="">— Pick —</option>
+          <option value="all">All locations</option>
           {locations.map((l) => (
             <option key={l.id} value={l.id}>
               {l.name}
             </option>
           ))}
         </Select>
+        {vendor && (
+          <span style={{ fontSize: 13 }} data-testid="inventory-vendor-chip">
+            Vendor: <strong>{vendor.name}</strong>{' '}
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              style={{ padding: '0 6px', fontSize: 12 }}
+              onClick={() => {
+                setVendor(null);
+                window.history.replaceState(null, '', '/inventory');
+                void loadLevels(locationId, q, null);
+              }}
+            >
+              clear
+            </button>
+          </span>
+        )}
         <Input
           name="q"
           placeholder="Search by name, SKU, or barcode"

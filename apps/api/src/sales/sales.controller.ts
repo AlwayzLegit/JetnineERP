@@ -26,6 +26,7 @@ import {
   type PageResponse,
   clampLimit as clampPageLimit,
 } from '../common/pagination';
+import { vendorMatchFor } from '../common/vendor-match';
 import { DRIZZLE } from '../database/database.module';
 import { CommissionsService } from '../money/commissions.service';
 import { GiftCardsService } from '../gift-cards/gift-cards.service';
@@ -284,26 +285,7 @@ export class SalesController {
     // preferred vendor on the variant, so the filter also accepts the
     // product's brand or the vendor's name inside the product name
     // ("Twin Helix Dusk …" for vendor Helix).
-    if (vendorId) {
-      const [vendor] = await this.db
-        .select({ name: schema.vendors.name })
-        .from(schema.vendors)
-        .where(
-          and(eq(schema.vendors.businessId, tenant.businessId!), eq(schema.vendors.id, vendorId)),
-        )
-        .limit(1);
-      const vendorName = vendor?.name?.trim();
-      // Whole-word match anywhere in the name: "Twin Helix Dusk …" is a
-      // Helix, "Helixir Pillow" is not.
-      const vendorWord = vendorName
-        ? '\\m' + vendorName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\M'
-        : null;
-      filters.push(
-        vendorName
-          ? sql`(${schema.productVariants.preferredVendorId} = ${vendorId} OR lower(${schema.brands.name}) = lower(${vendorName}) OR ${schema.products.name} ~* ${vendorWord})`
-          : eq(schema.productVariants.preferredVendorId, vendorId),
-      );
-    }
+    if (vendorId) filters.push(await vendorMatchFor(this.db, tenant.businessId!, vendorId));
     // Size / firmness are read off what the catalog actually says —
     // attributes when a variant has them, else the product and variant
     // names — so Shopify-shaped "Queen Helix Dusk 12\" Medium Firm …"

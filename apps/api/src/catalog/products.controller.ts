@@ -23,6 +23,7 @@ import {
   decodeCursor,
   type PageResponse,
 } from '../common/pagination';
+import { vendorMatchFor } from '../common/vendor-match';
 import { DRIZZLE } from '../database/database.module';
 import { RequirePermission, TenantScoped } from '../tenancy/decorators';
 import type { RequestTenantContext } from '../tenancy/request-context';
@@ -117,13 +118,21 @@ export class CatalogProductsController {
     @CurrentTenant() tenant: RequestTenantContext,
     @Query('q') q?: string,
     @Query('categoryId') categoryId?: string,
+    @Query('vendorId') vendorId?: string,
     @Query('limit') limitStr?: string,
     @Query('cursor') cursorStr?: string,
   ): Promise<PageResponse<{ id: string; sku: string | null; name: string; isActive: boolean }>> {
-    void tenant;
     const limit = clampPageLimit(limitStr);
     const filters: ReturnType<typeof and>[] = [];
     if (categoryId) filters.push(eq(schema.products.categoryId, categoryId));
+    // Vendor (owner 2026-09-02): the vendors page's "products we carry"
+    // count opens here. Same rule as the Add Product popup.
+    if (vendorId) {
+      const match = await vendorMatchFor(this.db, tenant.businessId!, vendorId);
+      filters.push(
+        sql`EXISTS (SELECT 1 FROM ${schema.productVariants} LEFT JOIN ${schema.brands} ON ${schema.brands.id} = ${schema.products.brandId} WHERE ${schema.productVariants.productId} = ${schema.products.id} AND ${match})`,
+      );
+    }
 
     if (q && q.trim().length > 0) {
       // Search returns ts_rank-ordered results — single page, no cursor.

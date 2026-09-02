@@ -26,6 +26,7 @@ import {
   timestampCursorWhere,
   type PageResponse,
 } from '../common/pagination';
+import { vendorMatchFor } from '../common/vendor-match';
 import { DRIZZLE } from '../database/database.module';
 import { RequirePermission, TenantScoped } from '../tenancy/decorators';
 import type { RequestTenantContext } from '../tenancy/request-context';
@@ -99,9 +100,13 @@ export class InventoryController {
     @CurrentTenant() _tenant: RequestTenantContext,
     @Query('locationId') locationId?: string,
     @Query('q') q?: string,
+    @Query('vendorId') vendorId?: string,
   ): Promise<LevelRow[]> {
     const filters = [];
     if (locationId) filters.push(eq(schema.inventoryLevels.locationId, locationId));
+    // Vendor (owner 2026-09-02): the vendors page's "in inventory" count
+    // opens here, across every location. Same rule as the Add Product popup.
+    if (vendorId) filters.push(await vendorMatchFor(this.db, _tenant.businessId!, vendorId));
     const query = q?.trim();
     if (query) {
       // Same tsvector the catalog search uses — covers product name,
@@ -135,6 +140,7 @@ export class InventoryController {
         eq(schema.productVariants.id, schema.inventoryLevels.variantId),
       )
       .innerJoin(schema.products, eq(schema.products.id, schema.productVariants.productId))
+      .leftJoin(schema.brands, eq(schema.brands.id, schema.products.brandId))
       .leftJoin(schema.storageBins, eq(schema.storageBins.id, schema.inventoryLevels.storageBinId))
       .where(where)
       .orderBy(asc(schema.products.name), asc(schema.productVariants.sku));
