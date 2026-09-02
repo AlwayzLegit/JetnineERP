@@ -131,6 +131,10 @@ export const NAV: NavGroup[] = [
 
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname() ?? '';
+  // Owner 2026-09-02: Orders and New Sale get 25% more room (1500px vs
+  // 1200px) so an added product's whole line shows without a sideways
+  // scroll. Other pages keep the reading width.
+  const wideContent = pathname.startsWith('/orders') || pathname.startsWith('/pos');
   const [open, setOpen] = useState(false);
   // Per-member nav visibility: tabs the owner hid for this member are
   // simply not rendered (the API stays gated by permissions regardless).
@@ -317,7 +321,11 @@ export function AppShell({ children }: { children: ReactNode }) {
             </div>
           </div>
         )}
-        <main className="mx-auto max-w-[1200px] px-4 pb-12 pt-5 md:px-6 md:pt-6">{children}</main>
+        <main
+          className={`mx-auto px-4 pb-12 pt-5 md:px-6 md:pt-6 ${wideContent ? 'max-w-[1500px]' : 'max-w-[1200px]'}`}
+        >
+          {children}
+        </main>
       </div>
     </div>
   );

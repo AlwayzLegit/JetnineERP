@@ -4376,3 +4376,58 @@ Owner ask on New Sale's Add Product popup.
 - Dialog gains Size and Firmness selects beside Vendor and Stock.
 - `apps/api/test/product-filters.int.spec.ts` (6). CI gets
   `jetnine_product_filters`.
+
+### Checkpoint — 2026-09-02 (duplicate products)
+
+Owner spotted the same Helix mattress two and three times in the Add
+Product popup: two imports (a `helix-…` SKU family and a
+`HELIX-SLEEP-…-<hash>` family) plus Shopify cover/support variants that
+now share one name after A7's shortening.
+
+- `GET /v1/products/duplicates` (`products.view`): active products
+  grouped by name, each with min price, variants, on hand, reserved,
+  document count and `deletable`.
+- `/products/duplicates` page ("Find duplicates" on Products): per row
+  Open / Deactivate (hides from selling, keeps history) / Delete (only
+  when nothing references it — the existing guard).
+- Covered in `product-filters.int.spec.ts` (+2).
+- Owner decision: **use the one from the import.** Each duplicate row
+  now shows its source (import batch: `storis` / CSV vs a connector sync
+  `shopify` / `woocommerce` / `wix`, or built in the app), and
+  `POST /v1/products/duplicates/keep-imported` (`products.update`,
+  optional `names[]`) deactivates the non-import copies in every group
+  that has an imported one — deactivate only, audit-logged, groups with
+  no imported copy skipped. Page: "Keep imported copy" per group and
+  "Keep imported copies everywhere".
+- Owner 2026-09-02: Orders (`/orders/**`) and New Sale (`/pos`) render
+  25% wider — the shell's content cap is 1500px on those routes, 1200px
+  elsewhere — so a product line fits without a sideways scroll.
+
+### Checkpoint — 2026-09-02 (As-Is review provenance)
+
+Owner ask: the As-Is review must say where each mattress came from and
+which invoice, with the invoice clickable.
+
+- `/v1/as-is` (and `/aging`) rows carry `origin`, resolved in one query
+  per reference type: register refund → the sale (invoice) + customer;
+  order return → the RMA + the order + customer; consolidation transfer
+  → the transfer + the store it left; receiving defect → the PO +
+  vendor; manual intake → none.
+- Page column "Came from": source, RMA, a link to the invoice / order /
+  transfer / PO with its date, the customer (linked), and "from <store
+  or vendor>". `apps/api/test/as-is-origin.int.spec.ts` (2). CI gets
+  `jetnine_as_is`.
+
+### Checkpoint — 2026-09-02 (Warehouse/Cashier could not open Inventory)
+
+Owner report: a member could not see or adjust inventory. Production
+request logs showed repeated 403s on `GET /v1/business/locations`, the
+first call the Inventory page makes (also Receive, Counts, Returns,
+Exchanges, Replenishment, the order page). That endpoint needs
+`locations.view`, which only Owner/Manager/Operations held — so a
+Warehouse member with `inventory.adjust` still hit "Missing required
+permission: locations.view" before anything loaded.
+
+- `locations.view` added to the Cashier, Warehouse and Bookkeeper
+  system roles (read-only store list; create/update/delete unchanged).
+  The boot sync backfills existing tenants' roles on deploy.

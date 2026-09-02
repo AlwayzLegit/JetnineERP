@@ -62,6 +62,9 @@ export default function ProductsPage() {
         title="Products"
         actions={
           <>
+            <LinkButton href="/products/duplicates" variant="secondary">
+              Find duplicates
+            </LinkButton>
             <LinkButton href="/products/pricing" variant="secondary">
               Set prices
             </LinkButton>
