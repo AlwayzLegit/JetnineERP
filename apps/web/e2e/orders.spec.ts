@@ -138,13 +138,12 @@ test.describe('Day 2 — order writer', () => {
     await expect(invRow.locator('td').nth(4)).toHaveText('1');
     await expect(invRow.locator('td').nth(6)).toHaveText('99');
 
-    // --- Orders table row opens the slide-over; full page returns here ---
+    // --- Orders table row opens the full order page directly (no slide-over) ---
     await page.goto('/orders');
     await expect(page.getByTestId('orders-table')).toBeVisible();
     await page.getByTestId('order-row').first().click();
-    await expect(page.getByTestId('order-slide-over')).toBeVisible();
-    await page.getByTestId('slide-over-full-page').click();
     await page.waitForURL(orderUrl);
+    await expect(page.getByTestId('order-status')).toBeVisible();
   });
 
   test('delivery lifecycle: schedule → deliver → collect balance → complete', async ({ page }) => {

@@ -4486,3 +4486,13 @@ reserved".
   fetch. E2E `orders.spec.ts` (3) + sweep layaway pass unchanged.
 - Declined by owner: per-line edit popover (3), timeline (9), keyboard
   shortcuts (10), customer history (11), print preview (12).
+
+### Checkpoint — 2026-09-02 (orders list opens the order directly)
+
+Owner ask: clicking an Order # on the Orders page must open the full
+order page, not the side panel.
+
+- Orders list: row click navigates to `/orders/:id`; the Order # cell is
+  a real link (`order-number-link`) so middle-click / new tab work. The
+  slide-over component and its detail fetch are removed. §8 amended.
+- E2E `orders.spec.ts` updated (row click → full page). 3/3 pass locally.

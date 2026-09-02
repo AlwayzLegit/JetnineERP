@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { PenLine, X } from 'lucide-react';
+import { PenLine } from 'lucide-react';
 import { api } from '@/lib/api';
 import { Money } from '@/components/money';
 import {
@@ -18,9 +18,9 @@ import {
 
 /**
  * Orders list per PLAN-POS-OPERATIONS §8: a table (Order #, Customer,
- * Status, Delivery Date, Balance Due, Salesperson) whose rows open a
- * slide-over panel — the list keeps its scroll position — with a
- * full-page link for the complete order detail. Status wording comes
+ * Status, Delivery Date, Balance Due, Salesperson) whose rows open the
+ * full order page directly (owner 2026-09-02: no slide-over — one click
+ * lands on the order). Status wording comes
  * from the server's derived display status (Draft → Pending → On PO →
  * Reserved → Scheduled → Out for Delivery → Delivered, plus
  * Quote/Layaway/Cancelled), not the raw lifecycle status.
@@ -44,30 +44,6 @@ interface ListRow {
     fulfilled: number;
     specialOrder: number;
   } | null;
-}
-
-interface OrderDetail {
-  id: string;
-  number: string;
-  status: string;
-  fulfillmentType: string;
-  totalCents: number;
-  subtotalCents: number;
-  taxCents: number;
-  discountCents: number;
-  paidCents: number;
-  balanceDueCents: number;
-  requestedDate: string | null;
-  notes: string | null;
-  createdAt: string;
-  lines: {
-    id: string;
-    description: string;
-    quantity: number;
-    unitPriceCents: number;
-    totalCents: number;
-  }[];
-  payments: { id: string; amountCents: number; method: string; status: string }[];
 }
 
 function DisplayStatus({ row }: { row: ListRow }) {
@@ -129,7 +105,6 @@ export default function OrdersPage() {
   });
   const [atLoginStore, setAtLoginStore] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
-  const [selected, setSelected] = useState<ListRow | null>(null);
   const searchSeq = useRef(0);
 
   const fetchPage = useCallback(
@@ -367,10 +342,19 @@ export default function OrdersPage() {
                 <tr
                   key={r.id}
                   data-testid="order-row"
-                  onClick={() => setSelected(r)}
+                  onClick={() => router.push(`/orders/${r.id}`)}
                   style={{ cursor: 'pointer' }}
                 >
-                  <td style={{ fontWeight: 600, whiteSpace: 'nowrap' }}>{r.number}</td>
+                  <td style={{ fontWeight: 600, whiteSpace: 'nowrap' }}>
+                    <Link
+                      href={`/orders/${r.id}`}
+                      data-testid="order-number-link"
+                      onClick={(e) => e.stopPropagation()}
+                      style={{ color: 'inherit', textDecoration: 'none' }}
+                    >
+                      {r.number}
+                    </Link>
+                  </td>
                   <td>{r.customerName}</td>
                   <td style={{ whiteSpace: 'nowrap' }}>
                     <DisplayStatus row={r} />
@@ -419,182 +403,6 @@ export default function OrdersPage() {
           </button>
         </div>
       )}
-
-      {selected && <OrderSlideOver row={selected} onClose={() => setSelected(null)} />}
-    </div>
-  );
-}
-
-/**
- * Slide-over order summary (spec §8: "row click opens a slide-over panel
- * (list keeps its place) with a full-page option"). Read-only — edits
- * happen on the full page.
- */
-function OrderSlideOver({ row, onClose }: { row: ListRow; onClose: () => void }) {
-  const [detail, setDetail] = useState<OrderDetail | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let stale = false;
-    setDetail(null);
-    setError(null);
-    api<OrderDetail>(`/v1/orders/${row.id}`)
-      .then((d) => {
-        if (!stale) setDetail(d);
-      })
-      .catch((err) => {
-        if (!stale) setError(err instanceof Error ? err.message : String(err));
-      });
-    return () => {
-      stale = true;
-    };
-  }, [row.id]);
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
-
-  return (
-    <div
-      style={{ position: 'fixed', inset: 0, zIndex: 60 }}
-      role="dialog"
-      aria-modal="true"
-      aria-label={`Order ${row.number}`}
-    >
-      <div
-        onClick={onClose}
-        style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.35)' }}
-      />
-      <div
-        data-testid="order-slide-over"
-        style={{
-          position: 'absolute',
-          top: 0,
-          right: 0,
-          bottom: 0,
-          width: 'min(440px, 92vw)',
-          background: 'var(--surface)',
-          borderLeft: '1px solid var(--border)',
-          boxShadow: '-8px 0 24px rgba(0,0,0,0.12)',
-          overflowY: 'auto',
-          padding: 20,
-        }}
-      >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-          <h2 style={{ fontSize: 18, fontWeight: 700, margin: 0 }}>{row.number}</h2>
-          <DisplayStatus row={row} />
-          <button
-            type="button"
-            aria-label="Close"
-            onClick={onClose}
-            className="btn"
-            style={{ marginLeft: 'auto', padding: '4px 8px' }}
-          >
-            <X size={14} aria-hidden />
-          </button>
-        </div>
-        <p style={{ fontSize: 13, color: 'var(--text-secondary)', margin: '0 0 12px' }}>
-          {row.customerName}
-          {row.salespersonName ? ` · ${row.salespersonName}` : ''}
-          {row.deliveryDate ? ` · delivers ${row.deliveryDate}` : ''}
-        </p>
-
-        <LinkButton
-          href={`/orders/${row.id}`}
-          variant="primary"
-          data-testid="slide-over-full-page"
-          style={{ marginBottom: 16 }}
-        >
-          Open full page
-        </LinkButton>
-
-        {error && <p style={{ color: 'var(--danger)', fontSize: 13 }}>{error}</p>}
-        {!detail && !error && <LoadingRows rows={3} />}
-
-        {detail && (
-          <>
-            <h3 style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-              Lines
-            </h3>
-            <table className="table" style={{ fontSize: 13 }}>
-              <tbody>
-                {detail.lines.map((l) => (
-                  <tr key={l.id}>
-                    <td>
-                      {l.description}
-                      {l.quantity !== 1 && (
-                        <span style={{ color: 'var(--text-muted)' }}> ×{l.quantity}</span>
-                      )}
-                    </td>
-                    <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
-                      <Money cents={l.totalCents} />
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-
-            <div style={{ fontSize: 13, marginTop: 12 }}>
-              <SummaryRow label="Subtotal" cents={detail.subtotalCents} />
-              {detail.discountCents > 0 && (
-                <SummaryRow label="Discount" cents={-detail.discountCents} />
-              )}
-              <SummaryRow label="Tax" cents={detail.taxCents} />
-              <SummaryRow label="Total" cents={detail.totalCents} bold />
-              <SummaryRow label="Paid" cents={detail.paidCents} />
-              <SummaryRow label="Balance due" cents={detail.balanceDueCents} bold />
-            </div>
-
-            {detail.payments.length > 0 && (
-              <>
-                <h3
-                  style={{
-                    fontSize: 12,
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.05em',
-                    marginTop: 16,
-                  }}
-                >
-                  Payments
-                </h3>
-                <ul style={{ fontSize: 13, paddingLeft: 16, margin: 0 }}>
-                  {detail.payments.map((p) => (
-                    <li key={p.id}>
-                      <Money cents={p.amountCents} /> — {p.method.replace(/_/g, ' ')} ({p.status})
-                    </li>
-                  ))}
-                </ul>
-              </>
-            )}
-
-            {detail.notes && (
-              <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 16 }}>
-                {detail.notes}
-              </p>
-            )}
-          </>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function SummaryRow({ label, cents, bold }: { label: string; cents: number; bold?: boolean }) {
-  return (
-    <div
-      style={{
-        display: 'flex',
-        justifyContent: 'space-between',
-        fontWeight: bold ? 700 : 400,
-        padding: '2px 0',
-      }}
-    >
-      <span>{label}</span>
-      <Money cents={cents} />
     </div>
   );
 }
