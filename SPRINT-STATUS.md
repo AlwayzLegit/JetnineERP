@@ -4361,3 +4361,18 @@ Owner ask: a section on every order where all users can leave notes.
   Add note (Ctrl/⌘+Enter), newest first with "You" / author name and
   time. `apps/api/test/order-notes.int.spec.ts` (7). CI gets
   `jetnine_order_notes`.
+
+### Checkpoint — 2026-09-01 (Add Product filters: vendor, size, firmness, in stock)
+
+Owner ask on New Sale's Add Product popup.
+
+- `/v1/pos/product-search` takes `size` and `firmness` (canonical lists
+  `MATTRESS_SIZES` / `FIRMNESS_LEVELS`), returns both per row, and the
+  vendor filter now also matches the product's brand or a name starting
+  with the vendor's name — imported catalogs rarely carry a preferred
+  vendor on the variant. Classification is a SQL CASE over attributes +
+  product + variant names ("Twin XL" before "Twin", "Cal King" before
+  "King", "Medium Firm" before "Medium"/"Firm").
+- Dialog gains Size and Firmness selects beside Vendor and Stock.
+- `apps/api/test/product-filters.int.spec.ts` (6). CI gets
+  `jetnine_product_filters`.

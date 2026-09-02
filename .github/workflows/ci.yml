@@ -83,6 +83,7 @@ jobs:
       WAREHOUSE_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/jetnine_warehouse
       CASHIER_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/jetnine_cashier
       ORDER_NOTES_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/jetnine_order_notes
+      PRODUCT_FILTERS_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/jetnine_product_filters
       REDIS_URL: redis://localhost:6379
 
     steps:
@@ -142,6 +143,7 @@ jobs:
           createdb -h localhost -U postgres jetnine_warehouse
           createdb -h localhost -U postgres jetnine_cashier
           createdb -h localhost -U postgres jetnine_order_notes
+          createdb -h localhost -U postgres jetnine_product_filters
 
       - name: Format check
         run: pnpm format:check

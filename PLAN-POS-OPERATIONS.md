@@ -64,6 +64,11 @@ Single-screen order entry — customer, products, payment all on one screen (no 
   against all stored fields, pulls the full record. Multiple matches → dropdown with
   phone + address preview. Inline "create new customer" if no match.
 - **Ship To** defaults to billing with a one-click toggle for a different address.
+- **Add Product popup filters** (owner 2026-09-01): Vendor, Size, Firmness and In stock,
+  combinable with the search box. Size and firmness are read off the catalog — a
+  variant's attributes first, then the product and variant names — so Shopify-shaped
+  names classify without tagging. Vendor matches the variant's preferred vendor, the
+  product's brand, or a name that starts with the vendor's name.
 - **ZIP autofill** (A7): typing a complete ZIP (US 5-digit, ZIP+4 tolerated, or a
   Canadian postal code) fills city and state from the API's bundled table
   (`GET /v1/geo/zip/:zip`, offline, never rate-limited). It fills only where the
