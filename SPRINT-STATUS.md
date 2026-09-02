@@ -4449,3 +4449,18 @@ the page filtered to that vendor.
   `/inventory?vendorId&locationId=all` (new "All locations" option) and
   `/purchase-orders?vendorId`; each destination shows a vendor chip with
   clear. `product-filters.int.spec.ts` +2.
+
+### Checkpoint — 2026-09-02 (delete member)
+
+Owner ask: the Owner needs a Delete button on Members.
+
+- New permission `users.delete` (Owner only among system roles — the
+  Manager exclusion list carries it beside `users.disable`).
+- `DELETE /v1/business/members/:id`: a seat nothing refers to is
+  deleted outright; one with history (orders written, deliveries driven,
+  commission, notes, returns, register sales) is archived — status
+  `removed`, store scopes dropped, locked out by the tenancy guard — so
+  every document keeps its name. Never yourself, never the last active
+  Owner. Both paths audit-logged; removed members leave the roster.
+- Members list and member page: Delete (danger) for holders of the
+  permission, never on their own row. `business.int.spec.ts` +3.

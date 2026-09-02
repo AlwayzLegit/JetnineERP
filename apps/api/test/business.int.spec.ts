@@ -886,3 +886,140 @@ describe('White-label branding + agency overview', () => {
     ).toBeUndefined();
   });
 });
+
+describe('Deleting a member (owner 2026-09-02)', () => {
+  async function makeMember(email: string, roleName: string): Promise<string> {
+    const sql = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    const db = drizzle(sql);
+    try {
+      const [role] = await db
+        .select({ id: schema.roles.id })
+        .from(schema.roles)
+        .where(and(eq(schema.roles.businessId, businessId), eq(schema.roles.name, roleName)))
+        .limit(1);
+      const [u] = await db
+        .insert(schema.users)
+        .values({ email, emailVerified: true, name: email.split('@')[0] })
+        .returning();
+      const [m] = await db
+        .insert(schema.memberships)
+        .values({
+          businessId,
+          userId: u!.id,
+          roleId: role!.id,
+          status: 'active',
+          acceptedAt: new Date(),
+        })
+        .returning();
+      return m!.id;
+    } finally {
+      await sql.end({ timeout: 5 });
+    }
+  }
+  const del = (id: string, cookie = ownerCookie) =>
+    request(app.getHttpServer())
+      .delete(`/v1/business/members/${id}`)
+      .set('Cookie', cookie)
+      .set('x-business-id', businessId);
+
+  it('refuses your own membership and the last active Owner', async () => {
+    const me = await request(app.getHttpServer())
+      .get('/v1/business/members/me')
+      .set('Cookie', ownerCookie)
+      .set('x-business-id', businessId)
+      .expect(200);
+    expect(me.body.canDeleteMembers).toBe(true);
+    await del(me.body.membershipId).expect(400);
+  });
+
+  it('deletes a seat nothing refers to, archives one with history, and hides both from the roster', async () => {
+    const clean = await makeMember('fresh@business-test.local', 'Cashier');
+    const veteran = await makeMember('veteran@business-test.local', 'Cashier');
+    // The veteran has left a note on an order — that must survive.
+    const sql = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    const db = drizzle(sql);
+    try {
+      const [cust] = await db
+        .insert(schema.customers)
+        .values({ businessId, firstName: 'Del', lastName: 'Eted' })
+        .returning();
+      const [loc] = await db
+        .select({ id: schema.locations.id })
+        .from(schema.locations)
+        .where(eq(schema.locations.businessId, businessId))
+        .limit(1);
+      const [order] = await db
+        .insert(schema.orders)
+        .values({
+          businessId,
+          locationId: loc!.id,
+          number: 'SO-DEL-1',
+          status: 'open',
+          customerId: cust!.id,
+          subtotalCents: 1000,
+          totalCents: 1000,
+        })
+        .returning();
+      await db.insert(schema.orderNotes).values({
+        businessId,
+        orderId: order!.id,
+        authorMembershipId: veteran,
+        body: 'call before delivery',
+      });
+    } finally {
+      await sql.end({ timeout: 5 });
+    }
+
+    const a = await del(clean).expect(200);
+    expect(a.body).toEqual({ removed: true, mode: 'deleted' });
+    const b = await del(veteran).expect(200);
+    expect(b.body).toEqual({ removed: true, mode: 'archived' });
+
+    const list = await request(app.getHttpServer())
+      .get('/v1/business/members')
+      .set('Cookie', ownerCookie)
+      .set('x-business-id', businessId)
+      .expect(200);
+    const ids = list.body.map((m: { membershipId: string }) => m.membershipId);
+    expect(ids).not.toContain(clean);
+    expect(ids).not.toContain(veteran);
+
+    const sql2 = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    const db2 = drizzle(sql2);
+    try {
+      const rows = await db2
+        .select({ id: schema.memberships.id, status: schema.memberships.status })
+        .from(schema.memberships)
+        .where(eq(schema.memberships.businessId, businessId));
+      expect(rows.find((r) => r.id === clean)).toBeUndefined();
+      expect(rows.find((r) => r.id === veteran)?.status).toBe('removed');
+      // The note still names its author.
+      const [note] = await db2
+        .select({ author: schema.orderNotes.authorMembershipId })
+        .from(schema.orderNotes)
+        .where(eq(schema.orderNotes.body, 'call before delivery'));
+      expect(note?.author).toBe(veteran);
+      const audits = await db2
+        .select({ action: schema.auditLogs.action })
+        .from(schema.auditLogs)
+        .where(
+          and(
+            eq(schema.auditLogs.businessId, businessId),
+            eq(schema.auditLogs.targetType, 'membership'),
+          ),
+        );
+      const actions = audits.map((r) => r.action);
+      expect(actions).toContain('membership.delete');
+      expect(actions).toContain('membership.remove');
+    } finally {
+      await sql2.end({ timeout: 5 });
+    }
+  });
+
+  it('is not a Manager or Cashier call', async () => {
+    const target = await makeMember('target@business-test.local', 'Cashier');
+    const managerId = await makeMember('mgr@business-test.local', 'Manager');
+    void managerId;
+    await del(target, cashierCookie).expect(403);
+  });
+});
