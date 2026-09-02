@@ -4417,3 +4417,17 @@ which invoice, with the invoice clickable.
   transfer / PO with its date, the customer (linked), and "from <store
   or vendor>". `apps/api/test/as-is-origin.int.spec.ts` (2). CI gets
   `jetnine_as_is`.
+
+### Checkpoint — 2026-09-02 (Warehouse/Cashier could not open Inventory)
+
+Owner report: a member could not see or adjust inventory. Production
+request logs showed repeated 403s on `GET /v1/business/locations`, the
+first call the Inventory page makes (also Receive, Counts, Returns,
+Exchanges, Replenishment, the order page). That endpoint needs
+`locations.view`, which only Owner/Manager/Operations held — so a
+Warehouse member with `inventory.adjust` still hit "Missing required
+permission: locations.view" before anything loaded.
+
+- `locations.view` added to the Cashier, Warehouse and Bookkeeper
+  system roles (read-only store list; create/update/delete unchanged).
+  The boot sync backfills existing tenants' roles on deploy.
