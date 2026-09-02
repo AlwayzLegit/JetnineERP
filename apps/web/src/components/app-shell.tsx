@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { DynamicFavicon } from '@/components/dynamic-favicon';
 import { usePathname } from 'next/navigation';
 import { useEffect, useState, type ReactNode } from 'react';
 import {
@@ -187,6 +188,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <div className="min-h-screen">
+      <DynamicFavicon />
       {open && (
         <button
           type="button"

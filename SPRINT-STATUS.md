@@ -4580,3 +4580,17 @@ need modern, friendly UI with properly wired notices and notifications.
   test ids preserved. PLAN §12.6 (A10).
 - Next: move existing data-entry pages (customers, products, POs,
   settings) onto the kit as they are touched.
+
+### Checkpoint — 2026-09-02 (POS favicon = LA Mattress logo)
+
+Owner ask: give the POS a favicon using the LA Mattress logo.
+
+- `app/icon.svg` + `app/apple-icon.png` + `public/icons/icon-192/512.png`:
+  a bundled "LA" mattress mark (indigo) as the default tab / home-screen
+  icon; `manifest.webmanifest` lists them so an installed POS has an icon.
+- `DynamicFavicon` (mounted in the app shell): once branding loads, the
+  favicon and apple-touch-icon point at `branding.logoUrl` — the LA
+  Mattress logo the business already set under Settings → Branding. If
+  no logo is set, the bundled mark stays. lamattress.com is not reachable
+  from the build environment, so the real logo file is not bundled; the
+  runtime swap uses the configured one.
