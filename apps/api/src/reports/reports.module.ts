@@ -5,9 +5,15 @@ import { TenancyModule } from '../tenancy/tenancy.module';
 import { CashDrawerBalancingController } from './cash-drawer-balancing.controller';
 import { MorningDashboardController } from './morning-dashboard.controller';
 import { ReportsController } from './reports.controller';
+import { WrittenSalesController } from './written-sales.controller';
 
 @Module({
   imports: [AuthModule, TenancyModule, CostingModule],
-  controllers: [ReportsController, MorningDashboardController, CashDrawerBalancingController],
+  controllers: [
+    ReportsController,
+    MorningDashboardController,
+    CashDrawerBalancingController,
+    WrittenSalesController,
+  ],
 })
 export class ReportsModule {}

@@ -4627,3 +4627,19 @@ screen + sample PDF) — "create this too".
   `jetnine_cash_drawer`).
 - Web `/reports/cash-drawer-balancing` with the STORIS parameter card,
   linked from Reports. PLAN §12.8 (A12).
+
+### Checkpoint — 2026-09-02 (Report Written Sales Dollars)
+
+Owner ask: the STORIS "Report Written Sales Dollars" (parameter screen +
+sample PDF) — "We also need this built".
+
+- API `GET /v1/reports/written-sales`: location → type (new transactions
+  excl. layaway / layaway / register sales / ADJUSTMENT) → order → line
+  with merch, gross profit, profit %, charges, customer discount, misc
+  fee, sales tax, total order; totals at every level; Order Type both /
+  orders / adjustments, Report Type detail / summary, include audit
+  comments / all salespeople / customer address, multi-store filter, CSV;
+  profit masked without `reports.financial.view`.
+  `written-sales.int.spec.ts` (6 tests, new CI db `jetnine_written_sales`).
+- Web `/reports/written-sales` with the STORIS parameter card, linked
+  from Reports. PLAN §12.9 (A13).

@@ -558,6 +558,48 @@ Owner ask (STORIS AR.317 parameter screen + sample output): "create this too".
   carries the parameters.
 - Tests: `cash-drawer-balancing.int.spec.ts` (6).
 
+### 12.9 Report Written Sales Dollars (amendment A13, owner 2026-09-02)
+
+Owner ask (STORIS TE.320 parameter screen + sample output): "We also need
+this built".
+
+- **Endpoint** `GET /v1/reports/written-sales` (`reports.sales.view`,
+  selling scope): `start`/`end` (written date in the store's timezone,
+  default today), `locationId` (one, repeated, or comma-separated — the
+  STORIS multi-store picker), `orderType=both|orders|adjustments`,
+  `reportType=detail|summary`, `includeAuditComments` (default off),
+  `includeAllSalespeople` (default on), `includeAddress` (default on),
+  `format=csv`.
+- **Body** (the STORIS layout): location → type → order → line. Lines carry
+  qty, product number (variant SKU), description, merch amount, gross
+  profit, profit %, entered-by initials; each order carries number, written
+  date + time, customer code + name, salespeople initials, marketing code,
+  ship-to address (order address, else the customer's first address) and
+  the footer columns charges (delivery + install), customer discount
+  (order-level), misc fee charge (other fee), sales tax, total order.
+  Totals per order, type, location and grand (profit % recomputed at each
+  level).
+- **Types**: "New Transactions excluding Layaway" (sales orders),
+  "Layaway" (order kind layaway), "Register Sales" (POS cash-and-carry
+  sales — Jetnine's register has no STORIS equivalent, so it is its own
+  type), "ADJUSTMENT".
+- **Adjustments** = money that moved in the window on documents written
+  before it: price adjustments granted in the window (audit
+  `order.price_adjustment`, negative merch, reason shown), cancellations in
+  the window of earlier orders (the whole order comes back out, cost
+  included), and lines added in the window to earlier orders (a line
+  stamped a minute or more after its order). Line edits and removals are
+  not tracked as deltas today and stay off the register.
+- **Gross profit** is cost-derived (variant cost × qty) and only present
+  with `reports.financial.view`; otherwise every profit cell is null and
+  the page says so. Quotes, drafts, cancelled-at-write and imported legacy
+  documents are never written sales.
+- **UI** `/reports/written-sales`, linked from Reports: the STORIS parameter
+  card (date range picker, multi-select store, Order Type / Report Type
+  radios, the three include checkboxes), Run, Print, Export CSV; URL
+  carries the parameters.
+- Tests: `written-sales.int.spec.ts` (6).
+
 ### 12.3 Cashier dashboard — "My Day" (amendment A7, owner 2026-09-01)
 
 Fixed by role, like Operations and Warehouse: `cashier.dashboard.view` is the

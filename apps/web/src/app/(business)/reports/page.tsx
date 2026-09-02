@@ -390,6 +390,9 @@ export default function ReportsPage() {
         <a href="/reports/cash-drawer-balancing" data-testid="reports-cash-drawer-link">
           Cash drawer balancing totals →
         </a>
+        <a href="/reports/written-sales" data-testid="reports-written-sales-link">
+          Written sales dollars →
+        </a>
       </p>
       {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
 
