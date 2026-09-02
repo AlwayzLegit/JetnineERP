@@ -144,6 +144,21 @@ test.describe('Day 2 — order writer', () => {
     await page.getByTestId('order-row').first().click();
     await page.waitForURL(orderUrl);
     await expect(page.getByTestId('order-status')).toBeVisible();
+
+    // --- View Customer Activity: lookup → open orders and deposits agree with the order ---
+    await page.goto('/customers/activity');
+    await page.getByTestId('activity-lookup').fill('Dana');
+    await page.getByTestId('activity-lookup-hit').first().click();
+    await page.waitForURL(/\/customers\/[0-9a-f-]{36}\/activity$/);
+    await expect(page.getByTestId('activity-name')).toContainText('Dana Buyer');
+    await page.getByTestId('activity-tab-open-orders').click();
+    await expect(page.getByTestId('open-order-row')).toHaveCount(1);
+    await expect(page.getByTestId('sum-deposits')).toContainText('$2.50');
+    await expect(page.getByTestId('sum-unpaid')).toContainText('$7.50');
+    await page.getByTestId('activity-tab-deposits').click();
+    await expect(page.getByTestId('deposits-total')).toContainText('$2.50');
+    await page.getByTestId('activity-tab-order-lines').click();
+    await expect(page.getByTestId('order-line-row').first()).toContainText('Reserved');
   });
 
   test('delivery lifecycle: schedule → deliver → collect balance → complete', async ({ page }) => {
