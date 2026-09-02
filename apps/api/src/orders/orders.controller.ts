@@ -302,7 +302,30 @@ interface OrderDetail extends OrderListRow {
     status: string;
     totalCents: number;
     balanceDueCents: number;
+    /** Owner 2026-09-02: the split card shows what each piece carries. */
+    fulfillmentType: string;
+    requestedDate: string | null;
+    lines: {
+      id: string;
+      description: string;
+      quantity: number;
+      fulfillmentMethod: string | null;
+    }[];
   }[];
+}
+
+/**
+ * The purchase order a line is riding on (owner 2026-09-02): "PO-123 ·
+ * on order" until receiving accepts the units, then "accepted, reserved".
+ * From po_line_allocations — ordered vs received quantities per line.
+ */
+export interface OrderLinePo {
+  poId: string;
+  poNumber: string;
+  poStatus: string;
+  ordered: number;
+  received: number;
+  expectedAt: Date | null;
 }
 
 /**
@@ -1301,8 +1324,77 @@ export class OrdersController {
   async get(
     @CurrentTenant() _tenant: RequestTenantContext,
     @Param('id') id: string,
-  ): Promise<OrderDetail & { displayStatus: string; displayPoNumber: string | null }> {
+  ): Promise<
+    OrderDetail & {
+      displayStatus: string;
+      displayPoNumber: string | null;
+      lines: (OrderLineRow & { po: OrderLinePo | null })[];
+      /** §10 exchanges written against this order (owner 2026-09-02: their own card). */
+      exchangeOrders: {
+        id: string;
+        number: string;
+        status: string;
+        totalCents: number;
+        createdAt: Date;
+      }[];
+    }
+  > {
     const detail = await this.loadDetail(id);
+    // Per-line purchase order (owner 2026-09-02): what each unreserved
+    // line is waiting on, and when the PO has been accepted and the
+    // units reserved.
+    const poRows = await this.db
+      .select({
+        orderLineId: schema.poLineAllocations.orderLineId,
+        allocStatus: schema.poLineAllocations.status,
+        quantity: schema.poLineAllocations.quantity,
+        poId: schema.purchaseOrders.id,
+        poNumber: schema.purchaseOrders.number,
+        poStatus: schema.purchaseOrders.status,
+        expectedAt: schema.purchaseOrders.expectedAt,
+      })
+      .from(schema.poLineAllocations)
+      .innerJoin(schema.orderLines, eq(schema.orderLines.id, schema.poLineAllocations.orderLineId))
+      .innerJoin(
+        schema.purchaseOrderLines,
+        eq(schema.purchaseOrderLines.id, schema.poLineAllocations.poLineId),
+      )
+      .innerJoin(
+        schema.purchaseOrders,
+        eq(schema.purchaseOrders.id, schema.purchaseOrderLines.purchaseOrderId),
+      )
+      .where(
+        and(
+          eq(schema.orderLines.orderId, id),
+          sql`${schema.poLineAllocations.status} != 'cancelled'`,
+          sql`${schema.purchaseOrders.deletedAt} IS NULL`,
+        ),
+      );
+    const linePo = new Map<string, OrderLinePo>();
+    for (const r of poRows) {
+      const cur = linePo.get(r.orderLineId) ?? {
+        poId: r.poId,
+        poNumber: r.poNumber,
+        poStatus: r.poStatus,
+        ordered: 0,
+        received: 0,
+        expectedAt: r.expectedAt ?? null,
+      };
+      if (r.allocStatus === 'received') cur.received += r.quantity;
+      else cur.ordered += r.quantity;
+      linePo.set(r.orderLineId, cur);
+    }
+    const exchangeOrders = await this.db
+      .select({
+        id: schema.orders.id,
+        number: schema.orders.number,
+        status: schema.orders.status,
+        totalCents: schema.orders.totalCents,
+        createdAt: schema.orders.createdAt,
+      })
+      .from(schema.orders)
+      .where(eq(schema.orders.originalOrderId, id))
+      .orderBy(schema.orders.createdAt);
     // P-013 (BA-0017): the detail page shows the same display status as
     // the list — one vocabulary, derived from the same ladder.
     const [trip] = await this.db
@@ -1365,6 +1457,8 @@ export class OrdersController {
     });
     return {
       ...detail,
+      lines: detail.lines.map((l) => ({ ...l, po: linePo.get(l.id) ?? null })),
+      exchangeOrders,
       displayStatus,
       displayPoNumber: displayStatus === 'On PO' ? (openPo?.number ?? null) : null,
     };
@@ -4636,6 +4730,22 @@ export class OrdersController {
             familyRows.map((r) => r.id),
           ),
         );
+      const famLines = await this.db
+        .select({
+          id: schema.orderLines.id,
+          orderId: schema.orderLines.orderId,
+          description: schema.orderLines.description,
+          quantity: schema.orderLines.quantity,
+          fulfillmentMethod: schema.orderLines.fulfillmentMethod,
+        })
+        .from(schema.orderLines)
+        .where(
+          inArray(
+            schema.orderLines.orderId,
+            familyRows.map((r) => r.id),
+          ),
+        )
+        .orderBy(schema.orderLines.createdAt);
       family = familyRows.map((r) => ({
         id: r.id,
         number: r.number,
@@ -4645,6 +4755,16 @@ export class OrdersController {
           r.totalCents,
           famPayments.filter((fp) => fp.orderId === r.id),
         ),
+        fulfillmentType: r.fulfillmentType,
+        requestedDate: r.requestedDate,
+        lines: famLines
+          .filter((l) => l.orderId === r.id)
+          .map((l) => ({
+            id: l.id,
+            description: l.description,
+            quantity: l.quantity,
+            fulfillmentMethod: l.fulfillmentMethod,
+          })),
       }));
     }
 
