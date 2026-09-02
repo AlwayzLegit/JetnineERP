@@ -214,7 +214,10 @@ Returned/Exchanged.
 
 - Orders list columns: Order #, Customer, Status, Delivery Date, Balance Due,
   Salesperson.
-- Row click opens a slide-over panel (list keeps its place) with a full-page option.
+- Row click opens the full order page. _(Amendment 2026-09-02, owner: the
+  slide-over panel is retired — one click on an order row or its Order # lands
+  on the order itself; the browser Back button returns to the list, which keeps
+  its filters in the URL.)_
 - Order detail shows a change-history timeline, every field change attributed.
 
 **Amendment (2026-08-31, S01 browser-audit P-013/BA-0017):** the display ladder
