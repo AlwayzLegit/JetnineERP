@@ -63,6 +63,20 @@ function s(v: unknown): string {
 
 // ---------------------------------------------------------------- Shopify
 
+/**
+ * Helix mattresses (owner ask 2026-09-01): Shopify's variant title is
+ * "<size> / <cover> / <support>", and the register only wants the size,
+ * the mattress and its firmness — size first. Mirrors migration 0083 so
+ * a re-sync never writes the long names back.
+ *
+ *   Helix Twilight 11.5" Firm Hybrid Mattress — Twin / Breeathe Knit Cover / ErgoAlign Support
+ *   → Twin Helix Twilight 11.5" Firm Hybrid Mattress
+ */
+export function helixMattressName(name: string): string {
+  const m = name.match(/^(Helix .*Mattress) — ([^/]+?)\s*(\/.*)?$/);
+  return m ? `${m[2]} ${m[1]}`.trim() : name;
+}
+
 async function shopifyGet(
   ctx: ConnectorContext,
   path: string,
@@ -140,10 +154,11 @@ const shopify: Connector = {
       const variants = (p.variants as Record<string, unknown>[] | undefined) ?? [];
       return variants.map((v) => ({
         sku: s(v.sku) || `shp-${s(v.id)}`,
-        name:
+        name: helixMattressName(
           variants.length > 1 && s(v.title) !== 'Default Title'
             ? `${s(p.title)} — ${s(v.title)}`
             : s(p.title),
+        ),
         category: s(p.product_type),
         priceCents: centsString(v.price),
         barcode: s(v.barcode),

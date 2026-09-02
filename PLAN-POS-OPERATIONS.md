@@ -18,6 +18,7 @@
 | A6  | **Inventory Clerk is renamed Warehouse and gets its own home** (owner 2026-09-01). Same role, same permissions plus `warehouse.dashboard.view`; the sync renames existing tenants' system role in place (memberships untouched) and skips any business with its own "Warehouse" role. Dashboard spec in §12.2.                                                           |
 | A5  | **Operations is a sixth role, with its own home** (owner 2026-08-31). It watches every store's selling and every dollar and unit that moves, and signs off on what it reads — read-and-clear, never approve, consistent with §13's "approval queues (dashboard visibility instead)". It sells occasionally: no quota, no commission. Detail in §12.                      |
 | A7  | **Cashier gets its own home, "My Day"** (owner 2026-09-01). Permission `cashier.dashboard.view` on the Cashier role; ten cards about the signed-in seller's own day and the store they are standing in. Login still lands on New Sale (§4) — the dashboard serves selling, never replaces it. Customer address entry autofills city/state from the ZIP. Detail in §12.3. |
+| A8  | **Orders carry a notes thread** (owner 2026-09-01). Anyone who can see an order (`orders.view`) can leave a note on it; each note keeps its author and time, is append-only, and lands in the order's change history. The order's `notes` / `internal_notes` fields stay the printed and customer-facing text.                                                           |
 
 ## 1. Locations & Order Numbering
 
@@ -63,6 +64,11 @@ Single-screen order entry — customer, products, payment all on one screen (no 
   against all stored fields, pulls the full record. Multiple matches → dropdown with
   phone + address preview. Inline "create new customer" if no match.
 - **Ship To** defaults to billing with a one-click toggle for a different address.
+- **Add Product popup filters** (owner 2026-09-01): Vendor, Size, Firmness and In stock,
+  combinable with the search box. Size and firmness are read off the catalog — a
+  variant's attributes first, then the product and variant names — so Shopify-shaped
+  names classify without tagging. Vendor matches the variant's preferred vendor, the
+  product's brand, or a name that starts with the vendor's name.
 - **ZIP autofill** (A7): typing a complete ZIP (US 5-digit, ZIP+4 tolerated, or a
   Canadian postal code) fills city and state from the API's bundled table
   (`GET /v1/geo/zip/:zip`, offline, never rate-limited). It fills only where the

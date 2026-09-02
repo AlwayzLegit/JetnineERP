@@ -173,6 +173,48 @@ interface SaleDetail extends Omit<SaleListRow, 'customerName'> {
   refunds: RefundRow[];
 }
 
+/**
+ * Mattress size and firmness, read off the catalog (owner ask
+ * 2026-09-01: filter the Add Product popup by size and firmness). Most
+ * of the catalog came from Shopify with the size and firmness inside the
+ * product name, so the classifier looks at the variant's attributes
+ * first and the product + variant names second. Order matters: "Twin XL"
+ * before "Twin", "Cal King" before "King", "Medium Firm" before both
+ * "Medium" and "Firm".
+ */
+export const MATTRESS_SIZES = [
+  'Twin',
+  'Twin XL',
+  'Full',
+  'Queen',
+  'King',
+  'Cal King',
+  'Split King',
+  'Split Cal King',
+] as const;
+export const FIRMNESS_LEVELS = ['Plush', 'Medium', 'Medium Firm', 'Firm', 'Extra Firm'] as const;
+
+const NAME_HAY = sql`(coalesce(${schema.productVariants.attributesJson}->>'size', '') || ' ' || coalesce(${schema.productVariants.attributesJson}->>'firmness', '') || ' ' || coalesce(${schema.products.name}, '') || ' ' || coalesce(${schema.productVariants.name}, ''))`;
+
+const SIZE_EXPR = sql`CASE
+  WHEN ${NAME_HAY} ~* '\\m(split\\s+cal(ifornia)?\\.?\\s+king)\\M' THEN 'Split Cal King'
+  WHEN ${NAME_HAY} ~* '\\m(split\\s+king)\\M' THEN 'Split King'
+  WHEN ${NAME_HAY} ~* '\\m(cal(ifornia)?\\.?\\s+king)\\M' THEN 'Cal King'
+  WHEN ${NAME_HAY} ~* '\\mking\\M' THEN 'King'
+  WHEN ${NAME_HAY} ~* '\\mqueen\\M' THEN 'Queen'
+  WHEN ${NAME_HAY} ~* '\\m(full|double)\\M' THEN 'Full'
+  WHEN ${NAME_HAY} ~* '\\m(twin\\s*x-?l|txl)\\M' THEN 'Twin XL'
+  WHEN ${NAME_HAY} ~* '\\mtwin\\M' THEN 'Twin'
+  ELSE NULL END`;
+
+const FIRMNESS_EXPR = sql`CASE
+  WHEN ${NAME_HAY} ~* '\\m(extra\\s+firm|x-?firm|ultra\\s+firm)\\M' THEN 'Extra Firm'
+  WHEN ${NAME_HAY} ~* '\\m(medium\\s+firm|med\\.?\\s+firm|luxury\\s+firm|cushion\\s+firm|plush\\s+firm)\\M' THEN 'Medium Firm'
+  WHEN ${NAME_HAY} ~* '\\mfirm\\M' THEN 'Firm'
+  WHEN ${NAME_HAY} ~* '\\m(medium|med\\.?)\\M' THEN 'Medium'
+  WHEN ${NAME_HAY} ~* '\\m(plush|soft|ultra\\s+plush)\\M' THEN 'Plush'
+  ELSE NULL END`;
+
 @TenantScoped()
 @Controller('v1')
 export class SalesController {
@@ -209,6 +251,8 @@ export class SalesController {
     @Query('locationId') locationId?: string,
     @Query('limit') limitStr?: string,
     @Query('variantIds') variantIdsStr?: string,
+    @Query('size') size?: string,
+    @Query('firmness') firmness?: string,
   ): Promise<
     {
       variantId: string;
@@ -219,6 +263,10 @@ export class SalesController {
       priceCents: number;
       vendorId: string | null;
       vendorName: string | null;
+      /** Canonical mattress size read off the name/attributes, or null. */
+      size: string | null;
+      /** Canonical firmness read off the name/attributes, or null. */
+      firmness: string | null;
       availableHere: number;
       availableTotal: number;
       atpDate: string | null;
@@ -232,7 +280,49 @@ export class SalesController {
         sql`(${schema.products.name} ILIKE ${'%' + query + '%'} OR ${schema.productVariants.name} ILIKE ${'%' + query + '%'} OR ${schema.productVariants.sku} ILIKE ${'%' + query + '%'})`,
       );
     }
-    if (vendorId) filters.push(eq(schema.productVariants.preferredVendorId, vendorId));
+    // Vendor (owner ask 2026-09-01): imported catalogs rarely carry a
+    // preferred vendor on the variant, so the filter also accepts the
+    // product's brand or the vendor's name inside the product name
+    // ("Twin Helix Dusk …" for vendor Helix).
+    if (vendorId) {
+      const [vendor] = await this.db
+        .select({ name: schema.vendors.name })
+        .from(schema.vendors)
+        .where(
+          and(eq(schema.vendors.businessId, tenant.businessId!), eq(schema.vendors.id, vendorId)),
+        )
+        .limit(1);
+      const vendorName = vendor?.name?.trim();
+      // Whole-word match anywhere in the name: "Twin Helix Dusk …" is a
+      // Helix, "Helixir Pillow" is not.
+      const vendorWord = vendorName
+        ? '\\m' + vendorName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\M'
+        : null;
+      filters.push(
+        vendorName
+          ? sql`(${schema.productVariants.preferredVendorId} = ${vendorId} OR lower(${schema.brands.name}) = lower(${vendorName}) OR ${schema.products.name} ~* ${vendorWord})`
+          : eq(schema.productVariants.preferredVendorId, vendorId),
+      );
+    }
+    // Size / firmness are read off what the catalog actually says —
+    // attributes when a variant has them, else the product and variant
+    // names — so Shopify-shaped "Queen Helix Dusk 12\" Medium Firm …"
+    // products filter as well as hand-built ones.
+    if (size) {
+      const canonical = MATTRESS_SIZES.find((x) => x.toLowerCase() === size.trim().toLowerCase());
+      if (!canonical)
+        throw new BadRequestException(`size must be one of: ${MATTRESS_SIZES.join(', ')}`);
+      filters.push(sql`${SIZE_EXPR} = ${canonical}`);
+    }
+    if (firmness) {
+      const canonical = FIRMNESS_LEVELS.find(
+        (x) => x.toLowerCase() === firmness.trim().toLowerCase(),
+      );
+      if (!canonical) {
+        throw new BadRequestException(`firmness must be one of: ${FIRMNESS_LEVELS.join(', ')}`);
+      }
+      filters.push(sql`${FIRMNESS_EXPR} = ${canonical}`);
+    }
     // BA-0021: reopened drafts re-check availability for their exact
     // variants, so stock warnings survive the round trip.
     const variantIds = (variantIdsStr ?? '')
@@ -251,6 +341,8 @@ export class SalesController {
         priceCents: schema.productVariants.priceCents,
         vendorId: schema.productVariants.preferredVendorId,
         vendorName: schema.vendors.name,
+        size: sql<string | null>`${SIZE_EXPR}`,
+        firmness: sql<string | null>`${FIRMNESS_EXPR}`,
         availableHere: locationId
           ? sql<number>`coalesce(sum(${schema.inventoryLevels.onHand} - ${schema.inventoryLevels.reserved} - ${schema.inventoryLevels.floorSample}) FILTER (WHERE ${schema.inventoryLevels.locationId} = ${locationId}), 0)::int`
           : sql<number>`0`,
@@ -259,12 +351,18 @@ export class SalesController {
       .from(schema.productVariants)
       .innerJoin(schema.products, eq(schema.products.id, schema.productVariants.productId))
       .leftJoin(schema.vendors, eq(schema.vendors.id, schema.productVariants.preferredVendorId))
+      .leftJoin(schema.brands, eq(schema.brands.id, schema.products.brandId))
       .leftJoin(
         schema.inventoryLevels,
         eq(schema.inventoryLevels.variantId, schema.productVariants.id),
       )
       .where(and(...filters))
-      .groupBy(schema.productVariants.id, schema.products.id, schema.vendors.name)
+      .groupBy(
+        schema.productVariants.id,
+        schema.products.id,
+        schema.vendors.name,
+        schema.brands.name,
+      )
       .having(
         inStock === '1'
           ? sql`coalesce(sum(${schema.inventoryLevels.onHand} - ${schema.inventoryLevels.reserved} - ${schema.inventoryLevels.floorSample}), 0) > 0`

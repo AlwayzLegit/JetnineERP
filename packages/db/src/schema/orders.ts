@@ -422,3 +422,31 @@ export const deliveryLines = pgTable(
     quantityPositive: check('delivery_lines_quantity_positive', sql`${t.quantity} > 0`),
   }),
 );
+
+/**
+ * Free-form notes on an order (owner ask 2026-09-01): anyone who can see
+ * the order can leave one, and every note keeps its author and time.
+ * Append-only — the order's `notes`/`internal_notes` columns stay the
+ * printed/customer-facing text; this is the running conversation.
+ */
+export const orderNotes = pgTable(
+  'order_notes',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    businessId: uuid('business_id')
+      .notNull()
+      .references(() => businesses.id, { onDelete: 'cascade' }),
+    orderId: uuid('order_id')
+      .notNull()
+      .references(() => orders.id, { onDelete: 'cascade' }),
+    authorMembershipId: uuid('author_membership_id').references(() => memberships.id, {
+      onDelete: 'set null',
+    }),
+    body: text('body').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    orderIdx: index('order_notes_order_id_idx').on(t.orderId, t.createdAt),
+    businessIdx: index('order_notes_business_id_idx').on(t.businessId),
+  }),
+);
