@@ -4178,3 +4178,30 @@ describe('Take-with hand-over on Complete', () => {
     expect(finish.body.status).toBe('completed');
   });
 });
+
+describe('Orders list date window (owner 2026-09-02, Shopify-style picker)', () => {
+  const get = (url: string) =>
+    request(app.getHttpServer())
+      .get(url)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId);
+
+  it('start/end scope the list and the list view by created date; malformed is ignored', async () => {
+    const today = new Date().toISOString().slice(0, 10);
+    const all = await get('/v1/orders?limit=100').expect(200);
+    expect(all.body.data.length).toBeGreaterThan(0);
+    const past = await get('/v1/orders?limit=100&start=2000-01-01&end=2000-01-02').expect(200);
+    expect(past.body.data).toEqual([]);
+    // Earlier suites backdate a few orders (return windows), so today's
+    // window is a non-empty subset of everything.
+    const now = await get(`/v1/orders?limit=100&start=${today}&end=${today}`).expect(200);
+    expect(now.body.data.length).toBeGreaterThan(0);
+    expect(now.body.data.length).toBeLessThanOrEqual(all.body.data.length);
+    const bad = await get('/v1/orders?limit=100&start=2000-13-40&end=x').expect(200);
+    expect(bad.body.data.length).toBe(all.body.data.length);
+    const view = await get('/v1/orders/list-view?limit=100&start=2000-01-01&end=2000-01-02').expect(
+      200,
+    );
+    expect(view.body.data).toEqual([]);
+  });
+});

@@ -5,7 +5,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { api } from '@/lib/api';
 import { Money } from '@/components/money';
-import { Card, EmptyState, Input, Select, Skeleton, StatusBadge } from '@/components/ui';
+import { Card, EmptyState, Select, Skeleton, StatusBadge } from '@/components/ui';
+import { DateRangePicker, useUrlDateRange } from '@/components/date-range-picker';
 
 /**
  * View Customer Activity (owner 2026-09-02, STORIS-style): one customer,
@@ -763,36 +764,29 @@ function HistoricalDeposits({ data }: { data: Activity }) {
 }
 
 function OpenArItems({ data }: { data: Activity }) {
-  const [from, setFrom] = useState('');
-  const [to, setTo] = useState('');
+  // Section-level window (`ar.range` / `ar.start` / `ar.end` in the URL);
+  // "All time" is the default and means no filter. Filtering is client-side
+  // on the rows already loaded, so there is nothing to wait for.
+  const [range, setRange] = useUrlDateRange('all', { key: 'ar' });
   const rows = data.openArItems.filter((r) => {
-    const d = r.dueDate ?? r.transactionDate;
-    if (from && d < from) return false;
-    if (to && d > to) return false;
-    return true;
+    if (range.preset === 'all') return true;
+    const d = (r.dueDate ?? r.transactionDate).slice(0, 10);
+    return d >= range.start && d <= range.end;
   });
   const total = rows.reduce((s, r) => s + r.amountCents, 0);
   return (
     <Card title="Open A/R items" data-testid="activity-ar">
       <div className="grid grid-cols-2 gap-4 md:grid-cols-4" style={{ marginBottom: 12 }}>
-        <label style={{ display: 'grid', gap: 4 }}>
-          <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Earliest date</span>
-          <Input
-            type="date"
-            value={from}
-            onChange={(e) => setFrom(e.target.value)}
-            data-testid="ar-from"
+        <Labeled label="Due / transaction date">
+          <DateRangePicker
+            value={range}
+            onChange={setRange}
+            compact
+            allowAllTime
+            align="left"
+            testid="ar-range"
           />
-        </label>
-        <label style={{ display: 'grid', gap: 4 }}>
-          <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Latest date</span>
-          <Input
-            type="date"
-            value={to}
-            onChange={(e) => setTo(e.target.value)}
-            data-testid="ar-to"
-          />
-        </label>
+        </Labeled>
         <Labeled label="Credit limit">Unlimited</Labeled>
         <Labeled label="Open receivables">
           <span data-testid="ar-total">

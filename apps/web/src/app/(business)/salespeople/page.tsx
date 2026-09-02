@@ -1,20 +1,11 @@
 'use client';
 
-import { RefreshCw } from 'lucide-react';
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
-import {
-  Button,
-  Card,
-  EmptyState,
-  Field,
-  Input,
-  LinkButton,
-  LoadingRows,
-  PageHeader,
-} from '@/components/ui';
+import { Button, Card, EmptyState, LinkButton, LoadingRows, PageHeader } from '@/components/ui';
 import { api } from '@/lib/api';
 import { Money } from '@/components/money';
+import { DateRangePicker, useUrlDateRange } from '@/components/date-range-picker';
 
 interface SummaryRow {
   key: string;
@@ -52,22 +43,15 @@ interface MemberRow {
   name: string | null;
 }
 
-function defaultRange(): { start: string; end: string } {
-  const end = new Date().toISOString().slice(0, 10);
-  const s = new Date();
-  s.setUTCDate(s.getUTCDate() - 29);
-  return { start: s.toISOString().slice(0, 10), end };
-}
-
 /**
  * Salesperson activity (Sales Views Phase 4): one grid of written
  * activity per salesperson over the window, with a drill-in listing the
  * person's orders and POS sales. Store data scope applies server-side.
  */
 export default function SalespeoplePage() {
-  const [{ start: s0, end: e0 }] = useState(defaultRange);
-  const [start, setStart] = useState(s0);
-  const [end, setEnd] = useState(e0);
+  // Window lives in the URL (`?range=last30` / `?start&end`) so the view can
+  // be bookmarked; the report and the drill-in share it.
+  const [range, setRange, ready] = useUrlDateRange('last30');
   const [summary, setSummary] = useState<SalesSummary | null>(null);
   const [members, setMembers] = useState<MemberRow[]>([]);
   const [picked, setPicked] = useState<SummaryRow | null>(null);
@@ -75,25 +59,34 @@ export default function SalespeoplePage() {
   const [sales, setSales] = useState<SaleRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  async function load() {
-    try {
-      setSummary(
-        await api<SalesSummary>(
-          `/v1/reports/sales/summary?basis=written&groupBy=salesperson&start=${start}&end=${end}`,
-        ),
-      );
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    }
-  }
-
   useEffect(() => {
-    void load();
     api<MemberRow[]>('/v1/business/members')
       .then(setMembers)
       .catch(() => setMembers([]));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Refetch whenever the window changes (once the URL has been read). A
+  // drill-in from the previous window would no longer match the table, so
+  // it closes here and the user re-opens it against the new window.
+  useEffect(() => {
+    if (!ready) return;
+    let cancelled = false;
+    setPicked(null);
+    setOrders(null);
+    setSales(null);
+    api<SalesSummary>(
+      `/v1/reports/sales/summary?basis=written&groupBy=salesperson&start=${range.start}&end=${range.end}`,
+    )
+      .then((s) => {
+        if (!cancelled) setSummary(s);
+      })
+      .catch((err) => {
+        if (!cancelled) setError(err instanceof Error ? err.message : String(err));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [ready, range.start, range.end]);
 
   async function drill(row: SummaryRow) {
     setPicked(row);
@@ -102,15 +95,17 @@ export default function SalespeoplePage() {
     // The summary keys salespeople by user id; orders filter by
     // membership id — resolve through the member list.
     const member = members.find((m) => m.userId === row.key);
+    // Same window as the table so the documents listed add up to the row.
+    const windowQs = `start=${range.start}&end=${range.end}`;
     try {
       const [o, sl] = await Promise.all([
         member
           ? api<{ data: OrderRow[] }>(
-              `/v1/orders?limit=100&salespersonMembershipId=${member.membershipId}`,
+              `/v1/orders?limit=100&salespersonMembershipId=${member.membershipId}&${windowQs}`,
             )
           : Promise.resolve({ data: [] as OrderRow[] }),
         row.key
-          ? api<{ data: SaleRow[] }>(`/v1/sales?limit=100&associateUserId=${row.key}`)
+          ? api<{ data: SaleRow[] }>(`/v1/sales?limit=100&associateUserId=${row.key}&${windowQs}`)
           : Promise.resolve({ data: [] as SaleRow[] }),
       ]);
       setOrders(o.data);
@@ -125,25 +120,16 @@ export default function SalespeoplePage() {
       <PageHeader
         title="Salespeople"
         actions={
-          <LinkButton href="/salespeople/activity" data-testid="salespeople-activity-link">
-            View salesperson activity
-          </LinkButton>
+          <>
+            <DateRangePicker value={range} onChange={setRange} testid="salespeople-range" />
+            <LinkButton href="/salespeople/activity" data-testid="salespeople-activity-link">
+              View salesperson activity
+            </LinkButton>
+          </>
         }
       />
       {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
       <Card>
-        <div className="mb-3 flex flex-wrap items-end gap-2">
-          <Field label="Start">
-            <Input type="date" value={start} onChange={(e) => setStart(e.target.value)} />
-          </Field>
-          <Field label="End">
-            <Input type="date" value={end} onChange={(e) => setEnd(e.target.value)} />
-          </Field>
-          <Button variant="secondary" onClick={() => void load()}>
-            <RefreshCw size={14} aria-hidden />
-            Run
-          </Button>
-        </div>
         {!summary ? (
           <LoadingRows />
         ) : (
