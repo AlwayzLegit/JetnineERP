@@ -2,8 +2,10 @@
 
 import { useEffect, useState, type FormEvent } from 'react';
 import { Button, Card, EmptyState, Field, Input, LoadingRows, PageHeader } from '@/components/ui';
+import { DateRangePicker, useUrlDateRange } from '@/components/date-range-picker';
 import { useSession } from '@/lib/auth-client';
 import { api, apiUrl } from '@/lib/api';
+import { addDays, type DateRange } from '@/lib/date-range';
 
 interface AuditLogRow {
   id: string;
@@ -19,22 +21,42 @@ interface AuditLogRow {
   createdAt: string;
 }
 
+interface Filters {
+  action: string;
+  actorUserId: string;
+}
+
+/**
+ * Query params for /v1/audit-logs. The API treats `until` as EXCLUSIVE,
+ * so an inclusive picker range `[start, end]` becomes
+ * `since=start&until=end+1 day`; "All time" sends neither bound.
+ */
+function auditParams(filters: Filters, range: DateRange): URLSearchParams {
+  const params = new URLSearchParams();
+  if (filters.action) params.set('action', filters.action);
+  if (filters.actorUserId) params.set('actorUserId', filters.actorUserId);
+  if (range.preset !== 'all') {
+    params.set('since', range.start);
+    params.set('until', addDays(range.end, 1));
+  }
+  return params;
+}
+
 export default function AuditLogPage() {
   const session = useSession();
-  const [filters, setFilters] = useState({ action: '', actorUserId: '', since: '', until: '' });
+  const [filters, setFilters] = useState<Filters>({ action: '', actorUserId: '' });
+  // Page-level window (?range= / ?start=&end=); "All time" restores the
+  // unbounded stream the page had before the picker.
+  const [range, setRange, rangeReady] = useUrlDateRange('last30');
   const [rows, setRows] = useState<AuditLogRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  async function fetchRows(currentFilters: typeof filters): Promise<void> {
+  async function fetchRows(currentFilters: Filters, currentRange: DateRange): Promise<void> {
     setLoading(true);
     setError(null);
     try {
-      const params = new URLSearchParams();
-      if (currentFilters.action) params.set('action', currentFilters.action);
-      if (currentFilters.actorUserId) params.set('actorUserId', currentFilters.actorUserId);
-      if (currentFilters.since) params.set('since', currentFilters.since);
-      if (currentFilters.until) params.set('until', currentFilters.until);
+      const params = auditParams(currentFilters, currentRange);
       // Uses the shared api() helper like every other page: this one
       // hand-rolled fetch against its own NEXT_PUBLIC_API_URL default,
       // so in production it called http://localhost:4000 and the global
@@ -52,11 +74,13 @@ export default function AuditLogPage() {
   }
 
   useEffect(() => {
-    if (session.data) void fetchRows(filters);
-    // We only refetch on session change, not on every keystroke; the form
-    // submit calls fetchRows explicitly with the current values.
+    // Wait for the URL window to be read so we don't fetch twice.
+    if (session.data && rangeReady) void fetchRows(filters, range);
+    // We refetch on session change and when the picker applies a new
+    // window, not on every keystroke; the form submit calls fetchRows
+    // explicitly with the current values.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session.data?.user.id]);
+  }, [session.data?.user.id, rangeReady, range]);
 
   if (session.isPending)
     return (
@@ -72,12 +96,7 @@ export default function AuditLogPage() {
     );
 
   const exportHref = (() => {
-    const params = new URLSearchParams();
-    if (filters.action) params.set('action', filters.action);
-    if (filters.actorUserId) params.set('actorUserId', filters.actorUserId);
-    if (filters.since) params.set('since', filters.since);
-    if (filters.until) params.set('until', filters.until);
-    const qs = params.toString();
+    const qs = auditParams(filters, range).toString();
     return `${apiUrl}/v1/audit-logs/export.csv${qs ? `?${qs}` : ''}`;
   })();
 
@@ -86,17 +105,24 @@ export default function AuditLogPage() {
       <PageHeader
         title="Audit log"
         actions={
-          <a
-            className="btn btn-secondary btn-sm"
-            href={exportHref}
-            title="Download the filtered stream as CSV (the export itself is audited)"
-            data-testid="audit-export"
-          >
-            Export CSV
-          </a>
+          <>
+            <DateRangePicker value={range} onChange={setRange} allowAllTime testid="audit-range" />
+            <a
+              className="btn btn-secondary btn-sm"
+              href={exportHref}
+              title="Download the filtered stream as CSV (the export itself is audited)"
+              data-testid="audit-export"
+            >
+              Export CSV
+            </a>
+          </>
         }
       />
-      <FilterForm filters={filters} onChange={setFilters} onSubmit={(next) => fetchRows(next)} />
+      <FilterForm
+        filters={filters}
+        onChange={setFilters}
+        onSubmit={(next) => fetchRows(next, range)}
+      />
       {error && (
         <p data-testid="audit-error" style={{ color: 'var(--danger)' }}>
           {error}
@@ -175,9 +201,9 @@ function FilterForm({
   onChange,
   onSubmit,
 }: {
-  filters: { action: string; actorUserId: string; since: string; until: string };
-  onChange: (next: typeof filters) => void;
-  onSubmit: (next: typeof filters) => void;
+  filters: Filters;
+  onChange: (next: Filters) => void;
+  onSubmit: (next: Filters) => void;
 }) {
   function handle(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -186,7 +212,7 @@ function FilterForm({
   return (
     <form
       onSubmit={handle}
-      className="mb-6 grid items-end gap-3 sm:grid-cols-2 lg:grid-cols-[repeat(4,1fr)_auto]"
+      className="mb-6 grid items-end gap-3 sm:grid-cols-2 lg:grid-cols-[repeat(2,1fr)_auto]"
     >
       <Field label="Action">
         <Input
@@ -203,24 +229,6 @@ function FilterForm({
           value={filters.actorUserId}
           onChange={(e) => onChange({ ...filters, actorUserId: e.target.value })}
           placeholder="uuid"
-          style={{ width: '100%' }}
-        />
-      </Field>
-      <Field label="Since">
-        <Input
-          name="since"
-          type="datetime-local"
-          value={filters.since}
-          onChange={(e) => onChange({ ...filters, since: e.target.value })}
-          style={{ width: '100%' }}
-        />
-      </Field>
-      <Field label="Until">
-        <Input
-          name="until"
-          type="datetime-local"
-          value={filters.until}
-          onChange={(e) => onChange({ ...filters, until: e.target.value })}
           style={{ width: '100%' }}
         />
       </Field>

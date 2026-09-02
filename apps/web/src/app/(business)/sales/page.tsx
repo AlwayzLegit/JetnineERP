@@ -4,6 +4,8 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { api } from '@/lib/api';
+import { type DateRange } from '@/lib/date-range';
+import { DateRangePicker, useUrlDateRange } from '@/components/date-range-picker';
 import { Money } from '@/components/money';
 import { Button, EmptyState, Input, LoadingRows, PageHeader, StatusBadge } from '@/components/ui';
 
@@ -34,21 +36,28 @@ export default function SalesPage() {
   const [q, setQ] = useState('');
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Created-date window (owner 2026-09-02), kept in the URL as
+  // `?range=` / `?start=&end=`. "All time" sends no bounds.
+  const [range, setRange, rangeReady] = useUrlDateRange('all');
 
-  const buildUrl = useCallback((query: string, cursor?: string | null) => {
+  const buildUrl = useCallback((query: string, dateRange: DateRange, cursor?: string | null) => {
     const params = new URLSearchParams();
     params.set('limit', String(PAGE_LIMIT));
     if (query.trim()) params.set('q', query.trim());
+    if (dateRange.preset !== 'all') {
+      params.set('start', dateRange.start);
+      params.set('end', dateRange.end);
+    }
     if (cursor) params.set('cursor', cursor);
     return `/v1/sales?${params.toString()}`;
   }, []);
 
   const load = useCallback(
-    async (query: string) => {
+    async (query: string, dateRange: DateRange) => {
       setError(null);
       setRows(null);
       try {
-        const res = await api<SalesPageData>(buildUrl(query));
+        const res = await api<SalesPageData>(buildUrl(query, dateRange));
         setRows(res.data);
         setNextCursor(res.nextCursor);
       } catch (err) {
@@ -59,16 +68,20 @@ export default function SalesPage() {
     [buildUrl],
   );
 
+  // First load waits for the URL to be read; every window change reloads.
+  // The search text is applied on submit, not per keystroke, so it is
+  // read at call time rather than listed as a dependency.
   useEffect(() => {
-    void load('');
+    if (!rangeReady) return;
+    void load(q, range);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [rangeReady, range.preset, range.start, range.end, load]);
 
   async function loadMore() {
     if (!nextCursor) return;
     setLoadingMore(true);
     try {
-      const res = await api<SalesPageData>(buildUrl(q, nextCursor));
+      const res = await api<SalesPageData>(buildUrl(q, range, nextCursor));
       setRows((prev) => [...(prev ?? []), ...res.data]);
       setNextCursor(res.nextCursor);
     } catch (err) {
@@ -80,7 +93,7 @@ export default function SalesPage() {
 
   function search(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    void load(q);
+    void load(q, range);
   }
 
   return (
@@ -88,31 +101,42 @@ export default function SalesPage() {
       {/* P-018: no duplicate "Open register" — the global top bar has it. */}
       <PageHeader title="Sales" />
 
-      <form onSubmit={search} className="mb-4 flex flex-wrap gap-2">
-        {/* autoFocus is scanner-friendly: a scanned receipt barcode types
-            the number + Enter and finds the sale without the mouse. */}
-        <Input
-          autoFocus
-          name="q"
-          placeholder="Invoice # (scan a receipt) or customer name"
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          className="min-w-[240px] flex-1"
+      <div className="mb-4 flex flex-wrap items-center gap-2">
+        {/* The picker sits beside the form, not inside it, so none of its
+            buttons (calendar navigation included) can submit the search. */}
+        <form onSubmit={search} className="flex min-w-0 flex-1 flex-wrap gap-2">
+          {/* autoFocus is scanner-friendly: a scanned receipt barcode types
+              the number + Enter and finds the sale without the mouse. */}
+          <Input
+            autoFocus
+            name="q"
+            placeholder="Invoice # (scan a receipt) or customer name"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            className="min-w-[240px] flex-1"
+          />
+          <Button type="submit" variant="primary">
+            Search
+          </Button>
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={() => {
+              setQ('');
+              void load('', range);
+            }}
+          >
+            Clear
+          </Button>
+        </form>
+        <DateRangePicker
+          allowAllTime
+          align="right"
+          value={range}
+          onChange={setRange}
+          testid="sales-range"
         />
-        <Button type="submit" variant="primary">
-          Search
-        </Button>
-        <Button
-          type="button"
-          variant="secondary"
-          onClick={() => {
-            setQ('');
-            void load('');
-          }}
-        >
-          Clear
-        </Button>
-      </form>
+      </div>
 
       {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
       {!rows && !error && (
@@ -126,7 +150,9 @@ export default function SalesPage() {
             <EmptyState>
               {q.trim()
                 ? `No sales match "${q.trim()}".`
-                : 'No sales yet. Ring one up at the register to see it here.'}
+                : range.preset !== 'all'
+                  ? 'No sales in this window.'
+                  : 'No sales yet. Ring one up at the register to see it here.'}
             </EmptyState>
           ) : (
             <div style={{ overflow: 'auto', maxHeight: 'calc(100vh - 240px)' }}>

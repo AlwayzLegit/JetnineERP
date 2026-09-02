@@ -5,6 +5,15 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { PenLine } from 'lucide-react';
 import { api } from '@/lib/api';
+import {
+  formatRange,
+  presetLabel,
+  rangeFor,
+  rangeFromSearch,
+  rangeToSearch,
+  type DateRange,
+} from '@/lib/date-range';
+import { DateRangePicker } from '@/components/date-range-picker';
 import { Money } from '@/components/money';
 import {
   PageHeader,
@@ -87,6 +96,10 @@ export default function OrdersPage() {
   const [view, setView] = useState(initial.get('view') ?? '');
   const [sort, setSort] = useState(initial.get('sort') ?? '');
   const [dir, setDir] = useState(initial.get('dir') === 'desc' ? 'desc' : 'asc');
+  // Created-date window (owner 2026-09-02). Rides the same URL sync as
+  // the other filters (`?range=` or `?start=&end=`); "All time" writes
+  // nothing and sends nothing.
+  const [range, setRange] = useState<DateRange>(() => rangeFromSearch(initial, 'all'));
   // Deep-linkable from the dashboard's "My orders" card (?mine=1).
   const [mine, setMine] = useState(() => initial.get('mine') === '1');
   const router = useRouter();
@@ -117,12 +130,17 @@ export default function OrdersPage() {
       cursor: string | null,
       sortBy: string,
       sortDir: string,
+      dateRange: DateRange,
     ) => {
       const params = new URLSearchParams({ limit: '50' });
       if (query.trim()) params.set('q', query.trim());
       if (statusFilter) params.set('display', statusFilter);
       if (viewFilter) params.set('view', viewFilter);
       if (onlyMine) params.set('mine', '1');
+      if (dateRange.preset !== 'all') {
+        params.set('start', dateRange.start);
+        params.set('end', dateRange.end);
+      }
       if (sortBy) {
         params.set('sort', sortBy);
         params.set('dir', sortDir);
@@ -150,6 +168,7 @@ export default function OrdersPage() {
       urlParams.set('sort', sort);
       urlParams.set('dir', dir);
     }
+    if (range.preset !== 'all') rangeToSearch(range, urlParams);
     const qs = urlParams.toString();
     router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
     const t = setTimeout(
@@ -163,6 +182,7 @@ export default function OrdersPage() {
           null,
           sort,
           dir,
+          range,
         )
           .then((page) => {
             if (searchSeq.current !== seq) return;
@@ -179,7 +199,7 @@ export default function OrdersPage() {
     );
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [q, status, view, mine, atLoginStore, loginStore, sort, dir, fetchPage]);
+  }, [q, status, view, mine, atLoginStore, loginStore, sort, dir, range, fetchPage]);
 
   async function loadMore() {
     if (!nextCursor) return;
@@ -194,6 +214,7 @@ export default function OrdersPage() {
         nextCursor,
         sort,
         dir,
+        range,
       );
       setRows((prev) => [...(prev ?? []), ...page.data]);
       setNextCursor(page.nextCursor);
@@ -246,6 +267,16 @@ export default function OrdersPage() {
             </option>
           ))}
         </Select>
+        <DateRangePicker
+          allowAllTime
+          align="left"
+          value={range}
+          onChange={(next) => {
+            setRange(next);
+            setRows(null);
+          }}
+          testid="orders-range"
+        />
         <button
           className={`btn btn-sm ${view === 'past_due' ? 'btn-danger' : 'btn-secondary'}`}
           data-testid="past-due-chip"
@@ -283,13 +314,17 @@ export default function OrdersPage() {
               status && `status ${STATUS_FILTERS.find(([v]) => v === status)?.[1] ?? status}`,
               view === 'past_due' && 'past due',
               mine && 'my orders',
+              range.preset !== 'all' &&
+                (presetLabel(range.preset) === 'Custom'
+                  ? formatRange(range)
+                  : presetLabel(range.preset).toLowerCase()),
               loginStore && atLoginStore && `at ${loginStore.name}`,
             ].filter(Boolean);
             return active.length > 0
               ? `No orders match ${active.join(' + ')}.`
               : 'No orders yet — write the first one with New Sale.';
           })()}
-          {(q.trim() || status || view || mine) && (
+          {(q.trim() || status || view || mine || range.preset !== 'all') && (
             <div style={{ marginTop: 8 }}>
               <button
                 className="btn btn-sm btn-secondary"
@@ -299,6 +334,7 @@ export default function OrdersPage() {
                   setStatus('');
                   setView('');
                   setMine(false);
+                  setRange(rangeFor('all'));
                 }}
               >
                 Clear filters

@@ -4,7 +4,9 @@ import { Download, RefreshCw } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { Button, Card, Field, Input, LoadingRows, PageHeader, Select } from '@/components/ui';
+import { DateRangePicker, useUrlDateRange } from '@/components/date-range-picker';
 import { api } from '@/lib/api';
+import { formatRange } from '@/lib/date-range';
 import { downloadFile } from '@/lib/download';
 import { Money } from '@/components/money';
 
@@ -219,9 +221,9 @@ interface Valuation {
 
 export default function ReportsPage() {
   const today = new Date().toISOString().slice(0, 10);
-  const sevenDaysAgo = new Date(Date.now() - 6 * 86400_000).toISOString().slice(0, 10);
-  const [start, setStart] = useState(sevenDaysAgo);
-  const [end, setEnd] = useState(today);
+  // Page-level window (Shopify-style picker, carried in the URL as
+  // ?range= / ?start=&end=); every range-scoped report below follows it.
+  const [range, setRange, rangeReady] = useUrlDateRange('last7');
   const [lowStock, setLowStock] = useState('5');
   const [daily, setDaily] = useState<DailyReport | null>(null);
   const [products, setProducts] = useState<ProductRow[] | null>(null);
@@ -250,7 +252,7 @@ export default function ReportsPage() {
     try {
       setSummary(
         await api<SalesSummary>(
-          `/v1/reports/sales/summary?basis=${basis}&groupBy=${groupBy}&start=${start}&end=${end}`,
+          `/v1/reports/sales/summary?basis=${basis}&groupBy=${groupBy}&start=${range.start}&end=${range.end}`,
         ),
       );
     } catch (err) {
@@ -260,7 +262,9 @@ export default function ReportsPage() {
 
   async function loadDaily() {
     try {
-      setDaily(await api<DailyReport>(`/v1/reports/sales/daily?start=${start}&end=${end}`));
+      setDaily(
+        await api<DailyReport>(`/v1/reports/sales/daily?start=${range.start}&end=${range.end}`),
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -268,7 +272,9 @@ export default function ReportsPage() {
   async function loadProducts() {
     try {
       setProducts(
-        await api<ProductRow[]>(`/v1/reports/sales/by-product?start=${start}&end=${end}`),
+        await api<ProductRow[]>(
+          `/v1/reports/sales/by-product?start=${range.start}&end=${range.end}`,
+        ),
       );
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -296,7 +302,9 @@ export default function ReportsPage() {
   async function loadCategories() {
     try {
       setCategories(
-        await api<CategoryRow[]>(`/v1/reports/sales/by-category?start=${start}&end=${end}`),
+        await api<CategoryRow[]>(
+          `/v1/reports/sales/by-category?start=${range.start}&end=${range.end}`,
+        ),
       );
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -304,7 +312,9 @@ export default function ReportsPage() {
   }
   async function loadFinancial() {
     try {
-      setTaxSummary(await api<TaxSummary>(`/v1/reports/tax/summary?start=${start}&end=${end}`));
+      setTaxSummary(
+        await api<TaxSummary>(`/v1/reports/tax/summary?start=${range.start}&end=${range.end}`),
+      );
       setValuation(await api<Valuation>(`/v1/reports/inventory/valuation`));
       setGiftLiability(await api<GiftCardLiability>('/v1/reports/gift-cards/liability'));
     } catch (err) {
@@ -316,7 +326,9 @@ export default function ReportsPage() {
 
   async function loadReceipts() {
     try {
-      setReceipts(await api<ReceiptsReport>(`/v1/reports/receipts?start=${start}&end=${end}`));
+      setReceipts(
+        await api<ReceiptsReport>(`/v1/reports/receipts?start=${range.start}&end=${range.end}`),
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -325,7 +337,9 @@ export default function ReportsPage() {
   async function loadAdjustments() {
     try {
       setAdjustments(
-        await api<AdjustmentsReport>(`/v1/reports/inventory-adjustments?start=${start}&end=${end}`),
+        await api<AdjustmentsReport>(
+          `/v1/reports/inventory-adjustments?start=${range.start}&end=${range.end}`,
+        ),
       );
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -343,23 +357,34 @@ export default function ReportsPage() {
     }
   }
 
+  // Reports that don't follow the page window load once.
   useEffect(() => {
-    void loadAdjustments();
-    void loadReceipts();
     void loadDateChanges();
-    void loadSummary();
-    void loadDaily();
-    void loadProducts();
     void loadInv();
     void loadZ(zDate);
-    void loadCategories();
-    void loadFinancial();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Range-scoped reports: wait for the URL to be read (`rangeReady`) so we
+  // don't fire once with the fallback window and again with the real one.
+  useEffect(() => {
+    if (!rangeReady) return;
+    void loadAdjustments();
+    void loadReceipts();
+    void loadSummary();
+    void loadDaily();
+    void loadProducts();
+    void loadCategories();
+    void loadFinancial();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rangeReady, range]);
+
   return (
     <div>
-      <PageHeader title="Reports" />
+      <PageHeader
+        title="Reports"
+        actions={<DateRangePicker value={range} onChange={setRange} testid="reports-range" />}
+      />
       <p style={{ marginTop: -6, marginBottom: 14, fontSize: 13 }}>
         <a href="/reports/merchandising">Merchandising activity (buyer&apos;s report) →</a>
       </p>
@@ -516,8 +541,8 @@ export default function ReportsPage() {
             Run
           </Button>
           <CsvButton
-            path={`/v1/reports/sales/summary?basis=${summaryBasis}&groupBy=${summaryGroupBy}&start=${start}&end=${end}&format=csv`}
-            filename={`sales-summary-${summaryBasis}-${start}-to-${end}.csv`}
+            path={`/v1/reports/sales/summary?basis=${summaryBasis}&groupBy=${summaryGroupBy}&start=${range.start}&end=${range.end}&format=csv`}
+            filename={`sales-summary-${summaryBasis}-${range.start}-to-${range.end}.csv`}
             size="sm"
           />
         </div>
@@ -581,12 +606,9 @@ export default function ReportsPage() {
 
       <Card title="Daily sales">
         <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
-          <Field label="From">
-            <Input type="date" value={start} onChange={(e) => setStart(e.target.value)} />
-          </Field>
-          <Field label="To">
-            <Input type="date" value={end} onChange={(e) => setEnd(e.target.value)} />
-          </Field>
+          <span className="muted" style={{ fontSize: 13, alignSelf: 'flex-end' }}>
+            {formatRange(range)}
+          </span>
           <Button
             variant="primary"
             onClick={() => {
@@ -602,8 +624,8 @@ export default function ReportsPage() {
           </Button>
           <div style={{ alignSelf: 'flex-end' }}>
             <CsvButton
-              path={`/v1/reports/sales/daily?start=${start}&end=${end}&format=csv`}
-              filename={`daily-sales-${start}-to-${end}.csv`}
+              path={`/v1/reports/sales/daily?start=${range.start}&end=${range.end}&format=csv`}
+              filename={`daily-sales-${range.start}-to-${range.end}.csv`}
             />
           </div>
         </div>
@@ -707,8 +729,8 @@ export default function ReportsPage() {
       <Card title="Sales by product">
         <CsvButton
           size="sm"
-          path={`/v1/reports/sales/by-product?start=${start}&end=${end}&format=csv`}
-          filename={`sales-by-product-${start}-to-${end}.csv`}
+          path={`/v1/reports/sales/by-product?start=${range.start}&end=${range.end}&format=csv`}
+          filename={`sales-by-product-${range.start}-to-${range.end}.csv`}
         />
         {products ? (
           <div style={{ overflowX: 'auto' }}>
@@ -814,8 +836,8 @@ export default function ReportsPage() {
       <Card title="Sales by category">
         <CsvButton
           size="sm"
-          path={`/v1/reports/sales/by-category?start=${start}&end=${end}&format=csv`}
-          filename={`sales-by-category-${start}-to-${end}.csv`}
+          path={`/v1/reports/sales/by-category?start=${range.start}&end=${range.end}&format=csv`}
+          filename={`sales-by-category-${range.start}-to-${range.end}.csv`}
         />
         {categories ? (
           <div style={{ overflowX: 'auto' }}>
@@ -901,11 +923,11 @@ export default function ReportsPage() {
         <div className="mb-3 flex flex-wrap items-end gap-2">
           <Button variant="secondary" onClick={() => void loadReceipts()}>
             <RefreshCw size={14} aria-hidden />
-            Run for {start} → {end}
+            Run for {formatRange(range)}
           </Button>
           <CsvButton
-            path={`/v1/reports/receipts?start=${start}&end=${end}&format=csv`}
-            filename={`receipts-${start}-to-${end}.csv`}
+            path={`/v1/reports/receipts?start=${range.start}&end=${range.end}&format=csv`}
+            filename={`receipts-${range.start}-to-${range.end}.csv`}
             size="sm"
           />
         </div>
@@ -954,11 +976,11 @@ export default function ReportsPage() {
         <div className="mb-3 flex flex-wrap items-end gap-2">
           <Button variant="secondary" onClick={() => void loadAdjustments()}>
             <RefreshCw size={14} aria-hidden />
-            Run for {start} → {end}
+            Run for {formatRange(range)}
           </Button>
           <CsvButton
-            path={`/v1/reports/inventory-adjustments?start=${start}&end=${end}&format=csv`}
-            filename={`inventory-adjustments-${start}-to-${end}.csv`}
+            path={`/v1/reports/inventory-adjustments?start=${range.start}&end=${range.end}&format=csv`}
+            filename={`inventory-adjustments-${range.start}-to-${range.end}.csv`}
             size="sm"
           />
           {adjustments?.truncated && (
@@ -1038,8 +1060,8 @@ export default function ReportsPage() {
         <Card title="Tax summary">
           <CsvButton
             size="sm"
-            path={`/v1/reports/tax/summary?start=${start}&end=${end}&format=csv`}
-            filename={`tax-summary-${start}-to-${end}.csv`}
+            path={`/v1/reports/tax/summary?start=${range.start}&end=${range.end}&format=csv`}
+            filename={`tax-summary-${range.start}-to-${range.end}.csv`}
           />
           {taxSummary ? (
             <div style={{ overflowX: 'auto' }}>

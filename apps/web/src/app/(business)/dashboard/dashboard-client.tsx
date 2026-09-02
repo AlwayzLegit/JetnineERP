@@ -13,8 +13,10 @@ import {
   Skeleton,
   StatusBadge,
 } from '@/components/ui';
+import { DateRangePicker, useUrlDateRange } from '@/components/date-range-picker';
 import { api } from '@/lib/api';
 import { signOut, useSession } from '@/lib/auth-client';
+import { addDays } from '@/lib/date-range';
 import { Money } from '@/components/money';
 import { readActiveBusinessId } from '@/lib/offline';
 import { RevenueTrend, type TrendPoint } from './revenue-trend';
@@ -132,6 +134,8 @@ export default function DashboardClient() {
 
   const [z, setZ] = useState<ZReport | null>(null);
   const [trend, setTrend] = useState<TrendPoint[] | null>(null);
+  // The revenue trend card carries its own window (?trend.range= …).
+  const [trendRange, setTrendRange, trendReady] = useUrlDateRange('last30', { key: 'trend' });
   const [arTotal, setArTotal] = useState<number | null>(null);
   const [lowStock, setLowStock] = useState<LowStockRow[] | null>(null);
   const [openOrders, setOpenOrders] = useState<number | null>(null);
@@ -195,21 +199,6 @@ export default function DashboardClient() {
     void api<ZReport>('/v1/reports/z')
       .then(setZ)
       .catch(() => setSalesDenied(true));
-    const end = new Date().toISOString().slice(0, 10);
-    const start = new Date(Date.now() - 29 * 86400_000).toISOString().slice(0, 10);
-    void api<DailyReport>(`/v1/reports/sales/daily?start=${start}&end=${end}`)
-      .then((d) => {
-        // Fill missing days with zero so the line spans all 30 days.
-        const byDay = new Map(d.byDay.map((r) => [r.day, r]));
-        const points: TrendPoint[] = [];
-        for (let i = 29; i >= 0; i--) {
-          const day = new Date(Date.now() - i * 86400_000).toISOString().slice(0, 10);
-          const row = byDay.get(day);
-          points.push({ day, totalCents: row?.totalCents ?? 0, saleCount: row?.saleCount ?? 0 });
-        }
-        setTrend(points);
-      })
-      .catch(() => setSalesDenied(true));
     // Financial-gated.
     void api<ArReport>('/v1/reports/ar')
       .then((r) => setArTotal(r.totalCents))
@@ -241,6 +230,26 @@ export default function DashboardClient() {
       })
       .catch(() => {});
   }, [businessActive]);
+
+  // Revenue trend: follows its own picker; wait for the URL window to be
+  // read so we don't fetch the fallback window and then the real one.
+  useEffect(() => {
+    if (!businessActive || !trendReady) return;
+    const { start, end } = trendRange;
+    setTrend(null);
+    void api<DailyReport>(`/v1/reports/sales/daily?start=${start}&end=${end}`)
+      .then((d) => {
+        // Fill missing days with zero so the line spans the whole window.
+        const byDay = new Map(d.byDay.map((r) => [r.day, r]));
+        const points: TrendPoint[] = [];
+        for (let day = start; day <= end; day = addDays(day, 1)) {
+          const row = byDay.get(day);
+          points.push({ day, totalCents: row?.totalCents ?? 0, saleCount: row?.saleCount ?? 0 });
+        }
+        setTrend(points);
+      })
+      .catch(() => setSalesDenied(true));
+  }, [businessActive, trendReady, trendRange]);
 
   if (session.isPending) {
     return (
@@ -340,7 +349,18 @@ export default function DashboardClient() {
       {businessActive && morning != null && <MorningBriefCard brief={morning} />}
 
       {businessActive && !salesDenied && (
-        <Card title="Revenue — last 30 days">
+        <Card
+          title="Revenue"
+          actions={
+            <DateRangePicker
+              value={trendRange}
+              onChange={setTrendRange}
+              compact
+              align="right"
+              testid="trend-range"
+            />
+          }
+        >
           {trend ? <RevenueTrend points={trend} /> : <LoadingRows />}
         </Card>
       )}

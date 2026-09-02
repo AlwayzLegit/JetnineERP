@@ -934,6 +934,11 @@ describe('the summary', () => {
     expect(body.byStore).toHaveLength(2);
     expect(body.ritual).toHaveLength(2);
     expect(body.salesByDay).toHaveLength(14);
+    // No window → today → today, echoed back for the picker.
+    expect((body as { range: unknown }).range).toEqual({
+      start: (body as { date: string }).date,
+      end: (body as { date: string }).date,
+    });
 
     // Owner 2026-09-02: each store carries the documents behind its
     // Written number with cost and profit; the pieces add up to the row.
@@ -963,6 +968,40 @@ describe('the summary', () => {
       }
     }
     expect(stores.some((st) => st.documents.length > 0)).toBe(true);
+  });
+
+  it('scopes money and by-store to a picker window (owner 2026-09-02)', async () => {
+    const wide = await request(app.getHttpServer())
+      .get('/v1/dashboard/operations?start=2000-01-01&end=2099-12-31')
+      .set('Cookie', opsCookie)
+      .set('x-business-id', businessId)
+      .expect(200);
+    expect(wide.body.range).toEqual({ start: '2000-01-01', end: '2099-12-31' });
+    // Everything the fixture ever collected is inside the wide window.
+    expect(wide.body.money.out.refundsCents).toBe(52_000);
+    const past = await request(app.getHttpServer())
+      .get('/v1/dashboard/operations?start=2000-01-01&end=2000-01-02')
+      .set('Cookie', opsCookie)
+      .set('x-business-id', businessId)
+      .expect(200);
+    expect(past.body.money.inCents).toBe(0);
+    expect(past.body.byStore.every((s: { writtenCount: number }) => s.writtenCount === 0)).toBe(
+      true,
+    );
+    // A malformed window falls back to today rather than failing.
+    const bad = await request(app.getHttpServer())
+      .get('/v1/dashboard/operations?start=nope&end=2000-01-02')
+      .set('Cookie', opsCookie)
+      .set('x-business-id', businessId)
+      .expect(200);
+    expect(bad.body.range).toEqual({ start: bad.body.date, end: bad.body.date });
+    // The salesperson table takes the same window.
+    const none = await request(app.getHttpServer())
+      .get('/v1/dashboard/operations/salespeople?start=2000-01-01&end=2000-01-02')
+      .set('Cookie', opsCookie)
+      .set('x-business-id', businessId)
+      .expect(200);
+    expect(none.body.every((r: { writtenCents: number }) => r.writtenCents === 0)).toBe(true);
   });
 
   it('attributes written business and refunds to each salesperson', async () => {

@@ -5,6 +5,8 @@ import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { api } from '@/lib/api';
+import { formatRange, presetLabel, type DateRange } from '@/lib/date-range';
+import { DateRangePicker, useUrlDateRange } from '@/components/date-range-picker';
 import { LoadMore } from '@/components/load-more';
 import { useCursorList } from '@/lib/use-cursor-list';
 import {
@@ -44,6 +46,12 @@ interface DigestRow {
   byType: Record<string, number>;
 }
 
+/** "Last 7 days" / "Aug 4 – Sep 2, 2026" — the digest card's window, capitalised. */
+function windowTitle(range: DateRange): string {
+  const label = presetLabel(range.preset);
+  return label === 'Custom' ? formatRange(range) : label;
+}
+
 const TYPE_LABELS: Record<string, string> = {
   security_override: 'Security override',
   order_unlock: 'Order unlock',
@@ -57,6 +65,9 @@ export default function ExceptionsPage() {
   const [severity, setSeverity] = useState('');
   const list = useCursorList<ExceptionRow>('/v1/exceptions');
   const [digest, setDigest] = useState<DigestRow[] | null>(null);
+  // The digest carries its own window (owner 2026-09-02), namespaced in
+  // the URL as `digest.range` / `digest.start` / `digest.end`.
+  const [digestRange, setDigestRange, digestReady] = useUrlDateRange('last7', { key: 'digest' });
   const [busy, setBusy] = useState(false);
   const { rows, error } = list;
 
@@ -72,10 +83,20 @@ export default function ExceptionsPage() {
     void load();
   }, [load]);
   useEffect(() => {
-    api<DigestRow[]>('/v1/exceptions/digest?days=7')
-      .then(setDigest)
-      .catch(() => setDigest([]));
-  }, []);
+    if (!digestReady) return;
+    let cancelled = false;
+    setDigest(null);
+    api<DigestRow[]>(`/v1/exceptions/digest?start=${digestRange.start}&end=${digestRange.end}`)
+      .then((rows) => {
+        if (!cancelled) setDigest(rows);
+      })
+      .catch(() => {
+        if (!cancelled) setDigest([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [digestReady, digestRange.start, digestRange.end]);
 
   async function ack(id: string) {
     setBusy(true);
@@ -187,11 +208,22 @@ export default function ExceptionsPage() {
           )}
         </div>
 
-        <Card title="Last 7 days — by associate (ranked)">
+        <Card
+          title={`${windowTitle(digestRange)} — by associate (ranked)`}
+          actions={
+            <DateRangePicker
+              compact
+              align="right"
+              value={digestRange}
+              onChange={setDigestRange}
+              testid="digest-range"
+            />
+          }
+        >
           {!digest && <LoadingRows rows={3} />}
           {digest && digest.length === 0 && (
             <p className="muted" style={{ fontSize: 13, margin: 0 }}>
-              No exceptions this week.
+              No exceptions in this window.
             </p>
           )}
           {digest && digest.length > 0 && (
