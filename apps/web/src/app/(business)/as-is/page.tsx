@@ -36,6 +36,79 @@ interface AsIsRow {
   vendorCreditStatus: string | null;
   notes: string | null;
   createdAt: string;
+  origin: {
+    kind: 'sale' | 'order' | 'order_return' | 'stock_transfer' | 'purchase_order';
+    documentId: string;
+    documentNumber: string;
+    rmaNumber: string | null;
+    customerId: string | null;
+    customerName: string | null;
+    fromName: string | null;
+    documentDate: string | null;
+  } | null;
+}
+
+/** Where the piece came from, with the invoice / document clickable. */
+function Origin({ r }: { r: AsIsRow }) {
+  const o = r.origin;
+  const label = r.source.replace(/_/g, ' ');
+  if (!o) {
+    return (
+      <span data-testid="as-is-origin">
+        {label}
+        <span style={{ color: 'var(--text-muted)' }}> · manual intake</span>
+      </span>
+    );
+  }
+  const href =
+    o.kind === 'sale'
+      ? `/sales/${o.documentId}`
+      : o.kind === 'stock_transfer'
+        ? `/transfers/${o.documentId}`
+        : o.kind === 'purchase_order'
+          ? `/purchase-orders/${o.documentId}`
+          : `/orders/${o.documentId}`;
+  const docWord =
+    o.kind === 'sale'
+      ? 'invoice'
+      : o.kind === 'stock_transfer'
+        ? 'transfer'
+        : o.kind === 'purchase_order'
+          ? 'PO'
+          : 'order';
+  return (
+    <span data-testid="as-is-origin" style={{ fontSize: 12.5 }}>
+      <span style={{ textTransform: 'capitalize' }}>{label}</span>
+      {o.rmaNumber && (
+        <>
+          {' '}
+          <code>{o.rmaNumber}</code>
+        </>
+      )}
+      <span style={{ color: 'var(--text-muted)' }}> · {docWord} </span>
+      <Link href={href} data-testid="as-is-origin-link">
+        <strong>{o.documentNumber}</strong>
+      </Link>
+      {o.documentDate && (
+        <span style={{ color: 'var(--text-muted)' }}>
+          {' '}
+          ({new Date(o.documentDate).toLocaleDateString()})
+        </span>
+      )}
+      {o.customerName && (
+        <div style={{ fontSize: 12 }}>
+          {o.customerId ? (
+            <Link href={`/customers/${o.customerId}`}>{o.customerName}</Link>
+          ) : (
+            o.customerName
+          )}
+        </div>
+      )}
+      {o.fromName && (
+        <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>from {o.fromName}</div>
+      )}
+    </span>
+  );
 }
 
 export default function AsIsPage() {
@@ -127,7 +200,7 @@ export default function AsIsPage() {
                   <th>Item</th>
                   <th className="num">Qty</th>
                   <th>Location</th>
-                  <th>Source</th>
+                  <th>Came from</th>
                   <th>Received</th>
                   <th>Status</th>
                   <th></th>
@@ -173,7 +246,9 @@ export default function AsIsPage() {
                     </td>
                     <td className="num">{r.quantity}</td>
                     <td>{r.locationName ?? '—'}</td>
-                    <td>{r.source.replace(/_/g, ' ')}</td>
+                    <td>
+                      <Origin r={r} />
+                    </td>
                     <td style={{ whiteSpace: 'nowrap' }}>
                       {new Date(r.createdAt).toLocaleDateString()}
                     </td>

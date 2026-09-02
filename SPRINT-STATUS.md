@@ -4402,3 +4402,18 @@ now share one name after A7's shortening.
 - Owner 2026-09-02: Orders (`/orders/**`) and New Sale (`/pos`) render
   25% wider — the shell's content cap is 1500px on those routes, 1200px
   elsewhere — so a product line fits without a sideways scroll.
+
+### Checkpoint — 2026-09-02 (As-Is review provenance)
+
+Owner ask: the As-Is review must say where each mattress came from and
+which invoice, with the invoice clickable.
+
+- `/v1/as-is` (and `/aging`) rows carry `origin`, resolved in one query
+  per reference type: register refund → the sale (invoice) + customer;
+  order return → the RMA + the order + customer; consolidation transfer
+  → the transfer + the store it left; receiving defect → the PO +
+  vendor; manual intake → none.
+- Page column "Came from": source, RMA, a link to the invoice / order /
+  transfer / PO with its date, the customer (linked), and "from <store
+  or vendor>". `apps/api/test/as-is-origin.int.spec.ts` (2). CI gets
+  `jetnine_as_is`.

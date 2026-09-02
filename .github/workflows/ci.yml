@@ -84,6 +84,7 @@ jobs:
       CASHIER_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/jetnine_cashier
       ORDER_NOTES_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/jetnine_order_notes
       PRODUCT_FILTERS_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/jetnine_product_filters
+      AS_IS_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/jetnine_as_is
       REDIS_URL: redis://localhost:6379
 
     steps:
@@ -144,6 +145,7 @@ jobs:
           createdb -h localhost -U postgres jetnine_cashier
           createdb -h localhost -U postgres jetnine_order_notes
           createdb -h localhost -U postgres jetnine_product_filters
+          createdb -h localhost -U postgres jetnine_as_is
 
       - name: Format check
         run: pnpm format:check
