@@ -607,6 +607,11 @@ describe('G5 — exception register + ranked digest', () => {
     expect(types.has('security_override')).toBe(true);
     expect(types.has('order_unlock')).toBe(true);
     expect(types.has('write_off')).toBe(true);
+    // Owner 2026-09-02: order events carry the order number so the
+    // register can link to the order.
+    const unlock = list.body.data.find((e: { type: string }) => e.type === 'order_unlock');
+    expect(unlock.orderId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(unlock.orderNumber).toMatch(/\S/);
 
     await as(cashierCookie).get('/v1/exceptions').expect(403);
   });

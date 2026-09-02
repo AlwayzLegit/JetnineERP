@@ -8,7 +8,7 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
-import { and, eq, gte, isNull, sql } from 'drizzle-orm';
+import { and, inArray, eq, gte, isNull, sql } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
@@ -40,6 +40,9 @@ interface ExceptionRow {
   acknowledgedAt: Date | null;
   acknowledgedByEmail: string | null;
   createdAt: Date;
+  /** The sales order behind the event (owner 2026-09-02: the register links to it). */
+  orderId: string | null;
+  orderNumber: string | null;
 }
 
 interface DigestRow {
@@ -112,7 +115,59 @@ export class ExceptionsController {
       .orderBy(...timestampCursorOrder(schema.exceptionEvents.createdAt, schema.exceptionEvents.id))
       .limit(limit + 1);
 
-    return buildPage(rows, limit, (r) => r.createdAt);
+    // Resolve the sales order behind each event: direct order events,
+    // returns (their order) and exchanges (the exchange order written).
+    const orderIdFor = new Map<string, string>();
+    const returnIds = rows
+      .filter((r) => r.entityType === 'order_return' && r.entityId)
+      .map((r) => r.entityId!);
+    const exchangeIds = rows
+      .filter((r) => r.entityType === 'exchange' && r.entityId)
+      .map((r) => r.entityId!);
+    for (const r of rows)
+      if (r.entityType === 'order' && r.entityId) orderIdFor.set(r.id, r.entityId);
+    if (returnIds.length > 0) {
+      const rets = await this.db
+        .select({ id: schema.orderReturns.id, orderId: schema.orderReturns.orderId })
+        .from(schema.orderReturns)
+        .where(inArray(schema.orderReturns.id, returnIds));
+      const byId = new Map(rets.map((x) => [x.id, x.orderId]));
+      for (const r of rows) {
+        const oid = r.entityType === 'order_return' && r.entityId ? byId.get(r.entityId) : null;
+        if (oid) orderIdFor.set(r.id, oid);
+      }
+    }
+    if (exchangeIds.length > 0) {
+      const exs = await this.db
+        .select({
+          id: schema.exchanges.id,
+          saleOrderId: schema.exchanges.saleOrderId,
+          originalOrderId: schema.exchanges.originalOrderId,
+        })
+        .from(schema.exchanges)
+        .where(inArray(schema.exchanges.id, exchangeIds));
+      const byId = new Map(exs.map((x) => [x.id, x.saleOrderId ?? x.originalOrderId]));
+      for (const r of rows) {
+        const oid = r.entityType === 'exchange' && r.entityId ? byId.get(r.entityId) : null;
+        if (oid) orderIdFor.set(r.id, oid);
+      }
+    }
+    const orderIds = [...new Set(orderIdFor.values())];
+    const numbers = new Map<string, string>();
+    if (orderIds.length > 0) {
+      const ords = await this.db
+        .select({ id: schema.orders.id, number: schema.orders.number })
+        .from(schema.orders)
+        .where(inArray(schema.orders.id, orderIds));
+      for (const o of ords) numbers.set(o.id, o.number);
+    }
+    const enriched: ExceptionRow[] = rows.map((r) => {
+      const orderId = orderIdFor.get(r.id) ?? null;
+      const orderNumber = orderId ? (numbers.get(orderId) ?? null) : null;
+      return { ...r, orderId: orderNumber ? orderId : null, orderNumber };
+    });
+
+    return buildPage(enriched, limit, (r) => r.createdAt);
   }
 
   /** Per-associate ranked digest over the trailing window (default 7 days). */
