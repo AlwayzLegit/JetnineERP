@@ -4558,3 +4558,25 @@ actual orders with written amount, cost and profit.
   `ops.int.spec.ts` checks the pieces add up to the row.
 - Operations dashboard: store rows are collapsible; the sub-rows link to
   the order or sale. Store row gains Cost and Profit columns.
+
+### Checkpoint — 2026-09-02 (signed-out UX + form kit)
+
+Owner ask: login / signup / password reset / onboarding and data entry
+need modern, friendly UI with properly wired notices and notifications.
+
+- New form kit on react-hook-form + zod: `components/form/form.tsx`
+  (fields with labels + inline errors, password show/hide + strength,
+  pending submit, alerts). New signed-out shell + outcome panels
+  (`components/auth/auth-shell.tsx`). `lib/auth-errors.ts` maps
+  better-auth codes to plain sentences.
+- Rebuilt: /login (unverified → Resend, 2FA + backup code, `?next=`),
+  /signup ("Check your email" + Resend / Continue), /reset (both halves,
+  expired-link path, confirm password), /verify (`?error=` aware),
+  /accept-invite (confirm password, prefilled sign-in), /2fa (copy
+  secret, outcome), /welcome (stepper, live slug, 409 inline). Old
+  `AuthForm` removed.
+- `auth.spec.ts` e2e (signup → verify → 2FA → reset → login) passes
+  unchanged: labels, button names and `auth-success` / `auth-error`
+  test ids preserved. PLAN §12.6 (A10).
+- Next: move existing data-entry pages (customers, products, POs,
+  settings) onto the kit as they are touched.

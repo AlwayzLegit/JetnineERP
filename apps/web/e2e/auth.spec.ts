@@ -166,6 +166,7 @@ test.describe('auth golden path', () => {
       expect(location, 'reset redirect target').toBeTruthy();
       await page.goto(location!);
       await page.getByLabel('New password (min 12 chars)').fill(password2);
+      await page.getByLabel('Confirm new password').fill(password2);
       await page.getByRole('button', { name: 'Set password' }).click();
       await expect(page.getByTestId('auth-success')).toContainText('Password updated');
     });

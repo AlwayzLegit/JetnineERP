@@ -454,6 +454,40 @@ Header: initials code, name, email, membership status, selling locations
 (approved list, else "All stores"). Read-only; rows link to the order and to
 the customer's activity screen.
 
+### 12.6 Signed-out experience and the form kit (amendment A10, owner 2026-09-02)
+
+Owner: "password reset, login, signup, onboarding and data entry need better
+UI/UX with modern libraries; notices, submit actions and notifications wired
+properly." Decisions:
+
+- **Form kit** (`apps/web/src/components/form/form.tsx`): react-hook-form +
+  zod (v4) over the existing `.input` / `.btn` styles. `useZodForm`,
+  `Form` (server errors land in the root error), `TextField`, `SelectField`,
+  `PasswordField` (show/hide, strength meter), `SubmitButton` (pending
+  spinner), `FormAlert`, `FormRootError`. Fields own their label (screen
+  readers and `getByLabel` keep working), validate on blur then on change,
+  and show one inline error each. New data-entry screens use this kit;
+  existing ones move over as they are touched.
+- **Signed-out shell** (`components/auth/auth-shell.tsx`): brand mark over a
+  soft gradient, one card, footer. `AuthCard` (title, context line, links)
+  and `AuthOutcome` (finished-state panel: check your email / done / that
+  link failed) give every flow the same start and end.
+- **Flows**: login (friendly error copy, unverified-email alert with Resend,
+  2FA challenge with backup-code fallback, `?next=` / `?email=` /
+  `?reset=1` / `?verified=1` handling); signup (strength meter, "Check your
+  email" outcome with Resend, plus a Continue button when verification is
+  off and the account is already signed in); reset (request → outcome with
+  Send again; token → new + confirm password → outcome with Sign in;
+  expired link → Request a new one); verify (success or `?error=` outcome);
+  accept-invite (password + confirm, outcome linking to sign-in with the
+  email prefilled); 2FA enrolment (copy secret, backup codes grid, outcome).
+  Every success also toasts.
+- **Onboarding** (`/welcome`): same shell; business picker as a choice
+  list; create-business form on the kit with a 3-step stepper, live slug,
+  409 → inline "slug is taken", toast + /dashboard on success.
+- Error copy comes from `lib/auth-errors.ts` (better-auth codes → sentences;
+  429 → "Too many attempts").
+
 ## 13. Explicit v1 Exclusions (do not build)
 
 Barcode scanning · bundle/kit pricing · MSRP display · coupon-code validation ·
