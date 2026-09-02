@@ -170,6 +170,107 @@ export class CatalogProductsController {
     return buildPage(rows, limit, (r) => r.name);
   }
 
+  /**
+   * Same-name products (owner ask 2026-09-02): imports from two systems
+   * — and Shopify variants collapsed to one name — leave the register
+   * showing the same mattress two or three times. Groups active products
+   * by their name and, for each, says what would be lost by retiring it
+   * (stock, documents), so the keeper is obvious.
+   */
+  @Get('duplicates')
+  @RequirePermission('products.view')
+  async duplicates(@CurrentTenant() tenant: RequestTenantContext): Promise<{
+    groups: {
+      name: string;
+      products: {
+        id: string;
+        sku: string | null;
+        name: string;
+        isActive: boolean;
+        createdAt: Date;
+        priceCents: number | null;
+        variants: number;
+        onHand: number;
+        reserved: number;
+        documents: number;
+        /** Nothing references it — the DELETE endpoint would accept it. */
+        deletable: boolean;
+      }[];
+    }[];
+    productCount: number;
+  }> {
+    const businessId = tenant.businessId!;
+    const key = sql`lower(btrim(${schema.products.name}))`;
+    const dupNames = await this.db
+      .select({ key, n: sql<number>`count(*)::int` })
+      .from(schema.products)
+      .where(and(eq(schema.products.businessId, businessId), eq(schema.products.isActive, true)))
+      .groupBy(key)
+      .having(sql`count(*) > 1`)
+      .orderBy(desc(sql`count(*)`), key)
+      .limit(200);
+    if (dupNames.length === 0) return { groups: [], productCount: 0 };
+    const keys = dupNames.map((r) => r.key as string);
+
+    const rows = await this.db
+      .select({
+        id: schema.products.id,
+        sku: schema.products.sku,
+        name: schema.products.name,
+        isActive: schema.products.isActive,
+        createdAt: schema.products.createdAt,
+        key,
+        priceCents: sql<number | null>`min(${schema.productVariants.priceCents})`,
+        variants: sql<number>`count(DISTINCT ${schema.productVariants.id})::int`,
+        onHand: sql<number>`coalesce((SELECT sum(il.on_hand) FROM inventory_levels il JOIN product_variants pv ON pv.id = il.variant_id WHERE pv.product_id = ${schema.products.id}), 0)::int`,
+        reserved: sql<number>`coalesce((SELECT sum(il.reserved) FROM inventory_levels il JOIN product_variants pv ON pv.id = il.variant_id WHERE pv.product_id = ${schema.products.id}), 0)::int`,
+        documents: sql<number>`(
+          (SELECT count(*) FROM order_lines ol JOIN product_variants pv ON pv.id = ol.variant_id WHERE pv.product_id = ${schema.products.id})
+          + (SELECT count(*) FROM sale_lines sl JOIN product_variants pv ON pv.id = sl.variant_id WHERE pv.product_id = ${schema.products.id})
+          + (SELECT count(*) FROM purchase_order_lines pl JOIN product_variants pv ON pv.id = pl.variant_id WHERE pv.product_id = ${schema.products.id})
+          + (SELECT count(*) FROM stock_transfer_lines tl JOIN product_variants pv ON pv.id = tl.variant_id WHERE pv.product_id = ${schema.products.id})
+        )::int`,
+      })
+      .from(schema.products)
+      .leftJoin(schema.productVariants, eq(schema.productVariants.productId, schema.products.id))
+      .where(
+        and(
+          eq(schema.products.businessId, businessId),
+          eq(schema.products.isActive, true),
+          inArray(key, keys),
+        ),
+      )
+      .groupBy(schema.products.id)
+      .orderBy(asc(schema.products.createdAt));
+
+    const byKey = new Map<string, typeof rows>();
+    for (const r of rows) {
+      const list = byKey.get(r.key as string) ?? [];
+      list.push(r);
+      byKey.set(r.key as string, list);
+    }
+    const groups = keys
+      .map((k) => byKey.get(k) ?? [])
+      .filter((list) => list.length > 1)
+      .map((list) => ({
+        name: list[0]!.name,
+        products: list.map((r) => ({
+          id: r.id,
+          sku: r.sku,
+          name: r.name,
+          isActive: r.isActive,
+          createdAt: r.createdAt,
+          priceCents: r.priceCents,
+          variants: r.variants,
+          onHand: r.onHand,
+          reserved: r.reserved,
+          documents: r.documents,
+          deletable: r.onHand === 0 && r.reserved === 0 && r.documents === 0,
+        })),
+      }));
+    return { groups, productCount: groups.reduce((n, g) => n + g.products.length, 0) };
+  }
+
   @Get(':id')
   @RequirePermission('products.view')
   async get(

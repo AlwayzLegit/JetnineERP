@@ -4376,3 +4376,18 @@ Owner ask on New Sale's Add Product popup.
 - Dialog gains Size and Firmness selects beside Vendor and Stock.
 - `apps/api/test/product-filters.int.spec.ts` (6). CI gets
   `jetnine_product_filters`.
+
+### Checkpoint — 2026-09-02 (duplicate products)
+
+Owner spotted the same Helix mattress two and three times in the Add
+Product popup: two imports (a `helix-…` SKU family and a
+`HELIX-SLEEP-…-<hash>` family) plus Shopify cover/support variants that
+now share one name after A7's shortening.
+
+- `GET /v1/products/duplicates` (`products.view`): active products
+  grouped by name, each with min price, variants, on hand, reserved,
+  document count and `deletable`.
+- `/products/duplicates` page ("Find duplicates" on Products): per row
+  Open / Deactivate (hides from selling, keeps history) / Delete (only
+  when nothing references it — the existing guard).
+- Covered in `product-filters.int.spec.ts` (+2).
