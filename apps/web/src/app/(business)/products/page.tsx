@@ -1,6 +1,5 @@
 'use client';
 
-import Link from 'next/link';
 import { useEffect, useState, type FormEvent } from 'react';
 import { Plus } from 'lucide-react';
 import { toast } from 'sonner';
@@ -9,6 +8,7 @@ import { CsvImport } from '@/components/csv-import';
 import { LoadMore } from '@/components/load-more';
 import { useCursorList } from '@/lib/use-cursor-list';
 import {
+  Alert,
   Button,
   Card,
   EmptyState,
@@ -16,6 +16,10 @@ import {
   LinkButton,
   LoadingRows,
   PageHeader,
+  Stack,
+  StatusBadge,
+  TableWrap,
+  Toolbar,
 } from '@/components/ui';
 
 interface ProductRow {
@@ -74,13 +78,13 @@ export default function ProductsPage() {
         title="Products"
         actions={
           <>
-            <LinkButton href="/products/duplicates" variant="secondary">
+            <LinkButton href="/products/duplicates" variant="secondary" size="sm">
               Find duplicates
             </LinkButton>
-            <LinkButton href="/products/pricing" variant="secondary">
+            <LinkButton href="/products/pricing" variant="secondary" size="sm">
               Set prices
             </LinkButton>
-            <LinkButton href="/products/labels" variant="secondary">
+            <LinkButton href="/products/labels" variant="secondary" size="sm">
               Print labels
             </LinkButton>
             <LinkButton href="/products/new" variant="primary">
@@ -91,66 +95,98 @@ export default function ProductsPage() {
         }
       />
 
-      <form onSubmit={search} className="mb-4 flex flex-wrap gap-2">
-        <Input
-          name="q"
-          placeholder="Search by name, SKU, or barcode"
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          className="min-w-[200px] flex-1"
-        />
-        <Button type="submit" variant="primary">
-          Search
-        </Button>
-        <Button
-          type="button"
-          variant="secondary"
-          onClick={() => {
-            setQ('');
-            void list.load(params(''));
-          }}
-        >
-          Clear
-        </Button>
-      </form>
-
-      {vendor && (
-        <p style={{ fontSize: 13, margin: '0 0 8px' }} data-testid="products-vendor-chip">
-          Showing products from <strong>{vendor.name}</strong>{' '}
-          <button
+      <form onSubmit={search}>
+        <Toolbar>
+          <Input
+            name="q"
+            placeholder="Search by name, SKU, or barcode"
+            aria-label="Search by name, SKU, or barcode"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+          />
+          <Button type="submit" variant="secondary" size="sm">
+            Search
+          </Button>
+          <Button
             type="button"
-            className="btn btn-ghost btn-sm"
-            style={{ padding: '0 6px', fontSize: 12 }}
+            variant="ghost"
+            size="sm"
             onClick={() => {
-              setVendor(null);
-              window.history.replaceState(null, '', '/products');
-              void list.load(params(q, null));
+              setQ('');
+              void list.load(params(''));
             }}
           >
-            clear
-          </button>
-        </p>
-      )}
-      {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
-      <Card style={{ padding: 0 }}>
+            Clear
+          </Button>
+        </Toolbar>
+      </form>
+
+      <Stack>
+        {vendor && (
+          <Alert
+            tone="info"
+            data-testid="products-vendor-chip"
+            action={
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setVendor(null);
+                  window.history.replaceState(null, '', '/products');
+                  void list.load(params(q, null));
+                }}
+              >
+                clear
+              </Button>
+            }
+          >
+            Showing products from <strong>{vendor.name}</strong>
+          </Alert>
+        )}
+        {error && <Alert tone="error">{error}</Alert>}
+
         {rows == null ? (
-          <div style={{ padding: 16 }}>
+          <Card>
             <LoadingRows />
-          </div>
+          </Card>
         ) : rows.length === 0 ? (
-          <EmptyState>
-            No products match{q ? ` "${q}"` : ' yet'}. Create a product or import a CSV below.
-          </EmptyState>
+          <Card>
+            <EmptyState
+              title={q ? `No products match "${q}"` : 'No products yet'}
+              action={
+                q ? (
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => {
+                      setQ('');
+                      void list.load(params(''));
+                    }}
+                  >
+                    Clear search
+                  </Button>
+                ) : (
+                  <LinkButton href="/products/new" variant="secondary" size="sm">
+                    Create product
+                  </LinkButton>
+                )
+              }
+            >
+              Create a product or import a CSV below.
+            </EmptyState>
+          </Card>
         ) : (
-          <>
-            <div className="overflow-x-auto">
+          <Card flush>
+            <TableWrap>
               <table className="table">
                 <thead>
                   <tr>
                     <th>Name</th>
                     <th>SKU</th>
                     <th>Active</th>
-                    <th>&nbsp;</th>
+                    <th className="actions" />
                   </tr>
                 </thead>
                 <tbody>
@@ -163,47 +199,43 @@ export default function ProductsPage() {
                         <code>{p.sku ?? '—'}</code>
                       </td>
                       <td>
-                        <span className={`badge ${p.isActive ? 'badge-success' : 'badge-neutral'}`}>
-                          {p.isActive ? 'yes' : 'no'}
-                        </span>
+                        <StatusBadge status={p.isActive ? 'active' : 'inactive'} />
                       </td>
-                      <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
-                        <Link href={`/products/${p.id}`}>Open</Link>
-                        <button
+                      <td className="actions">
+                        <LinkButton href={`/products/${p.id}`} variant="secondary" size="sm">
+                          Open
+                        </LinkButton>
+                        <Button
+                          size="sm"
+                          variant="danger"
                           onClick={() => void deleteProduct(p)}
-                          style={{
-                            border: 'none',
-                            background: 'none',
-                            cursor: 'pointer',
-                            color: 'var(--danger)',
-                            fontSize: 13,
-                            marginLeft: 12,
-                          }}
                           aria-label={`Delete ${p.name}`}
                           title="Delete this product (only when unused — no stock, no documents)"
                           data-testid="product-row-delete"
                         >
                           Delete
-                        </button>
+                        </Button>
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
-            </div>
+            </TableWrap>
             <LoadMore state={list} noun="products" />
-          </>
+          </Card>
         )}
-      </Card>
 
-      <details style={{ marginTop: 24 }} data-testid="products-csv-import">
-        <summary style={{ cursor: 'pointer', fontSize: 14, fontWeight: 500 }}>
-          Import products from a CSV file
-        </summary>
-        <div style={{ marginTop: 8 }}>
-          <CsvImport entity="product" onCommitted={() => list.load(params(q))} />
-        </div>
-      </details>
+        <Card>
+          <details data-testid="products-csv-import">
+            <summary className="section-title cursor-pointer">
+              Import products from a CSV file
+            </summary>
+            <div className="pt-3">
+              <CsvImport entity="product" onCommitted={() => list.load(params(q))} />
+            </div>
+          </details>
+        </Card>
+      </Stack>
     </div>
   );
 }

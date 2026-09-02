@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { api } from '@/lib/api';
+import { TableWrap } from '@/components/ui';
 import { PrintToolbar } from '../../print-toolbar';
 
 /**
@@ -44,6 +45,9 @@ const cell: React.CSSProperties = {
   fontSize: 12,
   verticalAlign: 'top',
 };
+/* Print sheet: the cells draw their own black rules, so the wrap drops its chrome. */
+const wrap: React.CSSProperties = { border: 'none', borderRadius: 0, background: 'transparent' };
+const table: React.CSSProperties = { width: '100%', borderCollapse: 'collapse' };
 
 export default function CountSheetPrintPage() {
   const params = useParams<{ id: string }>();
@@ -103,31 +107,33 @@ export default function CountSheetPrintPage() {
             </div>
           )}
 
-          <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: 12 }}>
-            <thead>
-              <tr>
-                {['Bin', 'SKU', 'Item', 'Counted qty', 'Initials'].map((h) => (
-                  <th key={h} style={{ ...cell, ...label, textAlign: 'left' }}>
-                    {h}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {c.lines.map((l) => (
-                <tr key={l.id}>
-                  <td style={{ ...cell, width: 80 }}>{l.binCode ?? '—'}</td>
-                  <td style={{ ...cell, width: 140 }}>
-                    <code>{l.sku ?? '—'}</code>
-                  </td>
-                  <td style={cell}>{l.productName}</td>
-                  {/* Blank boxes — the sheet is blind on purpose. */}
-                  <td style={{ ...cell, width: 90 }}>&nbsp;</td>
-                  <td style={{ ...cell, width: 70 }}>&nbsp;</td>
+          <TableWrap style={{ ...wrap, marginTop: 12 }}>
+            <table style={table}>
+              <thead>
+                <tr>
+                  {['Bin', 'SKU', 'Item', 'Counted qty', 'Initials'].map((h) => (
+                    <th key={h} style={{ ...cell, ...label, textAlign: 'left' }}>
+                      {h}
+                    </th>
+                  ))}
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {c.lines.map((l) => (
+                  <tr key={l.id}>
+                    <td style={{ ...cell, width: 80 }}>{l.binCode ?? '—'}</td>
+                    <td style={{ ...cell, width: 140 }}>
+                      <code>{l.sku ?? '—'}</code>
+                    </td>
+                    <td style={cell}>{l.productName}</td>
+                    {/* Blank boxes — the sheet is blind on purpose. */}
+                    <td style={{ ...cell, width: 90 }}>&nbsp;</td>
+                    <td style={{ ...cell, width: 70 }}>&nbsp;</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </TableWrap>
 
           <div style={{ marginTop: 48, display: 'flex', gap: 24 }}>
             <div style={{ flex: 1 }}>
@@ -144,25 +150,27 @@ export default function CountSheetPrintPage() {
               <div style={{ borderTop: '1px solid #000', paddingTop: 4, fontSize: 10 }}>Date</div>
             </div>
           </div>
-          <p style={{ fontSize: 10, color: '#333', marginTop: 16 }}>
+          <p style={{ fontSize: 10, color: '#333', marginTop: 'var(--space-4)' }}>
             Count every unit physically present, including items staged for delivery. Write the
             quantity even when it is zero. Anything found that is not on this sheet goes in the
             blank lines below with its SKU.
           </p>
           {/* A few blank rows for found stock. */}
-          <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: 8 }}>
-            <tbody>
-              {[0, 1, 2].map((i) => (
-                <tr key={i}>
-                  <td style={{ ...cell, width: 80 }}>&nbsp;</td>
-                  <td style={{ ...cell, width: 140 }}>&nbsp;</td>
-                  <td style={cell}>&nbsp;</td>
-                  <td style={{ ...cell, width: 90 }}>&nbsp;</td>
-                  <td style={{ ...cell, width: 70 }}>&nbsp;</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <TableWrap style={{ ...wrap, marginTop: 8 }}>
+            <table style={table}>
+              <tbody>
+                {[0, 1, 2].map((i) => (
+                  <tr key={i}>
+                    <td style={{ ...cell, width: 80 }}>&nbsp;</td>
+                    <td style={{ ...cell, width: 140 }}>&nbsp;</td>
+                    <td style={cell}>&nbsp;</td>
+                    <td style={{ ...cell, width: 90 }}>&nbsp;</td>
+                    <td style={{ ...cell, width: 70 }}>&nbsp;</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </TableWrap>
         </div>
       )}
     </div>

@@ -5,14 +5,24 @@ import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { formatMoney } from '@jetnine/shared';
 import {
+  Alert,
   Button,
   Card,
   EmptyState,
   Field,
+  FormActions,
+  FormGrid,
   Input,
   LoadingRows,
   PageHeader,
+  Select,
+  Stack,
+  StatGrid,
+  StatTile,
   StatusBadge,
+  TableEmpty,
+  TableWrap,
+  Toolbar,
 } from '@/components/ui';
 import { api } from '@/lib/api';
 import { Money } from '@/components/money';
@@ -68,15 +78,19 @@ export default function CommissionsPage() {
   const [report, setReport] = useState<Report | null>(null);
   const [statement, setStatement] = useState<Statement | null>(null);
   const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function load(p: string) {
     setStatement(null);
+    setLoading(true);
     try {
       setReport(await api<Report>(`/v1/commissions/report?period=${p}`));
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoading(false);
     }
   }
   useEffect(() => {
@@ -126,180 +140,153 @@ export default function CommissionsPage() {
         title="Commissions"
         sub="Monthly accruals per associate. Open a statement for the payroll-day paper trail."
       />
-      {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
+      <Stack>
+        {error && <Alert tone="error">{error}</Alert>}
 
-      <Card title="Period" className="no-print">
-        <div className="flex flex-wrap items-end gap-2">
-          <Field label="Payroll month">
-            <Input
-              type="month"
-              value={period}
-              onChange={(e) => setPeriod(e.target.value)}
-              data-testid="commission-period"
-            />
-          </Field>
-          <Button variant="primary" onClick={() => void load(period)}>
-            Load
-          </Button>
-        </div>
-      </Card>
-
-      <Card title="By associate" className="no-print">
-        {report == null ? (
-          <LoadingRows />
-        ) : report.bySalesperson.length === 0 ? (
-          <EmptyState>No commission entries for {period}.</EmptyState>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Associate</th>
-                  <th className="num">Entries</th>
-                  <th className="num">Pending</th>
-                  <th className="num">Total</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {report.bySalesperson.map((r) => (
-                  <tr key={r.membershipId}>
-                    <td>{r.salesperson}</td>
-                    <td className="num">{r.entries}</td>
-                    <td className="num">
-                      <Money cents={r.pendingCents} />
-                    </td>
-                    <td className="num">
-                      <strong>
-                        <Money cents={r.totalCents} />
-                      </strong>
-                    </td>
-                    <td style={{ textAlign: 'right' }}>
-                      <Button
-                        size="sm"
-                        onClick={() => void openStatement(r.membershipId)}
-                        data-testid={`statement-${r.salesperson}`}
-                      >
-                        Statement
-                      </Button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </Card>
-
-      {statement && (
-        <Card
-          title={`Statement — ${statement.salesperson} · ${statement.period}`}
-          actions={
-            <span className="no-print" style={{ display: 'inline-flex', gap: 8 }}>
-              <Button size="sm" disabled={busy} onClick={() => void setStatus('approved')}>
-                Approve pending
-              </Button>
-              <Button size="sm" disabled={busy} onClick={() => void setStatus('paid')}>
-                Mark approved paid
-              </Button>
-              <Button size="sm" variant="secondary" onClick={() => window.print()}>
-                <Printer size={13} aria-hidden /> Print
-              </Button>
-            </span>
-          }
-          data-testid="commission-statement"
-        >
-          <div className="mb-3 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-            <MiniTotal label="Accrued" cents={statement.totals.accruedCents} />
-            <MiniTotal label="Reversals" cents={statement.totals.reversalCents} tone="danger" />
-            <MiniTotal label="Net" cents={statement.totals.netCents} strong />
-            <MiniTotal label="Pending" cents={statement.totals.pendingCents} />
-            <MiniTotal label="Approved" cents={statement.totals.approvedCents} />
-            <MiniTotal label="Paid" cents={statement.totals.paidCents} />
-          </div>
-          {statement.entries.length === 0 ? (
-            <EmptyState>No entries this period.</EmptyState>
+        <Card title="By associate" className="no-print">
+          <Toolbar className="items-end">
+            <Field label="Payroll month">
+              <Input
+                type="month"
+                value={period}
+                onChange={(e) => setPeriod(e.target.value)}
+                data-testid="commission-period"
+              />
+            </Field>
+            <Button
+              size="sm"
+              variant="primary"
+              disabled={loading}
+              onClick={() => void load(period)}
+            >
+              {loading ? 'Loading…' : 'Load'}
+            </Button>
+          </Toolbar>
+          {report == null ? (
+            <LoadingRows />
           ) : (
-            <div className="overflow-x-auto">
+            <TableWrap>
               <table className="table">
                 <thead>
                   <tr>
-                    <th>Date</th>
-                    <th>Document</th>
-                    <th className="num">Basis</th>
-                    <th className="num">Rate</th>
-                    <th className="num">Commission</th>
-                    <th>Status</th>
+                    <th>Associate</th>
+                    <th className="num">Entries</th>
+                    <th className="num">Pending</th>
+                    <th className="num">Total</th>
+                    <th className="actions" />
                   </tr>
                 </thead>
                 <tbody>
-                  {statement.entries.map((e) => (
-                    <tr key={e.id}>
-                      <td>{new Date(e.accruedAt).toLocaleDateString()}</td>
-                      <td>
-                        <code>{e.documentNumber ?? '—'}</code>
-                        {e.notes && (
-                          <span className="muted" style={{ display: 'block', fontSize: 11.5 }}>
-                            {e.notes}
-                          </span>
-                        )}
+                  {report.bySalesperson.length === 0 && (
+                    <TableEmpty colSpan={5}>No commission entries for {period}.</TableEmpty>
+                  )}
+                  {report.bySalesperson.map((r) => (
+                    <tr key={r.membershipId}>
+                      <td>{r.salesperson}</td>
+                      <td className="num">{r.entries}</td>
+                      <td className="num">
+                        <Money cents={r.pendingCents} />
                       </td>
                       <td className="num">
-                        <Money cents={e.basisCents} />
+                        <strong>
+                          <Money cents={r.totalCents} />
+                        </strong>
                       </td>
-                      <td className="num">{(e.rateBps / 100).toFixed(2)}%</td>
-                      <td
-                        className="num"
-                        style={{ color: e.amountCents < 0 ? 'var(--danger)' : undefined }}
-                      >
-                        <strong>{formatMoney(e.amountCents)}</strong>
-                      </td>
-                      <td>
-                        <StatusBadge status={e.status} />
+                      <td className="actions">
+                        <Button
+                          size="sm"
+                          onClick={() => void openStatement(r.membershipId)}
+                          data-testid={`statement-${r.salesperson}`}
+                        >
+                          Statement
+                        </Button>
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
-            </div>
+            </TableWrap>
           )}
         </Card>
-      )}
-    </div>
-  );
-}
 
-function MiniTotal({
-  label,
-  cents,
-  strong,
-  tone,
-}: {
-  label: string;
-  cents: number;
-  strong?: boolean;
-  tone?: 'danger';
-}) {
-  return (
-    <div
-      style={{
-        background: 'var(--surface-muted)',
-        border: '1px solid var(--border)',
-        borderRadius: 'var(--radius-sm)',
-        padding: '8px 10px',
-      }}
-    >
-      <div style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--text-muted)' }}>{label}</div>
-      <div
-        style={{
-          fontSize: 15,
-          fontWeight: strong ? 700 : 600,
-          color: tone === 'danger' && cents !== 0 ? 'var(--danger)' : 'var(--text)',
-        }}
-      >
-        {formatMoney(cents)}
-      </div>
-      <CommissionPlansCard />
+        {statement && (
+          <Card
+            title={`Statement — ${statement.salesperson} · ${statement.period}`}
+            actions={
+              <div className="no-print contents">
+                <Button size="sm" disabled={busy} onClick={() => void setStatus('approved')}>
+                  Approve pending
+                </Button>
+                <Button size="sm" disabled={busy} onClick={() => void setStatus('paid')}>
+                  Mark approved paid
+                </Button>
+                <Button size="sm" variant="secondary" onClick={() => window.print()}>
+                  <Printer size={13} aria-hidden /> Print
+                </Button>
+              </div>
+            }
+            data-testid="commission-statement"
+          >
+            <Stack>
+              <StatGrid cols={6}>
+                <StatTile label="Accrued" value={formatMoney(statement.totals.accruedCents)} />
+                <StatTile
+                  label="Reversals"
+                  value={formatMoney(statement.totals.reversalCents)}
+                  tone={statement.totals.reversalCents !== 0 ? 'danger' : undefined}
+                />
+                <StatTile label="Net" value={formatMoney(statement.totals.netCents)} tone="brand" />
+                <StatTile label="Pending" value={formatMoney(statement.totals.pendingCents)} />
+                <StatTile label="Approved" value={formatMoney(statement.totals.approvedCents)} />
+                <StatTile label="Paid" value={formatMoney(statement.totals.paidCents)} />
+              </StatGrid>
+              <TableWrap>
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Date</th>
+                      <th>Document</th>
+                      <th className="num">Basis</th>
+                      <th className="num">Rate</th>
+                      <th className="num">Commission</th>
+                      <th>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {statement.entries.length === 0 && (
+                      <TableEmpty colSpan={6}>No entries this period.</TableEmpty>
+                    )}
+                    {statement.entries.map((e) => (
+                      <tr key={e.id}>
+                        <td>{new Date(e.accruedAt).toLocaleDateString()}</td>
+                        <td>
+                          <code>{e.documentNumber ?? '—'}</code>
+                          {e.notes && <div className="muted">{e.notes}</div>}
+                        </td>
+                        <td className="num">
+                          <Money cents={e.basisCents} />
+                        </td>
+                        <td className="num">{(e.rateBps / 100).toFixed(2)}%</td>
+                        <td
+                          className="num"
+                          style={{ color: e.amountCents < 0 ? 'var(--danger)' : undefined }}
+                        >
+                          <strong>{formatMoney(e.amountCents)}</strong>
+                        </td>
+                        <td>
+                          <StatusBadge status={e.status} />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </TableWrap>
+            </Stack>
+          </Card>
+        )}
+
+        <CommissionPlansCard />
+      </Stack>
     </div>
   );
 }
@@ -388,105 +375,119 @@ function CommissionPlansCard() {
   }
 
   return (
-    <Card title="Commission plans" style={{ marginTop: 16 }}>
-      <p className="muted" style={{ fontSize: 12.5, marginTop: 0 }}>
-        Commission accrues at completion only for salespeople who are on a plan. Nobody on a plan
-        means nothing accrues.
-      </p>
-      {plans === null ? (
-        <LoadingRows rows={2} />
-      ) : plans.length === 0 ? (
-        <EmptyState>No plans yet — create one below.</EmptyState>
-      ) : (
-        <table className="table" data-testid="commission-plans-table">
-          <thead>
-            <tr>
-              <th>Plan</th>
-              <th>Basis</th>
-              <th className="num">Rate</th>
-            </tr>
-          </thead>
-          <tbody>
-            {plans.map((p) => (
-              <tr key={p.id}>
-                <td>{p.name}</td>
-                <td>{p.basis === 'percent_of_margin' ? 'of margin' : 'of sale'}</td>
-                <td className="num">{(p.rateBps / 100).toFixed(2)}%</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
+    <>
+      <Card
+        title="Commission plans"
+        description="Commission accrues at completion only for salespeople who are on a plan. Nobody on a plan means nothing accrues."
+        className="no-print"
+      >
+        {plans === null ? (
+          <LoadingRows rows={2} />
+        ) : plans.length === 0 ? (
+          <EmptyState>No plans yet — create one below.</EmptyState>
+        ) : (
+          <TableWrap>
+            <table className="table" data-testid="commission-plans-table">
+              <thead>
+                <tr>
+                  <th>Plan</th>
+                  <th>Basis</th>
+                  <th className="num">Rate</th>
+                </tr>
+              </thead>
+              <tbody>
+                {plans.map((p) => (
+                  <tr key={p.id}>
+                    <td>{p.name}</td>
+                    <td>{p.basis === 'percent_of_margin' ? 'of margin' : 'of sale'}</td>
+                    <td className="num">{(p.rateBps / 100).toFixed(2)}%</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </TableWrap>
+        )}
 
-      <div className="flex flex-wrap items-end gap-2" style={{ fontSize: 13, marginTop: 10 }}>
-        <label style={{ display: 'grid', gap: 2, fontSize: 12, minWidth: 0 }}>
-          Plan name
-          <Input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="Flat 5%"
-            data-testid="plan-name"
-            style={{ minWidth: 0 }}
-          />
-        </label>
-        <label style={{ display: 'grid', gap: 2, fontSize: 12 }}>
-          Rate (%)
-          <Input
-            type="number"
-            step="0.01"
-            min={0}
-            value={rate}
-            onChange={(e) => setRate(e.target.value)}
-            data-testid="plan-rate"
-            style={{ width: 90 }}
-          />
-        </label>
-        <label style={{ display: 'grid', gap: 2, fontSize: 12 }}>
-          Basis
-          <select className="select" value={basis} onChange={(e) => setBasis(e.target.value)}>
-            <option value="percent_of_sale">Percent of sale</option>
-            <option value="percent_of_margin">Percent of margin</option>
-          </select>
-        </label>
-        <Button
-          variant="secondary"
-          disabled={busy}
-          onClick={() => void createPlan()}
-          data-testid="create-plan"
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            void createPlan();
+          }}
         >
-          Add plan
-        </Button>
-      </div>
+          <FormGrid cols={3}>
+            <Field label="Plan name" required>
+              <Input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Flat 5%"
+                data-testid="plan-name"
+              />
+            </Field>
+            <Field label="Rate (%)" required>
+              <Input
+                type="number"
+                step="0.01"
+                min={0}
+                value={rate}
+                onChange={(e) => setRate(e.target.value)}
+                data-testid="plan-rate"
+              />
+            </Field>
+            <Field label="Basis">
+              <Select value={basis} onChange={(e) => setBasis(e.target.value)}>
+                <option value="percent_of_sale">Percent of sale</option>
+                <option value="percent_of_margin">Percent of margin</option>
+              </Select>
+            </Field>
+          </FormGrid>
+          <FormActions>
+            <Button type="submit" variant="secondary" disabled={busy} data-testid="create-plan">
+              {busy ? 'Adding…' : 'Add plan'}
+            </Button>
+          </FormActions>
+        </form>
+      </Card>
 
       {members.length > 0 && (plans?.length ?? 0) > 0 && (
-        <>
-          <h4 style={{ margin: '14px 0 6px', fontSize: 12.5 }}>Who is on a plan</h4>
-          <table className="table" data-testid="plan-assignments">
-            <tbody>
-              {members.map((m) => (
-                <tr key={m.membershipId}>
-                  <td>{m.name ?? m.email}</td>
-                  <td>
-                    <select
-                      className="select"
-                      value={m.commissionPlanId ?? ''}
-                      disabled={busy}
-                      onChange={(e) => void assign(m.membershipId, e.target.value)}
-                    >
-                      <option value="">Not on commission</option>
-                      {plans!.map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {p.name}
-                        </option>
-                      ))}
-                    </select>
-                  </td>
+        <Card
+          title="Who is on a plan"
+          description="Pick a plan per salesperson; leave blank for anyone not on commission."
+          className="no-print"
+        >
+          <TableWrap>
+            <table className="table" data-testid="plan-assignments">
+              <thead>
+                <tr>
+                  <th>Salesperson</th>
+                  <th>Plan</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </>
+              </thead>
+              <tbody>
+                {members.map((m) => (
+                  <tr key={m.membershipId}>
+                    <td>{m.name ?? m.email}</td>
+                    <td>
+                      <Select
+                        aria-label={`Plan for ${m.name ?? m.email}`}
+                        value={m.commissionPlanId ?? ''}
+                        disabled={busy}
+                        onChange={(e) => void assign(m.membershipId, e.target.value)}
+                      >
+                        <option value="">Not on commission</option>
+                        {plans!.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.name}
+                          </option>
+                        ))}
+                      </Select>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </TableWrap>
+        </Card>
       )}
-    </Card>
+    </>
   );
 }

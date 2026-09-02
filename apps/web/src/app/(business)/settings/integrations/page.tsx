@@ -1,10 +1,23 @@
 'use client';
 
-import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { Cable, CheckCircle2, FileSpreadsheet, Plug, RefreshCw, Unplug } from 'lucide-react';
-import { Button, Card, Field, Input, PageHeader, Select, StatusBadge } from '@/components/ui';
+import {
+  BackLink,
+  Button,
+  Card,
+  Field,
+  FormActions,
+  FormGrid,
+  Input,
+  LinkButton,
+  LoadingRows,
+  PageHeader,
+  Select,
+  Stack,
+  StatusBadge,
+} from '@/components/ui';
 import { api } from '@/lib/api';
 
 /**
@@ -156,124 +169,138 @@ export default function IntegrationsPage() {
   return (
     <div>
       <PageHeader
+        eyebrow={<BackLink href="/settings">Settings</BackLink>}
         title="Integrations"
         sub="Connect the platforms you already use — synced data flows through the same idempotent import pipeline as the STORIS migration, so syncing twice never duplicates anything."
       />
 
-      <div className="grid gap-4 sm:grid-cols-2">
-        {(providers ?? []).map((p) => (
-          <Card key={p.provider} data-testid={`integration-${p.provider}`}>
-            <div className="mb-2 flex flex-wrap items-center gap-2">
-              <Cable size={18} className="text-secondary" aria-hidden />
-              <strong className="text-[15px]">{p.label}</strong>
-              {p.connected && <StatusBadge status="connected" />}
-              {p.status === 'error' && <StatusBadge status="failed" />}
-            </div>
-
-            {p.connected ? (
-              <>
-                <p className="muted mb-3 text-[12.5px]">
-                  {p.lastSyncAt
-                    ? `Last synced ${new Date(p.lastSyncAt).toLocaleString()}`
-                    : 'Connected — not synced yet.'}
-                  {p.config?.locationName ? ` · history lands at ${p.config.locationName}` : ''}
-                </p>
-                {p.lastResult?.results && (
-                  <ul className="mb-3 grid gap-1 text-[12.5px] text-secondary">
-                    {p.lastResult.results.map((r) => (
-                      <li key={r.entity} className="flex items-center gap-1.5">
-                        <CheckCircle2 size={13} className="text-success" aria-hidden />
-                        {r.committed} {r.entity}
-                        {r.committed === 1 ? '' : 's'} synced
-                        {r.skipped > 0 ? ` (${r.skipped} skipped)` : ''}
-                      </li>
+      {providers == null ? (
+        <LoadingRows />
+      ) : (
+        <div className="grid gap-4 sm:grid-cols-2">
+          {providers.map((p) => (
+            <Card
+              key={p.provider}
+              data-testid={`integration-${p.provider}`}
+              title={
+                <span className="inline-flex flex-wrap items-center gap-2">
+                  <Cable size={16} className="text-secondary" aria-hidden />
+                  {p.label}
+                  {p.connected && <StatusBadge status="connected" />}
+                  {p.status === 'error' && <StatusBadge status="failed" />}
+                </span>
+              }
+              description={
+                p.connected
+                  ? `${
+                      p.lastSyncAt
+                        ? `Last synced ${new Date(p.lastSyncAt).toLocaleString()}`
+                        : 'Connected — not synced yet.'
+                    }${p.config?.locationName ? ` · history lands at ${p.config.locationName}` : ''}`
+                  : openForm === p.provider
+                    ? undefined
+                    : 'Pulls customers, products, and completed order history.'
+              }
+              actions={
+                p.connected ? (
+                  <>
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      disabled={busy === p.provider || p.syncStatus === 'running'}
+                      onClick={() => void sync(p)}
+                      data-testid={`sync-${p.provider}`}
+                    >
+                      <RefreshCw size={13} aria-hidden />
+                      {busy === p.provider || p.syncStatus === 'running' ? 'Syncing…' : 'Sync now'}
+                    </Button>
+                    <Button
+                      variant="danger"
+                      size="sm"
+                      disabled={busy === p.provider}
+                      onClick={() => void disconnect(p)}
+                    >
+                      <Unplug size={13} aria-hidden />
+                      Disconnect
+                    </Button>
+                  </>
+                ) : undefined
+              }
+            >
+              {p.connected ? (
+                <Stack gap="sm">
+                  {p.lastResult?.results && (
+                    <ul className="m-0 grid list-none gap-1 p-0">
+                      {p.lastResult.results.map((r) => (
+                        <li key={r.entity} className="flex items-center gap-1.5">
+                          <CheckCircle2 size={13} className="text-success" aria-hidden />
+                          {r.committed} {r.entity}
+                          {r.committed === 1 ? '' : 's'} synced
+                          {r.skipped > 0 ? ` (${r.skipped} skipped)` : ''}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  {p.syncStatus === 'running' && (
+                    <p
+                      className="m-0 flex items-center gap-1.5 text-[var(--brand)]"
+                      data-testid={`sync-progress-${p.provider}`}
+                    >
+                      <RefreshCw size={12} className="animate-spin" aria-hidden />
+                      {p.syncProgress?.note ?? 'Sync running…'}
+                    </p>
+                  )}
+                </Stack>
+              ) : openForm === p.provider ? (
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    void connect(p);
+                  }}
+                >
+                  <FormGrid cols={1}>
+                    {p.credentialFields.map((f) => (
+                      <Field key={f.name} label={f.label}>
+                        <Input
+                          type={f.secret ? 'password' : 'text'}
+                          value={creds[f.name] ?? ''}
+                          onChange={(e) => setCreds({ ...creds, [f.name]: e.target.value })}
+                          data-testid={`cred-${p.provider}-${f.name}`}
+                        />
+                      </Field>
                     ))}
-                  </ul>
-                )}
-                {p.syncStatus === 'running' && (
-                  <p
-                    className="mb-2 text-[12.5px]"
-                    style={{ color: 'var(--brand)' }}
-                    data-testid={`sync-progress-${p.provider}`}
-                  >
-                    <RefreshCw size={12} className="mr-1 inline animate-spin" aria-hidden />
-                    {p.syncProgress?.note ?? 'Sync running…'}
-                  </p>
-                )}
-                <div className="flex flex-wrap gap-2">
-                  <Button
-                    variant="primary"
-                    size="sm"
-                    disabled={busy === p.provider || p.syncStatus === 'running'}
-                    onClick={() => void sync(p)}
-                    data-testid={`sync-${p.provider}`}
-                  >
-                    <RefreshCw size={13} aria-hidden />
-                    {busy === p.provider || p.syncStatus === 'running' ? 'Syncing…' : 'Sync now'}
-                  </Button>
-                  <Button
-                    variant="danger"
-                    size="sm"
-                    disabled={busy === p.provider}
-                    onClick={() => void disconnect(p)}
-                  >
-                    <Unplug size={13} aria-hidden />
-                    Disconnect
-                  </Button>
-                </div>
-              </>
-            ) : openForm === p.provider ? (
-              <div className="grid gap-2">
-                {p.credentialFields.map((f) => (
-                  <Field key={f.name} label={f.label}>
-                    <Input
-                      type={f.secret ? 'password' : 'text'}
-                      className="w-full"
-                      value={creds[f.name] ?? ''}
-                      onChange={(e) => setCreds({ ...creds, [f.name]: e.target.value })}
-                      data-testid={`cred-${p.provider}-${f.name}`}
-                    />
-                  </Field>
-                ))}
-                <Field label="Land order history at location">
-                  <Select
-                    className="w-full"
-                    value={locationName}
-                    onChange={(e) => setLocationName(e.target.value)}
-                  >
-                    {locations.map((l) => (
-                      <option key={l.id} value={l.name}>
-                        {l.name}
-                      </option>
-                    ))}
-                  </Select>
-                  <span className="muted mt-1 block text-[12px] font-normal">
-                    Where imported online orders live for inventory, tax, and reporting — pick your
-                    warehouse (or a dedicated “Online” location) so web sales stay out of showroom
-                    numbers.
-                  </span>
-                </Field>
-                <div className="flex flex-wrap gap-2">
-                  <Button
-                    variant="primary"
-                    size="sm"
-                    disabled={busy === p.provider}
-                    onClick={() => void connect(p)}
-                    data-testid={`connect-${p.provider}`}
-                  >
-                    <Plug size={13} aria-hidden />
-                    {busy === p.provider ? 'Connecting…' : 'Connect'}
-                  </Button>
-                  <Button variant="ghost" size="sm" onClick={() => setOpenForm(null)}>
-                    Cancel
-                  </Button>
-                </div>
-              </div>
-            ) : (
-              <>
-                <p className="muted mb-3 text-[12.5px]">
-                  Pulls customers, products, and completed order history.
-                </p>
+                    <Field
+                      label="Land order history at location"
+                      hint="Where imported online orders live for inventory, tax, and reporting — pick your warehouse (or a dedicated “Online” location) so web sales stay out of showroom numbers."
+                    >
+                      <Select
+                        value={locationName}
+                        onChange={(e) => setLocationName(e.target.value)}
+                      >
+                        {locations.map((l) => (
+                          <option key={l.id} value={l.name}>
+                            {l.name}
+                          </option>
+                        ))}
+                      </Select>
+                    </Field>
+                  </FormGrid>
+                  <FormActions>
+                    <Button variant="ghost" onClick={() => setOpenForm(null)}>
+                      Cancel
+                    </Button>
+                    <Button
+                      type="submit"
+                      variant="primary"
+                      disabled={busy === p.provider}
+                      data-testid={`connect-${p.provider}`}
+                    >
+                      <Plug size={13} aria-hidden />
+                      {busy === p.provider ? 'Connecting…' : 'Connect'}
+                    </Button>
+                  </FormActions>
+                </form>
+              ) : (
                 <Button
                   variant="secondary"
                   size="sm"
@@ -286,26 +313,25 @@ export default function IntegrationsPage() {
                   <Plug size={13} aria-hidden />
                   Connect
                 </Button>
-              </>
-            )}
-          </Card>
-        ))}
+              )}
+            </Card>
+          ))}
 
-        <Card>
-          <div className="mb-2 flex items-center gap-2">
-            <FileSpreadsheet size={18} className="text-secondary" aria-hidden />
-            <strong className="text-[15px]">STORIS (and any CSV export)</strong>
-          </div>
-          <p className="muted mb-3 text-[12.5px]">
-            STORIS has no public API — its report-writer exports import through the guided CSV
-            wizard: upload → auto-map → validate → commit, with reconciliation gates that must match
-            to the cent.
-          </p>
-          <Link href="/settings/import" className="btn btn-secondary btn-sm no-underline">
-            Open the import wizard
-          </Link>
-        </Card>
-      </div>
+          <Card
+            title={
+              <span className="inline-flex items-center gap-2">
+                <FileSpreadsheet size={16} className="text-secondary" aria-hidden />
+                STORIS (and any CSV export)
+              </span>
+            }
+            description="STORIS has no public API — its report-writer exports import through the guided CSV wizard: upload → auto-map → validate → commit, with reconciliation gates that must match to the cent."
+          >
+            <LinkButton href="/settings/import" variant="secondary" size="sm">
+              Open the import wizard
+            </LinkButton>
+          </Card>
+        </div>
+      )}
     </div>
   );
 }

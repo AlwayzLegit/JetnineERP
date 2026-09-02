@@ -1,20 +1,26 @@
 'use client';
 
-import Link from 'next/link';
 import { toast } from 'sonner';
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import { Money } from '@/components/money';
 import {
+  Alert,
+  BackLink,
   Button,
   Card,
-  EmptyState,
   Field,
+  FormActions,
+  FormGrid,
   Input,
   LoadingRows,
   PageHeader,
+  SectionHeading,
   Select,
+  Stack,
   StatusBadge,
+  TableEmpty,
+  TableWrap,
 } from '@/components/ui';
 
 interface Account {
@@ -77,6 +83,7 @@ export default function GlJournalPage() {
     },
     { debit: 0, credit: 0 },
   );
+  const balanced = totals.debit === totals.credit;
 
   async function submit(post: boolean) {
     setBusy(true);
@@ -118,159 +125,178 @@ export default function GlJournalPage() {
     }
   }
 
-  if (error && !rows) return <p style={{ color: 'var(--danger)' }}>{error}</p>;
+  function updateLine(i: number, patch: Partial<LineDraft>) {
+    setLines((prev) => {
+      const current = prev[i];
+      if (!current) return prev;
+      const next = [...prev];
+      next[i] = { ...current, ...patch };
+      return next;
+    });
+  }
+
+  if (error && !rows) {
+    return (
+      <div>
+        <PageHeader
+          title="Journal entries"
+          eyebrow={<BackLink href="/gl">General ledger</BackLink>}
+        />
+        <Alert tone="error">{error}</Alert>
+      </div>
+    );
+  }
   if (!rows) return <LoadingRows rows={6} />;
 
   return (
     <div>
-      <p style={{ marginBottom: 12 }}>
-        <Link href="/gl">← General ledger</Link>
-      </p>
-      <PageHeader title="Journal entries" sub="Posted batches are append-only" />
+      <PageHeader
+        eyebrow={<BackLink href="/gl">General ledger</BackLink>}
+        title="Journal entries"
+        sub="Posted batches are append-only"
+      />
 
-      <Card title="New journal entry" style={{ marginBottom: 16 }}>
-        <div className="grid gap-3 sm:grid-cols-2" style={{ marginBottom: 8 }}>
-          <Field label="Date">
-            <Input
-              type="date"
-              value={businessDate}
-              onChange={(e) => setBusinessDate(e.target.value)}
-            />
-          </Field>
-          <Field label="Memo">
-            <Input value={memo} onChange={(e) => setMemo(e.target.value)} />
-          </Field>
-        </div>
-        {lines.map((l, i) => (
-          <div key={i} className="grid gap-2 sm:grid-cols-4" style={{ marginBottom: 6 }}>
-            <Select
-              value={l.accountId}
-              onChange={(e) => {
-                const next = [...lines];
-                next[i] = { ...l, accountId: e.target.value };
-                setLines(next);
-              }}
-            >
-              <option value="">Account…</option>
-              {accounts.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.code} — {a.name}
-                </option>
-              ))}
-            </Select>
-            <Select
-              value={l.side}
-              onChange={(e) => {
-                const next = [...lines];
-                next[i] = { ...l, side: e.target.value as 'debit' | 'credit' };
-                setLines(next);
-              }}
-            >
-              <option value="debit">Debit</option>
-              <option value="credit">Credit</option>
-            </Select>
-            <Input
-              type="number"
-              min={0}
-              step="0.01"
-              placeholder="$"
-              value={l.amountStr}
-              onChange={(e) => {
-                const next = [...lines];
-                next[i] = { ...l, amountStr: e.target.value };
-                setLines(next);
-              }}
-            />
-            <Input
-              placeholder="Line memo"
-              value={l.memo}
-              onChange={(e) => {
-                const next = [...lines];
-                next[i] = { ...l, memo: e.target.value };
-                setLines(next);
-              }}
-            />
-          </div>
-        ))}
-        <div className="flex gap-2" style={{ alignItems: 'center', marginTop: 8 }}>
-          <Button size="sm" variant="ghost" onClick={() => setLines([...lines, emptyLine()])}>
-            + Line
-          </Button>
-          <span
-            style={{
-              fontSize: 12,
-              color: totals.debit === totals.credit ? 'var(--success)' : 'var(--warning)',
+      <Stack>
+        <Card title="New journal entry">
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (busy || !balanced || totals.debit === 0) return;
+              void submit(true);
             }}
           >
-            Debits <Money cents={totals.debit} /> · Credits <Money cents={totals.credit} />
-            {totals.debit !== totals.credit && ' (out of balance)'}
-          </span>
-          <span style={{ flex: 1 }} />
-          <Button variant="secondary" disabled={busy} onClick={() => void submit(false)}>
-            Save draft
-          </Button>
-          <Button
-            variant="primary"
-            disabled={busy || totals.debit !== totals.credit || totals.debit === 0}
-            onClick={() => void submit(true)}
-          >
-            Post
-          </Button>
-        </div>
-      </Card>
+            <FormGrid cols={2}>
+              <Field label="Date">
+                <Input
+                  type="date"
+                  value={businessDate}
+                  onChange={(e) => setBusinessDate(e.target.value)}
+                />
+              </Field>
+              <Field label="Memo">
+                <Input value={memo} onChange={(e) => setMemo(e.target.value)} />
+              </Field>
+            </FormGrid>
 
-      <Card title="Batches" style={{ padding: 0, overflowX: 'auto' }}>
-        <table className="table">
-          <thead>
-            <tr>
-              <th>Batch</th>
-              <th>Date</th>
-              <th>Type</th>
-              <th>Memo</th>
-              <th className="num">Amount</th>
-              <th>Status</th>
-              <th />
-            </tr>
-          </thead>
-          <tbody>
-            {rows.length === 0 && (
-              <tr>
-                <td colSpan={7}>
-                  <EmptyState>No journal batches yet.</EmptyState>
-                </td>
-              </tr>
-            )}
-            {rows.map((b) => (
-              <tr key={b.id}>
-                <td>
-                  <code>{b.number}</code>
-                </td>
-                <td>{b.businessDate}</td>
-                <td>{b.batchType}</td>
-                <td>{b.memo ?? '—'}</td>
-                <td className="num">
-                  <Money cents={b.debitCents} />
-                </td>
-                <td>
-                  <StatusBadge status={b.status} />
-                </td>
-                <td>
-                  {b.status === 'draft' && (
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      disabled={busy}
-                      onClick={() => void postDraft(b.id)}
-                    >
-                      Post
-                    </Button>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </Card>
+            <SectionHeading as="h3" title="Lines" />
+            <Stack gap="sm">
+              {lines.map((l, i) => (
+                <div key={i} className="grid gap-2 sm:grid-cols-4">
+                  <Select
+                    aria-label={`Line ${i + 1} account`}
+                    value={l.accountId}
+                    onChange={(e) => updateLine(i, { accountId: e.target.value })}
+                  >
+                    <option value="">Account…</option>
+                    {accounts.map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.code} — {a.name}
+                      </option>
+                    ))}
+                  </Select>
+                  <Select
+                    aria-label={`Line ${i + 1} side`}
+                    value={l.side}
+                    onChange={(e) => updateLine(i, { side: e.target.value as 'debit' | 'credit' })}
+                  >
+                    <option value="debit">Debit</option>
+                    <option value="credit">Credit</option>
+                  </Select>
+                  <Input
+                    aria-label={`Line ${i + 1} amount`}
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    placeholder="$"
+                    value={l.amountStr}
+                    onChange={(e) => updateLine(i, { amountStr: e.target.value })}
+                  />
+                  <Input
+                    aria-label={`Line ${i + 1} memo`}
+                    placeholder="Line memo"
+                    value={l.memo}
+                    onChange={(e) => updateLine(i, { memo: e.target.value })}
+                  />
+                </div>
+              ))}
+              <div>
+                <Button size="sm" variant="ghost" onClick={() => setLines([...lines, emptyLine()])}>
+                  + Line
+                </Button>
+              </div>
+            </Stack>
+
+            <FormActions
+              start={
+                <span style={{ color: balanced ? 'var(--success)' : 'var(--warning)' }}>
+                  Debits <Money cents={totals.debit} /> · Credits <Money cents={totals.credit} />
+                  {!balanced && ' (out of balance)'}
+                </span>
+              }
+            >
+              <Button variant="secondary" disabled={busy} onClick={() => void submit(false)}>
+                Save draft
+              </Button>
+              <Button
+                type="submit"
+                variant="primary"
+                disabled={busy || !balanced || totals.debit === 0}
+              >
+                Post
+              </Button>
+            </FormActions>
+          </form>
+        </Card>
+
+        <Card title="Batches" flush>
+          <TableWrap>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Batch</th>
+                  <th>Date</th>
+                  <th>Type</th>
+                  <th>Memo</th>
+                  <th className="num">Amount</th>
+                  <th>Status</th>
+                  <th className="actions" />
+                </tr>
+              </thead>
+              <tbody>
+                {rows.length === 0 && <TableEmpty colSpan={7}>No journal batches yet.</TableEmpty>}
+                {rows.map((b) => (
+                  <tr key={b.id}>
+                    <td>
+                      <code>{b.number}</code>
+                    </td>
+                    <td className="nowrap">{b.businessDate}</td>
+                    <td>{b.batchType}</td>
+                    <td>{b.memo ?? '—'}</td>
+                    <td className="num">
+                      <Money cents={b.debitCents} />
+                    </td>
+                    <td>
+                      <StatusBadge status={b.status} />
+                    </td>
+                    <td className="actions">
+                      {b.status === 'draft' && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          disabled={busy}
+                          onClick={() => void postDraft(b.id)}
+                        >
+                          Post
+                        </Button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </TableWrap>
+        </Card>
+      </Stack>
     </div>
   );
 }

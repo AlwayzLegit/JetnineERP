@@ -1,11 +1,21 @@
 'use client';
 
-import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Search } from 'lucide-react';
 import { api } from '@/lib/api';
-import { Card, EmptyState, Input, PageHeader } from '@/components/ui';
+import {
+  Alert,
+  BackLink,
+  Card,
+  EmptyState,
+  Field,
+  Input,
+  LinkButton,
+  PageHeader,
+  Stack,
+  TableWrap,
+} from '@/components/ui';
 
 /**
  * View Customer Activity — lookup (owner 2026-09-02, STORIS-style blank
@@ -52,83 +62,87 @@ export default function CustomerActivityLookupPage() {
 
   return (
     <div>
-      <p style={{ margin: '0 0 12px' }}>
-        <Link href="/customers">← All customers</Link>
-      </p>
       <PageHeader
+        eyebrow={<BackLink href="/customers">All customers</BackLink>}
         title="View Customer Activity"
         sub="Look up a customer to see their orders, line details, purchase history, deposits, receivables and service orders."
       />
       <Card>
-        <label style={{ display: 'grid', gap: 4, maxWidth: 480 }}>
-          <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Customer</span>
-          <div style={{ position: 'relative' }}>
-            <Input
-              autoFocus
-              placeholder="Name, phone or email"
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && hits && hits[0]) {
-                  router.push(`/customers/${hits[0].id}/activity`);
-                }
-              }}
-              data-testid="activity-lookup"
-              style={{ paddingRight: 32 }}
-            />
-            <Search
-              size={16}
-              aria-hidden
-              style={{
-                position: 'absolute',
-                right: 10,
-                top: '50%',
-                transform: 'translateY(-50%)',
-                color: 'var(--text-muted)',
-              }}
-            />
-          </div>
-        </label>
-        {error && <p style={{ color: 'var(--danger)', fontSize: 13 }}>{error}</p>}
-        {hits && hits.length === 0 && <EmptyState>No customers match.</EmptyState>}
-        {hits && hits.length > 0 && (
-          <div style={{ overflowX: 'auto', marginTop: 12 }}>
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Customer</th>
-                  <th>Phone</th>
-                  <th>Email</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {hits.map((h) => (
-                  <tr
-                    key={h.id}
-                    data-testid="activity-lookup-hit"
-                    onClick={() => router.push(`/customers/${h.id}/activity`)}
-                    style={{ cursor: 'pointer' }}
-                  >
-                    <td style={{ fontWeight: 600 }}>
-                      {[h.firstName, h.lastName].filter(Boolean).join(' ') || '(no name)'}
-                    </td>
-                    <td>{h.phone ?? h.phone2 ?? '—'}</td>
-                    <td>{h.email ?? '—'}</td>
-                    <td style={{ textAlign: 'right' }}>
-                      <Link
-                        href={`/customers/${h.id}/activity`}
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        View activity
-                      </Link>
-                    </td>
+        <Stack>
+          <Field
+            label="Customer"
+            hint="Type at least two characters. Press Enter to open the first match."
+            className="form-narrow"
+          >
+            <div className="relative">
+              <Input
+                autoFocus
+                placeholder="Name, phone or email"
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && hits && hits[0]) {
+                    router.push(`/customers/${hits[0].id}/activity`);
+                  }
+                }}
+                data-testid="activity-lookup"
+                className="w-full"
+                // Same adornment inset the auth form kit uses (globals .input-adornment).
+                style={{ paddingRight: 36 }}
+              />
+              <span className="input-adornment pointer-events-none" aria-hidden>
+                <Search size={16} />
+              </span>
+            </div>
+          </Field>
+          {error && <Alert tone="error">{error}</Alert>}
+          {hits && hits.length === 0 && (
+            <EmptyState title="No customers match">Try another name, phone or email.</EmptyState>
+          )}
+          {hits && hits.length > 0 && (
+            <TableWrap>
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Customer</th>
+                    <th>Phone</th>
+                    <th>Email</th>
+                    <th className="actions">
+                      <span className="sr-only">Actions</span>
+                    </th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+                </thead>
+                <tbody>
+                  {hits.map((h) => (
+                    <tr
+                      key={h.id}
+                      data-testid="activity-lookup-hit"
+                      onClick={() => router.push(`/customers/${h.id}/activity`)}
+                      className="cursor-pointer"
+                    >
+                      <td>
+                        <strong>
+                          {[h.firstName, h.lastName].filter(Boolean).join(' ') || '(no name)'}
+                        </strong>
+                      </td>
+                      <td>{h.phone ?? h.phone2 ?? '—'}</td>
+                      <td>{h.email ?? '—'}</td>
+                      <td className="actions">
+                        <LinkButton
+                          size="sm"
+                          href={`/customers/${h.id}/activity`}
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          View activity
+                        </LinkButton>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </TableWrap>
+          )}
+        </Stack>
       </Card>
     </div>
   );

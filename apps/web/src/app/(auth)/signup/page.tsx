@@ -13,7 +13,7 @@ import {
   TextField,
   useZodForm,
 } from '@/components/form/form';
-import { LinkButton } from '@/components/ui';
+import { Button, LinkButton } from '@/components/ui';
 import { authClient, signUp } from '@/lib/auth-client';
 import { authErrorMessage } from '@/lib/auth-errors';
 
@@ -57,22 +57,18 @@ export default function SignupPage() {
         actions={
           <>
             {signedIn && (
-              <button
-                type="button"
-                className="btn btn-primary w-full"
-                onClick={() => router.push('/welcome')}
-              >
+              <Button variant="primary" className="w-full" onClick={() => router.push('/welcome')}>
                 Continue to set up your store
-              </button>
+              </Button>
             )}
-            <button
-              type="button"
-              className="btn btn-secondary w-full"
+            <Button
+              variant="secondary"
+              className="w-full"
               onClick={() => void resend()}
               disabled={resent}
             >
               {resent ? 'Sent again' : 'Resend the email'}
-            </button>
+            </Button>
             {!signedIn && (
               <LinkButton href="/login" variant="ghost">
                 Back to sign in

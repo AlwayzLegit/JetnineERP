@@ -2,7 +2,20 @@
 
 import { Camera } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { Button, Card, EmptyState, Input, PageHeader, Select } from '@/components/ui';
+import {
+  Alert,
+  Button,
+  Card,
+  Field,
+  FormActions,
+  FormGrid,
+  Input,
+  PageHeader,
+  Select,
+  Stack,
+  TableEmpty,
+  TableWrap,
+} from '@/components/ui';
 import { api } from '@/lib/api';
 
 /**
@@ -113,125 +126,127 @@ export default function TemplatesPage() {
   return (
     <div>
       <PageHeader title="Business templates" />
-      {error && <p style={{ color: 'var(--danger)', fontSize: 13 }}>{error}</p>}
-      {message && <p style={{ color: 'var(--success)', fontSize: 13 }}>{message}</p>}
+      <Stack>
+        {error && <Alert tone="error">{error}</Alert>}
+        {message && <Alert tone="success">{message}</Alert>}
 
-      <Card title="Save a business as a template" style={{ marginBottom: 16 }}>
-        <div className="flex flex-wrap items-center gap-2">
-          <Select value={sourceId} onChange={(e) => setSourceId(e.target.value)}>
-            {businesses.map((b) => (
-              <option key={b.id} value={b.id}>
-                {b.name} ({b.slug})
-              </option>
-            ))}
-          </Select>
-          <Input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="Template name"
-            data-testid="template-name"
-          />
-          <label
-            style={{
-              fontSize: 13,
-              color: 'var(--text-secondary)',
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 4,
+        <Card
+          title="Save a business as a template"
+          description="Captures custom roles, categories, tax classes, and settings (catalog optional). Pass the template when creating a business, or apply it to an existing one below — applying is additive and skips anything that already exists."
+        >
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              void snapshot();
             }}
           >
-            <input
-              type="checkbox"
-              checked={includeProducts}
-              onChange={(e) => setIncludeProducts(e.target.checked)}
-              style={{ accentColor: 'var(--brand)' }}
-            />{' '}
-            include catalog
-          </label>
-          <Button
-            variant="primary"
-            onClick={() => void snapshot()}
-            disabled={busy || !name.trim() || !sourceId}
-            data-testid="snapshot-template"
-          >
-            <Camera size={14} aria-hidden />
-            Snapshot
-          </Button>
-        </div>
-        <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '8px 0 0' }}>
-          Captures custom roles, categories, tax classes, and settings (catalog optional). Pass the
-          template when creating a business, or apply it to an existing one below — applying is
-          additive and skips anything that already exists.
-        </p>
-      </Card>
+            <FormGrid cols={3}>
+              <Field label="Source business" required>
+                <Select value={sourceId} onChange={(e) => setSourceId(e.target.value)}>
+                  {businesses.length === 0 && <option value="">No businesses yet</option>}
+                  {businesses.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.name} ({b.slug})
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <Field label="Template name" required>
+                <Input
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="Template name"
+                  data-testid="template-name"
+                />
+              </Field>
+              <label className="flex items-center gap-2 self-end pb-2">
+                <input
+                  type="checkbox"
+                  checked={includeProducts}
+                  onChange={(e) => setIncludeProducts(e.target.checked)}
+                />
+                include catalog
+              </label>
+            </FormGrid>
+            <FormActions>
+              <Button
+                type="submit"
+                variant="primary"
+                disabled={busy || !name.trim() || !sourceId}
+                data-testid="snapshot-template"
+              >
+                <Camera size={14} aria-hidden />
+                Snapshot
+              </Button>
+            </FormActions>
+          </form>
+        </Card>
 
-      <Card style={{ padding: 0, overflowX: 'auto' }}>
-        <table className="table">
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Scope</th>
-              <th>Created</th>
-              <th>Apply to</th>
-              <th />
-            </tr>
-          </thead>
-          <tbody>
-            {templates.map((t) => (
-              <tr key={t.id}>
-                <td>
-                  <strong>{t.name}</strong>
-                  {t.description && (
-                    <span style={{ color: 'var(--text-muted)' }}> — {t.description}</span>
-                  )}
-                </td>
-                <td>
-                  {Object.entries(t.scopeJson)
-                    .filter(([, v]) => v)
-                    .map(([k]) => k)
-                    .join(', ')}
-                </td>
-                <td>{new Date(t.createdAt).toLocaleDateString()}</td>
-                <td>
-                  <Select
-                    value={applyTarget[t.id] ?? ''}
-                    onChange={(e) => setApplyTarget({ ...applyTarget, [t.id]: e.target.value })}
-                  >
-                    <option value="">— pick business —</option>
-                    {businesses.map((b) => (
-                      <option key={b.id} value={b.id}>
-                        {b.name}
-                      </option>
-                    ))}
-                  </Select>
-                </td>
-                <td style={{ whiteSpace: 'nowrap' }}>
-                  <span style={{ display: 'inline-flex', gap: 8 }}>
-                    <Button
-                      variant="primary"
-                      size="sm"
-                      onClick={() => void apply(t)}
-                      disabled={busy || !applyTarget[t.id]}
-                    >
-                      Apply
-                    </Button>
-                    <Button variant="danger" size="sm" onClick={() => void remove(t)}>
-                      Delete
-                    </Button>
-                  </span>
-                </td>
-              </tr>
-            ))}
-            {templates.length === 0 && (
-              <tr>
-                <td colSpan={5}>
-                  <EmptyState>No templates yet — snapshot a configured business above.</EmptyState>
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </Card>
+        <Card flush title="Templates">
+          <TableWrap>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Scope</th>
+                  <th>Created</th>
+                  <th>Apply to</th>
+                  <th className="actions" />
+                </tr>
+              </thead>
+              <tbody>
+                {templates.map((t) => (
+                  <tr key={t.id}>
+                    <td>
+                      <strong>{t.name}</strong>
+                      {t.description && <span className="muted"> — {t.description}</span>}
+                    </td>
+                    <td>
+                      {Object.entries(t.scopeJson)
+                        .filter(([, v]) => v)
+                        .map(([k]) => k)
+                        .join(', ')}
+                    </td>
+                    <td className="nowrap">{new Date(t.createdAt).toLocaleDateString()}</td>
+                    <td>
+                      <Select
+                        aria-label={`Apply "${t.name}" to`}
+                        value={applyTarget[t.id] ?? ''}
+                        onChange={(e) => setApplyTarget({ ...applyTarget, [t.id]: e.target.value })}
+                      >
+                        <option value="">— pick business —</option>
+                        {businesses.map((b) => (
+                          <option key={b.id} value={b.id}>
+                            {b.name}
+                          </option>
+                        ))}
+                      </Select>
+                    </td>
+                    <td className="actions">
+                      <Button
+                        variant="primary"
+                        size="sm"
+                        onClick={() => void apply(t)}
+                        disabled={busy || !applyTarget[t.id]}
+                      >
+                        Apply
+                      </Button>
+                      <Button variant="danger" size="sm" onClick={() => void remove(t)}>
+                        Delete
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+                {templates.length === 0 && (
+                  <TableEmpty colSpan={5}>
+                    No templates yet — snapshot a configured business above.
+                  </TableEmpty>
+                )}
+              </tbody>
+            </table>
+          </TableWrap>
+        </Card>
+      </Stack>
     </div>
   );
 }

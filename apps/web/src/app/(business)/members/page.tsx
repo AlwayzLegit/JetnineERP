@@ -6,16 +6,21 @@ import { toast } from 'sonner';
 import { useEffect, useState, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import {
+  Alert,
   Button,
   Card,
-  EmptyState,
   Field,
+  FormActions,
+  FormGrid,
   Input,
   LinkButton,
   LoadingRows,
   PageHeader,
   Select,
+  Stack,
   StatusBadge,
+  TableEmpty,
+  TableWrap,
 } from '@/components/ui';
 import { api } from '@/lib/api';
 
@@ -46,6 +51,7 @@ export default function MembersPage() {
   const [roles, setRoles] = useState<Role[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [showInvite, setShowInvite] = useState(false);
+  const [inviting, setInviting] = useState(false);
   const [success, setSuccess] = useState<string | null>(null);
   // Set when the API tells us the invitation mail was captured rather than
   // sent (no mail transport configured). The invite is real either way, so
@@ -83,8 +89,10 @@ export default function MembersPage() {
     setError(null);
     setSuccess(null);
     setInviteLink(null);
+    setInviting(true);
+    const form = e.currentTarget;
     try {
-      const data = new FormData(e.currentTarget);
+      const data = new FormData(form);
       const result = await api<{ alreadyMember: boolean; inviteLink?: string }>(
         '/v1/business/members/invite',
         {
@@ -104,10 +112,12 @@ export default function MembersPage() {
             ? 'Invitation created. Email is not configured, so send this link yourself:'
             : 'Invitation sent.',
       );
-      e.currentTarget.reset();
+      form.reset();
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setInviting(false);
     }
   }
 
@@ -169,171 +179,159 @@ export default function MembersPage() {
         }
       />
 
-      {showInvite && (
-        <Card title="Invite member" style={{ marginBottom: 16 }}>
-          <form onSubmit={invite}>
-            <div className="grid items-end gap-3 sm:grid-cols-2 lg:grid-cols-[repeat(3,1fr)_auto]">
-              <Field label="Email">
-                <Input name="email" type="email" required style={{ width: '100%' }} />
-              </Field>
-              <Field label="Name (optional)">
-                <Input name="name" style={{ width: '100%' }} />
-              </Field>
-              <Field label="Role">
-                <Select name="roleId" required style={{ width: '100%' }}>
-                  <option value="">Select role…</option>
-                  {roles.map((r) => (
-                    <option key={r.id} value={r.id}>
-                      {r.name}
-                      {r.isSystem ? '' : ' (custom)'}
-                    </option>
-                  ))}
-                </Select>
-              </Field>
-              <Button type="submit" variant="primary" className="w-fit">
-                <UserPlus size={14} aria-hidden />
-                Invite
+      <Stack>
+        {showInvite && (
+          <Card title="Invite member">
+            <form onSubmit={invite}>
+              <FormGrid cols={3}>
+                <Field label="Email" required>
+                  <Input name="email" type="email" required />
+                </Field>
+                <Field label="Name (optional)">
+                  <Input name="name" />
+                </Field>
+                <Field label="Role" required>
+                  <Select name="roleId" required>
+                    <option value="">Select role…</option>
+                    {roles.map((r) => (
+                      <option key={r.id} value={r.id}>
+                        {r.name}
+                        {r.isSystem ? '' : ' (custom)'}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+              </FormGrid>
+              <FormActions
+                start={
+                  <span>
+                    The invitee starts with the selected role’s access. You can fine-tune their
+                    individual permissions from their member page — even before they accept.
+                  </span>
+                }
+              >
+                <Button type="submit" variant="primary" disabled={inviting}>
+                  <UserPlus size={14} aria-hidden />
+                  {inviting ? 'Inviting…' : 'Invite'}
+                </Button>
+              </FormActions>
+            </form>
+          </Card>
+        )}
+
+        {error && <Alert tone="error">{error}</Alert>}
+        {success && (
+          <Alert tone="success" data-testid="invite-success">
+            {success}
+          </Alert>
+        )}
+        {inviteLink && (
+          <Alert
+            tone="info"
+            data-testid="invite-link"
+            action={
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  void navigator.clipboard
+                    ?.writeText(inviteLink)
+                    .then(() => toast.success('Invite link copied.'))
+                    .catch(() => toast.error('Could not copy — select the link and copy it.'));
+                }}
+              >
+                <Copy size={14} aria-hidden />
+                Copy
               </Button>
-            </div>
-            <p style={{ marginTop: 8, marginBottom: 0, fontSize: 12, color: 'var(--text-muted)' }}>
-              The invitee starts with the selected role’s access. You can fine-tune their individual
-              permissions from their member page — even before they accept.
-            </p>
-          </form>
-        </Card>
-      )}
-
-      {error && (
-        <p style={{ color: 'var(--danger)', marginTop: 0, marginBottom: 12, fontSize: 13 }}>
-          {error}
-        </p>
-      )}
-      {success && (
-        <p
-          data-testid="invite-success"
-          style={{ color: 'var(--success)', marginTop: 0, marginBottom: 12, fontSize: 13 }}
-        >
-          {success}
-        </p>
-      )}
-      {inviteLink && (
-        <div
-          data-testid="invite-link"
-          style={{
-            marginBottom: 12,
-            padding: 10,
-            borderRadius: 6,
-            border: '1px solid var(--border)',
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8,
-          }}
-        >
-          <code
-            style={{
-              flex: 1,
-              fontSize: 12,
-              overflowWrap: 'anywhere',
-              color: 'var(--text-secondary)',
-            }}
+            }
           >
-            {inviteLink}
-          </code>
-          <Button
-            type="button"
-            size="sm"
-            variant="ghost"
-            onClick={() => {
-              void navigator.clipboard
-                ?.writeText(inviteLink)
-                .then(() => toast.success('Invite link copied.'))
-                .catch(() => toast.error('Could not copy — select the link and copy it.'));
-            }}
-          >
-            <Copy size={14} aria-hidden />
-            Copy
-          </Button>
-        </div>
-      )}
+            <code className="break-all">{inviteLink}</code>
+          </Alert>
+        )}
 
-      {!members && !error && (
-        <Card>
-          <LoadingRows />
-        </Card>
-      )}
-      {members && (
-        <Card style={{ padding: 0, overflowX: 'auto' }}>
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Member</th>
-                <th>Role</th>
-                <th>Store access</th>
-                <th>Status</th>
-                <th style={{ width: 1 }}>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {members.length === 0 && (
-                <tr>
-                  <td colSpan={5}>
-                    <EmptyState>No members yet. Invite someone above.</EmptyState>
-                  </td>
-                </tr>
-              )}
-              {members.map((m) => (
-                <tr
-                  key={m.membershipId}
-                  style={{ cursor: 'pointer' }}
-                  onClick={() => router.push(`/members/${m.membershipId}`)}
-                >
-                  <td>
-                    <Link href={`/members/${m.membershipId}`} onClick={(e) => e.stopPropagation()}>
-                      <strong>{m.name || m.email}</strong>
-                    </Link>
-                    <div style={{ color: 'var(--text-muted)', fontSize: 12 }}>{m.email}</div>
-                  </td>
-                  <td>{m.roleName}</td>
-                  <td style={{ fontSize: 13 }}>
-                    {m.dataScope === 'all' ? (
-                      'All locations'
-                    ) : m.scopeLocationIds.length > 0 ? (
-                      `${m.scopeLocationIds.length} location${m.scopeLocationIds.length === 1 ? '' : 's'}`
-                    ) : (
-                      <span style={{ color: 'var(--danger)' }}>No store selected</span>
-                    )}
-                  </td>
-                  <td>
-                    <StatusBadge status={m.status} />
-                  </td>
-                  <td onClick={(e) => e.stopPropagation()}>
-                    <span style={{ display: 'inline-flex', gap: 6 }}>
-                      {m.status === 'invited' && (
-                        <Button size="sm" variant="ghost" onClick={() => resend(m.membershipId)}>
-                          Resend invite
-                        </Button>
-                      )}
-                      <LinkButton size="sm" variant="secondary" href={`/members/${m.membershipId}`}>
-                        Manage
-                      </LinkButton>
-                      {me?.canDeleteMembers && me.membershipId !== m.membershipId && (
-                        <Button
-                          size="sm"
-                          variant="danger"
-                          onClick={() => void removeMember(m)}
-                          data-testid="member-delete"
+        {!members && !error && (
+          <Card>
+            <LoadingRows />
+          </Card>
+        )}
+        {members && (
+          <Card flush>
+            <TableWrap>
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Member</th>
+                    <th>Role</th>
+                    <th>Store access</th>
+                    <th>Status</th>
+                    <th className="actions">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {members.length === 0 && (
+                    <TableEmpty colSpan={5}>No members yet. Invite someone above.</TableEmpty>
+                  )}
+                  {members.map((m) => (
+                    <tr
+                      key={m.membershipId}
+                      className="cursor-pointer"
+                      onClick={() => router.push(`/members/${m.membershipId}`)}
+                    >
+                      <td>
+                        <Link
+                          href={`/members/${m.membershipId}`}
+                          onClick={(e) => e.stopPropagation()}
                         >
-                          Delete
-                        </Button>
-                      )}
-                    </span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </Card>
-      )}
+                          <strong>{m.name || m.email}</strong>
+                        </Link>
+                        <div className="muted text-xs">{m.email}</div>
+                      </td>
+                      <td>{m.roleName}</td>
+                      <td>
+                        {m.dataScope === 'all' ? (
+                          'All locations'
+                        ) : m.scopeLocationIds.length > 0 ? (
+                          `${m.scopeLocationIds.length} location${m.scopeLocationIds.length === 1 ? '' : 's'}`
+                        ) : (
+                          <span className="text-[var(--danger)]">No store selected</span>
+                        )}
+                      </td>
+                      <td>
+                        <StatusBadge status={m.status} />
+                      </td>
+                      <td className="actions" onClick={(e) => e.stopPropagation()}>
+                        {m.status === 'invited' && (
+                          <Button size="sm" variant="ghost" onClick={() => resend(m.membershipId)}>
+                            Resend invite
+                          </Button>
+                        )}
+                        <LinkButton
+                          size="sm"
+                          variant="secondary"
+                          href={`/members/${m.membershipId}`}
+                        >
+                          Manage
+                        </LinkButton>
+                        {me?.canDeleteMembers && me.membershipId !== m.membershipId && (
+                          <Button
+                            size="sm"
+                            variant="danger"
+                            onClick={() => void removeMember(m)}
+                            data-testid="member-delete"
+                          >
+                            Delete
+                          </Button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </TableWrap>
+          </Card>
+        )}
+      </Stack>
     </div>
   );
 }

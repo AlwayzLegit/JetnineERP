@@ -4,14 +4,20 @@ import { Plus } from 'lucide-react';
 import { toast } from 'sonner';
 import { useEffect, useState, type FormEvent } from 'react';
 import {
+  Alert,
   Button,
   Card,
-  EmptyState,
   Field,
+  FormActions,
+  FormGrid,
   Input,
   LoadingRows,
   PageHeader,
   Select,
+  Stack,
+  StatusBadge,
+  TableEmpty,
+  TableWrap,
 } from '@/components/ui';
 import { api } from '@/lib/api';
 
@@ -32,6 +38,7 @@ const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 export default function LocationsPage() {
   const [rows, setRows] = useState<Location[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
 
   async function load() {
     try {
@@ -48,8 +55,10 @@ export default function LocationsPage() {
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setError(null);
+    setCreating(true);
+    const form = e.currentTarget;
     try {
-      const data = new FormData(e.currentTarget);
+      const data = new FormData(form);
       const taxRaw = String(data.get('taxRateBps') ?? '').trim();
       await api('/v1/business/locations', {
         method: 'POST',
@@ -60,10 +69,12 @@ export default function LocationsPage() {
           taxRateBps: taxRaw ? Number(taxRaw) : null,
         }),
       });
-      e.currentTarget.reset();
+      form.reset();
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setCreating(false);
     }
   }
 
@@ -130,135 +141,132 @@ export default function LocationsPage() {
 
   return (
     <div>
-      <PageHeader title="Locations" />
-      <Card title="Add location">
-        <form onSubmit={submit}>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            <Field label="Name">
-              <Input name="name" required style={{ width: '100%' }} />
-            </Field>
-            <Field label="Type">
-              <Select name="locationType" defaultValue="store" style={{ width: '100%' }}>
-                <option value="store">Store</option>
-                <option value="warehouse">Warehouse</option>
-              </Select>
-            </Field>
-            <Field label="Timezone">
-              <Input
-                name="timezone"
-                defaultValue="America/Los_Angeles"
-                required
-                style={{ width: '100%' }}
-              />
-            </Field>
-            <Field label="Tax override (bps; blank = inherit)">
-              <Input name="taxRateBps" type="number" min={0} style={{ width: '100%' }} />
-            </Field>
-          </div>
-          <div style={{ marginTop: 12 }}>
-            <Button type="submit" variant="primary">
-              <Plus size={14} aria-hidden />
-              Create
-            </Button>
-          </div>
-        </form>
-      </Card>
-      {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
-      {!rows && !error && (
-        <Card>
-          <LoadingRows />
+      <PageHeader
+        title="Locations"
+        sub="Stores and warehouses. Type drives transfer gating and replenishment; tax overrides the business default."
+      />
+      <Stack>
+        <Card title="Add location">
+          <form onSubmit={submit}>
+            <FormGrid cols={3}>
+              <Field label="Name" required>
+                <Input name="name" required />
+              </Field>
+              <Field label="Type">
+                <Select name="locationType" defaultValue="store">
+                  <option value="store">Store</option>
+                  <option value="warehouse">Warehouse</option>
+                </Select>
+              </Field>
+              <Field label="Timezone" required>
+                <Input name="timezone" defaultValue="America/Los_Angeles" required />
+              </Field>
+              <Field label="Tax override (bps)" hint="Blank = inherit the business tax rate.">
+                <Input name="taxRateBps" type="number" min={0} />
+              </Field>
+            </FormGrid>
+            <FormActions>
+              <Button type="submit" variant="primary" disabled={creating}>
+                <Plus size={14} aria-hidden />
+                {creating ? 'Creating…' : 'Create'}
+              </Button>
+            </FormActions>
+          </form>
         </Card>
-      )}
-      {rows && (
-        <Card style={{ padding: 0, overflowX: 'auto' }}>
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>Type</th>
-                <th>Timezone</th>
-                <th>Tax</th>
-                <th title="Weekdays this store accepts auto replenishment transfers">
-                  Replenishment days
-                </th>
-                <th>Active</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.length === 0 && (
-                <tr>
-                  <td colSpan={7}>
-                    <EmptyState>No locations yet.</EmptyState>
-                  </td>
-                </tr>
-              )}
-              {rows.map((l) => (
-                <tr key={l.id}>
-                  <td>
-                    <strong>{l.name}</strong>
-                  </td>
-                  <td>
-                    <button
-                      type="button"
-                      className={`badge ${l.locationType === 'warehouse' ? 'badge-info' : 'badge-neutral'}`}
-                      style={{ cursor: 'pointer', border: 'none' }}
-                      title="Click to switch between store and warehouse"
-                      onClick={() => void toggleType(l)}
-                    >
-                      {l.locationType}
-                    </button>
-                  </td>
-                  <td>{l.timezone}</td>
-                  <td>
-                    {l.taxRateBps != null ? `${(l.taxRateBps / 100).toFixed(2)}%` : 'inherit'}
-                  </td>
-                  <td>
-                    <div className="flex gap-1">
-                      {WEEKDAYS.map((label, day) => {
-                        const on = (l.replenishmentDays ?? [0, 1, 2, 3, 4, 5, 6]).includes(day);
-                        return (
-                          <button
-                            key={label}
-                            type="button"
-                            className={`badge ${on ? 'badge-success' : 'badge-neutral'}`}
-                            style={{ cursor: 'pointer', border: 'none' }}
-                            title={
-                              on
-                                ? `Accepts auto transfers on ${label}`
-                                : `No auto transfers on ${label}`
-                            }
-                            onClick={() => void toggleDay(l, day)}
-                          >
-                            {label[0]}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </td>
-                  <td>
-                    <span className={`badge ${l.isActive ? 'badge-success' : 'badge-neutral'}`}>
-                      {l.isActive ? 'yes' : 'no'}
-                    </span>
-                  </td>
-                  <td>
-                    <div className="flex gap-1">
-                      <Button size="sm" variant="ghost" onClick={() => toggle(l)}>
-                        {l.isActive ? 'Deactivate' : 'Activate'}
-                      </Button>
-                      {!l.isActive && (
-                        <Button size="sm" variant="danger" onClick={() => void remove(l)}>
-                          Delete
+        {error && <Alert tone="error">{error}</Alert>}
+        {!rows && !error && (
+          <Card>
+            <LoadingRows />
+          </Card>
+        )}
+        {rows && (
+          <Card flush>
+            <TableWrap>
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>Type</th>
+                    <th>Timezone</th>
+                    <th className="num">Tax</th>
+                    <th title="Weekdays this store accepts auto replenishment transfers">
+                      Replenishment days
+                    </th>
+                    <th>Status</th>
+                    <th className="actions">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.length === 0 && (
+                    <TableEmpty colSpan={7}>No locations yet. Add the first one above.</TableEmpty>
+                  )}
+                  {rows.map((l) => (
+                    <tr key={l.id}>
+                      <td>
+                        <strong>{l.name}</strong>
+                      </td>
+                      <td>
+                        <button
+                          type="button"
+                          className={`badge cursor-pointer border-0 ${
+                            l.locationType === 'warehouse' ? 'badge-info' : 'badge-neutral'
+                          }`}
+                          title="Click to switch between store and warehouse"
+                          onClick={() => void toggleType(l)}
+                        >
+                          {l.locationType}
+                        </button>
+                      </td>
+                      <td>{l.timezone}</td>
+                      <td className="num">
+                        {l.taxRateBps != null ? `${(l.taxRateBps / 100).toFixed(2)}%` : 'inherit'}
+                      </td>
+                      <td>
+                        <div className="flex gap-1">
+                          {WEEKDAYS.map((label, day) => {
+                            const on = (l.replenishmentDays ?? [0, 1, 2, 3, 4, 5, 6]).includes(day);
+                            return (
+                              <button
+                                key={label}
+                                type="button"
+                                className={`badge cursor-pointer border-0 ${
+                                  on ? 'badge-success' : 'badge-neutral'
+                                }`}
+                                aria-pressed={on}
+                                title={
+                                  on
+                                    ? `Accepts auto transfers on ${label}`
+                                    : `No auto transfers on ${label}`
+                                }
+                                onClick={() => void toggleDay(l, day)}
+                              >
+                                {label[0]}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </td>
+                      <td>
+                        <StatusBadge status={l.isActive ? 'active' : 'inactive'} />
+                      </td>
+                      <td className="actions">
+                        <Button size="sm" variant="ghost" onClick={() => toggle(l)}>
+                          {l.isActive ? 'Deactivate' : 'Activate'}
                         </Button>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </Card>
-      )}
+                        {!l.isActive && (
+                          <Button size="sm" variant="danger" onClick={() => void remove(l)}>
+                            Delete
+                          </Button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </TableWrap>
+          </Card>
+        )}
+      </Stack>
     </div>
   );
 }

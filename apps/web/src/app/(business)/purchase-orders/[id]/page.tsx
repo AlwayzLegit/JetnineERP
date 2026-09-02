@@ -9,7 +9,24 @@ import { api, ApiError } from '@/lib/api';
 import { SecurityOverrideDialog } from '@/components/security-override-dialog';
 import { Money } from '@/components/money';
 import { PrintablePurchaseOrder } from '@/components/printable-purchase-order';
-import { Button, Card, Field, Input, LoadingRows, PageHeader, StatusBadge } from '@/components/ui';
+import {
+  Alert,
+  BackLink,
+  Button,
+  Card,
+  Field,
+  FormActions,
+  FormGrid,
+  Input,
+  KeyValue,
+  LoadingRows,
+  PageHeader,
+  SectionHeading,
+  Stack,
+  StatusBadge,
+  TableWrap,
+  Toolbar,
+} from '@/components/ui';
 
 interface PoLine {
   id: string;
@@ -261,7 +278,16 @@ export default function PurchaseOrderDetailPage() {
     }
   }
 
-  if (error && !po) return <p style={{ color: 'var(--danger)' }}>{error}</p>;
+  const backLink = <BackLink href="/purchase-orders">All purchase orders</BackLink>;
+
+  if (error && !po) {
+    return (
+      <div>
+        <PageHeader eyebrow={backLink} title="Purchase order not found" />
+        <Alert tone="error">{error}</Alert>
+      </div>
+    );
+  }
   if (!po) return <LoadingRows rows={5} />;
 
   const receivable = po.status === 'ordered' || po.status === 'partially_received';
@@ -272,37 +298,63 @@ export default function PurchaseOrderDetailPage() {
     (po.status === 'partially_received' || po.status === 'received') &&
     po.lines.some((l) => l.quantityAccepted > 0);
 
+  const summaryRows: { label: string; value: React.ReactNode }[] = [
+    {
+      label: 'Subtotal',
+      value: (
+        <strong>
+          <Money cents={po.subtotalCents} />
+        </strong>
+      ),
+    },
+  ];
+  if (po.freightCents != null && po.freightCents > 0) {
+    summaryRows.push({
+      label: 'Freight',
+      value: (
+        <>
+          <Money cents={po.freightCents} />{' '}
+          <span className="muted">(loads into unit cost at receipt)</span>
+        </>
+      ),
+    });
+  }
+  if (po.expectedAt) {
+    summaryRows.push({ label: 'Expected', value: new Date(po.expectedAt).toLocaleDateString() });
+  }
+  if (po.placedAt) {
+    summaryRows.push({ label: 'Placed', value: new Date(po.placedAt).toLocaleString() });
+  }
+  if (po.closedAt) {
+    summaryRows.push({ label: 'Closed', value: new Date(po.closedAt).toLocaleString() });
+  }
+  if (po.notes) summaryRows.push({ label: 'Notes', value: po.notes });
+
   return (
     <div>
-      <p style={{ marginBottom: 12 }}>
-        <Link href="/purchase-orders">← All purchase orders</Link>
-      </p>
       <PageHeader
+        eyebrow={backLink}
         title={<code>{po.number}</code>}
-        sub={
+        meta={
           <>
-            <StatusBadge status={po.status} /> · {po.vendorName ?? '(unknown vendor)'} ·{' '}
-            {new Date(po.createdAt).toLocaleString()}
+            <StatusBadge status={po.status} />
             {po.directShip && (
-              <>
-                {' '}
-                <span
-                  className="badge badge-info"
-                  title="The vendor ships straight to the customer — receiving records the shipment and fulfills the sales order; nothing enters stock"
-                >
-                  direct ship to{' '}
-                  {((po.shipToJson ?? {}) as { name?: string | null }).name ?? 'customer'}
-                </span>
-              </>
+              <span
+                className="badge badge-info"
+                title="The vendor ships straight to the customer — receiving records the shipment and fulfills the sales order; nothing enters stock"
+              >
+                direct ship to{' '}
+                {((po.shipToJson ?? {}) as { name?: string | null }).name ?? 'customer'}
+              </span>
             )}
           </>
         }
+        sub={`${po.vendorName ?? '(unknown vendor)'} · created ${new Date(po.createdAt).toLocaleString()}`}
         actions={
-          <span style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <>
             {po.status === 'draft' && (
               <Button
                 variant="primary"
-                size="sm"
                 onClick={() => void place()}
                 disabled={busy}
                 data-testid="place-po"
@@ -326,12 +378,11 @@ export default function PurchaseOrderDetailPage() {
               Email vendor
             </Button>
             {po.status === 'draft' && !po.deletedAt && (
-              // Deliberately last, behind a spacer: Delete and Place do
-              // opposite things and must not sit side by side.
+              // Deliberately last: Delete and Place do opposite things and
+              // must not sit side by side.
               <Button
                 variant="danger"
                 size="sm"
-                style={{ marginLeft: 'auto' }}
                 onClick={() => setConfirmDelete(true)}
                 disabled={busy}
                 data-testid="delete-po"
@@ -340,36 +391,9 @@ export default function PurchaseOrderDetailPage() {
                 Delete draft
               </Button>
             )}
-          </span>
+          </>
         }
       />
-
-      {po.deletedAt && (
-        <Card style={{ marginBottom: 16, borderColor: 'var(--danger)' }}>
-          <div
-            style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}
-            data-testid="po-deleted-banner"
-          >
-            <div style={{ fontSize: 13 }}>
-              <strong>Deleted draft.</strong> Hidden from the purchase-order list since{' '}
-              {new Date(po.deletedAt).toLocaleString()}
-              {po.deletedByEmail ? ` by ${po.deletedByEmail}` : ''}. The number{' '}
-              <code>{po.number}</code> stays retired either way.
-            </div>
-            <Button
-              variant="secondary"
-              size="sm"
-              style={{ marginLeft: 'auto' }}
-              onClick={() => void restore()}
-              disabled={busy}
-              data-testid="restore-po"
-            >
-              <Undo2 size={14} aria-hidden />
-              Restore
-            </Button>
-          </div>
-        </Card>
-      )}
 
       {confirmDelete && (
         <DeleteDraftDialog
@@ -381,117 +405,156 @@ export default function PurchaseOrderDetailPage() {
       )}
       <PrintablePurchaseOrder po={po} />
 
-      <Card title="Lines & receiving" style={{ marginBottom: 16 }}>
-        {receivable && (
-          <p style={{ color: 'var(--text-secondary)', fontSize: 12, margin: '0 0 8px' }}>
-            Per line: <strong>Received</strong> at the dock → <strong>Inspected</strong> →{' '}
-            <strong>Accepted</strong> into sellable stock, or <strong>Rejected</strong> into the
-            As-Is review queue (damage never silently becomes sellable). Stock moves at Accept.
-            Enter increments and record below.
-          </p>
+      <Stack>
+        {po.deletedAt && (
+          <Alert
+            tone="warning"
+            title="Deleted draft."
+            data-testid="po-deleted-banner"
+            action={
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => void restore()}
+                disabled={busy}
+                data-testid="restore-po"
+              >
+                <Undo2 size={14} aria-hidden />
+                Restore
+              </Button>
+            }
+          >
+            Hidden from the purchase-order list since {new Date(po.deletedAt).toLocaleString()}
+            {po.deletedByEmail ? ` by ${po.deletedByEmail}` : ''}. The number{' '}
+            <code>{po.number}</code> stays retired either way.
+          </Alert>
         )}
-        <div className="overflow-x-auto">
-          <table className="table" data-testid="receiving-table">
-            <thead>
-              <tr>
-                <th>Item</th>
-                {!po.blindReceiving && <th className="num">Ordered</th>}
-                <th className="num">Rcvd</th>
-                <th className="num">Insp</th>
-                <th className="num">Acc</th>
-                <th className="num">Rej</th>
-                {!po.blindReceiving && <th className="num">Unit cost</th>}
-                {receivable && <th>+Received</th>}
-                {receivable && <th>+Inspected</th>}
-                {receivable && <th>+Accepted</th>}
-                {receivable && <th>+Rejected</th>}
-              </tr>
-            </thead>
-            <tbody>
-              {po.lines.map((l) => {
-                const remaining = l.quantityOrdered - l.quantityAccepted;
-                return (
-                  <tr key={l.id}>
-                    <td>
-                      {l.productName}
-                      {l.variantName && (
-                        <span style={{ color: 'var(--text-secondary)' }}> — {l.variantName}</span>
-                      )}
-                      {(l.vendorSku ?? l.sku) && (
-                        <span style={{ color: 'var(--text-muted)', fontSize: 11, marginLeft: 6 }}>
-                          <code>{l.vendorSku ?? l.sku}</code>
-                        </span>
-                      )}
-                      {l.linkedOrders.length > 0 && (
-                        <div style={{ fontSize: 11.5, marginTop: 2 }}>
-                          {l.linkedOrders.map((o) => (
-                            <Link
-                              key={o.orderId}
-                              href={`/orders/${o.orderId}`}
-                              className="badge badge-info"
-                              style={{ marginRight: 4, textDecoration: 'none' }}
-                            >
-                              {o.orderNumber} ×{o.quantity}
-                            </Link>
-                          ))}
-                        </div>
-                      )}
-                      {!po.blindReceiving && remaining > 0 && l.quantityReceived > 0 && (
-                        <div
-                          style={{ fontSize: 11.5, color: 'var(--warning)' }}
-                          data-testid="remaining-note"
-                        >
-                          {l.quantityAccepted} of {l.quantityOrdered} accepted — {remaining}{' '}
-                          remaining
-                        </div>
-                      )}
-                    </td>
-                    {!po.blindReceiving && <td className="num">{l.quantityOrdered}</td>}
-                    <td className="num">{l.quantityReceived}</td>
-                    <td className="num">{l.quantityInspected}</td>
-                    <td className="num">
-                      {l.quantityAccepted >= l.quantityOrdered ? (
-                        <span className="badge badge-success">{l.quantityAccepted}</span>
-                      ) : (
-                        l.quantityAccepted
-                      )}
-                    </td>
-                    <td className="num">{l.quantityRejected || ''}</td>
-                    {!po.blindReceiving && (
-                      <td className="num">
-                        <Money cents={l.unitCostCents} />
-                      </td>
-                    )}
-                    {receivable &&
-                      (['received', 'inspected', 'accepted', 'rejected'] as const).map((stage) => (
-                        <td key={stage}>
-                          <Input
-                            type="number"
-                            min={0}
-                            placeholder="0"
-                            value={stageValue(l.id, stage)}
-                            onChange={(e) => setStage(l.id, stage, e.target.value)}
-                            data-testid={`stage-${stage}`}
-                            style={{ width: 62, padding: '4px 6px' }}
-                          />
-                        </td>
-                      ))}
+
+        <Card
+          title="Lines & receiving"
+          description={
+            receivable ? (
+              <>
+                Per line: <strong>Received</strong> at the dock → <strong>Inspected</strong> →{' '}
+                <strong>Accepted</strong> into sellable stock, or <strong>Rejected</strong> into the
+                As-Is review queue (damage never silently becomes sellable). Stock moves at Accept.
+                Enter increments and record below.
+              </>
+            ) : undefined
+          }
+        >
+          <Stack>
+            <TableWrap>
+              <table className="table" data-testid="receiving-table">
+                <thead>
+                  <tr>
+                    <th>Item</th>
+                    {!po.blindReceiving && <th className="num">Ordered</th>}
+                    <th className="num">Rcvd</th>
+                    <th className="num">Insp</th>
+                    <th className="num">Acc</th>
+                    <th className="num">Rej</th>
+                    {!po.blindReceiving && <th className="num">Unit cost</th>}
+                    {receivable && <th>+Received</th>}
+                    {receivable && <th>+Inspected</th>}
+                    {receivable && <th>+Accepted</th>}
+                    {receivable && <th>+Rejected</th>}
                   </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-        {receivable && (
-          <div style={{ marginTop: 12 }}>
-            <Field label="Receiving notes (optional)">
-              <Input
-                value={recvNotes}
-                onChange={(e) => setRecvNotes(e.target.value)}
-                style={{ maxWidth: 420, width: '100%' }}
-              />
-            </Field>
-            <div className="mt-3 flex flex-wrap gap-2">
+                </thead>
+                <tbody>
+                  {po.lines.map((l) => {
+                    const remaining = l.quantityOrdered - l.quantityAccepted;
+                    return (
+                      <tr key={l.id}>
+                        <td>
+                          {l.productName}
+                          {l.variantName && <span className="muted"> — {l.variantName}</span>}
+                          {(l.vendorSku ?? l.sku) && (
+                            <>
+                              {' '}
+                              <code className="muted">{l.vendorSku ?? l.sku}</code>
+                            </>
+                          )}
+                          {l.linkedOrders.length > 0 && (
+                            <div className="mt-1 flex flex-wrap gap-1">
+                              {l.linkedOrders.map((o) => (
+                                <Link
+                                  key={o.orderId}
+                                  href={`/orders/${o.orderId}`}
+                                  className="badge badge-info no-underline"
+                                >
+                                  {o.orderNumber} ×{o.quantity}
+                                </Link>
+                              ))}
+                            </div>
+                          )}
+                          {!po.blindReceiving && remaining > 0 && l.quantityReceived > 0 && (
+                            <div className="text-warning text-xs" data-testid="remaining-note">
+                              {l.quantityAccepted} of {l.quantityOrdered} accepted — {remaining}{' '}
+                              remaining
+                            </div>
+                          )}
+                        </td>
+                        {!po.blindReceiving && <td className="num">{l.quantityOrdered}</td>}
+                        <td className="num">{l.quantityReceived}</td>
+                        <td className="num">{l.quantityInspected}</td>
+                        <td className="num">
+                          {l.quantityAccepted >= l.quantityOrdered ? (
+                            <span className="badge badge-success">{l.quantityAccepted}</span>
+                          ) : (
+                            l.quantityAccepted
+                          )}
+                        </td>
+                        <td className="num">{l.quantityRejected || ''}</td>
+                        {!po.blindReceiving && (
+                          <td className="num">
+                            <Money cents={l.unitCostCents} />
+                          </td>
+                        )}
+                        {receivable &&
+                          (['received', 'inspected', 'accepted', 'rejected'] as const).map(
+                            (stage) => (
+                              <td key={stage}>
+                                <Input
+                                  type="number"
+                                  min={0}
+                                  placeholder="0"
+                                  aria-label={`+${stage}`}
+                                  value={stageValue(l.id, stage)}
+                                  onChange={(e) => setStage(l.id, stage, e.target.value)}
+                                  data-testid={`stage-${stage}`}
+                                  className="w-16"
+                                />
+                              </td>
+                            ),
+                          )}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </TableWrap>
+            {receivable && (
+              <FormGrid cols={2}>
+                <Field label="Receiving notes (optional)">
+                  <Input value={recvNotes} onChange={(e) => setRecvNotes(e.target.value)} />
+                </Field>
+              </FormGrid>
+            )}
+          </Stack>
+          {receivable && (
+            <FormActions
+              start={
+                cancellable ? (
+                  <Button variant="danger" size="sm" onClick={cancel} disabled={busy}>
+                    Cancel PO
+                  </Button>
+                ) : undefined
+              }
+            >
+              <Button variant="secondary" onClick={() => void acceptAllRemaining()} disabled={busy}>
+                Receive & accept all remaining
+              </Button>
               <Button
                 variant="primary"
                 onClick={() => void submitStages()}
@@ -501,64 +564,41 @@ export default function PurchaseOrderDetailPage() {
                 <PackageCheck size={14} />
                 {busy ? 'Recording…' : 'Record receiving'}
               </Button>
-              <Button variant="secondary" onClick={() => void acceptAllRemaining()} disabled={busy}>
-                Receive & accept all remaining
-              </Button>
-              {cancellable && (
-                <Button variant="danger" onClick={cancel} disabled={busy}>
-                  Cancel PO
-                </Button>
-              )}
-            </div>
-          </div>
-        )}
-      </Card>
+            </FormActions>
+          )}
+        </Card>
 
-      {editable && <EditOrderCard po={po} onChanged={load} />}
-      {unreceivable && <UnreceiveCard po={po} onChanged={load} />}
+        {editable && <EditOrderCard po={po} onChanged={load} />}
+        {unreceivable && <UnreceiveCard po={po} onChanged={load} />}
 
-      <Card style={{ marginBottom: 16 }}>
-        <Row label="Subtotal" cents={po.subtotalCents} bold />
-        {po.freightCents != null && po.freightCents > 0 && (
-          <Row label="Freight (loads into unit cost at receipt)" cents={po.freightCents} />
-        )}
-        {po.expectedAt && (
-          <Row label="Expected" text={new Date(po.expectedAt).toLocaleDateString()} />
-        )}
-        {po.placedAt && <Row label="Placed" text={new Date(po.placedAt).toLocaleString()} />}
-        {po.closedAt && <Row label="Closed" text={new Date(po.closedAt).toLocaleString()} />}
-        {po.notes && <Row label="Notes" text={po.notes} />}
-      </Card>
+        <Card title="Summary">
+          <KeyValue rows={summaryRows} />
+        </Card>
 
-      <InvoicesCard
-        poId={id}
-        poNumber={po.number}
-        vendorId={po.vendorId}
-        invoices={invoices}
-        onChanged={load}
-      />
+        <InvoicesCard
+          poId={id}
+          poNumber={po.number}
+          vendorId={po.vendorId}
+          invoices={invoices}
+          onChanged={load}
+        />
 
-      <Card title="Change history" style={{ marginBottom: 16 }}>
-        {timeline.length === 0 ? (
-          <p className="muted" style={{ fontSize: 13, margin: 0 }}>
-            No events recorded.
-          </p>
-        ) : (
-          <ul style={{ margin: 0, paddingLeft: 16, fontSize: 13 }} data-testid="po-timeline">
-            {timeline.map((t) => (
-              <li key={t.id} style={{ marginBottom: 6 }}>
-                <span style={{ color: 'var(--text-secondary)' }}>
-                  {new Date(t.createdAt).toLocaleString()}
-                </span>{' '}
-                — {t.action.replace('purchase_order.', '').replace(/[._]/g, ' ')}
-                {t.actorEmail && (
-                  <span style={{ color: 'var(--text-muted)' }}> by {t.actorEmail}</span>
-                )}
-              </li>
-            ))}
-          </ul>
-        )}
-      </Card>
+        <Card title="Change history">
+          {timeline.length === 0 ? (
+            <p className="muted">No events recorded.</p>
+          ) : (
+            <ul className="m-0 grid list-none gap-1.5 p-0" data-testid="po-timeline">
+              {timeline.map((t) => (
+                <li key={t.id}>
+                  <span className="muted">{new Date(t.createdAt).toLocaleString()}</span> —{' '}
+                  {t.action.replace('purchase_order.', '').replace(/[._]/g, ' ')}
+                  {t.actorEmail && <span className="muted"> by {t.actorEmail}</span>}
+                </li>
+              ))}
+            </ul>
+          )}
+        </Card>
+      </Stack>
     </div>
   );
 }
@@ -588,57 +628,48 @@ function DeleteDraftDialog({
       role="dialog"
       aria-modal
       data-testid="delete-po-dialog"
-      style={{
-        position: 'fixed',
-        inset: 0,
-        zIndex: 90,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        background: 'rgba(0,0,0,0.45)',
-      }}
+      className="fixed inset-0 z-[90] flex items-center justify-center bg-black/45 p-4"
       onClick={(e) => {
         if (e.target === e.currentTarget && !busy) onCancel();
       }}
     >
-      <div
-        className="card"
-        style={{ width: 'min(460px, 92vw)', padding: 20, display: 'grid', gap: 12 }}
-      >
-        <strong style={{ fontSize: 15 }}>Delete draft {po.number}?</strong>
-        <div style={{ fontSize: 13, display: 'grid', gap: 3 }}>
-          <div>
-            <span className="muted">Vendor</span> {po.vendorName ?? '(unknown vendor)'}
-          </div>
-          <div>
-            <span className="muted">Lines</span> {po.lines.length}
-          </div>
-          <div>
-            <span className="muted">Subtotal</span> <Money cents={po.subtotalCents} />
-          </div>
-        </div>
-        <p style={{ fontSize: 12.5, color: 'var(--text-secondary)', margin: 0 }}>
-          The draft leaves the list and can be restored from <em>Show deleted</em>.{' '}
-          <code>{po.number}</code> is retired for good — it will never be reused.
-          {linked > 0 && (
-            <>
-              {' '}
-              {linked} linked sales-order line{linked === 1 ? '' : 's'} go back on the
-              special-orders queue as un-sourced.
-            </>
-          )}
-        </p>
-        <label style={{ display: 'grid', gap: 4, fontSize: 13 }}>
-          Type <code>{po.number}</code> to confirm
-          <Input
-            data-testid="delete-po-confirm"
-            value={typed}
-            autoFocus
-            onChange={(e) => setTyped(e.target.value)}
-            placeholder={po.number}
+      <Card title={<>Delete draft {po.number}?</>} className="w-[min(460px,92vw)]">
+        <Stack>
+          <KeyValue
+            rows={[
+              { label: 'Vendor', value: po.vendorName ?? '(unknown vendor)' },
+              { label: 'Lines', value: po.lines.length },
+              { label: 'Subtotal', value: <Money cents={po.subtotalCents} /> },
+            ]}
           />
-        </label>
-        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+          <p className="muted">
+            The draft leaves the list and can be restored from <em>Show deleted</em>.{' '}
+            <code>{po.number}</code> is retired for good — it will never be reused.
+            {linked > 0 && (
+              <>
+                {' '}
+                {linked} linked sales-order line{linked === 1 ? '' : 's'} go back on the
+                special-orders queue as un-sourced.
+              </>
+            )}
+          </p>
+          <Field
+            label={
+              <>
+                Type <code>{po.number}</code> to confirm
+              </>
+            }
+          >
+            <Input
+              data-testid="delete-po-confirm"
+              value={typed}
+              autoFocus
+              onChange={(e) => setTyped(e.target.value)}
+              placeholder={po.number}
+            />
+          </Field>
+        </Stack>
+        <FormActions>
           <Button variant="secondary" size="sm" onClick={onCancel} disabled={busy}>
             Keep it
           </Button>
@@ -651,8 +682,8 @@ function DeleteDraftDialog({
           >
             {busy ? 'Deleting…' : 'Delete draft'}
           </Button>
-        </div>
-      </div>
+        </FormActions>
+      </Card>
     </div>
   );
 }
@@ -770,37 +801,86 @@ function EditOrderCard({ po, onChanged }: { po: Po; onChanged: () => Promise<voi
   }
 
   return (
-    <Card title="Edit order" style={{ marginBottom: 16 }}>
-      <div className="overflow-x-auto">
-        <table className="table" data-testid="edit-po-table">
-          <thead>
-            <tr>
-              <th>Item</th>
-              <th className="num">Qty</th>
-              <th className="num">Unit cost ($)</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {po.lines.map((l) => {
-              const d = draftFor(l);
-              const locked = l.quantityReceived > 0 || l.linkedOrders.length > 0;
-              return (
-                <tr key={l.id} style={d.remove ? { opacity: 0.45 } : undefined}>
+    <Card title="Edit order">
+      <Stack>
+        <TableWrap>
+          <table className="table" data-testid="edit-po-table">
+            <thead>
+              <tr>
+                <th>Item</th>
+                <th className="num">Qty</th>
+                <th className="num">Unit cost ($)</th>
+                <th className="actions" />
+              </tr>
+            </thead>
+            <tbody>
+              {po.lines.map((l) => {
+                const d = draftFor(l);
+                const locked = l.quantityReceived > 0 || l.linkedOrders.length > 0;
+                return (
+                  <tr key={l.id} style={d.remove ? { opacity: 0.45 } : undefined}>
+                    <td>
+                      {l.productName}
+                      {l.variantName && <span className="muted"> — {l.variantName}</span>}
+                    </td>
+                    <td className="num">
+                      <Input
+                        type="number"
+                        min={Math.max(l.quantityReceived, 1)}
+                        aria-label="Quantity"
+                        value={d.quantity}
+                        disabled={d.remove}
+                        onChange={(e) => setDraft(l, { quantity: e.target.value })}
+                        className="w-20"
+                      />
+                    </td>
+                    <td className="num">
+                      <Input
+                        type="number"
+                        step="0.01"
+                        min={0}
+                        aria-label="Unit cost"
+                        value={d.cost}
+                        disabled={d.remove}
+                        onChange={(e) => setDraft(l, { cost: e.target.value })}
+                        className="w-24"
+                      />
+                    </td>
+                    <td className="actions">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        disabled={locked}
+                        title={
+                          locked
+                            ? 'Received or linked to a sales order — cannot remove'
+                            : 'Remove line'
+                        }
+                        onClick={() => setDraft(l, { remove: !d.remove })}
+                      >
+                        {d.remove ? 'Keep' : 'Remove'}
+                      </Button>
+                    </td>
+                  </tr>
+                );
+              })}
+              {added.map((a, i) => (
+                <tr key={`add-${a.variantId}`}>
                   <td>
-                    {l.productName}
-                    {l.variantName && (
-                      <span style={{ color: 'var(--text-secondary)' }}> — {l.variantName}</span>
-                    )}
+                    {a.description} <span className="badge badge-info">new</span>
                   </td>
                   <td className="num">
                     <Input
                       type="number"
-                      min={Math.max(l.quantityReceived, 1)}
-                      value={d.quantity}
-                      disabled={d.remove}
-                      onChange={(e) => setDraft(l, { quantity: e.target.value })}
-                      style={{ width: 72, padding: '4px 6px' }}
+                      min={1}
+                      aria-label="Quantity"
+                      value={a.quantity}
+                      onChange={(e) =>
+                        setAdded((prev) =>
+                          prev.map((x, j) => (j === i ? { ...x, quantity: e.target.value } : x)),
+                        )
+                      }
+                      className="w-20"
                     />
                   </td>
                   <td className="num">
@@ -808,143 +888,97 @@ function EditOrderCard({ po, onChanged }: { po: Po; onChanged: () => Promise<voi
                       type="number"
                       step="0.01"
                       min={0}
-                      value={d.cost}
-                      disabled={d.remove}
-                      onChange={(e) => setDraft(l, { cost: e.target.value })}
-                      style={{ width: 90, padding: '4px 6px' }}
+                      aria-label="Unit cost"
+                      value={a.cost}
+                      onChange={(e) =>
+                        setAdded((prev) =>
+                          prev.map((x, j) => (j === i ? { ...x, cost: e.target.value } : x)),
+                        )
+                      }
+                      className="w-24"
                     />
                   </td>
-                  <td>
+                  <td className="actions">
                     <Button
                       size="sm"
                       variant="ghost"
-                      disabled={locked}
-                      title={
-                        locked
-                          ? 'Received or linked to a sales order — cannot remove'
-                          : 'Remove line'
-                      }
-                      onClick={() => setDraft(l, { remove: !d.remove })}
+                      onClick={() => setAdded((prev) => prev.filter((_, j) => j !== i))}
                     >
-                      {d.remove ? 'Keep' : 'Remove'}
+                      Remove
                     </Button>
                   </td>
                 </tr>
-              );
-            })}
-            {added.map((a, i) => (
-              <tr key={`add-${a.variantId}`}>
-                <td>
-                  {a.description} <span className="badge badge-info">new</span>
-                </td>
-                <td className="num">
-                  <Input
-                    type="number"
-                    min={1}
-                    value={a.quantity}
-                    onChange={(e) =>
-                      setAdded((prev) =>
-                        prev.map((x, j) => (j === i ? { ...x, quantity: e.target.value } : x)),
-                      )
-                    }
-                    style={{ width: 72, padding: '4px 6px' }}
-                  />
-                </td>
-                <td className="num">
-                  <Input
-                    type="number"
-                    step="0.01"
-                    min={0}
-                    value={a.cost}
-                    onChange={(e) =>
-                      setAdded((prev) =>
-                        prev.map((x, j) => (j === i ? { ...x, cost: e.target.value } : x)),
-                      )
-                    }
-                    style={{ width: 90, padding: '4px 6px' }}
-                  />
-                </td>
-                <td>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => setAdded((prev) => prev.filter((_, j) => j !== i))}
-                  >
-                    Remove
-                  </Button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+              ))}
+            </tbody>
+          </table>
+        </TableWrap>
 
-      <div className="mt-3 flex flex-wrap items-end gap-2">
-        <Field label="Add item (name, SKU, or barcode)">
-          <Input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault();
-                void searchVariants();
-              }
-            }}
-            style={{ width: 240 }}
-          />
-        </Field>
-        <Button variant="secondary" size="sm" onClick={() => void searchVariants()}>
-          Search
-        </Button>
-      </div>
-      {results.length > 0 && (
-        <div className="mt-2 flex flex-wrap gap-2">
-          {results.slice(0, 8).map((r) => (
-            <Button
-              key={r.variantId}
-              size="sm"
-              variant="ghost"
-              disabled={
-                po.lines.some((l) => l.variantId === r.variantId) ||
-                added.some((a) => a.variantId === r.variantId)
-              }
-              onClick={() => {
-                setAdded((prev) => [
-                  ...prev,
-                  {
-                    variantId: r.variantId,
-                    description: [r.productName, r.variantName].filter(Boolean).join(' — '),
-                    quantity: '1',
-                    cost: '0.00',
-                  },
-                ]);
-                setResults([]);
-                setSearch('');
+        <div>
+          <SectionHeading as="h3" title="Add item" />
+          <Toolbar>
+            <Input
+              value={search}
+              aria-label="Add item (name, SKU, or barcode)"
+              placeholder="Name, SKU, or barcode"
+              onChange={(e) => setSearch(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  void searchVariants();
+                }
               }}
-            >
-              + {[r.productName, r.variantName].filter(Boolean).join(' — ')}
-              {r.sku ? ` (${r.sku})` : ''}
+            />
+            <Button variant="secondary" size="sm" onClick={() => void searchVariants()}>
+              Search
             </Button>
-          ))}
+          </Toolbar>
+          {results.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {results.slice(0, 8).map((r) => (
+                <Button
+                  key={r.variantId}
+                  size="sm"
+                  variant="ghost"
+                  disabled={
+                    po.lines.some((l) => l.variantId === r.variantId) ||
+                    added.some((a) => a.variantId === r.variantId)
+                  }
+                  onClick={() => {
+                    setAdded((prev) => [
+                      ...prev,
+                      {
+                        variantId: r.variantId,
+                        description: [r.productName, r.variantName].filter(Boolean).join(' — '),
+                        quantity: '1',
+                        cost: '0.00',
+                      },
+                    ]);
+                    setResults([]);
+                    setSearch('');
+                  }}
+                >
+                  + {[r.productName, r.variantName].filter(Boolean).join(' — ')}
+                  {r.sku ? ` (${r.sku})` : ''}
+                </Button>
+              ))}
+            </div>
+          )}
         </div>
-      )}
 
-      <div className="mt-3 flex flex-wrap items-end gap-2">
-        <Field label="Expected date">
-          <Input
-            type="date"
-            value={expectedAt}
-            onChange={(e) => setExpectedAt(e.target.value)}
-            style={{ width: 150 }}
-          />
-        </Field>
-        <Field label="Notes">
-          <Input value={notes} onChange={(e) => setNotes(e.target.value)} style={{ width: 280 }} />
-        </Field>
+        <FormGrid cols={2}>
+          <Field label="Expected date">
+            <Input type="date" value={expectedAt} onChange={(e) => setExpectedAt(e.target.value)} />
+          </Field>
+          <Field label="Notes">
+            <Input value={notes} onChange={(e) => setNotes(e.target.value)} />
+          </Field>
+        </FormGrid>
+      </Stack>
+      <FormActions>
         <Button variant="primary" onClick={() => void save()} disabled={busy} data-testid="save-po">
           {busy ? 'Saving…' : 'Save changes'}
         </Button>
-      </div>
+      </FormActions>
     </Card>
   );
 }
@@ -992,49 +1026,53 @@ function UnreceiveCard({ po, onChanged }: { po: Po; onChanged: () => Promise<voi
 
   const lines = po.lines.filter((l) => l.quantityAccepted > 0);
   return (
-    <Card title="Correct a receipt (un-receive)" style={{ marginBottom: 16 }}>
-      <p style={{ color: 'var(--text-secondary)', fontSize: 12, margin: '0 0 8px' }}>
-        For mis-keyed receipts: backs units out of stock with an audited ledger entry and reopens
-        the PO. Units reserved for customers or committed to sales orders cannot be un-received.
-      </p>
-      <table className="table" data-testid="unreceive-table">
-        <thead>
-          <tr>
-            <th>Item</th>
-            <th className="num">Accepted</th>
-            <th className="num">Undo</th>
-          </tr>
-        </thead>
-        <tbody>
-          {lines.map((l) => (
-            <tr key={l.id}>
-              <td>
-                {l.productName}
-                {l.variantName && (
-                  <span style={{ color: 'var(--text-secondary)' }}> — {l.variantName}</span>
-                )}
-              </td>
-              <td className="num">{l.quantityAccepted}</td>
-              <td className="num">
-                <Input
-                  type="number"
-                  min={0}
-                  max={l.quantityAccepted}
-                  placeholder="0"
-                  value={drafts[l.id] ?? ''}
-                  onChange={(e) => setDrafts((prev) => ({ ...prev, [l.id]: e.target.value }))}
-                  data-testid="undo-qty"
-                  style={{ width: 72, padding: '4px 6px' }}
-                />
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      <div className="mt-3 flex flex-wrap items-end gap-2">
-        <Field label="Correction notes (optional)">
-          <Input value={notes} onChange={(e) => setNotes(e.target.value)} style={{ width: 280 }} />
-        </Field>
+    <Card
+      title="Correct a receipt (un-receive)"
+      description="For mis-keyed receipts: backs units out of stock with an audited ledger entry and reopens the PO. Units reserved for customers or committed to sales orders cannot be un-received."
+    >
+      <Stack>
+        <TableWrap>
+          <table className="table" data-testid="unreceive-table">
+            <thead>
+              <tr>
+                <th>Item</th>
+                <th className="num">Accepted</th>
+                <th className="num">Undo</th>
+              </tr>
+            </thead>
+            <tbody>
+              {lines.map((l) => (
+                <tr key={l.id}>
+                  <td>
+                    {l.productName}
+                    {l.variantName && <span className="muted"> — {l.variantName}</span>}
+                  </td>
+                  <td className="num">{l.quantityAccepted}</td>
+                  <td className="num">
+                    <Input
+                      type="number"
+                      min={0}
+                      max={l.quantityAccepted}
+                      placeholder="0"
+                      aria-label="Units to un-receive"
+                      value={drafts[l.id] ?? ''}
+                      onChange={(e) => setDrafts((prev) => ({ ...prev, [l.id]: e.target.value }))}
+                      data-testid="undo-qty"
+                      className="w-20"
+                    />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </TableWrap>
+        <FormGrid cols={2}>
+          <Field label="Correction notes (optional)">
+            <Input value={notes} onChange={(e) => setNotes(e.target.value)} />
+          </Field>
+        </FormGrid>
+      </Stack>
+      <FormActions>
         <Button
           variant="danger"
           onClick={() => void submit()}
@@ -1043,7 +1081,7 @@ function UnreceiveCard({ po, onChanged }: { po: Po; onChanged: () => Promise<voi
         >
           {busy ? 'Working…' : 'Un-receive'}
         </Button>
-      </div>
+      </FormActions>
     </Card>
   );
 }
@@ -1125,7 +1163,7 @@ function InvoicesCard({
   }
 
   return (
-    <Card title="Vendor invoices" style={{ marginBottom: 16 }}>
+    <Card title="Vendor invoices">
       <SecurityOverrideDialog
         open={sodInvoiceId != null}
         title="Second sign-off needed — you recorded this invoice"
@@ -1140,131 +1178,106 @@ function InvoicesCard({
         onClose={() => setSodInvoiceId(null)}
         onSuccess={() => void onChanged()}
       />
-      {invoices.length === 0 ? (
-        <p className="muted" style={{ fontSize: 13, marginTop: 0 }}>
-          No vendor invoice recorded against this PO yet.
-        </p>
-      ) : (
-        <table className="table" style={{ marginBottom: 12 }} data-testid="invoice-table">
-          <thead>
-            <tr>
-              <th>Invoice #</th>
-              <th>Date</th>
-              <th className="num">Total</th>
-              <th className="num">Variance vs PO</th>
-              <th>Status</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {invoices.map((inv) => (
-              <tr key={inv.id}>
-                <td>
-                  <code>{inv.number}</code>
-                </td>
-                <td>{inv.invoiceDate ?? '—'}</td>
-                <td className="num">
-                  <Money cents={inv.totalCents} />
-                </td>
-                <td className="num">
-                  {inv.varianceCents == null ? (
-                    '—'
-                  ) : inv.varianceCents === 0 ? (
-                    <span className="badge badge-success">exact</span>
-                  ) : (
-                    <span style={{ color: 'var(--warning)' }}>
-                      {inv.varianceCents > 0 ? '+' : ''}
-                      <Money cents={inv.varianceCents} />
-                    </span>
-                  )}
-                </td>
-                <td>
-                  <StatusBadge status={inv.status} />
-                </td>
-                <td>
-                  {inv.status === 'matched' && (
-                    <Button
-                      size="sm"
-                      variant="primary"
-                      disabled={busy}
-                      onClick={() => void approve(inv.id)}
-                      data-testid="approve-invoice"
-                    >
-                      Approve
-                    </Button>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
-      <div className="flex flex-wrap items-end gap-2">
-        <Field label="Vendor invoice #">
-          <Input
-            value={number}
-            onChange={(e) => setNumber(e.target.value)}
-            data-testid="invoice-number"
-            style={{ width: 160 }}
-          />
-        </Field>
-        <Field label="Invoice date">
-          <Input
-            type="date"
-            value={invoiceDate}
-            onChange={(e) => setInvoiceDate(e.target.value)}
-            style={{ width: 150 }}
-          />
-        </Field>
-        <Field label="Total ($)">
-          <Input
-            type="number"
-            step="0.01"
-            min={0}
-            value={total}
-            onChange={(e) => setTotal(e.target.value)}
-            data-testid="invoice-total"
-            style={{ width: 120 }}
-          />
-        </Field>
+      <Stack>
+        {invoices.length === 0 ? (
+          <p className="muted">No vendor invoice recorded against this PO yet.</p>
+        ) : (
+          <TableWrap>
+            <table className="table" data-testid="invoice-table">
+              <thead>
+                <tr>
+                  <th>Invoice #</th>
+                  <th>Date</th>
+                  <th className="num">Total</th>
+                  <th className="num">Variance vs PO</th>
+                  <th>Status</th>
+                  <th className="actions" />
+                </tr>
+              </thead>
+              <tbody>
+                {invoices.map((inv) => (
+                  <tr key={inv.id}>
+                    <td>
+                      <code>{inv.number}</code>
+                    </td>
+                    <td>{inv.invoiceDate ?? '—'}</td>
+                    <td className="num">
+                      <Money cents={inv.totalCents} />
+                    </td>
+                    <td className="num">
+                      {inv.varianceCents == null ? (
+                        '—'
+                      ) : inv.varianceCents === 0 ? (
+                        <span className="badge badge-success">exact</span>
+                      ) : (
+                        <span className="text-warning">
+                          {inv.varianceCents > 0 ? '+' : ''}
+                          <Money cents={inv.varianceCents} />
+                        </span>
+                      )}
+                    </td>
+                    <td>
+                      <StatusBadge status={inv.status} />
+                    </td>
+                    <td className="actions">
+                      {inv.status === 'matched' && (
+                        <Button
+                          size="sm"
+                          variant="primary"
+                          disabled={busy}
+                          onClick={() => void approve(inv.id)}
+                          data-testid="approve-invoice"
+                        >
+                          Approve
+                        </Button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </TableWrap>
+        )}
+        <div>
+          <SectionHeading as="h3" title="Record an invoice" />
+          <FormGrid cols={3}>
+            <Field label="Vendor invoice #">
+              <Input
+                value={number}
+                onChange={(e) => setNumber(e.target.value)}
+                data-testid="invoice-number"
+              />
+            </Field>
+            <Field label="Invoice date">
+              <Input
+                type="date"
+                value={invoiceDate}
+                onChange={(e) => setInvoiceDate(e.target.value)}
+              />
+            </Field>
+            <Field label="Total ($)">
+              <Input
+                type="number"
+                step="0.01"
+                min={0}
+                value={total}
+                onChange={(e) => setTotal(e.target.value)}
+                data-testid="invoice-total"
+              />
+            </Field>
+          </FormGrid>
+        </div>
+      </Stack>
+      <FormActions>
         <Button
-          variant="secondary"
+          variant="primary"
           onClick={() => void record()}
           disabled={busy}
           data-testid="record-invoice"
         >
-          Record & match
+          {busy ? 'Recording…' : 'Record & match'}
         </Button>
-      </div>
+      </FormActions>
     </Card>
-  );
-}
-
-function Row({
-  label,
-  cents,
-  text,
-  bold,
-}: {
-  label: string;
-  cents?: number;
-  text?: string;
-  bold?: boolean;
-}) {
-  return (
-    <div
-      style={{
-        display: 'flex',
-        justifyContent: 'space-between',
-        fontSize: 13,
-        fontWeight: bold ? 700 : 400,
-        marginBottom: 4,
-      }}
-    >
-      <span style={{ color: bold ? 'var(--text)' : 'var(--text-secondary)' }}>{label}</span>
-      <span style={{ fontVariantNumeric: 'tabular-nums' }}>
-        {cents != null ? <Money cents={cents} /> : (text ?? '—')}
-      </span>
-    </div>
   );
 }

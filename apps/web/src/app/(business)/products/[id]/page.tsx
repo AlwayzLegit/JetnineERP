@@ -7,7 +7,22 @@ import { toast } from 'sonner';
 import { centsToInputString } from '@jetnine/shared';
 import { api } from '@/lib/api';
 import { Money } from '@/components/money';
-import { Button, Card, Input, LoadingRows, PageHeader, Select, StatusBadge } from '@/components/ui';
+import {
+  Alert,
+  BackLink,
+  Button,
+  Card,
+  Field,
+  FormGrid,
+  Input,
+  LoadingRows,
+  PageHeader,
+  Select,
+  Stack,
+  StatusBadge,
+  TableEmpty,
+  TableWrap,
+} from '@/components/ui';
 
 interface Variant {
   id: string;
@@ -229,20 +244,27 @@ export default function ProductDetailPage() {
     }
   }
 
-  if (error) return <p style={{ color: 'var(--danger)' }}>{error}</p>;
+  if (error)
+    return (
+      <div>
+        <PageHeader
+          eyebrow={<BackLink href="/products">All products</BackLink>}
+          title="Product not found"
+        />
+        <Alert tone="error">{error}</Alert>
+      </div>
+    );
   if (!p) return <LoadingRows rows={5} />;
 
   return (
     <div>
-      <p style={{ marginBottom: 12 }}>
-        <Link href="/products">← All products</Link>
-      </p>
       <PageHeader
+        eyebrow={<BackLink href="/products">All products</BackLink>}
         title={p.name}
+        meta={<StatusBadge status={p.isActive ? 'active' : 'inactive'} />}
         sub={
           <>
-            SKU <code>{p.sku ?? '—'}</code> ·{' '}
-            <StatusBadge status={p.isActive ? 'active' : 'inactive'} />
+            SKU <code>{p.sku ?? '—'}</code>
           </>
         }
         actions={
@@ -267,188 +289,217 @@ export default function ProductDetailPage() {
         }
       />
 
-      {taxClasses.length > 0 && (
-        <Card title="Tax class" style={{ marginBottom: 16 }}>
-          <p
-            style={{ color: 'var(--text-secondary)', fontSize: 12, marginTop: 0, marginBottom: 8 }}
+      <Stack>
+        {taxClasses.length > 0 && (
+          <Card
+            title="Tax class"
+            description={
+              <>
+                Override the location/business default tax rate for this product. Manage classes in{' '}
+                <Link href="/settings/tax-classes">Settings → Tax classes</Link>.
+              </>
+            }
           >
-            Override the location/business default tax rate for this product. Manage classes in{' '}
-            <Link href="/settings/tax-classes">Settings → Tax classes</Link>.
-          </p>
-          <Select value={p.taxClassId ?? ''} onChange={(e) => setTaxClass(e.target.value || null)}>
-            <option value="">(use location/business default)</option>
-            {taxClasses.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name} — {(c.rateBps / 100).toFixed(2)}%
-              </option>
-            ))}
-          </Select>
+            <FormGrid cols={2}>
+              <Field label="Tax class">
+                <Select
+                  value={p.taxClassId ?? ''}
+                  onChange={(e) => setTaxClass(e.target.value || null)}
+                >
+                  <option value="">(use location/business default)</option>
+                  {taxClasses.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name} — {(c.rateBps / 100).toFixed(2)}%
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+            </FormGrid>
+          </Card>
+        )}
+
+        <Card
+          title="Brand & collection"
+          description="The invoice's Brand column prints this brand; without one it falls back to the variant's preferred vendor."
+        >
+          <FormGrid cols={2}>
+            <Stack gap="sm">
+              <Field label="Brand">
+                <Select
+                  value={p.brandId ?? ''}
+                  onChange={(e) => void patchProduct({ brandId: e.target.value || null })}
+                >
+                  <option value="">(no brand)</option>
+                  {brands
+                    .filter((b) => b.isActive || b.id === p.brandId)
+                    .map((b) => (
+                      <option key={b.id} value={b.id}>
+                        {b.name}
+                      </option>
+                    ))}
+                </Select>
+              </Field>
+              <div className="flex gap-2">
+                <Input
+                  placeholder="New brand…"
+                  aria-label="New brand"
+                  value={newBrand}
+                  onChange={(e) => setNewBrand(e.target.value)}
+                  className="min-w-0 flex-1"
+                />
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  disabled={!newBrand.trim()}
+                  onClick={() => void createAndAssign('brand', newBrand)}
+                >
+                  Add
+                </Button>
+              </div>
+            </Stack>
+            <Stack gap="sm">
+              <Field label="Collection">
+                <Select
+                  value={p.collectionId ?? ''}
+                  onChange={(e) => void patchProduct({ collectionId: e.target.value || null })}
+                >
+                  <option value="">(no collection)</option>
+                  {collections
+                    .filter((c) => c.isActive || c.id === p.collectionId)
+                    .map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                </Select>
+              </Field>
+              <div className="flex gap-2">
+                <Input
+                  placeholder="New collection…"
+                  aria-label="New collection"
+                  value={newCollection}
+                  onChange={(e) => setNewCollection(e.target.value)}
+                  className="min-w-0 flex-1"
+                />
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  disabled={!newCollection.trim()}
+                  onClick={() => void createAndAssign('collection', newCollection)}
+                >
+                  Add
+                </Button>
+              </div>
+            </Stack>
+          </FormGrid>
         </Card>
-      )}
 
-      <Card title="Brand & collection" style={{ marginBottom: 16 }}>
-        <div className="flex flex-wrap gap-4">
-          <div style={{ minWidth: 220 }}>
-            <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Brand</label>
-            <Select
-              value={p.brandId ?? ''}
-              onChange={(e) => void patchProduct({ brandId: e.target.value || null })}
-            >
-              <option value="">(no brand)</option>
-              {brands
-                .filter((b) => b.isActive || b.id === p.brandId)
-                .map((b) => (
-                  <option key={b.id} value={b.id}>
-                    {b.name}
-                  </option>
-                ))}
-            </Select>
-            <div className="mt-2 flex gap-2">
-              <Input
-                placeholder="New brand…"
-                value={newBrand}
-                onChange={(e) => setNewBrand(e.target.value)}
-                style={{ width: 150 }}
-              />
-              <Button
-                type="button"
-                variant="secondary"
-                disabled={!newBrand.trim()}
-                onClick={() => void createAndAssign('brand', newBrand)}
-              >
-                Add
-              </Button>
-            </div>
-          </div>
-          <div style={{ minWidth: 220 }}>
-            <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Collection</label>
-            <Select
-              value={p.collectionId ?? ''}
-              onChange={(e) => void patchProduct({ collectionId: e.target.value || null })}
-            >
-              <option value="">(no collection)</option>
-              {collections
-                .filter((c) => c.isActive || c.id === p.collectionId)
-                .map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
-            </Select>
-            <div className="mt-2 flex gap-2">
-              <Input
-                placeholder="New collection…"
-                value={newCollection}
-                onChange={(e) => setNewCollection(e.target.value)}
-                style={{ width: 150 }}
-              />
-              <Button
-                type="button"
-                variant="secondary"
-                disabled={!newCollection.trim()}
-                onClick={() => void createAndAssign('collection', newCollection)}
-              >
-                Add
-              </Button>
-            </div>
-          </div>
-        </div>
-        <p style={{ color: 'var(--text-secondary)', fontSize: 12, marginBottom: 0, marginTop: 8 }}>
-          The invoice&apos;s Brand column prints this brand; without one it falls back to the
-          variant&apos;s preferred vendor.
-        </p>
-      </Card>
-
-      <Card title="Variants" style={{ marginBottom: 16 }}>
-        <div className="overflow-x-auto">
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>SKU</th>
-                <th>Barcode</th>
-                <th>Price</th>
-                <th>Cost</th>
-                <th>&nbsp;</th>
-              </tr>
-            </thead>
-            <tbody>
-              {p.variants.map((v) => (
-                <tr key={v.id}>
-                  <td>{v.name ?? '—'}</td>
-                  <td>
-                    <code>{v.sku ?? '—'}</code>
-                  </td>
-                  <td>
-                    <code>{v.barcode ?? '—'}</code>
-                  </td>
-                  <td>
-                    <Input
-                      defaultValue={centsToInputString(v.priceCents)}
-                      type="number"
-                      step="0.01"
-                      onBlur={(e) => {
-                        if (e.target.value !== centsToInputString(v.priceCents)) {
-                          void setVariantPrice(v.id, e.target.value);
-                        }
-                      }}
-                      style={{ width: 90 }}
-                    />
-                  </td>
-                  <td>
-                    {v.costCents != null ? (
-                      <Money cents={v.costCents} />
-                    ) : (
-                      <em className="muted">hidden</em>
-                    )}
-                  </td>
-                  <td style={{ textAlign: 'right' }}>
-                    {v.isActive && (
-                      <Button size="sm" variant="danger" onClick={() => deactivateVariant(v.id)}>
-                        Deactivate
-                      </Button>
-                    )}
-                  </td>
+        <Card title="Variants" flush>
+          <TableWrap>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>SKU</th>
+                  <th>Barcode</th>
+                  <th className="num">Price</th>
+                  <th className="num">Cost</th>
+                  <th className="actions" />
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </Card>
+              </thead>
+              <tbody>
+                {p.variants.length === 0 && (
+                  <TableEmpty colSpan={6}>This product has no variants.</TableEmpty>
+                )}
+                {p.variants.map((v) => (
+                  <tr key={v.id}>
+                    <td>{v.name ?? '—'}</td>
+                    <td>
+                      <code>{v.sku ?? '—'}</code>
+                    </td>
+                    <td>
+                      <code>{v.barcode ?? '—'}</code>
+                    </td>
+                    <td className="num">
+                      <Input
+                        defaultValue={centsToInputString(v.priceCents)}
+                        type="number"
+                        step="0.01"
+                        aria-label={`Price for ${v.name ?? v.sku ?? 'variant'}`}
+                        onBlur={(e) => {
+                          if (e.target.value !== centsToInputString(v.priceCents)) {
+                            void setVariantPrice(v.id, e.target.value);
+                          }
+                        }}
+                        className="w-24"
+                      />
+                    </td>
+                    <td className="num">
+                      {v.costCents != null ? (
+                        <Money cents={v.costCents} />
+                      ) : (
+                        <em className="muted">hidden</em>
+                      )}
+                    </td>
+                    <td className="actions">
+                      {v.isActive ? (
+                        <Button size="sm" variant="danger" onClick={() => deactivateVariant(v.id)}>
+                          Deactivate
+                        </Button>
+                      ) : (
+                        <StatusBadge status="inactive" />
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </TableWrap>
+        </Card>
 
-      <ReorderSettingsCard variants={p.variants} onSaved={load} />
+        <ReorderSettingsCard variants={p.variants} onSaved={load} />
 
-      <Card title="Images">
-        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-          {p.images.map((img) => (
-            <div
-              key={img.id}
-              style={{
-                background: 'var(--surface-muted)',
-                border: '1px solid var(--border)',
-                padding: 8,
-                borderRadius: 'var(--radius-sm)',
-                fontSize: 12,
-                maxWidth: 220,
-              }}
-            >
-              <code style={{ display: 'block', wordBreak: 'break-all', marginBottom: 6 }}>
-                {img.storageKey}
-              </code>
-              <Button size="sm" variant="danger" onClick={() => deleteImage(img.id)}>
-                Delete
+        <Card
+          title="Images"
+          actions={
+            p.images.length < 4 ? (
+              <Button variant="secondary" size="sm" onClick={registerImage}>
+                + Register image (max 4)
               </Button>
+            ) : undefined
+          }
+        >
+          {p.images.length === 0 ? (
+            <EmptyImages />
+          ) : (
+            <div className="flex flex-wrap gap-3">
+              {p.images.map((img) => (
+                <div
+                  key={img.id}
+                  className="max-w-[220px] rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--surface-muted)] p-2 text-xs"
+                >
+                  <Stack gap="sm">
+                    <code className="block break-all">{img.storageKey}</code>
+                    <div>
+                      <Button size="sm" variant="danger" onClick={() => deleteImage(img.id)}>
+                        Delete
+                      </Button>
+                    </div>
+                  </Stack>
+                </div>
+              ))}
             </div>
-          ))}
-          {p.images.length < 4 && (
-            <Button variant="secondary" onClick={registerImage}>
-              + Register image (max 4)
-            </Button>
           )}
-        </div>
-      </Card>
+        </Card>
+      </Stack>
     </div>
   );
+}
+
+function EmptyImages() {
+  return <p className="muted">No images registered yet.</p>;
 }
 
 /**
@@ -528,16 +579,15 @@ function ReorderSettingsCard({
     }
   }
 
+  const active = variants.filter((v) => v.isActive);
+
   return (
-    <Card title="Reorder automation" style={{ marginBottom: 16 }}>
-      <p className="muted" style={{ fontSize: 12.5, marginTop: 0 }}>
-        When available stock (on hand − committed, all locations) falls to the reorder point, the
-        item appears in Purchasing → Reorder suggestions under its vendor. Leave the point blank to
-        turn automation off for a variant. If the vendor uses a different part number than your SKU
-        (common for Shopify-synced catalogs), set it as the Vendor SKU — purchase orders will show
-        the vendor&apos;s number.
-      </p>
-      <div className="overflow-x-auto">
+    <Card
+      title="Reorder automation"
+      flush
+      description="When available stock (on hand − committed, all locations) falls to the reorder point, the item appears in Purchasing → Reorder suggestions under its vendor. Leave the point blank to turn automation off for a variant. If the vendor uses a different part number than your SKU (common for Shopify-synced catalogs), set it as the Vendor SKU — purchase orders will show the vendor's number."
+    >
+      <TableWrap>
         <table className="table">
           <thead>
             <tr>
@@ -546,91 +596,96 @@ function ReorderSettingsCard({
               <th className="num">Order qty</th>
               <th>Preferred vendor</th>
               <th>Vendor SKU</th>
-              <th>&nbsp;</th>
+              <th className="actions" />
             </tr>
           </thead>
           <tbody>
-            {variants
-              .filter((v) => v.isActive)
-              .map((v) => {
-                const d = valueFor(v);
-                return (
-                  <tr key={v.id}>
-                    <td>{v.name ?? <code>{v.sku ?? v.id.slice(0, 8)}</code>}</td>
-                    <td className="num">
-                      <Input
-                        type="number"
-                        min={0}
-                        value={d.point}
-                        placeholder="off"
-                        onChange={(e) =>
-                          setDraft((cur) => ({ ...cur, [v.id]: { ...d, point: e.target.value } }))
-                        }
-                        style={{ width: 80 }}
-                        data-testid={`reorder-point-${v.sku}`}
-                      />
-                    </td>
-                    <td className="num">
-                      <Input
-                        type="number"
-                        min={1}
-                        value={d.qty}
-                        placeholder="auto"
-                        onChange={(e) =>
-                          setDraft((cur) => ({ ...cur, [v.id]: { ...d, qty: e.target.value } }))
-                        }
-                        style={{ width: 80 }}
-                      />
-                    </td>
-                    <td>
-                      <Select
-                        value={d.vendorId}
-                        onChange={(e) =>
-                          setDraft((cur) => ({
-                            ...cur,
-                            [v.id]: { ...d, vendorId: e.target.value },
-                          }))
-                        }
-                      >
-                        <option value="">— none —</option>
-                        {vendors.map((vd) => (
-                          <option key={vd.id} value={vd.id}>
-                            {vd.name}
-                          </option>
-                        ))}
-                      </Select>
-                    </td>
-                    <td>
-                      <Input
-                        value={d.vendorSku}
-                        placeholder={v.sku ? `same as ${v.sku}` : 'vendor part #'}
-                        onChange={(e) =>
-                          setDraft((cur) => ({
-                            ...cur,
-                            [v.id]: { ...d, vendorSku: e.target.value },
-                          }))
-                        }
-                        style={{ width: 130 }}
-                        data-testid={`vendor-sku-${v.sku}`}
-                      />
-                    </td>
-                    <td style={{ textAlign: 'right' }}>
-                      <Button
-                        size="sm"
-                        variant="primary"
-                        disabled={savingId === v.id}
-                        onClick={() => void save(v)}
-                        data-testid={`save-reorder-${v.sku}`}
-                      >
-                        Save
-                      </Button>
-                    </td>
-                  </tr>
-                );
-              })}
+            {active.length === 0 && (
+              <TableEmpty colSpan={6}>No active variants to automate.</TableEmpty>
+            )}
+            {active.map((v) => {
+              const d = valueFor(v);
+              return (
+                <tr key={v.id}>
+                  <td>{v.name ?? <code>{v.sku ?? v.id.slice(0, 8)}</code>}</td>
+                  <td className="num">
+                    <Input
+                      type="number"
+                      min={0}
+                      value={d.point}
+                      placeholder="off"
+                      aria-label="Reorder point"
+                      onChange={(e) =>
+                        setDraft((cur) => ({ ...cur, [v.id]: { ...d, point: e.target.value } }))
+                      }
+                      className="w-20"
+                      data-testid={`reorder-point-${v.sku}`}
+                    />
+                  </td>
+                  <td className="num">
+                    <Input
+                      type="number"
+                      min={1}
+                      value={d.qty}
+                      placeholder="auto"
+                      aria-label="Order quantity"
+                      onChange={(e) =>
+                        setDraft((cur) => ({ ...cur, [v.id]: { ...d, qty: e.target.value } }))
+                      }
+                      className="w-20"
+                    />
+                  </td>
+                  <td>
+                    <Select
+                      value={d.vendorId}
+                      aria-label="Preferred vendor"
+                      onChange={(e) =>
+                        setDraft((cur) => ({
+                          ...cur,
+                          [v.id]: { ...d, vendorId: e.target.value },
+                        }))
+                      }
+                    >
+                      <option value="">— none —</option>
+                      {vendors.map((vd) => (
+                        <option key={vd.id} value={vd.id}>
+                          {vd.name}
+                        </option>
+                      ))}
+                    </Select>
+                  </td>
+                  <td>
+                    <Input
+                      value={d.vendorSku}
+                      placeholder={v.sku ? `same as ${v.sku}` : 'vendor part #'}
+                      aria-label="Vendor SKU"
+                      onChange={(e) =>
+                        setDraft((cur) => ({
+                          ...cur,
+                          [v.id]: { ...d, vendorSku: e.target.value },
+                        }))
+                      }
+                      className="w-36"
+                      data-testid={`vendor-sku-${v.sku}`}
+                    />
+                  </td>
+                  <td className="actions">
+                    <Button
+                      size="sm"
+                      variant="primary"
+                      disabled={savingId === v.id}
+                      onClick={() => void save(v)}
+                      data-testid={`save-reorder-${v.sku}`}
+                    >
+                      {savingId === v.id ? 'Saving…' : 'Save'}
+                    </Button>
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
-      </div>
+      </TableWrap>
     </Card>
   );
 }

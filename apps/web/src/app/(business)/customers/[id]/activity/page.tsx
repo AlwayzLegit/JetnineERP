@@ -5,7 +5,25 @@ import { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { api } from '@/lib/api';
 import { Money } from '@/components/money';
-import { Card, EmptyState, Select, Skeleton, StatusBadge } from '@/components/ui';
+import {
+  Alert,
+  BackLink,
+  Card,
+  DisplayStatusBadge,
+  EmptyState,
+  Field,
+  KeyValue,
+  LinkButton,
+  PageHeader,
+  Select,
+  Skeleton,
+  Stack,
+  StatGrid,
+  StatTile,
+  StatusBadge,
+  TableWrap,
+  Toolbar,
+} from '@/components/ui';
 import { DateRangePicker, useUrlDateRange } from '@/components/date-range-picker';
 
 /**
@@ -167,6 +185,8 @@ function fmtDate(d: string | null | undefined): string {
   return m && day && y ? `${m}/${day}/${y}` : d;
 }
 
+const PAGE_TITLE = 'View Customer Activity';
+
 export default function CustomerActivityPage() {
   const params = useParams<{ id: string }>();
   const id = (params?.id ?? '') as string;
@@ -193,13 +213,24 @@ export default function CustomerActivityPage() {
     window.history.replaceState(null, '', url.toString());
   }
 
-  if (error && !data) return <p style={{ color: 'var(--danger)' }}>{error}</p>;
+  const backLink = <BackLink href={`/customers/${id}`}>Customer record</BackLink>;
+
+  if (error && !data) {
+    return (
+      <div>
+        <PageHeader eyebrow={backLink} title={PAGE_TITLE} />
+        <Alert tone="error">{error}</Alert>
+      </div>
+    );
+  }
   if (!data) {
     return (
       <div data-testid="activity-loading">
-        <Skeleton style={{ height: 28, width: 320, marginBottom: 12 }} />
-        <Skeleton style={{ height: 120, marginBottom: 16 }} />
-        <Skeleton style={{ height: 320 }} />
+        <PageHeader eyebrow={backLink} title={PAGE_TITLE} />
+        <Stack>
+          <Skeleton style={{ height: 120 }} />
+          <Skeleton style={{ height: 320 }} />
+        </Stack>
       </div>
     );
   }
@@ -207,134 +238,88 @@ export default function CustomerActivityPage() {
 
   return (
     <div data-testid="customer-activity">
-      <p style={{ margin: '0 0 12px' }}>
-        <Link href={`/customers/${c.id}`}>← Customer record</Link>
-        <span style={{ color: 'var(--text-muted)' }}> · </span>
-        <Link href="/customers/activity">Look up another customer</Link>
-      </p>
-      <h1 className="page-title" style={{ marginBottom: 12 }}>
-        View Customer Activity
-      </h1>
+      <PageHeader
+        eyebrow={backLink}
+        title={PAGE_TITLE}
+        actions={
+          <LinkButton size="sm" href="/customers/activity">
+            Look up another customer
+          </LinkButton>
+        }
+      />
 
-      <Card style={{ marginBottom: 16 }} data-testid="activity-header">
-        <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-          <div>
-            <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Customer code</div>
-            <div style={{ fontWeight: 600, fontFamily: 'var(--font-mono, monospace)' }}>
-              {c.code}
-            </div>
-            <div
-              style={{ fontSize: 16, fontWeight: 600, marginTop: 4 }}
-              data-testid="activity-name"
-            >
-              {c.name}
-            </div>
-          </div>
-          <div>
-            <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Cell phone</div>
-            <div>{c.phone ?? '—'}</div>
-            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 6 }}>
-              Home / other phone
-            </div>
-            <div>{c.phone2 ?? '—'}</div>
-          </div>
-          <div>
-            <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Email address</div>
-            <div style={{ wordBreak: 'break-all' }}>{c.email ?? '—'}</div>
-          </div>
-          <div>
-            <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Store credit balance</div>
-            <div style={{ fontWeight: 600 }} data-testid="activity-store-credit">
-              <Money cents={c.storeCreditCents} />
-            </div>
-          </div>
-        </div>
-      </Card>
-
-      <div
-        style={{ display: 'grid', gridTemplateColumns: '220px 1fr', gap: 16, alignItems: 'start' }}
-      >
-        <nav
-          aria-label="Customer activity views"
-          style={{
-            border: '1px solid var(--border)',
-            borderRadius: 8,
-            background: 'var(--surface)',
-            overflow: 'hidden',
-            position: 'sticky',
-            top: 16,
-          }}
+      <Stack>
+        <Card
+          title={<span data-testid="activity-name">{c.name}</span>}
+          description={
+            <>
+              Customer code <code>{c.code}</code>
+            </>
+          }
+          data-testid="activity-header"
         >
-          {TABS.map((t) => {
-            const active = t.key === tab;
-            return (
-              <button
-                key={t.key}
-                type="button"
-                onClick={() => pick(t.key)}
-                aria-current={active ? 'page' : undefined}
-                data-testid={`activity-tab-${t.key}`}
-                style={{
-                  display: 'block',
-                  width: '100%',
-                  textAlign: 'left',
-                  padding: '10px 14px',
-                  border: 'none',
-                  borderLeft: `3px solid ${active ? 'var(--brand)' : 'transparent'}`,
-                  borderBottom: '1px solid var(--border)',
-                  background: active ? 'var(--surface-2, rgba(0,0,0,0.05))' : 'transparent',
-                  color: 'inherit',
-                  font: 'inherit',
-                  fontWeight: active ? 700 : 500,
-                  cursor: 'pointer',
-                }}
-              >
-                {t.label}
-              </button>
-            );
-          })}
-        </nav>
+          <div className="grid gap-4 md:grid-cols-2">
+            <KeyValue
+              rows={[
+                { label: 'Cell phone', value: c.phone ?? '—' },
+                { label: 'Home / other phone', value: c.phone2 ?? '—' },
+              ]}
+            />
+            <KeyValue
+              rows={[
+                { label: 'Email address', value: c.email ?? '—' },
+                {
+                  label: 'Store credit balance',
+                  value: (
+                    <strong data-testid="activity-store-credit">
+                      <Money cents={c.storeCreditCents} />
+                    </strong>
+                  ),
+                },
+              ]}
+            />
+          </div>
+        </Card>
 
-        <div style={{ minWidth: 0 }}>
-          {tab === 'general' && <GeneralInformation data={data} />}
-          {tab === 'open-orders' && <OpenOrders data={data} />}
-          {tab === 'order-lines' && <OrderLineDetails data={data} />}
-          {tab === 'history' && <HistoricalPurchases data={data} />}
-          {tab === 'deposits' && <CurrentDeposits data={data} />}
-          {tab === 'deposit-history' && <HistoricalDeposits data={data} />}
-          {tab === 'ar' && <OpenArItems data={data} />}
-          {tab === 'service' && <OpenServiceOrders data={data} />}
+        <div className="grid items-start gap-4 lg:grid-cols-[220px_minmax(0,1fr)]">
+          {/* Spec §12.4: the eight views run down the left (stack above the
+              content on phones). No shared side-nav primitive exists yet, so
+              this uses the card frame plus token utilities. */}
+          <nav aria-label="Customer activity views" className="card card-flush lg:sticky lg:top-4">
+            {TABS.map((t) => {
+              const active = t.key === tab;
+              return (
+                <button
+                  key={t.key}
+                  type="button"
+                  onClick={() => pick(t.key)}
+                  aria-current={active ? 'page' : undefined}
+                  data-testid={`activity-tab-${t.key}`}
+                  className={[
+                    'block w-full cursor-pointer border-0 border-b border-l-[3px] border-b-border px-3.5 py-2.5 text-left transition-colors last:border-b-0',
+                    active
+                      ? 'border-l-brand bg-surface-muted font-bold'
+                      : 'border-l-transparent bg-transparent font-medium hover:bg-surface-muted',
+                  ].join(' ')}
+                >
+                  {t.label}
+                </button>
+              );
+            })}
+          </nav>
+
+          <div className="min-w-0">
+            {tab === 'general' && <GeneralInformation data={data} />}
+            {tab === 'open-orders' && <OpenOrders data={data} />}
+            {tab === 'order-lines' && <OrderLineDetails data={data} />}
+            {tab === 'history' && <HistoricalPurchases data={data} />}
+            {tab === 'deposits' && <CurrentDeposits data={data} />}
+            {tab === 'deposit-history' && <HistoricalDeposits data={data} />}
+            {tab === 'ar' && <OpenArItems data={data} />}
+            {tab === 'service' && <OpenServiceOrders data={data} />}
+          </div>
         </div>
-      </div>
-    </div>
-  );
-}
-
-function Labeled({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div>
-      <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{label}</div>
-      <div style={{ fontWeight: 500 }}>{children}</div>
-    </div>
-  );
-}
-
-function MoneyBox({ label, cents, testid }: { label: string; cents: number; testid?: string }) {
-  return (
-    <div
-      style={{
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'baseline',
-        gap: 12,
-        padding: '6px 0',
-        borderBottom: '1px solid var(--border)',
-      }}
-    >
-      <span style={{ color: 'var(--text-secondary)' }}>{label}</span>
-      <span style={{ fontWeight: 600, fontVariantNumeric: 'tabular-nums' }} data-testid={testid}>
-        <Money cents={cents} />
-      </span>
+      </Stack>
     </div>
   );
 }
@@ -347,35 +332,39 @@ function GeneralInformation({ data }: { data: Activity }) {
     { label: 'Last year', y: t.lastYear },
     { label: 'Lifetime', y: t.lifetime },
   ];
+  const cityLine = a
+    ? [a.city, [a.region, a.postalCode].filter(Boolean).join(' ')].filter(Boolean).join(', ') || '—'
+    : '—';
   return (
-    <>
+    <Stack>
       <Card title="General information" data-testid="activity-general">
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-          <div style={{ display: 'grid', gap: 10 }}>
-            <Labeled label="Address 1">{a?.line1 ?? '—'}</Labeled>
-            <Labeled label="Address 2">{a?.line2 ?? '—'}</Labeled>
-            <Labeled label="City, State Zip Code">
-              {a
-                ? [a.city, [a.region, a.postalCode].filter(Boolean).join(' ')]
-                    .filter(Boolean)
-                    .join(', ') || '—'
-                : '—'}
-            </Labeled>
-            <Labeled label="Ship from location">{data.general.shipFromLocation ?? '—'}</Labeled>
-          </div>
-          <Labeled label="Credit remarks / notes">
-            <div style={{ whiteSpace: 'pre-wrap', minHeight: 60 }}>
-              {data.customer.notes ?? '—'}
-            </div>
-          </Labeled>
+        <div className="grid gap-4 md:grid-cols-2">
+          <KeyValue
+            rows={[
+              { label: 'Address 1', value: a?.line1 ?? '—' },
+              { label: 'Address 2', value: a?.line2 ?? '—' },
+              { label: 'City, State Zip Code', value: cityLine },
+              { label: 'Ship from location', value: data.general.shipFromLocation ?? '—' },
+            ]}
+          />
+          <KeyValue
+            rows={[
+              {
+                label: 'Credit remarks / notes',
+                value: <div className="whitespace-pre-wrap">{data.customer.notes ?? '—'}</div>,
+              },
+            ]}
+          />
         </div>
       </Card>
-      <Card title="Totals" style={{ marginTop: 16 }} data-testid="activity-totals">
-        <div style={{ overflowX: 'auto' }}>
+      <Card title="Totals" flush data-testid="activity-totals">
+        <TableWrap>
           <table className="table">
             <thead>
               <tr>
-                <th></th>
+                <th>
+                  <span className="sr-only">Period</span>
+                </th>
                 <th className="num">Sales</th>
                 <th className="num">#</th>
                 <th className="num">Returns</th>
@@ -387,7 +376,9 @@ function GeneralInformation({ data }: { data: Activity }) {
             <tbody>
               {rows.map((r) => (
                 <tr key={r.label} data-testid={`totals-${r.label.toLowerCase().replace(' ', '-')}`}>
-                  <td style={{ fontWeight: 600 }}>{r.label}</td>
+                  <td>
+                    <strong>{r.label}</strong>
+                  </td>
                   <td className="num">
                     <Money cents={r.y.sales.cents} />
                   </td>
@@ -404,26 +395,35 @@ function GeneralInformation({ data }: { data: Activity }) {
               ))}
             </tbody>
           </table>
-        </div>
+        </TableWrap>
       </Card>
-    </>
+    </Stack>
   );
 }
 
 function OpenOrdersSummary({ data }: { data: Activity }) {
   const o = data.openOrders;
   return (
-    <div className="grid grid-cols-1 gap-4 md:grid-cols-2" style={{ marginBottom: 16 }}>
-      <div>
-        <Labeled label="Credit limit">Unlimited</Labeled>
-      </div>
-      <div>
-        <MoneyBox label="Total orders" cents={o.totalOrdersCents} testid="sum-total-orders" />
-        <MoneyBox label="Deposits" cents={o.depositsCents} testid="sum-deposits" />
-        <MoneyBox label="Total A/R" cents={o.arCents} testid="sum-ar" />
-        <MoneyBox label="Unpaid balance" cents={o.unpaidBalanceCents} testid="sum-unpaid" />
-      </div>
-    </div>
+    <StatGrid cols={5}>
+      <StatTile label="Credit limit" value="Unlimited" />
+      <StatTile
+        label="Total orders"
+        value={<Money cents={o.totalOrdersCents} />}
+        data-testid="sum-total-orders"
+      />
+      <StatTile
+        label="Deposits"
+        value={<Money cents={o.depositsCents} />}
+        data-testid="sum-deposits"
+      />
+      <StatTile label="Total A/R" value={<Money cents={o.arCents} />} data-testid="sum-ar" />
+      <StatTile
+        label="Unpaid balance"
+        value={<Money cents={o.unpaidBalanceCents} />}
+        tone={o.unpaidBalanceCents > 0 ? 'danger' : undefined}
+        data-testid="sum-unpaid"
+      />
+    </StatGrid>
   );
 }
 
@@ -433,81 +433,85 @@ function OpenOrders({ data }: { data: Activity }) {
     rows.reduce((s, r) => s + (typeof r[k] === 'number' ? (r[k] as number) : 0), 0);
   return (
     <Card title="Open orders" data-testid="activity-open-orders">
-      <OpenOrdersSummary data={data} />
-      {rows.length === 0 ? (
-        <EmptyState>No open orders.</EmptyState>
-      ) : (
-        <div style={{ overflowX: 'auto' }}>
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Order</th>
-                <th>Order type</th>
-                <th>Fulfillment</th>
-                <th>Order date</th>
-                <th>Salesperson</th>
-                <th>Status</th>
-                <th className="num">Merchandise</th>
-                <th className="num">Other</th>
-                <th className="num">Total</th>
-                <th className="num">Amount paid</th>
-                <th className="num">Balance</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => (
-                <tr key={r.id} data-testid="open-order-row">
-                  <td>
-                    <Link href={`/orders/${r.id}`}>{r.number}</Link>
-                  </td>
-                  <td>{r.orderType}</td>
-                  <td style={{ textTransform: 'capitalize' }}>
-                    {r.fulfillmentType.replace(/_/g, ' ')}
-                  </td>
-                  <td>{fmtDate(r.orderDate)}</td>
-                  <td>{r.salespersonName ?? '—'}</td>
-                  <td>{r.displayStatus}</td>
+      <Stack>
+        <OpenOrdersSummary data={data} />
+        {rows.length === 0 ? (
+          <EmptyState>No open orders.</EmptyState>
+        ) : (
+          <TableWrap>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Order</th>
+                  <th>Order type</th>
+                  <th>Fulfillment</th>
+                  <th>Order date</th>
+                  <th>Salesperson</th>
+                  <th>Status</th>
+                  <th className="num">Merchandise</th>
+                  <th className="num">Other</th>
+                  <th className="num">Total</th>
+                  <th className="num">Amount paid</th>
+                  <th className="num">Balance</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr key={r.id} data-testid="open-order-row">
+                    <td>
+                      <Link href={`/orders/${r.id}`}>{r.number}</Link>
+                    </td>
+                    <td>{r.orderType}</td>
+                    <td className="capitalize">{r.fulfillmentType.replace(/_/g, ' ')}</td>
+                    <td>{fmtDate(r.orderDate)}</td>
+                    <td>{r.salespersonName ?? '—'}</td>
+                    <td>
+                      <DisplayStatusBadge displayStatus={r.displayStatus} />
+                    </td>
+                    <td className="num">
+                      <Money cents={r.merchandiseCents} />
+                    </td>
+                    <td className="num">
+                      <Money cents={r.otherCents} />
+                    </td>
+                    <td className="num">
+                      <Money cents={r.totalCents} />
+                    </td>
+                    <td className="num">
+                      <Money cents={r.amountPaidCents} />
+                    </td>
+                    <td className="num">
+                      <strong>
+                        <Money cents={r.balanceCents} />
+                      </strong>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr className="font-bold">
+                  <td colSpan={6}>Totals</td>
                   <td className="num">
-                    <Money cents={r.merchandiseCents} />
+                    <Money cents={sum('merchandiseCents')} />
                   </td>
                   <td className="num">
-                    <Money cents={r.otherCents} />
+                    <Money cents={sum('otherCents')} />
                   </td>
                   <td className="num">
-                    <Money cents={r.totalCents} />
+                    <Money cents={sum('totalCents')} />
                   </td>
                   <td className="num">
-                    <Money cents={r.amountPaidCents} />
+                    <Money cents={sum('amountPaidCents')} />
                   </td>
-                  <td className="num" style={{ fontWeight: 600 }}>
-                    <Money cents={r.balanceCents} />
+                  <td className="num">
+                    <Money cents={sum('balanceCents')} />
                   </td>
                 </tr>
-              ))}
-            </tbody>
-            <tfoot>
-              <tr style={{ fontWeight: 700 }}>
-                <td colSpan={6}>Totals</td>
-                <td className="num">
-                  <Money cents={sum('merchandiseCents')} />
-                </td>
-                <td className="num">
-                  <Money cents={sum('otherCents')} />
-                </td>
-                <td className="num">
-                  <Money cents={sum('totalCents')} />
-                </td>
-                <td className="num">
-                  <Money cents={sum('amountPaidCents')} />
-                </td>
-                <td className="num">
-                  <Money cents={sum('balanceCents')} />
-                </td>
-              </tr>
-            </tfoot>
-          </table>
-        </div>
-      )}
+              </tfoot>
+            </table>
+          </TableWrap>
+        )}
+      </Stack>
     </Card>
   );
 }
@@ -517,14 +521,23 @@ function OrderLineDetails({ data }: { data: Activity }) {
   const [orderId, setOrderId] = useState<string>(orders[0]?.orderId ?? '');
   const current = useMemo(() => orders.find((o) => o.orderId === orderId), [orders, orderId]);
   return (
-    <Card title="Order line details" data-testid="activity-order-lines">
+    <Card
+      title="Order line details"
+      data-testid="activity-order-lines"
+      actions={
+        current ? (
+          <LinkButton size="sm" href={`/orders/${current.orderId}`}>
+            Open order
+          </LinkButton>
+        ) : undefined
+      }
+    >
       {orders.length === 0 ? (
         <EmptyState>No orders yet.</EmptyState>
       ) : (
         <>
-          <div style={{ display: 'flex', gap: 12, alignItems: 'end', marginBottom: 12 }}>
-            <label style={{ display: 'grid', gap: 4 }}>
-              <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Order number</span>
+          <Toolbar>
+            <Field label="Order number">
               <Select
                 value={orderId}
                 onChange={(e) => setOrderId(e.target.value)}
@@ -536,10 +549,9 @@ function OrderLineDetails({ data }: { data: Activity }) {
                   </option>
                 ))}
               </Select>
-            </label>
-            {current && <Link href={`/orders/${current.orderId}`}>Open order</Link>}
-          </div>
-          <div style={{ overflowX: 'auto' }}>
+            </Field>
+          </Toolbar>
+          <TableWrap>
             <table className="table">
               <thead>
                 <tr>
@@ -560,7 +572,7 @@ function OrderLineDetails({ data }: { data: Activity }) {
               <tbody>
                 {(current?.lines ?? []).map((l) => (
                   <tr key={l.id} data-testid="order-line-row">
-                    <td style={{ whiteSpace: 'nowrap' }}>{l.sku ?? '—'}</td>
+                    <td className="nowrap">{l.sku ?? '—'}</td>
                     <td>{l.description}</td>
                     <td className="num">{l.qtyReserved}</td>
                     <td className="num">{l.qtyOrdered}</td>
@@ -582,7 +594,7 @@ function OrderLineDetails({ data }: { data: Activity }) {
                 ))}
               </tbody>
             </table>
-          </div>
+          </TableWrap>
         </>
       )}
     </Card>
@@ -594,23 +606,24 @@ function HistoricalPurchases({ data }: { data: Activity }) {
   const rows = data.historicalPurchases.filter((r) => filter === 'all' || r.docType === filter);
   return (
     <Card title="Historical purchases" data-testid="activity-history">
-      <label style={{ display: 'grid', gap: 4, marginBottom: 12, maxWidth: 260 }}>
-        <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Document filter</span>
-        <Select
-          value={filter}
-          onChange={(e) => setFilter(e.target.value as typeof filter)}
-          data-testid="history-filter"
-        >
-          <option value="all">All documents</option>
-          <option value="order">Delivered orders</option>
-          <option value="sale">Register sales</option>
-          <option value="return">Returns</option>
-        </Select>
-      </label>
+      <Toolbar>
+        <Field label="Document filter">
+          <Select
+            value={filter}
+            onChange={(e) => setFilter(e.target.value as typeof filter)}
+            data-testid="history-filter"
+          >
+            <option value="all">All documents</option>
+            <option value="order">Delivered orders</option>
+            <option value="sale">Register sales</option>
+            <option value="return">Returns</option>
+          </Select>
+        </Field>
+      </Toolbar>
       {rows.length === 0 ? (
         <EmptyState>No completed purchases yet.</EmptyState>
       ) : (
-        <div style={{ overflowX: 'auto' }}>
+        <TableWrap>
           <table className="table">
             <thead>
               <tr>
@@ -631,7 +644,7 @@ function HistoricalPurchases({ data }: { data: Activity }) {
                   </td>
                   <td>{r.orderType}</td>
                   <td>{fmtDate(r.invoiceDate)}</td>
-                  <td style={{ whiteSpace: 'nowrap' }}>{r.sku ?? '—'}</td>
+                  <td className="nowrap">{r.sku ?? '—'}</td>
                   <td>{r.description}</td>
                   <td className="num">{r.quantity}</td>
                   <td className="num">
@@ -641,7 +654,7 @@ function HistoricalPurchases({ data }: { data: Activity }) {
               ))}
             </tbody>
           </table>
-        </div>
+        </TableWrap>
       )}
     </Card>
   );
@@ -656,7 +669,7 @@ function CurrentDeposits({ data }: { data: Activity }) {
       {rows.length === 0 ? (
         <EmptyState>No open orders holding deposits.</EmptyState>
       ) : (
-        <div style={{ overflowX: 'auto' }}>
+        <TableWrap>
           <table className="table">
             <thead>
               <tr>
@@ -683,7 +696,7 @@ function CurrentDeposits({ data }: { data: Activity }) {
                   </td>
                   <td>{r.orderType}</td>
                   <td>{fmtDate(r.orderDate)}</td>
-                  <td style={{ textTransform: 'capitalize' }}>{r.depositType ?? '—'}</td>
+                  <td className="capitalize">{r.depositType ?? '—'}</td>
                   <td className="num">
                     <Money cents={r.arCreditCents} />
                   </td>
@@ -691,7 +704,7 @@ function CurrentDeposits({ data }: { data: Activity }) {
               ))}
             </tbody>
             <tfoot>
-              <tr style={{ fontWeight: 700 }}>
+              <tr className="font-bold">
                 <td>Totals</td>
                 <td className="num" data-testid="deposits-total">
                   <Money cents={totalDeposit} />
@@ -703,7 +716,7 @@ function CurrentDeposits({ data }: { data: Activity }) {
               </tr>
             </tfoot>
           </table>
-        </div>
+        </TableWrap>
       )}
     </Card>
   );
@@ -713,52 +726,52 @@ function HistoricalDeposits({ data }: { data: Activity }) {
   const h = data.historicalDeposits;
   return (
     <Card title="Historical deposits" data-testid="activity-deposit-history">
-      <div style={{ maxWidth: 320, marginBottom: 12 }}>
-        <MoneyBox
-          label="Total deposit liability"
-          cents={h.totalLiabilityCents}
-          testid="deposit-liability"
-        />
-      </div>
-      {h.rows.length === 0 ? (
-        <EmptyState>No deposit activity yet.</EmptyState>
-      ) : (
-        <div style={{ overflowX: 'auto' }}>
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Order number</th>
-                <th>Type</th>
-                <th>Date</th>
-                <th className="num">Deposit amount</th>
-                <th className="num">Activity amount</th>
-                <th>Reason for activity</th>
-              </tr>
-            </thead>
-            <tbody>
-              {h.rows.map((r) => (
-                <tr key={r.id} data-testid="deposit-history-row">
-                  <td>
-                    {r.orderId ? <Link href={`/orders/${r.orderId}`}>{r.number}</Link> : r.number}
-                  </td>
-                  <td>{r.type}</td>
-                  <td>{fmtDate(r.date)}</td>
-                  <td className="num">
-                    <Money cents={r.depositCents} />
-                  </td>
-                  <td
-                    className="num"
-                    style={{ color: r.activityCents < 0 ? 'var(--danger)' : undefined }}
-                  >
-                    <Money cents={r.activityCents} />
-                  </td>
-                  <td style={{ textTransform: 'capitalize' }}>{r.reason}</td>
+      <Stack>
+        <StatGrid cols={4}>
+          <StatTile
+            label="Total deposit liability"
+            value={<Money cents={h.totalLiabilityCents} />}
+            sub="Money held on undelivered orders"
+            data-testid="deposit-liability"
+          />
+        </StatGrid>
+        {h.rows.length === 0 ? (
+          <EmptyState>No deposit activity yet.</EmptyState>
+        ) : (
+          <TableWrap>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Order number</th>
+                  <th>Type</th>
+                  <th>Date</th>
+                  <th className="num">Deposit amount</th>
+                  <th className="num">Activity amount</th>
+                  <th>Reason for activity</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+              </thead>
+              <tbody>
+                {h.rows.map((r) => (
+                  <tr key={r.id} data-testid="deposit-history-row">
+                    <td>
+                      {r.orderId ? <Link href={`/orders/${r.orderId}`}>{r.number}</Link> : r.number}
+                    </td>
+                    <td>{r.type}</td>
+                    <td>{fmtDate(r.date)}</td>
+                    <td className="num">
+                      <Money cents={r.depositCents} />
+                    </td>
+                    <td className={`num${r.activityCents < 0 ? ' text-danger' : ''}`}>
+                      <Money cents={r.activityCents} />
+                    </td>
+                    <td className="capitalize">{r.reason}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </TableWrap>
+        )}
+      </Stack>
     </Card>
   );
 }
@@ -776,60 +789,74 @@ function OpenArItems({ data }: { data: Activity }) {
   const total = rows.reduce((s, r) => s + r.amountCents, 0);
   return (
     <Card title="Open A/R items" data-testid="activity-ar">
-      <div className="grid grid-cols-2 gap-4 md:grid-cols-4" style={{ marginBottom: 12 }}>
-        <Labeled label="Due / transaction date">
-          <DateRangePicker
-            value={range}
-            onChange={setRange}
-            compact
-            allowAllTime
-            align="left"
-            testid="ar-range"
-          />
-        </Labeled>
-        <Labeled label="Credit limit">Unlimited</Labeled>
-        <Labeled label="Open receivables">
-          <span data-testid="ar-total">
-            <Money cents={total} />
+      <Toolbar>
+        {/* Not a <label>: the picker's popover has its own controls, and a
+            wrapping label would re-dispatch stray clicks to the trigger. */}
+        <div className="field">
+          <span className="field-label" id="ar-range-label">
+            Due / transaction date
           </span>
-        </Labeled>
-      </div>
-      {rows.length === 0 ? (
-        <EmptyState>Nothing owed on delivered orders or scheduled installments.</EmptyState>
-      ) : (
-        <div style={{ overflowX: 'auto' }}>
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Reference</th>
-                <th>Transaction date</th>
-                <th>Due date</th>
-                <th>In dispute</th>
-                <th>Transaction type</th>
-                <th>Memo reference</th>
-                <th className="num">Amount</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => (
-                <tr key={r.id} data-testid="ar-row">
-                  <td>
-                    <Link href={`/orders/${r.orderId}`}>{r.reference}</Link>
-                  </td>
-                  <td>{fmtDate(r.transactionDate)}</td>
-                  <td>{fmtDate(r.dueDate)}</td>
-                  <td>{r.inDispute ? 'Yes' : 'No'}</td>
-                  <td>{r.transactionType}</td>
-                  <td>{r.memo}</td>
-                  <td className="num" style={{ fontWeight: 600 }}>
-                    <Money cents={r.amountCents} />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div aria-labelledby="ar-range-label">
+            <DateRangePicker
+              value={range}
+              onChange={setRange}
+              compact
+              allowAllTime
+              align="left"
+              testid="ar-range"
+            />
+          </div>
         </div>
-      )}
+      </Toolbar>
+      <Stack>
+        <StatGrid cols={4}>
+          <StatTile label="Credit limit" value="Unlimited" />
+          <StatTile
+            label="Open receivables"
+            value={<Money cents={total} />}
+            tone={total > 0 ? 'danger' : undefined}
+            data-testid="ar-total"
+          />
+        </StatGrid>
+        {rows.length === 0 ? (
+          <EmptyState>Nothing owed on delivered orders or scheduled installments.</EmptyState>
+        ) : (
+          <TableWrap>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Reference</th>
+                  <th>Transaction date</th>
+                  <th>Due date</th>
+                  <th>In dispute</th>
+                  <th>Transaction type</th>
+                  <th>Memo reference</th>
+                  <th className="num">Amount</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr key={r.id} data-testid="ar-row">
+                    <td>
+                      <Link href={`/orders/${r.orderId}`}>{r.reference}</Link>
+                    </td>
+                    <td>{fmtDate(r.transactionDate)}</td>
+                    <td>{fmtDate(r.dueDate)}</td>
+                    <td>{r.inDispute ? 'Yes' : 'No'}</td>
+                    <td>{r.transactionType}</td>
+                    <td>{r.memo}</td>
+                    <td className="num">
+                      <strong>
+                        <Money cents={r.amountCents} />
+                      </strong>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </TableWrap>
+        )}
+      </Stack>
     </Card>
   );
 }
@@ -838,51 +865,53 @@ function OpenServiceOrders({ data }: { data: Activity }) {
   const rows = data.openServiceOrders;
   return (
     <Card title="Open service orders" data-testid="activity-service">
-      <OpenOrdersSummary data={data} />
-      {rows.length === 0 ? (
-        <EmptyState>No open service orders.</EmptyState>
-      ) : (
-        <div style={{ overflowX: 'auto' }}>
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Order number</th>
-                <th>Order date</th>
-                <th>Type</th>
-                <th>Coordinator</th>
-                <th>Status</th>
-                <th>Product</th>
-                <th>Product description</th>
-                <th>Estimated date</th>
-                <th>Scheduled date</th>
-                <th className="num">Total</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => (
-                <tr key={r.id} data-testid="service-row">
-                  <td>
-                    <Link href={`/service/${r.id}`}>{r.number}</Link>
-                  </td>
-                  <td>{fmtDate(r.orderDate)}</td>
-                  <td>{r.type}</td>
-                  <td>{r.coordinator ?? '—'}</td>
-                  <td>
-                    <StatusBadge status={r.status} />
-                  </td>
-                  <td>{r.product}</td>
-                  <td>{r.description}</td>
-                  <td>{fmtDate(r.estimatedDate)}</td>
-                  <td>{fmtDate(r.scheduledDate)}</td>
-                  <td className="num">
-                    <Money cents={r.totalCents} />
-                  </td>
+      <Stack>
+        <OpenOrdersSummary data={data} />
+        {rows.length === 0 ? (
+          <EmptyState>No open service orders.</EmptyState>
+        ) : (
+          <TableWrap>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Order number</th>
+                  <th>Order date</th>
+                  <th>Type</th>
+                  <th>Coordinator</th>
+                  <th>Status</th>
+                  <th>Product</th>
+                  <th>Product description</th>
+                  <th>Estimated date</th>
+                  <th>Scheduled date</th>
+                  <th className="num">Total</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+              </thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr key={r.id} data-testid="service-row">
+                    <td>
+                      <Link href={`/service/${r.id}`}>{r.number}</Link>
+                    </td>
+                    <td>{fmtDate(r.orderDate)}</td>
+                    <td>{r.type}</td>
+                    <td>{r.coordinator ?? '—'}</td>
+                    <td>
+                      <StatusBadge status={r.status} />
+                    </td>
+                    <td>{r.product}</td>
+                    <td>{r.description}</td>
+                    <td>{fmtDate(r.estimatedDate)}</td>
+                    <td>{fmtDate(r.scheduledDate)}</td>
+                    <td className="num">
+                      <Money cents={r.totalCents} />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </TableWrap>
+        )}
+      </Stack>
     </Card>
   );
 }

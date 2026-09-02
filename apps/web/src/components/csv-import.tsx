@@ -3,7 +3,17 @@
 import { Upload } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { Button, Card, StatusBadge } from '@/components/ui';
+import {
+  Alert,
+  Button,
+  Field,
+  FormGrid,
+  SectionHeading,
+  Select,
+  StatusBadge,
+  TableWrap,
+  Toolbar,
+} from '@/components/ui';
 import { api } from '@/lib/api';
 
 interface EntityInfo {
@@ -37,7 +47,8 @@ interface Batch {
  * re-runnable — a corrected re-upload updates the same records.
  *
  * Drop it on any page that imports an entity; the full multi-entity
- * wizard at Settings → Import shares the same endpoints.
+ * wizard at Settings → Import shares the same endpoints. Renders no
+ * frame of its own — the host page puts it inside a `Card`.
  */
 export function CsvImport({
   entity,
@@ -118,33 +129,13 @@ export function CsvImport({
     spec?.fields.filter((f) => f.required && !mapping[f.name]).map((f) => f.name) ?? [];
 
   return (
-    <Card>
-      <div className="flex flex-wrap items-center gap-3">
-        <label className="btn btn-secondary btn-sm" style={{ cursor: 'pointer' }}>
-          <Upload size={13} aria-hidden />
-          {busy ? 'Working…' : batch ? 'Upload a different file' : 'Upload CSV file'}
-          <input
-            type="file"
-            accept=".csv,.tsv,.txt,text/csv"
-            style={{ display: 'none' }}
-            disabled={busy}
-            data-testid={`csv-import-${entity}`}
-            onChange={(e) => {
-              const f = e.target.files?.[0];
-              if (f) void upload(f);
-              e.target.value = '';
-            }}
-          />
-        </label>
-        {batch && (
-          <>
-            <span style={{ fontSize: 13 }}>
-              {batch.filename} · {batch.rowCount} rows
-            </span>
-            <StatusBadge status={batch.status} />
-            <div className="ml-auto flex flex-wrap gap-2">
+    <div>
+      <Toolbar
+        end={
+          batch ? (
+            <>
               <Button
-                variant="primary"
+                variant="secondary"
                 size="sm"
                 onClick={() => void run('validate')}
                 disabled={busy || batch.status === 'committed' || unmappedRequired.length > 0}
@@ -161,30 +152,55 @@ export function CsvImport({
               >
                 Commit
               </Button>
-            </div>
+            </>
+          ) : undefined
+        }
+      >
+        <label className="btn btn-secondary btn-sm cursor-pointer">
+          <Upload size={13} aria-hidden />
+          {busy ? 'Working…' : batch ? 'Upload a different file' : 'Upload CSV file'}
+          <input
+            type="file"
+            accept=".csv,.tsv,.txt,text/csv"
+            className="hidden"
+            disabled={busy}
+            data-testid={`csv-import-${entity}`}
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) void upload(f);
+              e.target.value = '';
+            }}
+          />
+        </label>
+        {batch && (
+          <>
+            <span>
+              {batch.filename} · {batch.rowCount} rows
+            </span>
+            <StatusBadge status={batch.status} />
           </>
         )}
-      </div>
-      {error && <p style={{ color: 'var(--danger)', fontSize: 13, margin: '8px 0 0' }}>{error}</p>}
+      </Toolbar>
+
+      {error && <Alert tone="error">{error}</Alert>}
 
       {batch && spec && (
         <>
           {unmappedRequired.length > 0 && (
-            <p style={{ color: 'var(--warning)', fontSize: 12.5, margin: '8px 0 0' }}>
+            <Alert tone="warning">
               Map the required column{unmappedRequired.length === 1 ? '' : 's'}{' '}
               <strong>{unmappedRequired.join(', ')}</strong> below before validating.
-            </p>
+            </Alert>
           )}
-          <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '10px 0 6px' }}>
-            Column mapping — file header for each field
-          </p>
-          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+          <SectionHeading
+            as="h3"
+            title="Column mapping"
+            description="Pick the file header that feeds each field. Required fields are starred."
+          />
+          <FormGrid cols={3}>
             {spec.fields.map((f) => (
-              <label key={f.name} style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-                {f.name}
-                {f.required ? ' *' : ''}
-                <select
-                  className="select"
+              <Field key={f.name} label={f.name} required={f.required}>
+                <Select
                   value={mapping[f.name] ?? ''}
                   disabled={busy || batch.status === 'committed'}
                   onChange={(e) => {
@@ -193,7 +209,6 @@ export function CsvImport({
                     else next[f.name] = e.target.value;
                     void remap(next);
                   }}
-                  style={{ display: 'block', width: '100%', marginTop: 2 }}
                 >
                   <option value="">— not mapped —</option>
                   {headers.map((h) => (
@@ -201,52 +216,60 @@ export function CsvImport({
                       {h}
                     </option>
                   ))}
-                </select>
-              </label>
+                </Select>
+              </Field>
             ))}
-          </div>
+          </FormGrid>
 
           {batch.validationJson && (
-            <div style={{ marginTop: 12 }}>
-              <p style={{ fontSize: 13, margin: '0 0 6px' }} data-testid={`csv-counts-${entity}`}>
-                <strong>{batch.validationJson.valid}</strong> valid ·{' '}
-                <strong
-                  style={{ color: batch.validationJson.invalid > 0 ? 'var(--danger)' : undefined }}
-                >
-                  {batch.validationJson.invalid}
-                </strong>{' '}
-                invalid
-                {batch.validationJson.invalid > 0 &&
-                  (batch.validationJson.valid === 0
-                    ? ' — nothing to commit; fix the rows below and re-validate'
-                    : ' — Commit imports the valid rows only; invalid rows are skipped')}
-              </p>
+            <>
+              <SectionHeading
+                as="h3"
+                title="Validation"
+                description={
+                  <span data-testid={`csv-counts-${entity}`}>
+                    <strong>{batch.validationJson.valid}</strong> valid ·{' '}
+                    <strong
+                      className={
+                        batch.validationJson.invalid > 0 ? 'text-[var(--danger)]' : undefined
+                      }
+                    >
+                      {batch.validationJson.invalid}
+                    </strong>{' '}
+                    invalid
+                    {batch.validationJson.invalid > 0 &&
+                      (batch.validationJson.valid === 0
+                        ? ' — nothing to commit; fix the rows below and re-validate'
+                        : ' — Commit imports the valid rows only; invalid rows are skipped')}
+                  </span>
+                }
+              />
               {batch.validationJson.errors.length > 0 && (
-                <div
-                  style={{
-                    maxHeight: 200,
-                    overflow: 'auto',
-                    border: '1px solid var(--border)',
-                    borderRadius: 'var(--radius-sm)',
-                  }}
-                >
-                  <table className="table" style={{ fontSize: 12 }}>
+                <TableWrap maxHeight={200}>
+                  <table className="table table-dense table-sticky">
+                    <thead>
+                      <tr>
+                        <th>Row</th>
+                        <th>Legacy ID</th>
+                        <th>Errors</th>
+                      </tr>
+                    </thead>
                     <tbody>
                       {batch.validationJson.errors.map((e) => (
                         <tr key={e.row}>
-                          <td style={{ whiteSpace: 'nowrap' }}>row {e.row}</td>
+                          <td className="nowrap">row {e.row}</td>
                           <td>{e.legacyId}</td>
                           <td>{e.errors.map((er) => `${er.field}: ${er.message}`).join('; ')}</td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
-                </div>
+                </TableWrap>
               )}
-            </div>
+            </>
           )}
         </>
       )}
-    </Card>
+    </div>
   );
 }

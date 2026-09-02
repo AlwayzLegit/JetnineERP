@@ -1,19 +1,24 @@
 'use client';
 
-import Link from 'next/link';
-
 import { useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import {
+  Alert,
   Button,
   Card,
   EmptyState,
   Field,
+  FormActions,
+  FormGrid,
   Input,
+  LinkButton,
   LoadingRows,
   PageHeader,
+  SectionHeading,
   Select,
+  Stack,
+  TableWrap,
 } from '@/components/ui';
 
 interface Vendor {
@@ -201,218 +206,246 @@ export default function ReplenishmentPage() {
   const orderable = effectiveRows.filter((r) => r.effectiveQty > 0);
 
   return (
-    <div className="space-y-6">
+    <div>
       <PageHeader
         title="Sales-rate replenishment"
         sub="One engine, three run modes — what this screen shows is exactly what the nightly build orders"
       />
-      {error ? (
-        <Card>
-          <p className="text-sm text-red-600">{error}</p>
-        </Card>
-      ) : null}
 
-      <Card>
-        <div className="grid gap-4 md:grid-cols-4">
-          <Field label="Vendor (required)">
-            <Select value={vendorId} onChange={(e) => setVendorId(e.target.value)}>
-              <option value="">Select a vendor…</option>
-              {(vendors ?? []).map((v) => (
-                <option key={v.id} value={v.id}>
-                  {v.name}
-                </option>
-              ))}
-            </Select>
-          </Field>
-          <Field label="Warehouse location">
-            <Select value={locationId} onChange={(e) => setLocationId(e.target.value)}>
-              <option value="">Select a location…</option>
-              {/* Q2: warehouses first — they are the replenishment target. */}
-              {[...(locations ?? [])]
-                .sort((a, b) =>
-                  a.locationType === b.locationType
-                    ? a.name.localeCompare(b.name)
-                    : a.locationType === 'warehouse'
-                      ? -1
-                      : 1,
-                )
-                .map((l) => (
-                  <option key={l.id} value={l.id}>
-                    {l.name}
-                    {l.locationType === 'warehouse' ? ' (warehouse)' : ''}
-                  </option>
-                ))}
-            </Select>
-          </Field>
-          <Field label="Variance % (blank = 100)">
-            <Input
-              type="number"
-              min={0}
-              max={999}
-              value={variance}
-              onChange={(e) => setVariance(e.target.value)}
-              placeholder="100"
-            />
-          </Field>
-          <Field label="Days for replenishment">
-            <Input
-              type="number"
-              min={0}
-              max={999}
-              value={daysForRepl}
-              onChange={(e) => setDaysForRepl(e.target.value)}
-              placeholder="Vendor default"
-              disabled={settings?.includeAllBackOrders === true}
-            />
-          </Field>
-          <Field label="Sales to use">
-            <Select
-              value={salesWindow}
-              onChange={(e) =>
-                setSalesWindow(
-                  e.target.value === 'last_year_subsequent'
-                    ? 'last_year_subsequent'
-                    : 'this_year_prior',
-                )
+      <Stack>
+        {error ? <Alert tone="error">{error}</Alert> : null}
+
+        <Card title="Criteria">
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              void run();
+            }}
+          >
+            <FormGrid cols={3}>
+              <Field label="Vendor" required>
+                <Select value={vendorId} onChange={(e) => setVendorId(e.target.value)}>
+                  <option value="">Select a vendor…</option>
+                  {(vendors ?? []).map((v) => (
+                    <option key={v.id} value={v.id}>
+                      {v.name}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <Field label="Warehouse location" required>
+                <Select value={locationId} onChange={(e) => setLocationId(e.target.value)}>
+                  <option value="">Select a location…</option>
+                  {/* Q2: warehouses first — they are the replenishment target. */}
+                  {[...(locations ?? [])]
+                    .sort((a, b) =>
+                      a.locationType === b.locationType
+                        ? a.name.localeCompare(b.name)
+                        : a.locationType === 'warehouse'
+                          ? -1
+                          : 1,
+                    )
+                    .map((l) => (
+                      <option key={l.id} value={l.id}>
+                        {l.name}
+                        {l.locationType === 'warehouse' ? ' (warehouse)' : ''}
+                      </option>
+                    ))}
+                </Select>
+              </Field>
+              <Field label="Variance %" hint="Blank = 100">
+                <Input
+                  type="number"
+                  min={0}
+                  max={999}
+                  value={variance}
+                  onChange={(e) => setVariance(e.target.value)}
+                  placeholder="100"
+                />
+              </Field>
+              <Field
+                label="Days for replenishment"
+                hint={
+                  settings?.includeAllBackOrders === true
+                    ? 'Ignored — this vendor includes all back orders'
+                    : undefined
+                }
+              >
+                <Input
+                  type="number"
+                  min={0}
+                  max={999}
+                  value={daysForRepl}
+                  onChange={(e) => setDaysForRepl(e.target.value)}
+                  placeholder="Vendor default"
+                  disabled={settings?.includeAllBackOrders === true}
+                />
+              </Field>
+              <Field label="Sales to use">
+                <Select
+                  value={salesWindow}
+                  onChange={(e) =>
+                    setSalesWindow(
+                      e.target.value === 'last_year_subsequent'
+                        ? 'last_year_subsequent'
+                        : 'this_year_prior',
+                    )
+                  }
+                >
+                  <option value="this_year_prior">This year&apos;s prior weeks</option>
+                  <option value="last_year_subsequent">Last year&apos;s subsequent weeks</option>
+                </Select>
+              </Field>
+              <div className="field">
+                <span className="field-label">Include overstocks</span>
+                <label className="flex h-9 items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={includeOverstocks}
+                    onChange={(e) => setIncludeOverstocks(e.target.checked)}
+                  />
+                  Show rows with nothing to order
+                </label>
+              </div>
+            </FormGrid>
+            <FormActions>
+              {rows ? (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => void run(true)}
+                  disabled={running}
+                >
+                  Rebuild list
+                </Button>
+              ) : null}
+              <Button
+                type="submit"
+                variant="primary"
+                disabled={running || !vendorId || !locationId}
+              >
+                {running ? 'Running…' : 'Run'}
+              </Button>
+            </FormActions>
+          </form>
+        </Card>
+
+        {vendorId && settingsLoaded ? (
+          <Card
+            title="Vendor replenishment settings"
+            actions={
+              <LinkButton size="sm" href={`/vendors/${vendorId}/settings?tab=replen`}>
+                Advanced vendor settings
+              </LinkButton>
+            }
+          >
+            <Stack>
+              {settings ? null : (
+                <Alert tone="warning">
+                  Not configured — this vendor is skipped by every run mode until enabled.
+                </Alert>
+              )}
+              <VendorSettingsForm settings={settings} onSave={(p) => void saveSettings(p)} />
+            </Stack>
+          </Card>
+        ) : null}
+
+        {rows === null ? (
+          vendorId && running ? (
+            <Card>
+              <LoadingRows rows={4} />
+            </Card>
+          ) : null
+        ) : rows.length === 0 ? (
+          <Card title="Items for replenishment">
+            <EmptyState title="Nothing to replenish">
+              No product cleared the sales-rate floor with a quantity to order under these criteria.
+            </EmptyState>
+          </Card>
+        ) : (
+          <Card
+            title="Items for replenishment"
+            description={`${rows.length} row(s) · ${orderable.length} with quantity to order — Order Qty edits are session-only; Rebuild List resets them.`}
+          >
+            <TableWrap>
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Product</th>
+                    <th>Vendor product</th>
+                    <th className="num">Rate/wk</th>
+                    <th className="num">Required</th>
+                    <th className="num">Additional</th>
+                    <th className="num">Available</th>
+                    <th className="num">Net PO</th>
+                    <th className="num">Volume</th>
+                    <th className="num">As-is</th>
+                    <th>Last sale</th>
+                    <th className="num">Order qty</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {effectiveRows.map((r) => (
+                    <tr key={r.variantId}>
+                      <td>
+                        {r.productName}
+                        {r.variantName ? ` — ${r.variantName}` : ''}
+                        {r.sku ? (
+                          <>
+                            {' '}
+                            <span className="muted">{r.sku}</span>
+                          </>
+                        ) : null}
+                      </td>
+                      <td>{r.vendorSku ?? r.sku ?? '—'}</td>
+                      <td className="num">{r.salesRate.toFixed(2)}</td>
+                      <td className="num">{r.required}</td>
+                      <td className="num">{r.additional}</td>
+                      <td className="num">{r.available}</td>
+                      <td className="num">{r.netPo}</td>
+                      <td className="num">{r.volume}</td>
+                      <td className="num">{r.asIsQty}</td>
+                      <td>{r.lastSaleDate ?? '—'}</td>
+                      <td className="num">
+                        <Input
+                          type="number"
+                          className="w-20 text-right"
+                          aria-label={`Order quantity for ${r.productName}`}
+                          value={String(r.effectiveQty)}
+                          onChange={(e) => {
+                            const n = Number(e.target.value);
+                            setOverrides((o) => ({
+                              ...o,
+                              [r.variantId]: Number.isInteger(n) ? n : 0,
+                            }));
+                          }}
+                        />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </TableWrap>
+            <FormActions
+              start={
+                <span>
+                  Only lines with a positive order quantity are written to the purchase order.
+                </span>
               }
             >
-              <option value="this_year_prior">This year&apos;s prior weeks</option>
-              <option value="last_year_subsequent">Last year&apos;s subsequent weeks</option>
-            </Select>
-          </Field>
-          <Field label="Include overstocks">
-            <label className="flex h-9 items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                checked={includeOverstocks}
-                onChange={(e) => setIncludeOverstocks(e.target.checked)}
-              />
-              Show rows with nothing to order
-            </label>
-          </Field>
-          <div className="flex items-end gap-2 md:col-span-2">
-            <Button
-              variant="primary"
-              onClick={() => void run()}
-              disabled={running || !vendorId || !locationId}
-            >
-              {running ? 'Running…' : 'Run'}
-            </Button>
-            {rows ? (
-              <Button onClick={() => void run(true)} disabled={running}>
-                Rebuild list
+              <Button
+                variant="primary"
+                onClick={() => void createPo()}
+                disabled={creating || orderable.length === 0}
+              >
+                {creating
+                  ? 'Creating…'
+                  : `Create purchase order (${orderable.length} line${orderable.length === 1 ? '' : 's'})`}
               </Button>
-            ) : null}
-          </div>
-        </div>
-      </Card>
-
-      {vendorId && settingsLoaded ? (
-        <Card
-          title="Vendor replenishment settings"
-          actions={
-            <Link href={`/vendors/${vendorId}/settings?tab=replen`}>
-              Advanced vendor settings →
-            </Link>
-          }
-        >
-          {settings ? null : (
-            <p className="mb-3 text-sm text-neutral-500">
-              Not configured — this vendor is skipped by every run mode until enabled.
-            </p>
-          )}
-          <VendorSettingsForm settings={settings} onSave={(p) => void saveSettings(p)} />
-        </Card>
-      ) : null}
-
-      {rows === null ? (
-        vendorId && running ? (
-          <Card>
-            <LoadingRows rows={4} />
+            </FormActions>
           </Card>
-        ) : null
-      ) : rows.length === 0 ? (
-        <EmptyState>
-          Nothing to replenish — no product cleared the sales-rate floor with a quantity to order
-          under these criteria.
-        </EmptyState>
-      ) : (
-        <Card title="Items for replenishment">
-          <p className="mb-3 text-xs text-neutral-500">
-            {rows.length} row(s) · {orderable.length} with quantity to order — Order Qty edits are
-            session-only; Rebuild List resets them.
-          </p>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b text-left text-xs uppercase text-neutral-500">
-                  <th className="py-2 pr-3">Product</th>
-                  <th className="py-2 pr-3">Vendor product</th>
-                  <th className="py-2 pr-3 text-right">Rate/wk</th>
-                  <th className="py-2 pr-3 text-right">Required</th>
-                  <th className="py-2 pr-3 text-right">Additional</th>
-                  <th className="py-2 pr-3 text-right">Available</th>
-                  <th className="py-2 pr-3 text-right">Net PO</th>
-                  <th className="py-2 pr-3 text-right">Volume</th>
-                  <th className="py-2 pr-3 text-right">As-is</th>
-                  <th className="py-2 pr-3">Last sale</th>
-                  <th className="py-2 pr-3 text-right">Order qty</th>
-                </tr>
-              </thead>
-              <tbody>
-                {effectiveRows.map((r) => (
-                  <tr key={r.variantId} className="border-b last:border-0">
-                    <td className="py-2 pr-3">
-                      {r.productName}
-                      {r.variantName ? ` — ${r.variantName}` : ''}
-                      {r.sku ? (
-                        <span className="ml-1 text-xs text-neutral-500">{r.sku}</span>
-                      ) : null}
-                    </td>
-                    <td className="py-2 pr-3">{r.vendorSku ?? r.sku ?? '—'}</td>
-                    <td className="py-2 pr-3 text-right">{r.salesRate.toFixed(2)}</td>
-                    <td className="py-2 pr-3 text-right">{r.required}</td>
-                    <td className="py-2 pr-3 text-right">{r.additional}</td>
-                    <td className="py-2 pr-3 text-right">{r.available}</td>
-                    <td className="py-2 pr-3 text-right">{r.netPo}</td>
-                    <td className="py-2 pr-3 text-right">{r.volume}</td>
-                    <td className="py-2 pr-3 text-right">{r.asIsQty}</td>
-                    <td className="py-2 pr-3">{r.lastSaleDate ?? '—'}</td>
-                    <td className="py-2 pr-3 text-right">
-                      <Input
-                        type="number"
-                        className="w-20 text-right"
-                        value={String(r.effectiveQty)}
-                        onChange={(e) => {
-                          const n = Number(e.target.value);
-                          setOverrides((o) => ({
-                            ...o,
-                            [r.variantId]: Number.isInteger(n) ? n : 0,
-                          }));
-                        }}
-                      />
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <div className="mt-4 flex items-center justify-between">
-            <p className="text-xs text-neutral-500">
-              Only lines with a positive order quantity are written to the purchase order.
-            </p>
-            <Button
-              variant="primary"
-              onClick={() => void createPo()}
-              disabled={creating || orderable.length === 0}
-            >
-              {creating
-                ? 'Creating…'
-                : `Create purchase order (${orderable.length} line${orderable.length === 1 ? '' : 's'})`}
-            </Button>
-          </div>
-        </Card>
-      )}
+        )}
+      </Stack>
     </div>
   );
 }
@@ -463,8 +496,13 @@ function VendorSettingsForm({
   }
 
   return (
-    <div className="space-y-4">
-      <div className="grid gap-4 md:grid-cols-4">
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        onSave(form);
+      }}
+    >
+      <FormGrid cols={3}>
         {num('weeklySalesRateWeeks', 'Sales-rate window (weeks)', 1, 156)}
         {num('minimumStockDays', 'Minimum stock days')}
         {num('leadDays', 'Lead days')}
@@ -485,9 +523,9 @@ function VendorSettingsForm({
             <option value="today">Today&apos;s date</option>
           </Select>
         </Field>
-      </div>
-      <div className="flex flex-wrap items-center gap-6 text-sm">
-        <label className="flex items-center gap-2">
+
+        <SectionHeading as="h3" title="Automatic POs" />
+        <label className="flex items-center gap-2 text-sm">
           <input
             type="checkbox"
             checked={form.generateAutomaticPos}
@@ -495,7 +533,7 @@ function VendorSettingsForm({
           />
           Generate automatic POs (nightly)
         </label>
-        <label className="flex items-center gap-2">
+        <label className="flex items-center gap-2 text-sm">
           <input
             type="checkbox"
             checked={form.automaticallyHoldPos}
@@ -503,7 +541,7 @@ function VendorSettingsForm({
           />
           Automatically hold POs (draft for buyer review)
         </label>
-        <label className="flex items-center gap-2">
+        <label className="flex items-center gap-2 text-sm">
           <input
             type="checkbox"
             checked={form.includeAllBackOrders}
@@ -517,30 +555,33 @@ function VendorSettingsForm({
           />
           Include all back orders
         </label>
-      </div>
-      <div className="flex flex-wrap items-center gap-3 text-sm">
-        <span className="text-xs uppercase text-neutral-500">Build POs on</span>
-        {WEEKDAYS.map((d, i) => (
-          <label key={d} className="flex items-center gap-1">
-            <input
-              type="checkbox"
-              checked={form.buildDays.includes(i)}
-              onChange={(e) =>
-                setForm((f) => ({
-                  ...f,
-                  buildDays: e.target.checked
-                    ? [...f.buildDays, i].sort()
-                    : f.buildDays.filter((x) => x !== i),
-                }))
-              }
-            />
-            {d}
-          </label>
-        ))}
-      </div>
-      <Button variant="primary" onClick={() => onSave(form)}>
-        Save vendor settings
-      </Button>
-    </div>
+
+        <SectionHeading as="h3" title="Build POs on" />
+        <div className="form-span flex flex-wrap items-center gap-4 text-sm">
+          {WEEKDAYS.map((d, i) => (
+            <label key={d} className="flex items-center gap-1">
+              <input
+                type="checkbox"
+                checked={form.buildDays.includes(i)}
+                onChange={(e) =>
+                  setForm((f) => ({
+                    ...f,
+                    buildDays: e.target.checked
+                      ? [...f.buildDays, i].sort()
+                      : f.buildDays.filter((x) => x !== i),
+                  }))
+                }
+              />
+              {d}
+            </label>
+          ))}
+        </div>
+      </FormGrid>
+      <FormActions>
+        <Button type="submit" variant="primary">
+          Save vendor settings
+        </Button>
+      </FormActions>
+    </form>
   );
 }

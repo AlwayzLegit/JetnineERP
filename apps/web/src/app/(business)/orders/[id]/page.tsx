@@ -9,15 +9,28 @@ import { formatMoney } from '@jetnine/shared';
 import { api, ApiError } from '@/lib/api';
 import { Money } from '@/components/money';
 import {
+  Alert,
+  BackLink,
+  Breadcrumbs,
   Button,
   Card,
-  Field,
-  Input,
-  LinkButton,
-  Skeleton,
-  Select,
-  StatusBadge,
   DisplayStatusBadge,
+  Field,
+  FormActions,
+  FormGrid,
+  Input,
+  KeyValue,
+  LinkButton,
+  PageHeader,
+  SectionHeading,
+  Select,
+  Skeleton,
+  Stack,
+  StatGrid,
+  StatTile,
+  StatusBadge,
+  TableWrap,
+  Toolbar,
 } from '@/components/ui';
 import { SecurityOverrideDialog } from '@/components/security-override-dialog';
 import { OrderNotesCard } from '@/components/order-notes-card';
@@ -552,16 +565,21 @@ export default function OrderDetailPage() {
   if (error && !order) {
     return (
       <div>
-        <h1 className="page-title">Order not found</h1>
-        <div className="card" style={{ padding: 24, maxWidth: 520 }}>
-          <p style={{ margin: '0 0 4px', fontWeight: 600 }}>We couldn&apos;t open this order.</p>
-          <p className="muted" style={{ margin: '0 0 12px', fontSize: 13 }}>
-            {error}
-          </p>
-          <Link href="/orders" className="btn btn-secondary btn-sm no-underline">
-            ← Back to orders
-          </Link>
-        </div>
+        <PageHeader
+          title="Order not found"
+          eyebrow={<BackLink href="/orders">All orders</BackLink>}
+        />
+        <Alert
+          tone="error"
+          title="We couldn't open this order."
+          action={
+            <LinkButton href="/orders" variant="secondary" size="sm">
+              ← Back to orders
+            </LinkButton>
+          }
+        >
+          {error}
+        </Alert>
       </div>
     );
   }
@@ -569,181 +587,161 @@ export default function OrderDetailPage() {
 
   const live = !order.completedAt && !order.cancelledAt;
   const depositOutstanding = Math.max(0, order.depositRequiredCents - order.paidCents);
+  const editable = live && !order.lockedAt;
 
   return (
     <div>
       {/* P-024: a breadcrumb takes you back; the action row keeps one
           primary control. */}
-      <nav aria-label="Breadcrumb" style={{ fontSize: 12.5, marginBottom: 2 }}>
-        <Link href="/orders" className="muted no-underline">
-          Orders
-        </Link>{' '}
-        <span className="muted">/</span> {order.number}
-      </nav>
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 12,
-          marginBottom: 4,
-          flexWrap: 'wrap',
-        }}
-      >
-        <h1 className="page-title" data-testid="order-number" style={{ margin: 0 }}>
-          {order.number}
-        </h1>
-        <span data-testid="order-status" style={{ display: 'inline-flex' }}>
-          {/* P-013 (BA-0017): same badge words as the orders list. */}
-          {order.displayStatus ? (
-            <DisplayStatusBadge
-              displayStatus={order.displayStatus}
-              poNumber={order.displayPoNumber}
-            />
-          ) : (
-            <StatusBadge status={order.status} />
-          )}
-        </span>
-        {order.legacyNumber && (
-          <span className="muted" style={{ fontSize: 12 }}>
-            STORIS #{order.legacyNumber}
-          </span>
-        )}
-        <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 8, flexWrap: 'wrap' }}>
-          <Button
-            size="sm"
-            variant="secondary"
-            data-testid="share-status-link"
-            onClick={async () => {
-              try {
-                const res = await api<{ path: string }>(`/v1/orders/${id}/share`, {
-                  method: 'POST',
-                });
-                const url = `${window.location.origin}${res.path}`;
-                await navigator.clipboard.writeText(url).catch(() => {});
-                toast.success('Status link copied — send it to the customer', {
-                  description: url,
-                });
-              } catch (err) {
-                toast.error(err instanceof Error ? err.message : String(err));
-              }
-            }}
-          >
-            <Share2 size={13} aria-hidden /> Share status link
-          </Button>
-          <span style={{ position: 'relative' }}>
+      <PageHeader
+        eyebrow={
+          <Breadcrumbs items={[{ label: 'Orders', href: '/orders' }, { label: order.number }]} />
+        }
+        title={<span data-testid="order-number">{order.number}</span>}
+        meta={
+          <>
+            <span data-testid="order-status" className="inline-flex">
+              {/* P-013 (BA-0017): same badge words as the orders list. */}
+              {order.displayStatus ? (
+                <DisplayStatusBadge
+                  displayStatus={order.displayStatus}
+                  poNumber={order.displayPoNumber}
+                />
+              ) : (
+                <StatusBadge status={order.status} />
+              )}
+            </span>
+            {order.legacyNumber && <span className="muted">STORIS #{order.legacyNumber}</span>}
+          </>
+        }
+        sub={
+          <>
+            {order.fulfillmentType}
+            {order.requestedDate ? ` · promised ${order.requestedDate}` : ''} · written{' '}
+            {new Date(order.createdAt).toLocaleString()}
+          </>
+        }
+        actions={
+          <>
             <Button
               size="sm"
-              variant="primary"
-              data-testid="order-documents-menu"
-              aria-haspopup="menu"
-              aria-expanded={docsOpen}
-              onClick={() => setDocsOpen((v) => !v)}
+              variant="secondary"
+              data-testid="share-status-link"
+              onClick={async () => {
+                try {
+                  const res = await api<{ path: string }>(`/v1/orders/${id}/share`, {
+                    method: 'POST',
+                  });
+                  const url = `${window.location.origin}${res.path}`;
+                  await navigator.clipboard.writeText(url).catch(() => {});
+                  toast.success('Status link copied — send it to the customer', {
+                    description: url,
+                  });
+                } catch (err) {
+                  toast.error(err instanceof Error ? err.message : String(err));
+                }
+              }}
             >
-              <Printer size={13} aria-hidden /> Documents ▾
+              <Share2 size={13} aria-hidden /> Share status link
             </Button>
-            {docsOpen && (
-              <span
-                role="menu"
-                style={{
-                  position: 'absolute',
-                  right: 0,
-                  top: '110%',
-                  zIndex: 30,
-                  display: 'flex',
-                  flexDirection: 'column',
-                  minWidth: 170,
-                  background: 'var(--surface)',
-                  border: '1px solid var(--border)',
-                  borderRadius: 8,
-                  boxShadow: '0 8px 24px rgba(0,0,0,0.12)',
-                  padding: 4,
-                }}
+            <span className="relative">
+              <Button
+                variant="primary"
+                data-testid="order-documents-menu"
+                aria-haspopup="menu"
+                aria-expanded={docsOpen}
+                onClick={() => setDocsOpen((v) => !v)}
               >
-                {[
-                  ['invoice', 'Invoice', 'print-invoice'],
-                  ['delivery-ticket', 'Delivery ticket', 'print-delivery-ticket'],
-                  ['pick-list', 'Pick list', 'print-pick-list'],
-                ].map(([slug, label, testid]) => (
-                  <Link
-                    key={slug}
-                    role="menuitem"
-                    href={`/print/orders/${id}/${slug}`}
-                    target="_blank"
-                    data-testid={testid}
-                    className="no-underline"
-                    style={{ padding: '6px 10px', fontSize: 13, borderRadius: 6, color: 'inherit' }}
-                    onClick={() => setDocsOpen(false)}
-                  >
-                    {label}
-                  </Link>
-                ))}
-              </span>
-            )}
-          </span>
-        </span>
-      </div>
-      <p style={{ fontSize: 13, color: 'var(--text-secondary)', margin: '0 0 12px' }}>
-        {order.fulfillmentType}
-        {order.requestedDate ? ` · promised ${order.requestedDate}` : ''} · written{' '}
-        {new Date(order.createdAt).toLocaleString()}
-      </p>
+                <Printer size={13} aria-hidden /> Documents ▾
+              </Button>
+              {docsOpen && (
+                // No shared dropdown-menu class exists yet; the popover
+                // keeps its own chrome until one lands in globals.css.
+                <span
+                  role="menu"
+                  style={{
+                    position: 'absolute',
+                    right: 0,
+                    top: '110%',
+                    zIndex: 30,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    minWidth: 170,
+                    background: 'var(--surface)',
+                    border: '1px solid var(--border)',
+                    borderRadius: 8,
+                    boxShadow: '0 8px 24px rgba(0,0,0,0.12)',
+                    padding: 4,
+                  }}
+                >
+                  {[
+                    ['invoice', 'Invoice', 'print-invoice'],
+                    ['delivery-ticket', 'Delivery ticket', 'print-delivery-ticket'],
+                    ['pick-list', 'Pick list', 'print-pick-list'],
+                  ].map(([slug, label, testid]) => (
+                    <Link
+                      key={slug}
+                      role="menuitem"
+                      href={`/print/orders/${id}/${slug}`}
+                      target="_blank"
+                      data-testid={testid}
+                      className="no-underline"
+                      style={{
+                        padding: '6px 10px',
+                        fontSize: 13,
+                        borderRadius: 6,
+                        color: 'inherit',
+                      }}
+                      onClick={() => setDocsOpen(false)}
+                    >
+                      {label}
+                    </Link>
+                  ))}
+                </span>
+              )}
+            </span>
+          </>
+        }
+      />
       <NextStepBanner order={order} deliveries={deliveries} />
 
       {order.onOpenRun && (
-        <div
+        <Alert
+          tone="error"
           data-testid="run-locked-banner"
-          className="card"
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 10,
-            padding: '10px 14px',
-            marginBottom: 16,
-            borderColor: 'var(--danger)',
-            fontSize: 13,
-          }}
+          action={
+            <LinkButton href="/deliveries/dispatch" size="sm" variant="secondary">
+              Dispatch →
+            </LinkButton>
+          }
         >
-          <Truck size={15} aria-hidden style={{ color: 'var(--danger)', flexShrink: 0 }} />
-          <span style={{ flex: 1 }}>
-            <strong>On the {order.onOpenRun.runDate} delivery run</strong> — the goods are
-            manifested against a truck, so this order is locked until the run closes out. Pull the
-            stop off the run (with a reason) to edit it first.
-          </span>
-          <LinkButton href="/deliveries/dispatch" size="sm" variant="secondary">
-            Dispatch →
-          </LinkButton>
-        </div>
+          <Truck size={14} aria-hidden className="mr-1 inline-block align-[-2px]" />
+          <strong>On the {order.onOpenRun.runDate} delivery run</strong> — the goods are manifested
+          against a truck, so this order is locked until the run closes out. Pull the stop off the
+          run (with a reason) to edit it first.
+        </Alert>
       )}
 
       {order.lockedAt && (
-        <div
+        <Alert
+          tone="warning"
           data-testid="locked-banner"
-          className="card"
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 10,
-            padding: '10px 14px',
-            marginBottom: 16,
-            borderColor: 'var(--warning)',
-            fontSize: 13,
-          }}
+          action={
+            <Button
+              size="sm"
+              variant="secondary"
+              data-testid="unlock-order"
+              disabled={busy}
+              onClick={() => setUnlockOpen(true)}
+            >
+              Unlock…
+            </Button>
+          }
         >
-          <Lock size={15} aria-hidden style={{ color: 'var(--warning)', flexShrink: 0 }} />
-          <span style={{ flex: 1 }}>
-            <strong>Locked</strong> — the delivery ticket was printed{' '}
-            {new Date(order.lockedAt).toLocaleString()}. No edits while it&apos;s on the truck.
-          </span>
-          <Button
-            size="sm"
-            variant="secondary"
-            data-testid="unlock-order"
-            disabled={busy}
-            onClick={() => setUnlockOpen(true)}
-          >
-            Unlock…
-          </Button>
-        </div>
+          <Lock size={14} aria-hidden className="mr-1 inline-block align-[-2px]" />
+          <strong>Locked</strong> — the delivery ticket was printed{' '}
+          {new Date(order.lockedAt).toLocaleString()}. No edits while it&apos;s on the truck.
+        </Alert>
       )}
 
       <SecurityOverrideDialog
@@ -784,19 +782,22 @@ export default function OrderDetailPage() {
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
           data-testid="add-price-dialog"
         >
-          <div
-            className="card"
-            style={{ maxWidth: 420, width: '100%', padding: 20, background: 'var(--surface)' }}
+          <Card
+            className="w-full max-w-[420px]"
+            title={
+              <>
+                Add {pendingAdd.productName}
+                {pendingAdd.variantName ? ` — ${pendingAdd.variantName}` : ''}
+              </>
+            }
+            description={
+              <>
+                Set the price it sells at (list <Money cents={pendingAdd.priceCents} />
+                ). The payment form pre-fills with the charge after it&apos;s added.
+              </>
+            }
           >
-            <h3 style={{ margin: '0 0 4px', fontSize: 16 }}>
-              Add {pendingAdd.productName}
-              {pendingAdd.variantName ? ` — ${pendingAdd.variantName}` : ''}
-            </h3>
-            <p style={{ margin: '0 0 12px', fontSize: 13, color: 'var(--text-secondary)' }}>
-              Set the price it sells at (list <Money cents={pendingAdd.priceCents} />
-              ). The payment form pre-fills with the charge after it&apos;s added.
-            </p>
-            <div className="grid gap-2 sm:grid-cols-2" style={{ marginBottom: 12 }}>
+            <FormGrid cols={2}>
               <Field label="Unit price ($)">
                 <Input
                   type="number"
@@ -818,14 +819,13 @@ export default function OrderDetailPage() {
                   data-testid="add-line-qty"
                 />
               </Field>
-            </div>
-            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-              <Button variant="ghost" size="sm" onClick={() => setPendingAdd(null)} disabled={busy}>
+            </FormGrid>
+            <FormActions>
+              <Button variant="ghost" onClick={() => setPendingAdd(null)} disabled={busy}>
                 Cancel
               </Button>
               <Button
                 variant="primary"
-                size="sm"
                 disabled={busy || !(Number(addPrice) >= 0) || !(Number(addQty) >= 1)}
                 data-testid="add-line-confirm"
                 onClick={() =>
@@ -838,19 +838,18 @@ export default function OrderDetailPage() {
               >
                 Add to order
               </Button>
-            </div>
-          </div>
+            </FormActions>
+          </Card>
         </div>
       )}
 
       <div className="grid gap-4 lg:grid-cols-[2fr_1fr]">
-        <div className="min-w-0">
+        <Stack className="min-w-0">
           <Card
             title="Lines"
-            style={{ marginBottom: 16 }}
             actions={
-              live && !order.lockedAt ? (
-                <span style={{ display: 'inline-flex', gap: 8 }}>
+              editable ? (
+                <>
                   {order.lines.length > 1 && (
                     <Button
                       size="sm"
@@ -920,21 +919,26 @@ export default function OrderDetailPage() {
                   >
                     Add product
                   </Button>
-                </span>
+                </>
               ) : undefined
             }
           >
             {splitMode && (
-              <div
-                className="mb-3 flex flex-wrap items-end gap-2"
-                style={{
-                  border: '1px solid var(--border)',
-                  borderRadius: 'var(--radius-sm)',
-                  padding: '8px 10px',
-                }}
+              <Toolbar
                 data-testid="split-bar"
+                end={
+                  <Button
+                    size="sm"
+                    variant="primary"
+                    disabled={busy || splitSel.size === 0}
+                    onClick={() => void splitOrder()}
+                    data-testid="split-confirm"
+                  >
+                    Split {splitSel.size || ''} line{splitSel.size === 1 ? '' : 's'} to a new order
+                  </Button>
+                }
               >
-                <span style={{ fontSize: 13, alignSelf: 'center' }}>
+                <span className="muted">
                   Tick the backordered lines — they move to a new order with its own promised date.
                   Payments stay here.
                 </span>
@@ -946,18 +950,9 @@ export default function OrderDetailPage() {
                     data-testid="split-date"
                   />
                 </Field>
-                <Button
-                  size="sm"
-                  variant="primary"
-                  disabled={busy || splitSel.size === 0}
-                  onClick={() => void splitOrder()}
-                  data-testid="split-confirm"
-                >
-                  Split {splitSel.size || ''} line{splitSel.size === 1 ? '' : 's'} to a new order
-                </Button>
-              </div>
+              </Toolbar>
             )}
-            <div className="overflow-x-auto">
+            <TableWrap>
               <table className="table">
                 <thead>
                   <tr>
@@ -970,7 +965,7 @@ export default function OrderDetailPage() {
                     <th>Inventory from</th>
                     <th>Stock</th>
                     <th className="num">Amount</th>
-                    <th />
+                    <th className="actions" />
                   </tr>
                 </thead>
                 <tbody>
@@ -982,7 +977,7 @@ export default function OrderDetailPage() {
                             <input
                               type="checkbox"
                               checked={splitSel.has(l.id)}
-                              style={{ accentColor: 'var(--brand)', marginRight: 8 }}
+                              className="mr-2 accent-brand"
                               aria-label={`Split ${l.description} to a new order`}
                               data-testid="split-line"
                               onChange={(e) => {
@@ -1006,10 +1001,8 @@ export default function OrderDetailPage() {
                             // PO-060: the type stays changeable on an open
                             // line — e.g. flip to direct ship when the
                             // vendor will deliver straight to the customer.
-                            <select
-                              className="select"
+                            <Select
                               value={l.lineType}
-                              style={{ fontSize: 12, padding: '2px 4px' }}
                               aria-label={`Line type for ${l.description}`}
                               onChange={async (e) => {
                                 try {
@@ -1026,12 +1019,12 @@ export default function OrderDetailPage() {
                               <option value="stock">stock</option>
                               <option value="special_order">special order</option>
                               <option value="direct_ship">direct ship</option>
-                            </select>
+                            </Select>
                           ) : l.lineType === 'special_order' ? (
-                            <span style={{ color: 'var(--warning)' }}>special order</span>
+                            <span className="text-warning">special order</span>
                           ) : l.lineType === 'direct_ship' ? (
                             <span
-                              style={{ color: 'var(--info, var(--warning))' }}
+                              className="text-info"
                               title="The vendor ships straight to the customer"
                             >
                               direct ship
@@ -1041,7 +1034,7 @@ export default function OrderDetailPage() {
                           )}
                         </td>
                         <td>
-                          {live && !order.lockedAt ? (
+                          {editable ? (
                             <Input
                               key={`qty-${l.id}-${l.quantity}`}
                               type="number"
@@ -1052,7 +1045,7 @@ export default function OrderDetailPage() {
                                 if (Number.isFinite(qty) && qty >= 1 && qty !== l.quantity)
                                   void patchLineField(l.id, { quantity: qty });
                               }}
-                              style={{ width: 56, padding: '4px 8px' }}
+                              className="w-16"
                               aria-label={`Quantity for ${l.description}`}
                               data-testid="order-line-qty"
                             />
@@ -1061,7 +1054,7 @@ export default function OrderDetailPage() {
                           )}
                         </td>
                         <td>
-                          {live && !order.lockedAt ? (
+                          {editable ? (
                             <Input
                               key={`price-${l.id}-${l.unitPriceCents}`}
                               type="number"
@@ -1077,7 +1070,7 @@ export default function OrderDetailPage() {
                                 )
                                   void patchLineField(l.id, { unitPriceCents: cents });
                               }}
-                              style={{ width: 84, padding: '4px 8px' }}
+                              className="w-24"
                               aria-label={`Unit price for ${l.description}`}
                               data-testid="order-line-price"
                             />
@@ -1086,7 +1079,7 @@ export default function OrderDetailPage() {
                           )}
                         </td>
                         <td>
-                          {live && !order.lockedAt ? (
+                          {editable ? (
                             <Input
                               key={`disc-${l.id}-${l.discountCents}`}
                               type="number"
@@ -1105,7 +1098,7 @@ export default function OrderDetailPage() {
                                 )
                                   void patchLineField(l.id, { lineDiscountCents: cents });
                               }}
-                              style={{ width: 70, padding: '4px 8px' }}
+                              className="w-20"
                               aria-label={`Discount for ${l.description}`}
                               data-testid="order-line-disc"
                             />
@@ -1117,10 +1110,8 @@ export default function OrderDetailPage() {
                         </td>
                         <td>
                           {l.lineType === 'custom' ? (
-                            <span className="muted" style={{ fontSize: 12 }}>
-                              fee
-                            </span>
-                          ) : live && !order.lockedAt ? (
+                            <span className="muted">fee</span>
+                          ) : editable ? (
                             <Select
                               value={l.fulfillmentMethod ?? ''}
                               onChange={(e) =>
@@ -1128,7 +1119,7 @@ export default function OrderDetailPage() {
                                   fulfillmentMethod: e.target.value || null,
                                 })
                               }
-                              style={{ width: 116, padding: '4px 8px', fontSize: 12 }}
+                              className="w-32"
                               aria-label={`Fulfillment for ${l.description}`}
                               data-testid="order-line-fulfillment"
                             >
@@ -1144,10 +1135,8 @@ export default function OrderDetailPage() {
                         </td>
                         <td>
                           {l.lineType === 'custom' ? (
-                            <span className="muted" style={{ fontSize: 12 }}>
-                              —
-                            </span>
-                          ) : live && !order.lockedAt ? (
+                            <span className="muted">—</span>
+                          ) : editable ? (
                             <Select
                               value={
                                 l.sourceLocationId ?? order.stockLocationId ?? order.locationId
@@ -1159,7 +1148,7 @@ export default function OrderDetailPage() {
                                     e.target.value === fallback ? null : e.target.value,
                                 });
                               }}
-                              style={{ width: 130, padding: '4px 8px', fontSize: 12 }}
+                              className="w-36"
                               aria-label={`Inventory source for ${l.description}`}
                               data-testid="order-line-source"
                             >
@@ -1187,7 +1176,7 @@ export default function OrderDetailPage() {
                         <td>
                           <StockCell
                             line={l}
-                            canRelease={Boolean(live && !order.lockedAt && !order.onOpenRun)}
+                            canRelease={Boolean(editable && !order.onOpenRun)}
                             busy={busy}
                             onRelease={() => void releaseLine(l)}
                           />
@@ -1195,23 +1184,19 @@ export default function OrderDetailPage() {
                         <td className="num">
                           <Money cents={l.totalCents} />
                         </td>
-                        <td>
-                          {live && !order.lockedAt && l.qtyFulfilled === 0 && (
-                            <button
+                        <td className="actions">
+                          {editable && l.qtyFulfilled === 0 && (
+                            <Button
+                              size="sm"
+                              variant="ghost"
                               onClick={() => void removeLine(l)}
                               disabled={busy}
-                              style={{
-                                border: 'none',
-                                background: 'none',
-                                cursor: 'pointer',
-                                color: 'var(--text-muted)',
-                              }}
                               aria-label={`Remove ${l.description}`}
                               title="Remove line (releases its reserved stock)"
                               data-testid="order-remove-line"
                             >
                               ✕
-                            </button>
+                            </Button>
                           )}
                         </td>
                       </tr>
@@ -1219,20 +1204,13 @@ export default function OrderDetailPage() {
                         !l.po &&
                         l.quantity - l.qtyFulfilled - l.qtyReserved > 0 && (
                           <tr>
-                            <td colSpan={10} style={{ paddingTop: 0 }}>
-                              <div
-                                style={{
-                                  background: '#fef3c7',
-                                  color: '#92400e',
-                                  fontSize: 12.5,
-                                  padding: '4px 10px',
-                                  borderRadius: 6,
-                                }}
-                                data-testid="order-line-short"
-                              >
-                                {l.quantity - l.qtyFulfilled - l.qtyReserved} not reserved — not in
-                                stock at the selected source location.
-                              </div>
+                            <td
+                              colSpan={10}
+                              className="text-warning"
+                              data-testid="order-line-short"
+                            >
+                              {l.quantity - l.qtyFulfilled - l.qtyReserved} not reserved — not in
+                              stock at the selected source location.
                             </td>
                           </tr>
                         )}
@@ -1240,18 +1218,16 @@ export default function OrderDetailPage() {
                   ))}
                 </tbody>
               </table>
-            </div>
+            </TableWrap>
           </Card>
 
           {(order.family ?? []).length > 0 && <SplitOrdersCard order={order} />}
 
-          <Card title="Payments" style={{ marginBottom: 16 }} id="payments-card">
+          <Card title="Payments" id="payments-card">
             {order.payments.length === 0 ? (
-              <p className="muted" style={{ fontSize: 13, margin: 0 }}>
-                No money taken yet.
-              </p>
+              <p className="muted">No money taken yet.</p>
             ) : (
-              <div className="overflow-x-auto">
+              <TableWrap>
                 <table className="table">
                   <thead>
                     <tr>
@@ -1269,9 +1245,7 @@ export default function OrderDetailPage() {
                         <td>{new Date(p.createdAt).toLocaleString()}</td>
                         <td>{p.kind}</td>
                         <td>{TENDERS.find((t) => t.value === p.method)?.label ?? p.method}</td>
-                        <td className="muted" style={{ fontSize: 12.5 }}>
-                          {p.processorRef ?? '—'}
-                        </td>
+                        <td className="muted">{p.processorRef ?? '—'}</td>
                         <td>
                           <StatusBadge status={p.status} />
                         </td>
@@ -1282,71 +1256,68 @@ export default function OrderDetailPage() {
                     ))}
                   </tbody>
                 </table>
-              </div>
+              </TableWrap>
             )}
             {live && (
-              <div style={{ marginTop: 12, display: 'grid', gap: 8 }}>
-                <div
-                  style={{
-                    display: 'flex',
-                    gap: 8,
-                    alignItems: 'center',
-                    flexWrap: 'wrap',
-                  }}
+              <>
+                <SectionHeading as="h3" title="New payment" />
+                <FormGrid cols={3}>
+                  <Field label="Method">
+                    <Select
+                      value={payMethod}
+                      onChange={(e) => setPayMethod(e.target.value as typeof payMethod)}
+                      data-testid="order-pay-method"
+                    >
+                      {TENDERS.map((t) => (
+                        <option key={t.value} value={t.value}>
+                          {t.label}
+                        </option>
+                      ))}
+                    </Select>
+                  </Field>
+                  <Field label="Amount ($)">
+                    <Input
+                      type="number"
+                      step="0.01"
+                      min={0}
+                      value={payAmount}
+                      onChange={(e) => setPayAmount(e.target.value)}
+                      placeholder={
+                        depositOutstanding > 0
+                          ? (depositOutstanding / 100).toFixed(2)
+                          : (order.balanceDueCents / 100).toFixed(2)
+                      }
+                      data-testid="payment-amount"
+                    />
+                  </Field>
+                  {payMethod !== 'cash' && (
+                    <Field label="Reference">
+                      <Input
+                        placeholder="Reference / last 4 / approval #"
+                        value={payRef}
+                        onChange={(e) => setPayRef(e.target.value)}
+                        data-testid="payment-ref"
+                      />
+                    </Field>
+                  )}
+                </FormGrid>
+                <FormActions
+                  start={
+                    depositOutstanding > 0 ? (
+                      <span className="text-warning">
+                        Deposit outstanding: {formatMoney(depositOutstanding)}
+                      </span>
+                    ) : undefined
+                  }
                 >
-                  <Select
-                    value={payMethod}
-                    onChange={(e) => setPayMethod(e.target.value as typeof payMethod)}
-                    style={{ width: 150 }}
-                    data-testid="order-pay-method"
-                  >
-                    {TENDERS.map((t) => (
-                      <option key={t.value} value={t.value}>
-                        {t.label}
-                      </option>
-                    ))}
-                  </Select>
-                  <Input
-                    type="number"
-                    step="0.01"
-                    min={0}
-                    value={payAmount}
-                    onChange={(e) => setPayAmount(e.target.value)}
-                    placeholder={
-                      depositOutstanding > 0
-                        ? (depositOutstanding / 100).toFixed(2)
-                        : (order.balanceDueCents / 100).toFixed(2)
-                    }
-                    style={{ width: 110 }}
-                    data-testid="payment-amount"
-                  />
                   {order.balanceDueCents > 0 && (
                     <Button
-                      size="sm"
-                      variant="ghost"
+                      variant="secondary"
                       onClick={() => setPayAmount((order.balanceDueCents / 100).toFixed(2))}
                     >
                       Exact balance
                     </Button>
                   )}
-                </div>
-                {payMethod !== 'cash' && (
-                  <Input
-                    placeholder="Reference / last 4 / approval #"
-                    value={payRef}
-                    onChange={(e) => setPayRef(e.target.value)}
-                    style={{ maxWidth: 420 }}
-                    data-testid="payment-ref"
-                  />
-                )}
-                <div
-                  style={{
-                    display: 'flex',
-                    gap: 8,
-                    alignItems: 'center',
-                    flexWrap: 'wrap',
-                  }}
-                >
                   <Button
                     variant="primary"
                     onClick={() => void takePayment()}
@@ -1356,13 +1327,8 @@ export default function OrderDetailPage() {
                     <CreditCard size={14} aria-hidden />
                     {order.paidCents === 0 ? 'Take deposit' : 'Take payment'}
                   </Button>
-                  {depositOutstanding > 0 && (
-                    <span style={{ fontSize: 12, color: 'var(--warning)' }}>
-                      Deposit outstanding: {formatMoney(depositOutstanding)}
-                    </span>
-                  )}
-                </div>
-              </div>
+                </FormActions>
+              </>
             )}
           </Card>
 
@@ -1409,17 +1375,17 @@ export default function OrderDetailPage() {
               );
             }
             return (
-              <Card title="Deliveries & fulfillment" style={{ marginBottom: 16 }}>
+              <Card title="Deliveries & fulfillment">
                 {deliveries.length === 0 ? (
-                  <p className="muted" style={{ fontSize: 13, margin: 0 }}>
+                  <p className="muted">
                     {order.fulfillmentType === 'pickup'
                       ? 'Pickup order — hand over the goods below when the customer arrives.'
                       : 'Nothing scheduled yet.'}
                   </p>
                 ) : (
-                  <ul style={{ margin: 0, paddingLeft: 16, fontSize: 13 }}>
+                  <ul className="grid gap-1">
                     {deliveries.map((dv) => (
-                      <li key={dv.id} style={{ marginBottom: 4 }}>
+                      <li key={dv.id}>
                         <Link href={`/deliveries/${dv.id}`}>
                           {dv.scheduledDate}
                           {dv.windowStart ? ` ${dv.windowStart.slice(0, 5)}` : ''}
@@ -1453,7 +1419,7 @@ export default function OrderDetailPage() {
                                   setBusy(false);
                                 }
                               }}
-                              style={{ width: 140, padding: '2px 6px', fontSize: 12 }}
+                              className="w-36"
                               aria-label="Change the delivery date"
                               data-testid="reschedule-delivery-date"
                             />
@@ -1463,25 +1429,45 @@ export default function OrderDetailPage() {
                     ))}
                   </ul>
                 )}
-                {live && order.status !== 'quote' && (
-                  <div
-                    style={{
-                      display: 'flex',
-                      gap: 8,
-                      marginTop: 12,
-                      alignItems: 'center',
-                      flexWrap: 'wrap',
-                    }}
-                  >
-                    {order.fulfillmentType === 'delivery' ? (
-                      <>
-                        <Input
-                          type="date"
-                          value={deliveryDate}
-                          onChange={(e) => setDeliveryDate(e.target.value)}
-                          style={{ width: 150 }}
-                          data-testid="delivery-date"
-                        />
+                {live &&
+                  order.status !== 'quote' &&
+                  (order.fulfillmentType === 'delivery' ? (
+                    <>
+                      <SectionHeading as="h3" title="Book a delivery" />
+                      <FormGrid cols={3}>
+                        <Field label="Delivery date">
+                          <Input
+                            type="date"
+                            value={deliveryDate}
+                            onChange={(e) => setDeliveryDate(e.target.value)}
+                            data-testid="delivery-date"
+                          />
+                        </Field>
+                      </FormGrid>
+                      <FormActions
+                        start={
+                          <>
+                            {dayCapacity && (
+                              <span
+                                className={`badge badge-${
+                                  dayCapacity.booked >= dayCapacity.cap ? 'danger' : 'info'
+                                }`}
+                                data-testid="capacity-hint"
+                              >
+                                {dayCapacity.booked}/{dayCapacity.cap} stops booked
+                              </span>
+                            )}
+                            {counterUnits > 0 && (
+                              <span className="muted" data-testid="counter-lines-hint">
+                                {counterUnits} unit{counterUnits === 1 ? '' : 's'} marked
+                                take-with/pickup stay off the truck — use{' '}
+                                <strong>Complete take-with items</strong> in the actions to hand
+                                them over.
+                              </span>
+                            )}
+                          </>
+                        }
+                      >
                         <Button
                           variant="primary"
                           onClick={async () => {
@@ -1533,30 +1519,10 @@ export default function OrderDetailPage() {
                           <Truck size={14} aria-hidden />
                           Schedule delivery
                         </Button>
-                        {dayCapacity && (
-                          <span
-                            className={`badge badge-${
-                              dayCapacity.booked >= dayCapacity.cap ? 'danger' : 'info'
-                            }`}
-                            data-testid="capacity-hint"
-                          >
-                            {dayCapacity.booked}/{dayCapacity.cap} stops booked
-                          </span>
-                        )}
-                        {counterUnits > 0 && (
-                          <span
-                            className="muted"
-                            style={{ fontSize: 12.5, flexBasis: '100%' }}
-                            data-testid="counter-lines-hint"
-                          >
-                            {counterUnits} unit{counterUnits === 1 ? '' : 's'} marked
-                            take-with/pickup stay off the truck — use{' '}
-                            <strong>Complete take-with items</strong> in the actions to hand them
-                            over.
-                          </span>
-                        )}
-                      </>
-                    ) : (
+                      </FormActions>
+                    </>
+                  ) : (
+                    <FormActions>
                       <Button
                         variant="primary"
                         onClick={() => void act('/fulfill', {})}
@@ -1565,9 +1531,8 @@ export default function OrderDetailPage() {
                       >
                         Hand over the goods (pickup)
                       </Button>
-                    )}
-                  </div>
-                )}
+                    </FormActions>
+                  ))}
               </Card>
             );
           })()}
@@ -1577,33 +1542,22 @@ export default function OrderDetailPage() {
 
           <OrderNotesCard orderId={order.id} />
 
-          <Card title="Change history" style={{ marginBottom: 16 }}>
+          <Card title="Change history">
             {timeline.length === 0 ? (
-              <p className="muted" style={{ fontSize: 13, margin: 0 }}>
-                No events recorded.
-              </p>
+              <p className="muted">No events recorded.</p>
             ) : (
-              <ul style={{ margin: 0, paddingLeft: 16, fontSize: 13 }} data-testid="order-timeline">
+              <ul className="grid gap-1.5" data-testid="order-timeline">
                 {timeline.map((t) => {
                   const changes = auditChanges(t);
                   return (
-                    <li key={t.id} style={{ marginBottom: 6 }}>
-                      <span style={{ color: 'var(--text-secondary)' }}>
+                    <li key={t.id}>
+                      <span className="text-secondary">
                         {new Date(t.createdAt).toLocaleString()}
                       </span>{' '}
                       — {t.action.replace('order.', '').replace(/[._]/g, ' ')}
-                      {t.actorEmail && (
-                        <span style={{ color: 'var(--text-muted)' }}> by {t.actorEmail}</span>
-                      )}
+                      {t.actorEmail && <span className="muted"> by {t.actorEmail}</span>}
                       {changes.length > 0 && (
-                        <ul
-                          style={{
-                            margin: '2px 0 0',
-                            paddingLeft: 14,
-                            color: 'var(--text-secondary)',
-                            fontSize: 12,
-                          }}
-                        >
+                        <ul className="text-secondary mt-0.5 pl-3.5 text-xs">
                           {changes.map((c) => (
                             <li key={c.field}>
                               {c.field}: {c.from} → {c.to}
@@ -1617,259 +1571,277 @@ export default function OrderDetailPage() {
               </ul>
             )}
           </Card>
-        </div>
+        </Stack>
 
-        <div className="min-w-0">
+        <Stack className="min-w-0">
           <BalanceStrip order={order} />
-          <Card title="Customer" style={{ marginBottom: 16 }}>
+          <Card
+            title="Customer"
+            actions={
+              customer ? (
+                <LinkButton size="sm" variant="secondary" href={`/customers/${customer.id}`}>
+                  Open
+                </LinkButton>
+              ) : undefined
+            }
+          >
             {customer ? (
-              <p style={{ fontSize: 13, margin: 0 }}>
-                <Link href={`/customers/${customer.id}`}>
-                  <strong>
-                    {[customer.firstName, customer.lastName].filter(Boolean).join(' ') ||
-                      '(no name)'}
-                  </strong>
-                </Link>
-                <br />
-                <span style={{ color: 'var(--text-secondary)' }}>
-                  {customer.email ?? customer.phone ?? '—'}
-                </span>
-              </p>
+              <KeyValue
+                rows={[
+                  {
+                    label: 'Name',
+                    value: (
+                      <Link href={`/customers/${customer.id}`}>
+                        <strong>
+                          {[customer.firstName, customer.lastName].filter(Boolean).join(' ') ||
+                            '(no name)'}
+                        </strong>
+                      </Link>
+                    ),
+                  },
+                  { label: 'Contact', value: customer.email ?? customer.phone ?? '—' },
+                  ...(order.fulfillmentType === 'delivery' && order.addressLine1
+                    ? [
+                        {
+                          label: 'Deliver to',
+                          value: (
+                            <>
+                              {order.addressLine1}
+                              {order.addressLine2 ? <>, {order.addressLine2}</> : null}
+                              <br />
+                              {[order.addressCity, order.addressRegion, order.addressPostalCode]
+                                .filter(Boolean)
+                                .join(', ')}
+                              {order.addressPhone ? (
+                                <>
+                                  <br />
+                                  {order.addressPhone}
+                                </>
+                              ) : null}
+                            </>
+                          ),
+                        },
+                      ]
+                    : []),
+                ]}
+              />
             ) : (
-              <p className="muted" style={{ fontSize: 13, margin: 0 }}>
-                …
-              </p>
-            )}
-            {order.fulfillmentType === 'delivery' && order.addressLine1 && (
-              <p
-                style={{
-                  fontSize: 13,
-                  color: 'var(--text-secondary)',
-                  marginTop: 8,
-                  marginBottom: 0,
-                }}
-              >
-                {order.addressLine1}
-                {order.addressLine2 ? <>, {order.addressLine2}</> : null}
-                <br />
-                {[order.addressCity, order.addressRegion, order.addressPostalCode]
-                  .filter(Boolean)
-                  .join(', ')}
-                {order.addressPhone ? (
-                  <>
-                    <br />
-                    {order.addressPhone}
-                  </>
-                ) : null}
-              </p>
+              <p className="muted">Loading customer…</p>
             )}
           </Card>
 
-          <Card title="Money" style={{ marginBottom: 16 }}>
-            <Row label="Subtotal" value={order.subtotalCents} />
-            <Row label="Discount" value={-order.discountCents} />
-            <Row label="Tax" value={order.taxCents} />
-            <Row label="Total" value={order.totalCents} bold />
-            <div style={{ borderTop: '1px solid var(--border)', margin: '8px 0' }} />
-            <Row label="Deposit required" value={order.depositRequiredCents} />
-            <Row label="Paid" value={order.paidCents} />
-            <div data-testid="balance-due">
-              <Row label="Balance due" value={order.balanceDueCents} bold />
-            </div>
-            {order.creditDueCents > 0 && (
-              <div data-testid="credit-due" style={{ color: 'var(--danger)' }}>
-                <Row label="Overpaid — credit" value={order.creditDueCents} bold />
-              </div>
-            )}
-            {live &&
-              order.creditDueCents > 0 &&
-              (order.family ?? [])
-                .filter((f) => f.balanceDueCents > 0)
-                .map((f) => (
-                  <Button
-                    key={f.id}
-                    variant="secondary"
-                    onClick={() => void moveCredit(f.id, f.number)}
-                    disabled={busy}
-                    data-testid={`move-credit-${f.number}`}
-                    style={{ marginTop: 8, width: '100%' }}
-                  >
-                    Move credit to {f.number} (owes <Money cents={f.balanceDueCents} />)
-                  </Button>
-                ))}
-            {(order.family ?? []).length > 0 && (
-              <p
-                data-testid="split-family"
-                style={{
-                  fontSize: 13,
-                  color: 'var(--text-secondary)',
-                  marginTop: 10,
-                  marginBottom: 0,
-                }}
-              >
-                Split family:{' '}
-                {(order.family ?? []).map((f, i) => (
-                  <span key={f.id}>
-                    {i > 0 ? ' · ' : ''}
-                    <Link href={`/orders/${f.id}`}>{f.number}</Link>
-                  </span>
-                ))}
-              </p>
-            )}
+          <Card title="Money">
+            <Stack gap="sm">
+              <KeyValue
+                rows={[
+                  { label: 'Subtotal', value: <MoneyValue cents={order.subtotalCents} /> },
+                  { label: 'Discount', value: <MoneyValue cents={-order.discountCents} /> },
+                  { label: 'Tax', value: <MoneyValue cents={order.taxCents} /> },
+                  {
+                    label: <strong>Total</strong>,
+                    value: <MoneyValue cents={order.totalCents} bold />,
+                  },
+                ]}
+              />
+              <hr className="border-border" />
+              <KeyValue
+                rows={[
+                  {
+                    label: 'Deposit required',
+                    value: <MoneyValue cents={order.depositRequiredCents} />,
+                  },
+                  { label: 'Paid', value: <MoneyValue cents={order.paidCents} /> },
+                  {
+                    label: <strong>Balance due</strong>,
+                    value: (
+                      <span data-testid="balance-due">
+                        <MoneyValue cents={order.balanceDueCents} bold />
+                      </span>
+                    ),
+                  },
+                  ...(order.creditDueCents > 0
+                    ? [
+                        {
+                          label: <strong className="text-danger">Overpaid — credit</strong>,
+                          value: (
+                            <span data-testid="credit-due" className="text-danger">
+                              <MoneyValue cents={order.creditDueCents} bold />
+                            </span>
+                          ),
+                        },
+                      ]
+                    : []),
+                ]}
+              />
+              {live &&
+                order.creditDueCents > 0 &&
+                (order.family ?? [])
+                  .filter((f) => f.balanceDueCents > 0)
+                  .map((f) => (
+                    <Button
+                      key={f.id}
+                      variant="secondary"
+                      onClick={() => void moveCredit(f.id, f.number)}
+                      disabled={busy}
+                      data-testid={`move-credit-${f.number}`}
+                      className="w-full"
+                    >
+                      Move credit to {f.number} (owes <Money cents={f.balanceDueCents} />)
+                    </Button>
+                  ))}
+              {(order.family ?? []).length > 0 && (
+                <KeyValue
+                  data-testid="split-family"
+                  rows={[
+                    {
+                      label: 'Split family',
+                      value: (order.family ?? []).map((f, i) => (
+                        <span key={f.id}>
+                          {i > 0 ? ' · ' : ''}
+                          <Link href={`/orders/${f.id}`}>{f.number}</Link>
+                        </span>
+                      )),
+                    },
+                  ]}
+                />
+              )}
+            </Stack>
           </Card>
 
           {live && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {error && <p style={{ color: 'var(--danger)', margin: 0, fontSize: 13 }}>{error}</p>}
-              {order.status === 'draft' && (
-                <Button
-                  variant="primary"
-                  onClick={() => void confirmDraft()}
-                  disabled={busy}
-                  data-testid="confirm-draft"
-                >
-                  <CheckCircle2 size={14} aria-hidden />
-                  Confirm order — make it a live sale
-                </Button>
-              )}
-              {order.status === 'quote' && (
-                <Button
-                  variant="primary"
-                  onClick={() => void act('/reserve')}
-                  disabled={busy}
-                  data-testid="confirm-reserve"
-                >
-                  Confirm order (commit stock)
-                </Button>
-              )}
-              {(() => {
-                // Take-with hand-over (owner 2026-08-31): visible while
-                // any take-with unit is still owed on a live order.
-                if (!['open', 'partially_fulfilled'].includes(order.status)) return null;
-                const tw = order.lines.filter(
-                  (l) =>
-                    l.lineType !== 'direct_ship' &&
-                    (l.fulfillmentMethod ?? order.fulfillmentType) === 'take_with' &&
-                    l.quantity - l.qtyFulfilled - l.qtyReturned > 0,
-                );
-                if (tw.length === 0) return null;
-                const pureTakeWith = order.lines.every(
-                  (l) =>
-                    l.lineType === 'custom' ||
-                    (l.fulfillmentMethod ?? order.fulfillmentType) === 'take_with',
-                );
-                const shortUnits = tw
-                  .filter((l) => l.variantId && l.lineType !== 'custom')
-                  .reduce(
-                    (n, l) => n + Math.max(0, l.quantity - l.qtyFulfilled - l.qtyReserved),
-                    0,
+            <Card title="Actions">
+              <Stack gap="sm">
+                {error && <Alert tone="error">{error}</Alert>}
+                {order.status === 'draft' && (
+                  <Button
+                    variant="primary"
+                    onClick={() => void confirmDraft()}
+                    disabled={busy}
+                    data-testid="confirm-draft"
+                  >
+                    <CheckCircle2 size={14} aria-hidden />
+                    Confirm order — make it a live sale
+                  </Button>
+                )}
+                {order.status === 'quote' && (
+                  <Button
+                    variant="primary"
+                    onClick={() => void act('/reserve')}
+                    disabled={busy}
+                    data-testid="confirm-reserve"
+                  >
+                    Confirm order (commit stock)
+                  </Button>
+                )}
+                {(() => {
+                  // Take-with hand-over (owner 2026-08-31): visible while
+                  // any take-with unit is still owed on a live order.
+                  if (!['open', 'partially_fulfilled'].includes(order.status)) return null;
+                  const tw = order.lines.filter(
+                    (l) =>
+                      l.lineType !== 'direct_ship' &&
+                      (l.fulfillmentMethod ?? order.fulfillmentType) === 'take_with' &&
+                      l.quantity - l.qtyFulfilled - l.qtyReturned > 0,
                   );
-                const waiting: string[] = [];
-                if (pureTakeWith) {
-                  if (shortUnits > 0)
-                    waiting.push(
-                      `${shortUnits} unit${shortUnits === 1 ? '' : 's'} not in stock at the source — a user with inventory access must adjust them in`,
+                  if (tw.length === 0) return null;
+                  const pureTakeWith = order.lines.every(
+                    (l) =>
+                      l.lineType === 'custom' ||
+                      (l.fulfillmentMethod ?? order.fulfillmentType) === 'take_with',
+                  );
+                  const shortUnits = tw
+                    .filter((l) => l.variantId && l.lineType !== 'custom')
+                    .reduce(
+                      (n, l) => n + Math.max(0, l.quantity - l.qtyFulfilled - l.qtyReserved),
+                      0,
                     );
-                  if (order.balanceDueCents > 0)
-                    waiting.push(`$${(order.balanceDueCents / 100).toFixed(2)} still due`);
-                }
-                return (
-                  <>
-                    {waiting.length > 0 && (
-                      <div
-                        style={{
-                          background: '#fef3c7',
-                          color: '#92400e',
-                          fontSize: 12.5,
-                          padding: '6px 10px',
-                          borderRadius: 6,
-                        }}
-                        data-testid="take-with-waiting"
-                      >
-                        Take-with — waiting on: {waiting.join('; ')}. Then hit Complete.
-                      </div>
-                    )}
-                    <Button
-                      variant="primary"
-                      onClick={() => void completeTakeWith()}
-                      disabled={busy}
-                      data-testid="complete-take-with"
-                    >
-                      <CheckCircle2 size={14} aria-hidden />
-                      Complete take-with item{tw.length === 1 ? '' : 's'}
-                    </Button>
-                  </>
-                );
-              })()}
-              {order.status === 'fulfilled' && (
-                <Button
-                  variant="primary"
-                  onClick={() => void act('/complete', {})}
-                  disabled={busy || order.balanceDueCents > 0}
-                  data-testid="complete-order"
-                  title={
-                    order.balanceDueCents > 0
-                      ? 'Collect the balance first'
-                      : 'Close the book on this order'
+                  const waiting: string[] = [];
+                  if (pureTakeWith) {
+                    if (shortUnits > 0)
+                      waiting.push(
+                        `${shortUnits} unit${shortUnits === 1 ? '' : 's'} not in stock at the source — a user with inventory access must adjust them in`,
+                      );
+                    if (order.balanceDueCents > 0)
+                      waiting.push(`$${(order.balanceDueCents / 100).toFixed(2)} still due`);
                   }
-                >
-                  <CheckCircle2 size={14} aria-hidden />
-                  Complete order
-                </Button>
-              )}
-              {order.status === 'fulfilled' && order.balanceDueCents > 0 && (
+                  return (
+                    <>
+                      {waiting.length > 0 && (
+                        <Alert tone="warning" data-testid="take-with-waiting">
+                          Take-with — waiting on: {waiting.join('; ')}. Then hit Complete.
+                        </Alert>
+                      )}
+                      <Button
+                        variant="primary"
+                        onClick={() => void completeTakeWith()}
+                        disabled={busy}
+                        data-testid="complete-take-with"
+                      >
+                        <CheckCircle2 size={14} aria-hidden />
+                        Complete take-with item{tw.length === 1 ? '' : 's'}
+                      </Button>
+                    </>
+                  );
+                })()}
+                {order.status === 'fulfilled' && (
+                  <Button
+                    variant="primary"
+                    onClick={() => void act('/complete', {})}
+                    disabled={busy || order.balanceDueCents > 0}
+                    data-testid="complete-order"
+                    title={
+                      order.balanceDueCents > 0
+                        ? 'Collect the balance first'
+                        : 'Close the book on this order'
+                    }
+                  >
+                    <CheckCircle2 size={14} aria-hidden />
+                    Complete order
+                  </Button>
+                )}
+                {order.status === 'fulfilled' && order.balanceDueCents > 0 && (
+                  <Button
+                    variant="secondary"
+                    onClick={() => void act('/complete', { allowBalance: true })}
+                    disabled={busy}
+                    data-testid="complete-with-balance"
+                  >
+                    Complete with balance due (AR)
+                  </Button>
+                )}
+                {!['quote', 'fulfilled', 'draft'].includes(order.status) && (
+                  <Button variant="secondary" onClick={() => void act('/release')} disabled={busy}>
+                    Release reserved stock
+                  </Button>
+                )}
                 <Button
-                  onClick={() => void act('/complete', { allowBalance: true })}
+                  variant="danger"
+                  onClick={() => {
+                    const reason = prompt('Cancel this order? Reason (optional):');
+                    if (reason === null) return;
+                    void act('/cancel', { reason: reason || null });
+                  }}
                   disabled={busy}
-                  data-testid="complete-with-balance"
                 >
-                  Complete with balance due (AR)
+                  Cancel order
                 </Button>
-              )}
-              {!['quote', 'fulfilled', 'draft'].includes(order.status) && (
-                <Button onClick={() => void act('/release')} disabled={busy}>
-                  Release reserved stock
-                </Button>
-              )}
-              <Button
-                variant="danger"
-                onClick={() => {
-                  const reason = prompt('Cancel this order? Reason (optional):');
-                  if (reason === null) return;
-                  void act('/cancel', { reason: reason || null });
-                }}
-                disabled={busy}
-              >
-                Cancel order
-              </Button>
-              <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>
-                Schedule or reschedule delivery in Deliveries &amp; fulfillment below.
-              </p>
-            </div>
+                <span className="field-hint">
+                  Schedule or reschedule delivery in Deliveries &amp; fulfillment on the left.
+                </span>
+              </Stack>
+            </Card>
           )}
-        </div>
+        </Stack>
       </div>
     </div>
   );
 }
 
-function Row({ label, value, bold }: { label: string; value: number; bold?: boolean }) {
+/** Right-aligned money for the Money card's label/value rows. */
+function MoneyValue({ cents, bold }: { cents: number; bold?: boolean }) {
+  const money = <Money cents={cents} />;
   return (
-    <div
-      style={{
-        display: 'flex',
-        justifyContent: 'space-between',
-        fontSize: 13,
-        fontWeight: bold ? 700 : 400,
-        marginBottom: 4,
-        fontVariantNumeric: 'tabular-nums',
-      }}
-    >
-      <span>{label}</span>
-      <span>
-        <Money cents={value} />
-      </span>
-    </div>
+    <span className="block text-right tabular-nums">{bold ? <strong>{money}</strong> : money}</span>
   );
 }
 
@@ -1963,7 +1935,7 @@ function PaymentPlanCard(props: {
         testid="payment-plan-card"
         actions={
           props.balanceDueCents > 0 ? (
-            <span style={{ display: 'inline-flex', gap: 6 }}>
+            <>
               <Button size="sm" variant="ghost" onClick={() => setExpanded(true)}>
                 Options…
               </Button>
@@ -1976,7 +1948,7 @@ function PaymentPlanCard(props: {
               >
                 Start layaway plan
               </Button>
-            </span>
+            </>
           ) : undefined
         }
       >
@@ -1988,92 +1960,97 @@ function PaymentPlanCard(props: {
   }
 
   return (
-    <Card title="Payment plan" style={{ marginBottom: 16 }} data-testid="payment-plan-card">
-      {error && <p style={{ color: 'var(--danger)', fontSize: 13 }}>{error}</p>}
+    <Card
+      title="Payment plan"
+      description={
+        plan ? (
+          <>
+            {plan.frequency} plan · <span data-testid="plan-status">{plan.status}</span>
+          </>
+        ) : props.balanceDueCents > 0 ? (
+          'Split the balance into installments.'
+        ) : undefined
+      }
+      data-testid="payment-plan-card"
+    >
+      {error && <Alert tone="error">{error}</Alert>}
       {plan === null ? (
         props.balanceDueCents > 0 ? (
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-            <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
-              Split the balance into
-            </span>
-            <Input
-              type="number"
-              min={2}
-              max={24}
-              value={count}
-              onChange={(e) => setCount(e.target.value)}
-              style={{ width: 60 }}
-              data-testid="plan-count"
-            />
-            <Select
-              value={frequency}
-              onChange={(e) => setFrequency(e.target.value)}
-              style={{ width: 120 }}
-            >
-              <option value="weekly">weekly</option>
-              <option value="biweekly">biweekly</option>
-              <option value="monthly">monthly</option>
-            </Select>
-            <Button
-              variant="primary"
-              onClick={() => void createPlan()}
-              disabled={busy || !(Number(count) >= 1)}
-              data-testid="create-plan"
-            >
-              Start layaway plan
-            </Button>
-          </div>
+          <>
+            <FormGrid cols={3}>
+              <Field label="Installments">
+                <Input
+                  type="number"
+                  min={2}
+                  max={24}
+                  value={count}
+                  onChange={(e) => setCount(e.target.value)}
+                  data-testid="plan-count"
+                />
+              </Field>
+              <Field label="Frequency">
+                <Select value={frequency} onChange={(e) => setFrequency(e.target.value)}>
+                  <option value="weekly">weekly</option>
+                  <option value="biweekly">biweekly</option>
+                  <option value="monthly">monthly</option>
+                </Select>
+              </Field>
+            </FormGrid>
+            <FormActions>
+              <Button
+                variant="primary"
+                onClick={() => void createPlan()}
+                disabled={busy || !(Number(count) >= 1)}
+                data-testid="create-plan"
+              >
+                Start layaway plan
+              </Button>
+            </FormActions>
+          </>
         ) : (
-          <p className="muted" style={{ fontSize: 13, margin: 0 }}>
-            No plan — the balance is already zero.
-          </p>
+          <p className="muted">No plan — the balance is already zero.</p>
         )
       ) : (
-        <>
-          <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '0 0 8px' }}>
-            {plan.frequency} plan · <span data-testid="plan-status">{plan.status}</span>
-          </p>
-          <div className="overflow-x-auto">
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>#</th>
-                  <th>Due</th>
-                  <th>Status</th>
-                  <th className="num">Amount</th>
-                  <th className="num"> </th>
+        <TableWrap>
+          <table className="table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Due</th>
+                <th>Status</th>
+                <th className="num">Amount</th>
+                <th className="actions" />
+              </tr>
+            </thead>
+            <tbody>
+              {plan.installments.map((i) => (
+                <tr key={i.seq}>
+                  <td>{i.seq}</td>
+                  <td>{i.dueDate}</td>
+                  <td>
+                    <StatusBadge status={i.status} />
+                  </td>
+                  <td className="num">
+                    <Money cents={i.amountCents} />
+                  </td>
+                  <td className="actions">
+                    {i.status !== 'paid' && plan.status === 'active' && (
+                      <Button
+                        variant="primary"
+                        size="sm"
+                        onClick={() => void pay(i.seq)}
+                        disabled={busy}
+                        data-testid={`pay-installment-${i.seq}`}
+                      >
+                        Pay cash
+                      </Button>
+                    )}
+                  </td>
                 </tr>
-              </thead>
-              <tbody>
-                {plan.installments.map((i) => (
-                  <tr key={i.seq}>
-                    <td>{i.seq}</td>
-                    <td>{i.dueDate}</td>
-                    <td>
-                      <StatusBadge status={i.status} />
-                    </td>
-                    <td className="num">
-                      <Money cents={i.amountCents} />
-                    </td>
-                    <td className="num">
-                      {i.status !== 'paid' && plan.status === 'active' && (
-                        <Button
-                          variant="primary"
-                          size="sm"
-                          onClick={() => void pay(i.seq)}
-                          disabled={busy}
-                          data-testid={`pay-installment-${i.seq}`}
-                        >
-                          Pay cash
-                        </Button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </>
+              ))}
+            </tbody>
+          </table>
+        </TableWrap>
       )}
     </Card>
   );
@@ -2267,218 +2244,221 @@ function ReturnsCard({
   }
 
   return (
-    <Card title="Returns" style={{ marginBottom: 16 }} data-testid="returns-card">
-      {returns.length > 0 && (
-        <table className="table" style={{ marginBottom: 12 }} data-testid="returns-table">
-          <thead>
-            <tr>
-              <th>RMA</th>
-              <th>Status</th>
-              <th>Refund</th>
-              <th className="num">Amount</th>
-              <th />
-            </tr>
-          </thead>
-          <tbody>
-            {returns.map((r) => (
-              <tr key={r.id}>
-                <td style={{ fontWeight: 600 }}>{r.rmaNumber}</td>
-                <td>
-                  {r.status === 'authorized'
-                    ? `awaiting ${r.fulfillment === 'pickup' ? 'pickup' : 'drop-off'}`
-                    : r.status}
-                </td>
-                <td>{r.refundMethod === 'store_credit' ? 'store credit' : 'original tenders'}</td>
-                <td className="num">
-                  <Money cents={r.amountCents} />
-                </td>
-                <td style={{ whiteSpace: 'nowrap' }}>
-                  {r.status === 'authorized' && (
-                    <>
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        disabled={working}
-                        data-testid="receive-return"
-                        onClick={() => void receiveReturn(r.id)}
-                      >
-                        Goods received
-                      </Button>{' '}
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        disabled={working}
-                        onClick={() => setCancellingReturnId(r.id)}
-                      >
-                        Cancel
-                      </Button>
-                    </>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
-
-      <SecurityOverrideDialog
-        open={windowOverrideOpen}
-        title="Outside the return window — manager approval needed"
-        usageClass="exception"
-        submitLabel="Approve return"
-        perform={(payload) =>
-          api(`/v1/orders/${order.id}/return`, {
-            method: 'POST',
-            body: JSON.stringify({ ...buildReturnBody(), override: payload.override }),
-          }).then(() => undefined)
-        }
-        onClose={() => setWindowOverrideOpen(false)}
-        onSuccess={() => {
-          setQty({});
-          setReason('');
-          void onChanged();
-          void loadReturns();
-        }}
-      />
-      <SecurityOverrideDialog
-        open={cancellingReturnId != null}
-        title="Cancel this return authorization"
-        usageClass="exception"
-        submitLabel="Cancel return"
-        perform={(payload) =>
-          api(`/v1/order-returns/${cancellingReturnId}/cancel`, {
-            method: 'POST',
-            body: JSON.stringify(payload),
-          }).then(() => undefined)
-        }
-        onClose={() => setCancellingReturnId(null)}
-        onSuccess={() => {
-          void onChanged();
-          void loadReturns();
-        }}
-      />
-      {returnable.length > 0 && (
-        <>
-          <table className="table" style={{ marginBottom: 8 }}>
-            <thead>
-              <tr>
-                <th>Delivered item</th>
-                <th className="num">Returnable</th>
-                <th>Return qty</th>
-              </tr>
-            </thead>
-            <tbody>
-              {returnable.map((l) => {
-                const max = l.qtyFulfilled - l.qtyReturned;
-                return (
-                  <tr key={l.id}>
-                    <td>{l.description}</td>
-                    <td className="num">{max}</td>
+    <Card
+      title="Returns"
+      description="Returned goods go to the As-Is queue for manager/warehouse review — never straight back to sellable stock."
+      data-testid="returns-card"
+    >
+      <Stack>
+        {returns.length > 0 && (
+          <TableWrap>
+            <table className="table" data-testid="returns-table">
+              <thead>
+                <tr>
+                  <th>RMA</th>
+                  <th>Status</th>
+                  <th>Refund</th>
+                  <th className="num">Amount</th>
+                  <th className="actions" />
+                </tr>
+              </thead>
+              <tbody>
+                {returns.map((r) => (
+                  <tr key={r.id}>
+                    <td className="font-semibold">{r.rmaNumber}</td>
                     <td>
-                      <Input
-                        type="number"
-                        min={0}
-                        max={max}
-                        value={qty[l.id] ?? 0}
-                        data-testid="return-qty"
-                        onChange={(e) =>
-                          setQty((prev) => ({
-                            ...prev,
-                            [l.id]: Math.max(0, Math.min(max, Number(e.target.value) || 0)),
-                          }))
-                        }
-                        style={{ width: 70 }}
-                      />
+                      {r.status === 'authorized'
+                        ? `awaiting ${r.fulfillment === 'pickup' ? 'pickup' : 'drop-off'}`
+                        : r.status}
+                    </td>
+                    <td>
+                      {r.refundMethod === 'store_credit' ? 'store credit' : 'original tenders'}
+                    </td>
+                    <td className="num">
+                      <Money cents={r.amountCents} />
+                    </td>
+                    <td className="actions">
+                      {r.status === 'authorized' && (
+                        <>
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            disabled={working}
+                            data-testid="receive-return"
+                            onClick={() => void receiveReturn(r.id)}
+                          >
+                            Goods received
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            disabled={working}
+                            onClick={() => setCancellingReturnId(r.id)}
+                          >
+                            Cancel
+                          </Button>
+                        </>
+                      )}
                     </td>
                   </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </>
-      )}
-      <div className="flex flex-wrap items-end gap-2" style={{ fontSize: 13 }}>
-        <label style={{ display: 'grid', gap: 2, fontSize: 12 }}>
-          Refund to
-          <select
-            className="select"
-            value={method}
-            data-testid="refund-method"
-            onChange={(e) => setMethod(e.target.value as 'original' | 'store_credit')}
-          >
-            <option value="original">Original tenders</option>
-            <option value="store_credit">Store credit</option>
-          </select>
-        </label>
-        <label style={{ display: 'grid', gap: 2, fontSize: 12 }}>
-          Goods come back by
-          <select
-            className="select"
-            value={fulfillment}
-            data-testid="return-fulfillment"
-            onChange={(e) => setFulfillment(e.target.value as 'drop_off' | 'pickup')}
-          >
-            <option value="drop_off">Customer drop-off (refund now)</option>
-            <option value="pickup">Truck pickup (refund on receipt)</option>
-          </select>
-        </label>
-        <label style={{ display: 'grid', gap: 2, fontSize: 12, flex: 1, minWidth: 160 }}>
-          Reason
-          <Input value={reason} onChange={(e) => setReason(e.target.value)} />
-        </label>
+                ))}
+              </tbody>
+            </table>
+          </TableWrap>
+        )}
+
+        <SecurityOverrideDialog
+          open={windowOverrideOpen}
+          title="Outside the return window — manager approval needed"
+          usageClass="exception"
+          submitLabel="Approve return"
+          perform={(payload) =>
+            api(`/v1/orders/${order.id}/return`, {
+              method: 'POST',
+              body: JSON.stringify({ ...buildReturnBody(), override: payload.override }),
+            }).then(() => undefined)
+          }
+          onClose={() => setWindowOverrideOpen(false)}
+          onSuccess={() => {
+            setQty({});
+            setReason('');
+            void onChanged();
+            void loadReturns();
+          }}
+        />
+        <SecurityOverrideDialog
+          open={cancellingReturnId != null}
+          title="Cancel this return authorization"
+          usageClass="exception"
+          submitLabel="Cancel return"
+          perform={(payload) =>
+            api(`/v1/order-returns/${cancellingReturnId}/cancel`, {
+              method: 'POST',
+              body: JSON.stringify(payload),
+            }).then(() => undefined)
+          }
+          onClose={() => setCancellingReturnId(null)}
+          onSuccess={() => {
+            void onChanged();
+            void loadReturns();
+          }}
+        />
         {returnable.length > 0 && (
-          <Button
-            variant="primary"
-            disabled={busy || working}
-            onClick={() => void processReturn()}
-            data-testid="process-return"
-          >
-            Process return
-          </Button>
+          <TableWrap>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Delivered item</th>
+                  <th className="num">Returnable</th>
+                  <th>Return qty</th>
+                </tr>
+              </thead>
+              <tbody>
+                {returnable.map((l) => {
+                  const max = l.qtyFulfilled - l.qtyReturned;
+                  return (
+                    <tr key={l.id}>
+                      <td>{l.description}</td>
+                      <td className="num">{max}</td>
+                      <td>
+                        <Input
+                          type="number"
+                          min={0}
+                          max={max}
+                          value={qty[l.id] ?? 0}
+                          data-testid="return-qty"
+                          aria-label={`Return quantity for ${l.description}`}
+                          onChange={(e) =>
+                            setQty((prev) => ({
+                              ...prev,
+                              [l.id]: Math.max(0, Math.min(max, Number(e.target.value) || 0)),
+                            }))
+                          }
+                          className="w-20"
+                        />
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </TableWrap>
         )}
-        <label style={{ display: 'grid', gap: 2, fontSize: 12 }}>
-          Adjustment ($)
-          <Input
-            type="number"
-            step="0.01"
-            min={0}
-            value={adjustAmount}
-            onChange={(e) => setAdjustAmount(e.target.value)}
-            data-testid="adjust-amount"
-            style={{ width: 110 }}
-          />
-        </label>
-        {adjustCodes.length > 0 && (
-          <label style={{ display: 'grid', gap: 2, fontSize: 12 }}>
-            Adjustment reason
-            <select
-              className="select"
-              value={adjustCodeId}
-              data-testid="adjust-reason-code"
-              onChange={(e) => setAdjustCodeId(e.target.value)}
+        <div>
+          <FormGrid cols={3}>
+            <Field label="Refund to">
+              <Select
+                value={method}
+                data-testid="refund-method"
+                onChange={(e) => setMethod(e.target.value as 'original' | 'store_credit')}
+              >
+                <option value="original">Original tenders</option>
+                <option value="store_credit">Store credit</option>
+              </Select>
+            </Field>
+            <Field label="Goods come back by">
+              <Select
+                value={fulfillment}
+                data-testid="return-fulfillment"
+                onChange={(e) => setFulfillment(e.target.value as 'drop_off' | 'pickup')}
+              >
+                <option value="drop_off">Customer drop-off (refund now)</option>
+                <option value="pickup">Truck pickup (refund on receipt)</option>
+              </Select>
+            </Field>
+            <Field label="Reason">
+              <Input value={reason} onChange={(e) => setReason(e.target.value)} />
+            </Field>
+            <SectionHeading as="h3" title="Price adjustment" />
+            <Field label="Adjustment ($)">
+              <Input
+                type="number"
+                step="0.01"
+                min={0}
+                value={adjustAmount}
+                onChange={(e) => setAdjustAmount(e.target.value)}
+                data-testid="adjust-amount"
+              />
+            </Field>
+            {adjustCodes.length > 0 && (
+              <Field label="Adjustment reason">
+                <Select
+                  value={adjustCodeId}
+                  data-testid="adjust-reason-code"
+                  onChange={(e) => setAdjustCodeId(e.target.value)}
+                >
+                  <option value="">Select…</option>
+                  {adjustCodes.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.code} — {c.description}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+            )}
+          </FormGrid>
+          <FormActions>
+            <Button
+              variant="secondary"
+              disabled={busy || working}
+              onClick={() => void processAdjustment()}
+              data-testid="process-adjustment"
             >
-              <option value="">Select…</option>
-              {adjustCodes.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.code} — {c.description}
-                </option>
-              ))}
-            </select>
-          </label>
-        )}
-        <Button
-          variant="secondary"
-          disabled={busy || working}
-          onClick={() => void processAdjustment()}
-          data-testid="process-adjustment"
-        >
-          Price adjustment
-        </Button>
-      </div>
-      <p className="muted" style={{ fontSize: 11.5, margin: '8px 0 0' }}>
-        Returned goods go to the As-Is queue for manager/warehouse review — never straight back to
-        sellable stock.
-      </p>
+              Price adjustment
+            </Button>
+            {returnable.length > 0 && (
+              <Button
+                variant="primary"
+                disabled={busy || working}
+                onClick={() => void processReturn()}
+                data-testid="process-return"
+              >
+                Process return
+              </Button>
+            )}
+          </FormActions>
+        </div>
+      </Stack>
     </Card>
   );
 }
@@ -2511,7 +2491,7 @@ function ExchangesCard({
   return (
     <Card
       title="Exchanges"
-      style={{ marginBottom: 16 }}
+      description="An exchange nets the return credit against the replacement in one settlement (restocking fee per Settings)."
       data-testid="exchanges-card"
       actions={
         !order.originalOrderId && delivered ? (
@@ -2527,7 +2507,7 @@ function ExchangesCard({
       }
     >
       {order.originalOrderId && (
-        <p style={{ fontSize: 13, margin: '0 0 8px' }}>
+        <Alert tone="info">
           This is an <strong>Exchange Order</strong> —{' '}
           <Link href={`/orders/${order.originalOrderId}`}>view the original invoice</Link>.
           {order.creditDueCents > 0 && (
@@ -2536,48 +2516,42 @@ function ExchangesCard({
               Credit due to customer: <Money cents={order.creditDueCents} />.
             </>
           )}
-        </p>
+        </Alert>
       )}
       {exchanges.length === 0 ? (
-        !order.originalOrderId && (
-          <p className="muted" style={{ fontSize: 13, margin: 0 }}>
-            No exchange written against this invoice.
-          </p>
-        )
+        !order.originalOrderId && <p className="muted">No exchange written against this invoice.</p>
       ) : (
-        <table className="table" data-testid="exchanges-table">
-          <thead>
-            <tr>
-              <th>Exchange order</th>
-              <th>Status</th>
-              <th>Written</th>
-              <th className="num">Total</th>
-            </tr>
-          </thead>
-          <tbody>
-            {exchanges.map((x) => (
-              <tr key={x.id}>
-                <td>
-                  <Link href={`/orders/${x.id}`}>
-                    <strong>{x.number}</strong>
-                  </Link>
-                </td>
-                <td>
-                  <StatusBadge status={x.status} />
-                </td>
-                <td style={{ fontSize: 13 }}>{new Date(x.createdAt).toLocaleDateString()}</td>
-                <td className="num">
-                  <Money cents={x.totalCents} />
-                </td>
+        <TableWrap>
+          <table className="table" data-testid="exchanges-table">
+            <thead>
+              <tr>
+                <th>Exchange order</th>
+                <th>Status</th>
+                <th>Written</th>
+                <th className="num">Total</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {exchanges.map((x) => (
+                <tr key={x.id}>
+                  <td>
+                    <Link href={`/orders/${x.id}`}>
+                      <strong>{x.number}</strong>
+                    </Link>
+                  </td>
+                  <td>
+                    <StatusBadge status={x.status} />
+                  </td>
+                  <td>{new Date(x.createdAt).toLocaleDateString()}</td>
+                  <td className="num">
+                    <Money cents={x.totalCents} />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </TableWrap>
       )}
-      <p className="muted" style={{ fontSize: 11.5, margin: '8px 0 0' }}>
-        An exchange nets the return credit against the replacement in one settlement (restocking fee
-        per Settings).
-      </p>
     </Card>
   );
 }
@@ -2595,24 +2569,9 @@ function CollapsedCard({
   actions?: React.ReactNode;
 }) {
   return (
-    <div
-      className="card"
-      data-testid={testid}
-      style={{
-        marginBottom: 16,
-        padding: '8px 14px',
-        display: 'flex',
-        alignItems: 'center',
-        gap: 10,
-        flexWrap: 'wrap',
-      }}
-    >
-      <span style={{ fontWeight: 600, fontSize: 13 }}>{title}</span>
-      <span className="muted" style={{ fontSize: 12.5, flex: 1 }}>
-        {children}
-      </span>
-      {actions}
-    </div>
+    <Card title={title} actions={actions} data-testid={testid}>
+      <p className="muted">{children}</p>
+    </Card>
   );
 }
 
@@ -2634,11 +2593,7 @@ function StockCell({
   onRelease: () => void;
 }) {
   if (l.lineType === 'custom') {
-    return (
-      <span className="muted" style={{ fontSize: 12 }}>
-        —
-      </span>
-    );
+    return <span className="muted">—</span>;
   }
   const open = l.quantity - l.qtyFulfilled;
   const state =
@@ -2652,7 +2607,7 @@ function StockCell({
             ? { label: `${l.qtyReserved}/${open} reserved`, cls: 'badge-warning' }
             : { label: 'not reserved', cls: 'badge-danger' };
   return (
-    <div style={{ fontSize: 12, display: 'grid', gap: 2 }} data-testid="order-line-stock">
+    <div className="grid gap-0.5 text-xs" data-testid="order-line-stock">
       <span>
         <span className={`badge ${state.cls}`}>{state.label}</span>
         {l.qtyFulfilled > 0 && open > 0 && (
@@ -2660,7 +2615,7 @@ function StockCell({
         )}
       </span>
       {l.po && (
-        <span data-testid="order-line-po" style={{ whiteSpace: 'nowrap' }}>
+        <span data-testid="order-line-po" className="nowrap">
           <Link href={`/purchase-orders/${l.po.poId}`}>{l.po.poNumber}</Link>
           <span className="muted">
             {' · '}
@@ -2679,16 +2634,7 @@ function StockCell({
           type="button"
           onClick={onRelease}
           disabled={busy}
-          style={{
-            border: 'none',
-            background: 'none',
-            cursor: 'pointer',
-            color: 'var(--text-secondary)',
-            fontSize: 11.5,
-            padding: 0,
-            textAlign: 'left',
-            textDecoration: 'underline',
-          }}
+          className="btn-link text-left"
           data-testid="order-line-release"
         >
           Release {l.qtyReserved} reserved
@@ -2705,70 +2651,64 @@ function StockCell({
  */
 function SplitOrdersCard({ order }: { order: OrderDetail }) {
   return (
-    <Card
-      title="Split orders"
-      style={{ marginBottom: 16, padding: 0 }}
-      data-testid="split-orders-card"
-    >
-      <table className="table">
-        <thead>
-          <tr>
-            <th>Order</th>
-            <th>Fulfillment</th>
-            <th>Items</th>
-            <th>Status</th>
-            <th className="num">Balance due</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr style={{ background: 'var(--surface-muted, transparent)' }}>
-            <td>
-              <strong>{order.number}</strong>
-              <span className="muted" style={{ fontSize: 11, display: 'block' }}>
-                this order
-              </span>
-            </td>
-            <td style={{ fontSize: 13 }}>
-              {order.fulfillmentType.replace(/_/g, ' ')}
-              {order.requestedDate ? ` · ${order.requestedDate}` : ''}
-            </td>
-            <td style={{ fontSize: 12.5 }}>
-              {order.lines
-                .filter((l) => l.lineType !== 'custom')
-                .map((l) => `${l.quantity} × ${l.description}`)
-                .join(', ')}
-            </td>
-            <td>
-              <StatusBadge status={order.status} />
-            </td>
-            <td className="num">
-              <Money cents={order.balanceDueCents} />
-            </td>
-          </tr>
-          {order.family.map((f) => (
-            <tr key={f.id}>
+    <Card title="Split orders" flush data-testid="split-orders-card">
+      <TableWrap>
+        <table className="table">
+          <thead>
+            <tr>
+              <th>Order</th>
+              <th>Fulfillment</th>
+              <th>Items</th>
+              <th>Status</th>
+              <th className="num">Balance due</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr className="bg-surface-muted">
               <td>
-                <Link href={`/orders/${f.id}`}>
-                  <strong>{f.number}</strong>
-                </Link>
-              </td>
-              <td style={{ fontSize: 13 }}>
-                {f.fulfillmentType.replace(/_/g, ' ')}
-                {f.requestedDate ? ` · ${f.requestedDate}` : ''}
-              </td>
-              <td style={{ fontSize: 12.5 }}>
-                {f.lines.map((l) => `${l.quantity} × ${l.description}`).join(', ') || '—'}
+                <strong>{order.number}</strong>
+                <span className="muted block text-[11px]">this order</span>
               </td>
               <td>
-                <StatusBadge status={f.status} />
+                {order.fulfillmentType.replace(/_/g, ' ')}
+                {order.requestedDate ? ` · ${order.requestedDate}` : ''}
+              </td>
+              <td>
+                {order.lines
+                  .filter((l) => l.lineType !== 'custom')
+                  .map((l) => `${l.quantity} × ${l.description}`)
+                  .join(', ')}
+              </td>
+              <td>
+                <StatusBadge status={order.status} />
               </td>
               <td className="num">
-                <Money cents={f.balanceDueCents} />
+                <Money cents={order.balanceDueCents} />
               </td>
             </tr>
-          ))}
-        </tbody>
-      </table>
+            {order.family.map((f) => (
+              <tr key={f.id}>
+                <td>
+                  <Link href={`/orders/${f.id}`}>
+                    <strong>{f.number}</strong>
+                  </Link>
+                </td>
+                <td>
+                  {f.fulfillmentType.replace(/_/g, ' ')}
+                  {f.requestedDate ? ` · ${f.requestedDate}` : ''}
+                </td>
+                <td>{f.lines.map((l) => `${l.quantity} × ${l.description}`).join(', ') || '—'}</td>
+                <td>
+                  <StatusBadge status={f.status} />
+                </td>
+                <td className="num">
+                  <Money cents={f.balanceDueCents} />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </TableWrap>
     </Card>
   );
 }
@@ -2833,36 +2773,18 @@ function NextStepBanner({ order, deliveries }: { order: OrderDetail; deliveries:
       tone: 'success',
     });
   if (steps.length === 0) return null;
-  const palette = {
-    danger: { bg: '#fee2e2', fg: '#991b1b' },
-    warning: { bg: '#fef3c7', fg: '#92400e' },
-    success: { bg: '#dcfce7', fg: '#166534' },
-    info: { bg: '#dbeafe', fg: '#1e40af' },
-  }[steps[0]!.tone];
+  const first = steps[0]!;
+  const tone = first.tone === 'danger' ? 'error' : first.tone;
   return (
-    <div
-      data-testid="next-step"
-      style={{
-        background: palette.bg,
-        color: palette.fg,
-        borderRadius: 8,
-        padding: '8px 12px',
-        marginBottom: 14,
-        fontSize: 13,
-        display: 'flex',
-        gap: 10,
-        flexWrap: 'wrap',
-        alignItems: 'center',
-      }}
-    >
-      <strong>Next:</strong>
-      <span>{steps[0]!.text}</span>
+    <Alert tone={tone} data-testid="next-step">
+      <strong>Next:</strong> {first.text}
       {steps.slice(1, 3).map((st) => (
-        <span key={st.text} style={{ opacity: 0.85 }}>
+        <span key={st.text} className="opacity-85">
+          {' '}
           · {st.text}
         </span>
       ))}
-    </div>
+    </Alert>
   );
 }
 
@@ -2870,74 +2792,63 @@ function NextStepBanner({ order, deliveries }: { order: OrderDetail; deliveries:
 function BalanceStrip({ order }: { order: OrderDetail }) {
   const owing = order.balanceDueCents > 0;
   return (
-    <div
+    <Card
       data-testid="balance-strip"
-      className="card"
-      style={{
-        position: 'sticky',
-        top: 12,
-        zIndex: 5,
-        marginBottom: 16,
-        padding: '10px 14px',
-        borderLeft: `4px solid ${owing ? 'var(--danger)' : 'var(--success)'}`,
-      }}
+      className="sticky top-3 z-[5]"
+      // Data-driven: the rule colour follows whether money is owed.
+      style={{ borderLeft: `4px solid ${owing ? 'var(--danger)' : 'var(--success)'}` }}
     >
-      <div style={{ display: 'flex', gap: 14, alignItems: 'baseline', flexWrap: 'wrap' }}>
-        <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600 }}>
-          Total <Money cents={order.totalCents} />
-        </span>
-        <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600 }}>
-          Paid <Money cents={order.paidCents} />
-        </span>
-        <span
-          style={{
-            marginLeft: 'auto',
-            fontSize: 16,
-            fontWeight: 700,
-            color: owing ? 'var(--danger)' : 'var(--success)',
-          }}
-        >
-          {owing ? 'Due ' : 'Paid in full '}
-          {owing && <Money cents={order.balanceDueCents} />}
-        </span>
-      </div>
-      {owing && !order.completedAt && !order.cancelledAt && (
-        <button
-          type="button"
-          className="btn btn-primary btn-sm"
-          style={{ marginTop: 8, width: '100%' }}
-          data-testid="balance-strip-pay"
-          onClick={() =>
-            document
-              .getElementById('payments-card')
-              ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-          }
-        >
-          Take payment
-        </button>
-      )}
-    </div>
+      <Stack gap="sm">
+        <StatGrid cols={2}>
+          <StatTile label="Total" value={<Money cents={order.totalCents} />} />
+          <StatTile label="Paid" value={<Money cents={order.paidCents} />} />
+          <StatTile
+            className="col-span-2"
+            label={owing ? 'Due' : 'Balance'}
+            value={owing ? <Money cents={order.balanceDueCents} /> : 'Paid in full'}
+            tone={owing ? 'danger' : 'success'}
+          />
+        </StatGrid>
+        {owing && !order.completedAt && !order.cancelledAt && (
+          <Button
+            variant="primary"
+            size="sm"
+            className="w-full"
+            data-testid="balance-strip-pay"
+            onClick={() =>
+              document
+                .getElementById('payments-card')
+                ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+            }
+          >
+            Take payment
+          </Button>
+        )}
+      </Stack>
+    </Card>
   );
 }
 
 /** Page skeleton that holds the two-column layout while the order loads (#8). */
 function OrderSkeleton() {
   return (
-    <div data-testid="order-skeleton">
-      <Skeleton style={{ height: 28, width: 260, marginBottom: 8 }} />
-      <Skeleton style={{ height: 14, width: 340, marginBottom: 16 }} />
+    <Stack data-testid="order-skeleton">
+      <Stack gap="sm">
+        <Skeleton style={{ height: 28, width: 260 }} />
+        <Skeleton style={{ height: 14, width: 340 }} />
+      </Stack>
       <div className="grid gap-4 lg:grid-cols-[2fr_1fr]">
-        <div className="min-w-0">
-          <Skeleton style={{ height: 220, marginBottom: 16 }} />
-          <Skeleton style={{ height: 140, marginBottom: 16 }} />
+        <Stack className="min-w-0">
+          <Skeleton style={{ height: 220 }} />
+          <Skeleton style={{ height: 140 }} />
           <Skeleton style={{ height: 120 }} />
-        </div>
-        <div className="min-w-0">
-          <Skeleton style={{ height: 70, marginBottom: 16 }} />
-          <Skeleton style={{ height: 110, marginBottom: 16 }} />
+        </Stack>
+        <Stack className="min-w-0">
+          <Skeleton style={{ height: 70 }} />
+          <Skeleton style={{ height: 110 }} />
           <Skeleton style={{ height: 180 }} />
-        </div>
+        </Stack>
       </div>
-    </div>
+    </Stack>
   );
 }

@@ -6,13 +6,14 @@ import { z } from 'zod';
 import { AuthCard, AuthLink, AuthOutcome } from '@/components/auth/auth-shell';
 import {
   Form,
+  FormAlert,
   FormRootError,
   PasswordField,
   SubmitButton,
   TextField,
   useZodForm,
 } from '@/components/form/form';
-import { LinkButton } from '@/components/ui';
+import { Button, LinkButton } from '@/components/ui';
 import { authClient } from '@/lib/auth-client';
 import { authErrorMessage } from '@/lib/auth-errors';
 
@@ -43,6 +44,7 @@ type EmailValues = z.output<typeof emailSchema>;
 function RequestLink({ linkError }: { linkError: string | null }) {
   const [sentTo, setSentTo] = useState<string | null>(null);
   const [again, setAgain] = useState(false);
+  const [resending, setResending] = useState(false);
   const form = useZodForm(emailSchema, { email: '' });
 
   async function send(email: string) {
@@ -61,21 +63,24 @@ function RequestLink({ linkError }: { linkError: string | null }) {
         testid="auth-success"
         actions={
           <>
-            <button
-              type="button"
-              className="btn btn-secondary w-full"
-              disabled={again}
-              onClick={() =>
+            <Button
+              variant="secondary"
+              className="w-full"
+              disabled={again || resending}
+              aria-busy={resending}
+              onClick={() => {
+                setResending(true);
                 void send(sentTo)
                   .then(() => {
                     setAgain(true);
                     toast.success('Sent again.');
                   })
                   .catch((err: Error) => toast.error(err.message))
-              }
+                  .finally(() => setResending(false));
+              }}
             >
               {again ? 'Sent again' : 'Send it again'}
-            </button>
+            </Button>
             <LinkButton href="/login" variant="ghost">
               Back to sign in
             </LinkButton>
@@ -98,11 +103,7 @@ function RequestLink({ linkError }: { linkError: string | null }) {
         </span>
       }
     >
-      {linkError && (
-        <p className="alert alert-warning" role="status">
-          {linkError}
-        </p>
-      )}
+      {linkError && <FormAlert tone="warning">{linkError}</FormAlert>}
       <Form<EmailValues>
         form={form}
         onSubmit={async (values) => {

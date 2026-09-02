@@ -3,6 +3,17 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { formatMoney } from '@jetnine/shared';
+import {
+  Alert,
+  Card,
+  PageHeader,
+  SectionHeading,
+  Skeleton,
+  Stack,
+  StatGrid,
+  StatTile,
+  TableWrap,
+} from '@/components/ui';
 import { apiUrl } from '@/lib/api';
 
 export const dynamic = 'force-dynamic';
@@ -73,12 +84,10 @@ export default function TrackOrderPage() {
   if (notFound) {
     return (
       <Wrapper>
-        <div className="card" style={{ textAlign: 'center', padding: 32 }}>
-          <h1 style={{ fontSize: 20, margin: '0 0 8px' }}>We couldn&apos;t find that order</h1>
-          <p className="muted" style={{ margin: 0, fontSize: 14 }}>
-            The link may have been mistyped. Check the link you were sent, or contact the store.
-          </p>
-        </div>
+        <PageHeader title="We couldn't find that order" />
+        <Alert tone="error">
+          The link may have been mistyped. Check the link you were sent, or contact the store.
+        </Alert>
       </Wrapper>
     );
   }
@@ -86,164 +95,137 @@ export default function TrackOrderPage() {
   if (!order) {
     return (
       <Wrapper>
-        <div className="card">
-          <div className="skeleton" style={{ height: 24, width: 180, marginBottom: 12 }} />
-          <div className="skeleton" style={{ height: 60 }} />
-        </div>
+        <Card aria-busy>
+          <Stack gap="sm">
+            <Skeleton style={{ height: 24, width: 180 }} />
+            <Skeleton style={{ height: 60 }} />
+          </Stack>
+        </Card>
       </Wrapper>
     );
   }
 
   return (
     <Wrapper>
-      <div className="card" style={{ borderTop: `4px solid ${accent}`, padding: 24 }}>
-        <p
-          style={{
-            margin: 0,
-            fontSize: 12,
-            fontWeight: 700,
-            letterSpacing: '.06em',
-            textTransform: 'uppercase',
-            color: 'var(--text-muted)',
-          }}
-        >
-          {order.businessName}
-        </p>
-        <h1 style={{ fontSize: 22, margin: '4px 0 2px' }} data-testid="track-heading">
-          {order.customerFirstName ? `${order.customerFirstName}, your` : 'Your'} order{' '}
-          <code style={{ fontSize: 16 }}>{order.number}</code>
-        </h1>
-
-        {cancelled ? (
-          <p style={{ color: 'var(--danger)', fontWeight: 600 }}>
-            This order was cancelled. Contact the store if that&apos;s unexpected.
-          </p>
-        ) : (
-          <ol
-            style={{
-              listStyle: 'none',
-              display: 'grid',
-              gap: 0,
-              margin: '18px 0 6px',
-              padding: 0,
-            }}
-          >
-            {JOURNEY.map((s, i) => {
-              const reached = i <= stageIndex;
-              const current = i === stageIndex;
-              return (
-                <li key={s.key} style={{ display: 'flex', gap: 12 }}>
-                  <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                    <span
-                      aria-hidden
-                      style={{
-                        width: 16,
-                        height: 16,
-                        borderRadius: '50%',
-                        border: `3px solid ${reached ? accent : 'var(--border-strong)'}`,
-                        background: reached ? accent : 'var(--surface)',
-                      }}
-                    />
-                    {i < JOURNEY.length - 1 && (
+      {/* The accent is the store's own brand colour — a data-driven value. */}
+      <Card style={{ borderTop: `4px solid ${accent}` }}>
+        <PageHeader
+          eyebrow={<span className="muted font-semibold uppercase">{order.businessName}</span>}
+          title={
+            <span data-testid="track-heading">
+              {order.customerFirstName ? `${order.customerFirstName}, your` : 'Your'} order{' '}
+              <code>{order.number}</code>
+            </span>
+          }
+        />
+        <Stack>
+          {cancelled ? (
+            <Alert tone="error">
+              This order was cancelled. Contact the store if that&apos;s unexpected.
+            </Alert>
+          ) : (
+            <ol className="m-0 grid list-none p-0" aria-label="Order progress">
+              {JOURNEY.map((s, i) => {
+                const reached = i <= stageIndex;
+                const current = i === stageIndex;
+                return (
+                  <li
+                    key={s.key}
+                    className="flex gap-3"
+                    aria-current={current ? 'step' : undefined}
+                  >
+                    <span className="flex flex-col items-center">
                       <span
                         aria-hidden
+                        className="h-4 w-4 shrink-0 rounded-full"
                         style={{
-                          width: 3,
-                          flex: 1,
-                          minHeight: 22,
-                          background: i < stageIndex ? accent : 'var(--border)',
+                          border: `3px solid ${reached ? accent : 'var(--border-strong)'}`,
+                          background: reached ? accent : 'var(--surface)',
                         }}
                       />
-                    )}
-                  </span>
-                  <span style={{ paddingBottom: 14 }}>
-                    <span
-                      style={{
-                        fontWeight: current ? 700 : 500,
-                        color: reached ? 'var(--text)' : 'var(--text-muted)',
-                        fontSize: 14.5,
-                      }}
-                    >
-                      {s.label}
+                      {i < JOURNEY.length - 1 && (
+                        <span
+                          aria-hidden
+                          className="w-[3px] flex-1"
+                          style={{
+                            minHeight: 22,
+                            background: i < stageIndex ? accent : 'var(--border)',
+                          }}
+                        />
+                      )}
                     </span>
-                    {current && s.key === 'ready' && order.scheduledDate && (
+                    <span className="pb-3.5">
                       <span
-                        style={{ display: 'block', fontSize: 13, color: 'var(--text-secondary)' }}
+                        className={
+                          reached ? (current ? 'font-bold' : 'font-medium') : 'muted font-medium'
+                        }
                       >
-                        {order.fulfillmentType === 'pickup' ? 'Pickup' : 'Delivery'} scheduled for{' '}
-                        <strong>{formatDate(order.scheduledDate)}</strong>
+                        {s.label}
                       </span>
-                    )}
-                  </span>
-                </li>
-              );
-            })}
-          </ol>
-        )}
+                      {current && s.key === 'ready' && order.scheduledDate && (
+                        <span className="muted block">
+                          {order.fulfillmentType === 'pickup' ? 'Pickup' : 'Delivery'} scheduled for{' '}
+                          <strong>{formatDate(order.scheduledDate)}</strong>
+                        </span>
+                      )}
+                    </span>
+                  </li>
+                );
+              })}
+            </ol>
+          )}
 
-        <h2 style={sub}>Items</h2>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
-          <tbody>
-            {order.lines.map((l, i) => (
-              <tr key={i}>
-                <td style={{ padding: '5px 0', borderBottom: '1px solid var(--border)' }}>
-                  {l.description}
-                </td>
-                <td
-                  style={{
-                    padding: '5px 0',
-                    borderBottom: '1px solid var(--border)',
-                    textAlign: 'right',
-                    color: 'var(--text-secondary)',
-                  }}
-                >
-                  ×{l.quantity}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+          <div>
+            <SectionHeading title="Items" />
+            <TableWrap>
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Item</th>
+                    <th className="num">Qty</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {order.lines.map((l, i) => (
+                    <tr key={i}>
+                      <td>{l.description}</td>
+                      <td className="num">×{l.quantity}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </TableWrap>
+          </div>
 
-        <h2 style={sub}>Balance</h2>
-        <div style={{ display: 'flex', gap: 24, fontSize: 14 }}>
-          <span>
-            Total <strong>{formatMoney(order.totalCents)}</strong>
-          </span>
-          <span>
-            Paid <strong>{formatMoney(order.paidCents)}</strong>
-          </span>
-          <span>
-            {order.balanceCents > 0 ? (
-              <>
-                Remaining{' '}
-                <strong style={{ color: 'var(--warning)' }} data-testid="track-balance">
-                  {formatMoney(order.balanceCents)}
-                </strong>
-              </>
-            ) : (
-              <strong style={{ color: 'var(--success)' }} data-testid="track-balance">
-                Paid in full
-              </strong>
-            )}
-          </span>
-        </div>
+          <div>
+            <SectionHeading title="Balance" />
+            <StatGrid cols={3}>
+              <StatTile label="Total" value={formatMoney(order.totalCents)} />
+              <StatTile label="Paid" value={formatMoney(order.paidCents)} />
+              {order.balanceCents > 0 ? (
+                <StatTile
+                  label="Remaining"
+                  tone="warning"
+                  value={<span data-testid="track-balance">{formatMoney(order.balanceCents)}</span>}
+                />
+              ) : (
+                <StatTile
+                  label="Balance"
+                  tone="success"
+                  value={<span data-testid="track-balance">Paid in full</span>}
+                />
+              )}
+            </StatGrid>
+          </div>
 
-        <p style={{ fontSize: 12.5, color: 'var(--text-muted)', marginTop: 20, marginBottom: 0 }}>
-          Questions about this order? Contact {order.businessName} — have your order number ready.
-        </p>
-      </div>
+          <p className="muted m-0">
+            Questions about this order? Contact {order.businessName} — have your order number ready.
+          </p>
+        </Stack>
+      </Card>
     </Wrapper>
   );
 }
-
-const sub: React.CSSProperties = {
-  fontSize: 12,
-  fontWeight: 700,
-  letterSpacing: '.05em',
-  textTransform: 'uppercase',
-  color: 'var(--text-muted)',
-  margin: '18px 0 8px',
-};
 
 function formatDate(iso: string): string {
   return new Date(`${iso}T12:00:00`).toLocaleDateString(undefined, {

@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { PERMISSIONS, PERMISSION_GROUPS, type Permission } from '@jetnine/shared';
-import { Accordion } from '@/components/ui';
+import { Accordion, Stack } from '@/components/ui';
 
 /**
  * Shopify-style grouped permission editor: one accordion per domain,
@@ -32,6 +32,7 @@ export function PermissionGroupsEditor({
   const [open, setOpen] = useState<Set<string>>(
     () => new Set(defaultOpen ? PERMISSION_GROUPS.map((g) => g.key) : []),
   );
+  const editable = Boolean(onChange) && !disabled;
 
   function toggleGroupOpen(key: string) {
     setOpen((prev) => {
@@ -61,7 +62,7 @@ export function PermissionGroupsEditor({
   }
 
   return (
-    <div style={{ display: 'grid', gap: 8 }}>
+    <Stack gap="sm">
       {PERMISSION_GROUPS.map((g) => {
         const granted = g.permissions.filter((p) => value.has(p)).length;
         const all = granted === g.permissions.length;
@@ -78,7 +79,7 @@ export function PermissionGroupsEditor({
               <TriCheckbox
                 checked={all && g.permissions.length > 0}
                 indeterminate={granted > 0 && !all}
-                disabled={disabled || !onChange}
+                disabled={!editable}
                 ariaLabel={`Grant all ${g.label} permissions`}
                 onChange={(checked) => setGroup(g.permissions, checked)}
               />
@@ -86,7 +87,7 @@ export function PermissionGroupsEditor({
             summary={
               <>
                 {overrides > 0 && (
-                  <span className="badge badge-warning" style={{ marginRight: 8 }}>
+                  <span className="badge badge-warning mr-2">
                     {overrides} override{overrides === 1 ? '' : 's'}
                   </span>
                 )}
@@ -94,40 +95,34 @@ export function PermissionGroupsEditor({
               </>
             }
           >
-            <div style={{ display: 'grid', gap: 2 }}>
+            <div className="grid gap-0.5">
               {g.permissions.map((p) => {
                 const has = value.has(p);
                 const overridden = baseline ? has !== baseline.has(p) : false;
                 return (
                   <label
                     key={p}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'flex-start',
-                      gap: 10,
-                      padding: '6px 4px',
-                      borderRadius: 6,
-                      cursor: disabled || !onChange ? 'default' : 'pointer',
-                      background: overridden ? 'var(--surface-muted)' : undefined,
-                    }}
+                    className={`flex items-start gap-2.5 rounded-md px-1 py-1.5 ${
+                      editable ? 'cursor-pointer' : 'cursor-default'
+                    } ${overridden ? 'bg-[var(--surface-muted)]' : ''}`}
                   >
                     <input
                       type="checkbox"
+                      className="mt-[3px] accent-[var(--brand)]"
                       checked={has}
-                      disabled={disabled || !onChange}
+                      disabled={!editable}
                       onChange={() => togglePermission(p)}
-                      style={{ marginTop: 3, accentColor: 'var(--brand)' }}
                     />
-                    <span style={{ flex: 1, minWidth: 0 }}>
-                      <span style={{ fontSize: 13, display: 'block' }}>
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-[13px]">
                         {PERMISSIONS[p]}
                         {overridden && (
-                          <span className="badge badge-warning" style={{ marginLeft: 8 }}>
+                          <span className="badge badge-warning ml-2">
                             {has ? 'extra allow' : 'revoked'}
                           </span>
                         )}
                       </span>
-                      <code style={{ fontSize: 11, color: 'var(--text-muted)' }}>{p}</code>
+                      <code className="muted text-[11px]">{p}</code>
                     </span>
                   </label>
                 );
@@ -136,7 +131,7 @@ export function PermissionGroupsEditor({
           </Accordion>
         );
       })}
-    </div>
+    </Stack>
   );
 }
 
@@ -165,7 +160,7 @@ function TriCheckbox({
       checked={checked}
       disabled={disabled}
       onChange={(e) => onChange(e.target.checked)}
-      style={{ accentColor: 'var(--brand)' }}
+      className="accent-[var(--brand)]"
     />
   );
 }

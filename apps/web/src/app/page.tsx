@@ -1,16 +1,22 @@
+import { Card, PageHeader } from '@/components/ui';
+
 export default function HomePage() {
   return (
-    <main style={{ padding: '4rem', fontFamily: 'system-ui, sans-serif' }}>
-      <h1>LA Mattress ERP</h1>
-      <p>Phase 0 bootstrap is live. Web app is running on Next.js 15.</p>
-      <ul>
-        <li>
-          <a href="/health">API /health</a>
-        </li>
-        <li>
-          <a href="/ready">API /ready</a>
-        </li>
-      </ul>
+    <main className="mx-auto w-full max-w-2xl px-4 py-8 sm:px-6 sm:py-12">
+      <PageHeader
+        title="LA Mattress ERP"
+        sub="Phase 0 bootstrap is live. Web app is running on Next.js 15."
+      />
+      <Card title="Service checks">
+        <ul className="m-0 list-disc pl-5 text-sm">
+          <li>
+            <a href="/health">API /health</a>
+          </li>
+          <li>
+            <a href="/ready">API /ready</a>
+          </li>
+        </ul>
+      </Card>
     </main>
   );
 }

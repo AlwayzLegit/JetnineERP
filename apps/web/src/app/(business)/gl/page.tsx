@@ -6,15 +6,23 @@ import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import { Money } from '@/components/money';
 import {
+  Alert,
   Button,
   Card,
   EmptyState,
   Field,
+  FormActions,
+  FormGrid,
   Input,
   LinkButton,
   LoadingRows,
   PageHeader,
+  SectionHeading,
   Select,
+  Stack,
+  StatusBadge,
+  TableEmpty,
+  TableWrap,
 } from '@/components/ui';
 
 /**
@@ -94,8 +102,18 @@ export default function GlPage() {
     }
   }
 
-  if (error && !accounts) return <p style={{ color: 'var(--danger)' }}>{error}</p>;
+  if (error && !accounts) {
+    return (
+      <div>
+        <PageHeader title="General ledger" />
+        <Alert tone="error">{error}</Alert>
+      </div>
+    );
+  }
   if (!accounts) return <LoadingRows rows={6} />;
+
+  const yearOptions = [year - 1, year, year + 1].filter((v, i, a) => a.indexOf(v) === i);
+  const trialRows = trial?.rows ?? [];
 
   return (
     <div>
@@ -109,215 +127,249 @@ export default function GlPage() {
         }
       />
 
-      <Card
-        title={`Fiscal periods ${year}${yearClosed ? ' (year closed)' : ''}`}
-        style={{ marginBottom: 16 }}
-      >
-        <div className="flex gap-2" style={{ marginBottom: 10, alignItems: 'center' }}>
-          <Select value={String(year)} onChange={(e) => setYear(Number(e.target.value))}>
-            {[year - 1, year, year + 1]
-              .filter((v, i, a) => a.indexOf(v) === i)
-              .map((y) => (
+      <Stack>
+        <Card
+          title={`Fiscal periods ${year}${yearClosed ? ' (year closed)' : ''}`}
+          description="Closing a period closes all earlier open ones; reopening reopens all later closed ones. Period 13 (year-end adjustments) closes the year."
+          actions={
+            <Select
+              aria-label="Fiscal year"
+              value={String(year)}
+              onChange={(e) => setYear(Number(e.target.value))}
+            >
+              {yearOptions.map((y) => (
                 <option key={y} value={y}>
                   {y}
                 </option>
               ))}
-          </Select>
-          <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-            Closing a period closes all earlier open ones; reopening reopens all later closed ones.
-            Period 13 (year-end adjustments) closes the year.
-          </span>
-        </div>
-        <div className="flex flex-wrap gap-1">
-          {periods.map((p) => (
-            <button
-              key={p.period}
-              type="button"
-              className={`badge ${p.status === 'closed' ? 'badge-neutral' : 'badge-success'}`}
-              style={{ cursor: 'pointer', border: 'none', minWidth: 44 }}
-              disabled={busy}
-              title={
-                p.status === 'closed'
-                  ? 'Click to reopen (cascades forward)'
-                  : 'Click to close (cascades back)'
-              }
-              onClick={() => {
-                const closing = p.status === 'open';
-                const verb = closing ? 'Close' : 'Reopen';
-                const warning = closing
-                  ? 'This also closes every earlier open period.'
-                  : 'This also reopens every later closed period.';
-                if (!window.confirm(`${verb} ${year} period ${p.period}? ${warning}`)) return;
-                void act(() =>
-                  api(`/v1/gl/periods/${closing ? 'close' : 'reopen'}`, {
-                    method: 'POST',
-                    body: JSON.stringify({ fiscalYear: year, period: p.period }),
-                  }),
+            </Select>
+          }
+        >
+          {periods.length === 0 ? (
+            <p className="muted">No fiscal periods for {year}.</p>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              {periods.map((p) => {
+                const closed = p.status === 'closed';
+                return (
+                  <button
+                    key={p.period}
+                    type="button"
+                    className={`pill ${closed ? '' : 'pill-active'}`}
+                    aria-pressed={!closed}
+                    disabled={busy}
+                    title={
+                      closed
+                        ? 'Click to reopen (cascades forward)'
+                        : 'Click to close (cascades back)'
+                    }
+                    onClick={() => {
+                      const closing = !closed;
+                      const verb = closing ? 'Close' : 'Reopen';
+                      const warning = closing
+                        ? 'This also closes every earlier open period.'
+                        : 'This also reopens every later closed period.';
+                      if (!window.confirm(`${verb} ${year} period ${p.period}? ${warning}`)) return;
+                      void act(() =>
+                        api(`/v1/gl/periods/${closing ? 'close' : 'reopen'}`, {
+                          method: 'POST',
+                          body: JSON.stringify({ fiscalYear: year, period: p.period }),
+                        }),
+                      );
+                    }}
+                  >
+                    {p.period === 13 ? 'YE' : p.period} {closed ? '✕' : ''}
+                  </button>
                 );
-              }}
-            >
-              {p.period === 13 ? 'YE' : p.period} {p.status === 'closed' ? '✕' : ''}
-            </button>
-          ))}
-        </div>
-      </Card>
+              })}
+            </div>
+          )}
+        </Card>
 
-      <Card title="Chart of accounts" style={{ marginBottom: 16 }}>
-        {accounts.length === 0 ? (
-          <div>
-            <EmptyState>No accounts yet.</EmptyState>
-            <Button
-              variant="primary"
-              disabled={busy}
-              onClick={() =>
-                void act(() => api('/v1/gl/accounts/seed-defaults', { method: 'POST', body: '{}' }))
+        <Card title="Chart of accounts">
+          {accounts.length === 0 ? (
+            <EmptyState
+              title="No accounts yet"
+              action={
+                <Button
+                  variant="primary"
+                  size="sm"
+                  disabled={busy}
+                  onClick={() =>
+                    void act(() =>
+                      api('/v1/gl/accounts/seed-defaults', { method: 'POST', body: '{}' }),
+                    )
+                  }
+                >
+                  Seed the default retail chart (20 accounts)
+                </Button>
               }
             >
-              Seed the default retail chart (20 accounts)
-            </Button>
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
+              Seed the default chart or add accounts one at a time below.
+            </EmptyState>
+          ) : (
+            <TableWrap>
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Code</th>
+                    <th>Name</th>
+                    <th>Type</th>
+                    <th>System key</th>
+                    <th>Active</th>
+                    <th className="actions" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {accounts.map((a) => (
+                    <tr key={a.id} style={a.isActive ? undefined : { opacity: 0.5 }}>
+                      <td>
+                        <Link href={`/gl/accounts/${a.id}`}>
+                          <code>{a.code}</code>
+                        </Link>
+                      </td>
+                      <td>{a.name}</td>
+                      <td>{a.accountType}</td>
+                      <td>{a.systemKey ? <code>{a.systemKey}</code> : '—'}</td>
+                      <td>
+                        <StatusBadge status={a.isActive ? 'active' : 'inactive'} />
+                      </td>
+                      <td className="actions">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          disabled={busy}
+                          onClick={() =>
+                            void act(() =>
+                              api(`/v1/gl/accounts/${a.id}`, {
+                                method: 'PATCH',
+                                body: JSON.stringify({ isActive: !a.isActive }),
+                              }),
+                            )
+                          }
+                        >
+                          {a.isActive ? 'Deactivate' : 'Activate'}
+                        </Button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </TableWrap>
+          )}
+
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (busy || !newAcc.code || !newAcc.name) return;
+              void act(async () => {
+                await api('/v1/gl/accounts', { method: 'POST', body: JSON.stringify(newAcc) });
+                setNewAcc({ code: '', name: '', accountType: 'expense' });
+              });
+            }}
+          >
+            <SectionHeading as="h3" title="Add account" />
+            <FormGrid cols={3}>
+              <Field label="Code" required>
+                <Input
+                  value={newAcc.code}
+                  onChange={(e) => setNewAcc({ ...newAcc, code: e.target.value })}
+                  placeholder="6000"
+                />
+              </Field>
+              <Field label="Name" required>
+                <Input
+                  value={newAcc.name}
+                  onChange={(e) => setNewAcc({ ...newAcc, name: e.target.value })}
+                />
+              </Field>
+              <Field label="Type">
+                <Select
+                  value={newAcc.accountType}
+                  onChange={(e) => setNewAcc({ ...newAcc, accountType: e.target.value })}
+                >
+                  {TYPES.map((t) => (
+                    <option key={t} value={t}>
+                      {t}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+            </FormGrid>
+            <FormActions>
+              <Button
+                type="submit"
+                variant="primary"
+                disabled={busy || !newAcc.code || !newAcc.name}
+              >
+                Add account
+              </Button>
+            </FormActions>
+          </form>
+        </Card>
+
+        <Card
+          title={`Trial balance ${year}`}
+          description="Posted batches are append-only; correct with a new batch, never an edit."
+          actions={
+            <LinkButton size="sm" variant="secondary" href="/gl/journal">
+              Journal entries →
+            </LinkButton>
+          }
+          flush
+        >
+          <TableWrap>
             <table className="table">
               <thead>
                 <tr>
-                  <th>Code</th>
-                  <th>Name</th>
+                  <th>Account</th>
                   <th>Type</th>
-                  <th>System key</th>
-                  <th>Active</th>
-                  <th />
+                  <th className="num">Debits</th>
+                  <th className="num">Credits</th>
                 </tr>
               </thead>
               <tbody>
-                {accounts.map((a) => (
-                  <tr key={a.id} style={a.isActive ? undefined : { opacity: 0.5 }}>
+                {trialRows.length === 0 && (
+                  <TableEmpty colSpan={4}>No posted activity in {year}.</TableEmpty>
+                )}
+                {trialRows.map((r) => (
+                  <tr key={r.code}>
                     <td>
-                      <Link href={`/gl/accounts/${a.id}`}>
-                        <code>{a.code}</code>
-                      </Link>
+                      <code>{r.code}</code> {r.name}
                     </td>
-                    <td>{a.name}</td>
-                    <td>{a.accountType}</td>
-                    <td>{a.systemKey ? <code>{a.systemKey}</code> : '—'}</td>
-                    <td>{a.isActive ? 'yes' : 'no'}</td>
-                    <td>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        disabled={busy}
-                        onClick={() =>
-                          void act(() =>
-                            api(`/v1/gl/accounts/${a.id}`, {
-                              method: 'PATCH',
-                              body: JSON.stringify({ isActive: !a.isActive }),
-                            }),
-                          )
-                        }
-                      >
-                        {a.isActive ? 'Deactivate' : 'Activate'}
-                      </Button>
+                    <td>{r.accountType}</td>
+                    <td className="num">
+                      <Money cents={r.debitCents} />
+                    </td>
+                    <td className="num">
+                      <Money cents={r.creditCents} />
                     </td>
                   </tr>
                 ))}
               </tbody>
+              {trial && trial.rows.length > 0 && (
+                <tfoot>
+                  <tr>
+                    <td colSpan={2}>
+                      <strong>Totals</strong>
+                    </td>
+                    <td className="num">
+                      <strong>
+                        <Money cents={trial.totals.debitCents} />
+                      </strong>
+                    </td>
+                    <td className="num">
+                      <strong>
+                        <Money cents={trial.totals.creditCents} />
+                      </strong>
+                    </td>
+                  </tr>
+                </tfoot>
+              )}
             </table>
-          </div>
-        )}
-        <div className="grid gap-3 sm:grid-cols-4" style={{ marginTop: 12 }}>
-          <Field label="Code">
-            <Input
-              value={newAcc.code}
-              onChange={(e) => setNewAcc({ ...newAcc, code: e.target.value })}
-              placeholder="6000"
-            />
-          </Field>
-          <Field label="Name">
-            <Input
-              value={newAcc.name}
-              onChange={(e) => setNewAcc({ ...newAcc, name: e.target.value })}
-            />
-          </Field>
-          <Field label="Type">
-            <Select
-              value={newAcc.accountType}
-              onChange={(e) => setNewAcc({ ...newAcc, accountType: e.target.value })}
-            >
-              {TYPES.map((t) => (
-                <option key={t} value={t}>
-                  {t}
-                </option>
-              ))}
-            </Select>
-          </Field>
-          <div style={{ alignSelf: 'end' }}>
-            <Button
-              variant="secondary"
-              disabled={busy || !newAcc.code || !newAcc.name}
-              onClick={() =>
-                void act(async () => {
-                  await api('/v1/gl/accounts', { method: 'POST', body: JSON.stringify(newAcc) });
-                  setNewAcc({ code: '', name: '', accountType: 'expense' });
-                })
-              }
-            >
-              Add account
-            </Button>
-          </div>
-        </div>
-      </Card>
-
-      <Card title={`Trial balance ${year}`} style={{ padding: 0, overflowX: 'auto' }}>
-        <table className="table">
-          <thead>
-            <tr>
-              <th>Account</th>
-              <th>Type</th>
-              <th className="num">Debits</th>
-              <th className="num">Credits</th>
-            </tr>
-          </thead>
-          <tbody>
-            {(trial?.rows ?? []).length === 0 && (
-              <tr>
-                <td colSpan={4}>
-                  <EmptyState>No posted activity in {year}.</EmptyState>
-                </td>
-              </tr>
-            )}
-            {(trial?.rows ?? []).map((r) => (
-              <tr key={r.code}>
-                <td>
-                  <code>{r.code}</code> {r.name}
-                </td>
-                <td>{r.accountType}</td>
-                <td className="num">
-                  <Money cents={r.debitCents} />
-                </td>
-                <td className="num">
-                  <Money cents={r.creditCents} />
-                </td>
-              </tr>
-            ))}
-            {trial && trial.rows.length > 0 && (
-              <tr style={{ fontWeight: 700 }}>
-                <td colSpan={2}>Totals</td>
-                <td className="num">
-                  <Money cents={trial.totals.debitCents} />
-                </td>
-                <td className="num">
-                  <Money cents={trial.totals.creditCents} />
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </Card>
-
-      <p style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 12 }}>
-        <Link href="/gl/journal">Journal entries →</Link> Posted batches are append-only; correct
-        with a new batch, never an edit.
-      </p>
+          </TableWrap>
+        </Card>
+      </Stack>
     </div>
   );
 }

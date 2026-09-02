@@ -4660,3 +4660,15 @@ Cutting Date / Auto PO Replen).
 - Web `/vendors/[id]/settings` with the four STORIS tabs; Vendors list
   links to it; replenishment page links to the Auto PO Replen tab.
   PLAN §12.10 (A14).
+
+### Checkpoint — 2026-09-02 (design pass: layout contract on every screen)
+
+Owner ask: a screen-by-screen design pass with proper heading placement
+and margins.
+
+- Layout contract (spacing scale + margin-owning primitives in
+  `ui.tsx` / `globals.css`) and a workflow pass over 117 web files: page
+  headers, section headings, stacks, toolbars, forms, stat tiles, table
+  wraps, token classes. PLAN §12.11 (A15).
+- Typecheck, lint, unit tests and the full Playwright suite pass (one
+  spec updated for a renamed link).

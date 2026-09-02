@@ -5,7 +5,19 @@ import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react
 import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import { formatMoney, parseMoneyToCents } from '@jetnine/shared';
-import { Button, Card, EmptyState, Input, LoadingRows, PageHeader } from '@/components/ui';
+import {
+  Alert,
+  BackLink,
+  Button,
+  Card,
+  EmptyState,
+  Input,
+  LoadingRows,
+  PageHeader,
+  Stack,
+  TableWrap,
+  Toolbar,
+} from '@/components/ui';
 
 interface PricingRow {
   id: string;
@@ -136,11 +148,23 @@ export default function PricingPage() {
   }
 
   const showCost = (rows ?? []).some((r) => r.costCents !== null);
+  const colSpan = showCost ? 5 : 4;
 
   return (
     <div>
       <PageHeader
+        eyebrow={<BackLink href="/products">All products</BackLink>}
         title="Price entry"
+        sub={
+          <>
+            {unpricedCount === null
+              ? 'Loading…'
+              : unpricedCount === 0
+                ? 'Every active variant has a price.'
+                : `${unpricedCount.toLocaleString()} active variant${unpricedCount === 1 ? '' : 's'} still without a price.`}{' '}
+            Type prices in the column and save — only changed rows are written.
+          </>
+        }
         actions={
           <Button
             type="button"
@@ -155,124 +179,135 @@ export default function PricingPage() {
         }
       />
 
-      <p style={{ marginBottom: 12, fontSize: 14, color: 'var(--text-muted)' }}>
-        {unpricedCount === null
-          ? 'Loading…'
-          : unpricedCount === 0
-            ? 'Every active variant has a price.'
-            : `${unpricedCount.toLocaleString()} active variant${unpricedCount === 1 ? '' : 's'} still without a price.`}{' '}
-        Type prices in the column and save — only changed rows are written.
-      </p>
-
-      <form onSubmit={search} className="mb-4 flex flex-wrap items-center gap-2">
-        <Input
-          name="q"
-          placeholder="Search by name, SKU, or barcode"
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          className="min-w-[200px] flex-1"
-        />
-        <Button type="submit" variant="secondary">
-          Search
-        </Button>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 14 }}>
-          <input
-            type="checkbox"
-            checked={unpricedOnly}
-            onChange={(e) => setUnpricedOnly(e.target.checked)}
+      <form onSubmit={search}>
+        <Toolbar>
+          <Input
+            name="q"
+            placeholder="Search by name, SKU, or barcode"
+            aria-label="Search by name, SKU, or barcode"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
           />
-          Unpriced only
-        </label>
+          <Button type="submit" variant="secondary" size="sm">
+            Search
+          </Button>
+          <button
+            type="button"
+            className={`pill ${unpricedOnly ? 'pill-active' : ''}`}
+            aria-pressed={unpricedOnly}
+            onClick={() => setUnpricedOnly((v) => !v)}
+          >
+            Unpriced only
+          </button>
+        </Toolbar>
       </form>
 
-      {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
-      <Card style={{ padding: 0 }}>
+      <Stack>
+        {error && <Alert tone="error">{error}</Alert>}
         {rows == null ? (
-          <div style={{ padding: 16 }}>
+          <Card>
             <LoadingRows />
-          </div>
+          </Card>
         ) : rows.length === 0 ? (
-          <EmptyState>
-            {unpricedOnly
-              ? 'No unpriced variants match. Uncheck "Unpriced only" to edit existing prices.'
-              : 'No variants match.'}
-          </EmptyState>
+          <Card>
+            <EmptyState
+              title={unpricedOnly ? 'No unpriced variants match' : 'No variants match'}
+              action={
+                unpricedOnly ? (
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => setUnpricedOnly(false)}
+                  >
+                    Show all variants
+                  </Button>
+                ) : undefined
+              }
+            >
+              {unpricedOnly
+                ? 'Turn off "Unpriced only" to edit existing prices.'
+                : 'Try a different name, SKU, or barcode.'}
+            </EmptyState>
+          </Card>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>SKU</th>
-                  <th>Product</th>
-                  {showCost && <th style={{ textAlign: 'right' }}>Cost</th>}
-                  <th style={{ textAlign: 'right' }}>Current price</th>
-                  <th style={{ width: 140 }}>New price ($)</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((row) => {
-                  const draft = drafts[row.id] ?? '';
-                  const cents = draft.trim() === '' ? null : parseMoneyToCents(draft);
-                  const isInvalid = draft.trim() !== '' && (cents === null || cents < 0);
-                  return (
-                    <tr key={row.id}>
-                      <td>
-                        <code>{row.sku ?? '—'}</code>
-                      </td>
-                      <td>
-                        <Link href={`/products/${row.productId}`}>
-                          <strong>{row.productName}</strong>
-                        </Link>
-                        {row.name ? (
-                          <span style={{ color: 'var(--text-muted)' }}> · {row.name}</span>
-                        ) : null}
-                      </td>
-                      {showCost && (
-                        <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>
-                          {row.costCents === null ? '—' : formatMoney(row.costCents)}
+          <Card flush>
+            <TableWrap>
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>SKU</th>
+                    <th>Product</th>
+                    {showCost && <th className="num">Cost</th>}
+                    <th className="num">Current price</th>
+                    <th className="w-36">New price ($)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((row) => {
+                    const draft = drafts[row.id] ?? '';
+                    const cents = draft.trim() === '' ? null : parseMoneyToCents(draft);
+                    const isInvalid = draft.trim() !== '' && (cents === null || cents < 0);
+                    return (
+                      <tr key={row.id}>
+                        <td>
+                          <code>{row.sku ?? '—'}</code>
                         </td>
-                      )}
-                      <td style={{ textAlign: 'right' }}>
-                        {row.priceCents === 0 ? (
-                          <span className="badge badge-warning">$0.00</span>
-                        ) : (
-                          formatMoney(row.priceCents)
+                        <td>
+                          <Link href={`/products/${row.productId}`}>
+                            <strong>{row.productName}</strong>
+                          </Link>
+                          {row.name ? <span className="muted"> · {row.name}</span> : null}
+                        </td>
+                        {showCost && (
+                          <td className="num muted">
+                            {row.costCents === null ? '—' : formatMoney(row.costCents)}
+                          </td>
                         )}
-                      </td>
-                      <td>
-                        <Input
-                          value={draft}
-                          inputMode="decimal"
-                          placeholder="0.00"
-                          aria-label={`New price for ${row.sku ?? row.productName}`}
-                          aria-invalid={isInvalid || undefined}
-                          style={isInvalid ? { borderColor: 'var(--danger)' } : undefined}
-                          onChange={(e) =>
-                            setDrafts((prev) => ({ ...prev, [row.id]: e.target.value }))
-                          }
-                        />
+                        <td className="num">
+                          {row.priceCents === 0 ? (
+                            <span className="badge badge-warning">$0.00</span>
+                          ) : (
+                            formatMoney(row.priceCents)
+                          )}
+                        </td>
+                        <td>
+                          <Input
+                            value={draft}
+                            inputMode="decimal"
+                            placeholder="0.00"
+                            aria-label={`New price for ${row.sku ?? row.productName}`}
+                            aria-invalid={isInvalid || undefined}
+                            className="w-32"
+                            onChange={(e) =>
+                              setDrafts((prev) => ({ ...prev, [row.id]: e.target.value }))
+                            }
+                          />
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {nextCursor && (
+                    <tr>
+                      <td colSpan={colSpan} className="text-center">
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => void loadMore()}
+                          disabled={loadingMore}
+                        >
+                          {loadingMore ? 'Loading…' : 'Load more'}
+                        </Button>
                       </td>
                     </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+                  )}
+                </tbody>
+              </table>
+            </TableWrap>
+          </Card>
         )}
-      </Card>
-
-      {nextCursor && (
-        <div style={{ marginTop: 12, textAlign: 'center' }}>
-          <Button
-            type="button"
-            variant="secondary"
-            onClick={() => void loadMore()}
-            disabled={loadingMore}
-          >
-            {loadingMore ? 'Loading…' : 'Load more'}
-          </Button>
-        </div>
-      )}
+      </Stack>
     </div>
   );
 }

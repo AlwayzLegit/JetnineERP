@@ -3,9 +3,28 @@
 import Link from 'next/link';
 import { Save, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { Fragment, useEffect, useRef, useState, type FormEvent } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { Button, Card, EmptyState, Field, Input, LoadingRows, StatusBadge } from '@/components/ui';
+import {
+  Alert,
+  BackLink,
+  Button,
+  Card,
+  EmptyState,
+  Field,
+  FormActions,
+  FormGrid,
+  Input,
+  LinkButton,
+  LoadingRows,
+  PageHeader,
+  SectionHeading,
+  Stack,
+  StatGrid,
+  StatTile,
+  StatusBadge,
+  TableWrap,
+} from '@/components/ui';
 import { api } from '@/lib/api';
 import { autofillFormFromZip, type ZipHit } from '@/lib/zip-lookup';
 import { downloadFile } from '@/lib/download';
@@ -104,6 +123,19 @@ function lineStateLabel(l: HistoryLine): string {
   return parts.join(' · ');
 }
 
+/** "receipt · imported from STORIS · 3/2/2024 · promised 2024-03-05" */
+function historyFacts(o: HistoryOrder): string {
+  return [
+    o.docType === 'sale' ? 'receipt' : null,
+    o.orderKind === 'exchange' ? 'exchange' : null,
+    o.importedAt ? 'imported from STORIS' : null,
+    new Date(o.createdAt).toLocaleDateString(),
+    o.requestedDate ? `promised ${o.requestedDate}` : null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+}
+
 export default function CustomerDetailPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
@@ -136,6 +168,7 @@ export default function CustomerDetailPage() {
     }[]
   >([]);
   const [merging, setMerging] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   async function load() {
     setError(null);
@@ -248,353 +281,378 @@ export default function CustomerDetailPage() {
     }
   }
 
-  if (error && !c) return <p style={{ color: 'var(--danger)' }}>{error}</p>;
-  if (!c) return <LoadingRows />;
+  async function exportPurchases() {
+    const start = '2000-01-01';
+    const end = new Date().toISOString().slice(0, 10);
+    setExporting(true);
+    try {
+      await downloadFile(
+        `/v1/reports/customer-purchases?customerId=${id}&start=${start}&end=${end}&format=csv`,
+        `purchases-${id}.csv`,
+      );
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  const backLink = <BackLink href="/customers">All customers</BackLink>;
+
+  if (error && !c) {
+    return (
+      <div>
+        <PageHeader eyebrow={backLink} title="Customer not found" />
+        <Alert tone="error">{error}</Alert>
+      </div>
+    );
+  }
+  if (!c) {
+    return (
+      <div>
+        <PageHeader eyebrow={backLink} title="Customer" />
+        <LoadingRows />
+      </div>
+    );
+  }
 
   const name = [c.firstName, c.lastName].filter(Boolean).join(' ') || '(no name)';
 
   return (
     <div>
-      <p style={{ margin: '0 0 12px' }}>
-        <Link href="/customers">← All customers</Link>
-      </p>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 4 }}>
-        <h1 className="page-title" style={{ margin: 0 }}>
-          {name}
-        </h1>
-        <Link
-          href={`/customers/${id}/activity`}
-          className="btn"
-          data-testid="view-activity"
-          style={{ marginLeft: 'auto' }}
-        >
-          View customer activity
-        </Link>
-      </div>
-      <p style={{ color: 'var(--text-secondary)', fontSize: 13, margin: '0 0 24px' }}>
-        Customer since {new Date(c.createdAt).toLocaleDateString()}
-      </p>
+      <PageHeader
+        eyebrow={backLink}
+        title={name}
+        sub={`Customer since ${new Date(c.createdAt).toLocaleDateString()}`}
+        actions={
+          <LinkButton size="sm" href={`/customers/${id}/activity`} data-testid="view-activity">
+            View customer activity
+          </LinkButton>
+        }
+      />
 
-      <Card title="Details">
-        <form onSubmit={save} style={{ display: 'grid', gap: 8, maxWidth: 560 }}>
-          <div className="grid gap-2 sm:grid-cols-2">
-            <Field label="First name">
-              <Input name="firstName" defaultValue={c.firstName ?? ''} style={{ width: '100%' }} />
-            </Field>
-            <Field label="Last name">
-              <Input name="lastName" defaultValue={c.lastName ?? ''} style={{ width: '100%' }} />
-            </Field>
-          </div>
-          <Field label="Email">
-            <Input
-              name="email"
-              type="email"
-              defaultValue={c.email ?? ''}
-              style={{ width: '100%' }}
-            />
-          </Field>
-          <Field label="Phone">
-            <Input name="phone" defaultValue={c.phone ?? ''} style={{ width: '100%' }} />
-          </Field>
-          <Field label="2nd phone (optional)">
-            <Input name="phone2" defaultValue={c.phone2 ?? ''} style={{ width: '100%' }} />
-          </Field>
-          <Field label="How did they hear about us?">
-            <Input
-              name="referralSource"
-              defaultValue={c.referralSource ?? ''}
-              style={{ width: '100%' }}
-            />
-          </Field>
-          {(['d', 'b'] as const).map((prefix) => {
-            const kind = prefix === 'd' ? 'delivery' : 'billing';
-            const a = pickAddress(c.addressesJson, kind);
-            return (
-              <div key={prefix} style={{ display: 'grid', gap: 8 }}>
-                <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-secondary)' }}>
-                  {kind === 'delivery' ? 'Delivery address' : 'Billing address (if different)'}
-                </div>
-                <div className="grid gap-2 sm:grid-cols-2">
-                  <Input
-                    name={`${prefix}_line1`}
-                    placeholder="Street address"
-                    defaultValue={a.line1 ?? ''}
-                    style={{ width: '100%' }}
-                  />
-                  <Input
-                    name={`${prefix}_line2`}
-                    placeholder="Apt / unit"
-                    defaultValue={a.line2 ?? ''}
-                    style={{ width: '100%' }}
-                  />
-                </div>
-                <div className="grid gap-2 sm:grid-cols-3">
-                  <Input
-                    name={`${prefix}_city`}
-                    placeholder="City"
-                    defaultValue={a.city ?? ''}
-                    style={{ width: '100%' }}
-                  />
-                  <Input
-                    name={`${prefix}_region`}
-                    placeholder="State"
-                    defaultValue={a.region ?? ''}
-                    style={{ width: '100%' }}
-                  />
-                  <Input
-                    name={`${prefix}_postalCode`}
-                    placeholder="ZIP"
-                    defaultValue={a.postalCode ?? ''}
-                    style={{ width: '100%' }}
-                    onChange={(e) =>
-                      autofillFormFromZip(
-                        e.currentTarget,
-                        { city: `${prefix}_city`, region: `${prefix}_region` },
-                        zipMemo(prefix),
-                      )
-                    }
-                  />
-                </div>
-              </div>
-            );
-          })}
-          <Field label="Notes">
-            <textarea
-              name="notes"
-              defaultValue={c.notes ?? ''}
-              rows={3}
-              className="textarea"
-              style={{ width: '100%', resize: 'vertical' }}
-            />
-          </Field>
-          {error && <p style={{ color: 'var(--danger)', margin: 0 }}>{error}</p>}
-          {saved && <p style={{ color: 'var(--success)', margin: 0, fontSize: 13 }}>Saved.</p>}
-          <div className="flex flex-wrap gap-2">
-            <Button type="submit" variant="primary" disabled={saving}>
-              <Save size={14} aria-hidden />
-              {saving ? 'Saving…' : 'Save changes'}
-            </Button>
-            <Button type="button" variant="danger" onClick={destroy}>
-              <Trash2 size={14} aria-hidden />
-              Delete customer
-            </Button>
-          </div>
-        </form>
-      </Card>
-
-      {dupes.length > 0 && (
-        <Card title="Possible duplicates" style={{ marginTop: 16 }} data-testid="duplicates-card">
-          <p style={{ margin: '0 0 8px', fontSize: 12.5, color: 'var(--text-secondary)' }}>
-            These records look like the same person. Merging moves their whole history — orders,
-            receipts, store credit, notes — onto THIS record and deletes the duplicate.
-          </p>
-          <div style={{ display: 'grid', gap: 6 }}>
-            {dupes.map((d) => (
-              <div
-                key={d.id}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 8,
-                  flexWrap: 'wrap',
-                  fontSize: 13,
-                  border: '1px solid var(--border)',
-                  borderRadius: 'var(--radius-sm)',
-                  padding: '6px 10px',
-                }}
-              >
-                <Link href={`/customers/${d.id}`}>
-                  <strong>
-                    {[d.firstName, d.lastName].filter(Boolean).join(' ') || 'unnamed'}
-                  </strong>
-                </Link>
-                <span style={{ color: 'var(--text-secondary)' }}>
-                  {[d.phone, d.email].filter(Boolean).join(' · ') || 'no contact info'} · same{' '}
-                  {d.matchedBy} · {d.docCount} document{d.docCount === 1 ? '' : 's'}
-                </span>
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  disabled={merging}
-                  data-testid={`merge-${d.id}`}
-                  style={{ marginLeft: 'auto' }}
-                  onClick={() => void mergeDupe(d.id)}
-                >
-                  Merge into this record
+      <Stack>
+        <Card title="Details">
+          <form onSubmit={save}>
+            <FormGrid cols={2}>
+              <Field label="First name">
+                <Input name="firstName" defaultValue={c.firstName ?? ''} />
+              </Field>
+              <Field label="Last name">
+                <Input name="lastName" defaultValue={c.lastName ?? ''} />
+              </Field>
+              <Field label="Email">
+                <Input name="email" type="email" defaultValue={c.email ?? ''} />
+              </Field>
+              <Field label="Phone">
+                <Input name="phone" type="tel" defaultValue={c.phone ?? ''} />
+              </Field>
+              <Field label="2nd phone (optional)">
+                <Input name="phone2" type="tel" defaultValue={c.phone2 ?? ''} />
+              </Field>
+              <Field label="How did they hear about us?">
+                <Input name="referralSource" defaultValue={c.referralSource ?? ''} />
+              </Field>
+              {(['d', 'b'] as const).map((prefix) => {
+                const kind = prefix === 'd' ? 'delivery' : 'billing';
+                const a = pickAddress(c.addressesJson, kind);
+                const groupLabel =
+                  kind === 'delivery' ? 'Delivery address' : 'Billing address (if different)';
+                return (
+                  <Fragment key={prefix}>
+                    <SectionHeading as="h3" title={groupLabel} />
+                    <Input
+                      name={`${prefix}_line1`}
+                      placeholder="Street address"
+                      aria-label={`${groupLabel}: street address`}
+                      defaultValue={a.line1 ?? ''}
+                      className="w-full"
+                    />
+                    <Input
+                      name={`${prefix}_line2`}
+                      placeholder="Apt / unit"
+                      aria-label={`${groupLabel}: apt / unit`}
+                      defaultValue={a.line2 ?? ''}
+                      className="w-full"
+                    />
+                    <FormGrid cols={3} className="form-span">
+                      <Input
+                        name={`${prefix}_city`}
+                        placeholder="City"
+                        aria-label={`${groupLabel}: city`}
+                        defaultValue={a.city ?? ''}
+                        className="w-full"
+                      />
+                      <Input
+                        name={`${prefix}_region`}
+                        placeholder="State"
+                        aria-label={`${groupLabel}: state`}
+                        defaultValue={a.region ?? ''}
+                        className="w-full"
+                      />
+                      <Input
+                        name={`${prefix}_postalCode`}
+                        placeholder="ZIP"
+                        aria-label={`${groupLabel}: ZIP`}
+                        defaultValue={a.postalCode ?? ''}
+                        className="w-full"
+                        onChange={(e) =>
+                          autofillFormFromZip(
+                            e.currentTarget,
+                            { city: `${prefix}_city`, region: `${prefix}_region` },
+                            zipMemo(prefix),
+                          )
+                        }
+                      />
+                    </FormGrid>
+                  </Fragment>
+                );
+              })}
+              <Field label="Notes" className="form-span">
+                <textarea name="notes" defaultValue={c.notes ?? ''} rows={3} className="textarea" />
+              </Field>
+              {error && (
+                <Alert tone="error" className="form-span">
+                  {error}
+                </Alert>
+              )}
+              {saved && (
+                <Alert tone="success" className="form-span">
+                  Saved.
+                </Alert>
+              )}
+            </FormGrid>
+            <FormActions
+              start={
+                <Button type="button" variant="danger" size="sm" onClick={destroy}>
+                  <Trash2 size={14} aria-hidden />
+                  Delete customer
                 </Button>
-              </div>
-            ))}
-          </div>
+              }
+            >
+              <Button type="submit" variant="primary" disabled={saving}>
+                <Save size={14} aria-hidden />
+                {saving ? 'Saving…' : 'Save changes'}
+              </Button>
+            </FormActions>
+          </form>
         </Card>
-      )}
-      {credit && (credit.balanceCents > 0 || credit.entries.length > 0) && (
-        <Card title="Store credit" style={{ marginTop: 16 }}>
-          <p style={{ fontSize: 14, marginTop: 0 }} data-testid="store-credit-balance">
-            Balance: <strong>${(credit.balanceCents / 100).toFixed(2)}</strong>
-            <span className="muted" style={{ fontSize: 12, marginLeft: 8 }}>
-              never expires — auto-surfaces at checkout (§10)
-            </span>
-          </p>
-          {credit.entries.length > 0 && (
-            <ul style={{ margin: 0, paddingLeft: 16, fontSize: 13 }}>
-              {credit.entries.slice(0, 10).map((e) => (
-                <li key={e.id}>
-                  {new Date(e.createdAt).toLocaleDateString()} —{' '}
-                  <span style={{ color: e.deltaCents > 0 ? 'var(--success)' : 'var(--danger)' }}>
-                    {e.deltaCents > 0 ? '+' : ''}${(e.deltaCents / 100).toFixed(2)}
-                  </span>
-                  {e.reason ? ` · ${e.reason}` : ''}
-                </li>
-              ))}
-            </ul>
-          )}
-        </Card>
-      )}
 
-      {summary && (
-        <Card title="Activity totals" style={{ marginTop: 16 }} data-testid="customer-totals">
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <div>
-              <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Lifetime documents</div>
-              <div style={{ fontSize: 18, fontWeight: 600 }}>{summary.lifetime.documents}</div>
-            </div>
-            <div>
-              <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Lifetime total</div>
-              <div style={{ fontSize: 18, fontWeight: 600 }}>
-                <Money cents={summary.lifetime.totalCents} />
-              </div>
-            </div>
-            <div>
-              <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>YTD documents</div>
-              <div style={{ fontSize: 18, fontWeight: 600 }}>{summary.ytd.documents}</div>
-            </div>
-            <div>
-              <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>YTD total</div>
-              <div style={{ fontSize: 18, fontWeight: 600 }}>
-                <Money cents={summary.ytd.totalCents} />
-              </div>
-            </div>
-          </div>
-        </Card>
-      )}
-      {summary && summary.openOrders.length > 0 && (
-        <Card title="Open orders" style={{ marginTop: 16 }} data-testid="customer-open-orders">
-          <div style={{ overflowX: 'auto' }}>
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Order</th>
-                  <th>Status</th>
-                  <th>Requested</th>
-                  <th className="num">Total</th>
-                  <th className="num">Paid</th>
-                  <th className="num">Balance</th>
-                </tr>
-              </thead>
-              <tbody>
-                {summary.openOrders.map((o) => (
-                  <tr key={o.id}>
-                    <td>
-                      <Link href={`/orders/${o.id}`}>{o.number}</Link>
-                    </td>
-                    <td>
-                      <StatusBadge status={o.status} />
-                    </td>
-                    <td>{o.requestedDate ?? '—'}</td>
-                    <td className="num">
-                      <Money cents={o.totalCents} />
-                    </td>
-                    <td className="num">
-                      <Money cents={o.paidCents} />
-                    </td>
-                    <td className="num" style={{ fontWeight: 600 }}>
-                      <Money cents={o.balanceCents} />
-                    </td>
+        {dupes.length > 0 && (
+          <Card
+            title="Possible duplicates"
+            description={
+              <>
+                These records look like the same person. Merging moves their whole history — orders,
+                receipts, store credit, notes — onto <strong>this</strong> record and deletes the
+                duplicate.
+              </>
+            }
+            flush
+            data-testid="duplicates-card"
+          >
+            <TableWrap>
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Customer</th>
+                    <th>Contact</th>
+                    <th>Matched by</th>
+                    <th className="num">Documents</th>
+                    <th className="actions">
+                      <span className="sr-only">Actions</span>
+                    </th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </Card>
-      )}
-      <Card title="Purchase history" style={{ marginTop: 16 }} data-testid="purchase-history">
-        <Button
-          size="sm"
-          variant="secondary"
-          style={{ marginBottom: 10 }}
-          onClick={() => {
-            const start = '2000-01-01';
-            const end = new Date().toISOString().slice(0, 10);
-            void downloadFile(
-              `/v1/reports/customer-purchases?customerId=${id}&start=${start}&end=${end}&format=csv`,
-              `purchases-${id}.csv`,
-            ).catch((err: unknown) =>
-              toast.error(err instanceof Error ? err.message : String(err)),
-            );
-          }}
-        >
-          Export purchase history CSV
-        </Button>
-        {!history || history.length === 0 ? (
-          <EmptyState>No purchases yet.</EmptyState>
-        ) : (
-          <div style={{ display: 'grid', gap: 12 }}>
-            {history.map((o) => (
-              <div
+                </thead>
+                <tbody>
+                  {dupes.map((d) => (
+                    <tr key={d.id}>
+                      <td>
+                        <Link href={`/customers/${d.id}`}>
+                          <strong>
+                            {[d.firstName, d.lastName].filter(Boolean).join(' ') || 'unnamed'}
+                          </strong>
+                        </Link>
+                      </td>
+                      <td>
+                        {[d.phone, d.email].filter(Boolean).join(' · ') || (
+                          <span className="muted">no contact info</span>
+                        )}
+                      </td>
+                      <td>same {d.matchedBy}</td>
+                      <td className="num">{d.docCount}</td>
+                      <td className="actions">
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          disabled={merging}
+                          data-testid={`merge-${d.id}`}
+                          onClick={() => void mergeDupe(d.id)}
+                        >
+                          {merging ? 'Merging…' : 'Merge into this record'}
+                        </Button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </TableWrap>
+          </Card>
+        )}
+
+        {credit && (credit.balanceCents > 0 || credit.entries.length > 0) && (
+          <Card title="Store credit">
+            <Stack>
+              <StatGrid cols={4}>
+                <StatTile
+                  label="Balance"
+                  value={<Money cents={credit.balanceCents} />}
+                  sub="Never expires — auto-surfaces at checkout"
+                  tone={credit.balanceCents > 0 ? 'success' : undefined}
+                  data-testid="store-credit-balance"
+                />
+              </StatGrid>
+              {credit.entries.length > 0 && (
+                <TableWrap>
+                  <table className="table table-dense">
+                    <thead>
+                      <tr>
+                        <th>Date</th>
+                        <th className="num">Amount</th>
+                        <th>Reason</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {credit.entries.slice(0, 10).map((e) => (
+                        <tr key={e.id}>
+                          <td>{new Date(e.createdAt).toLocaleDateString()}</td>
+                          <td
+                            className={`num ${e.deltaCents > 0 ? 'text-success' : 'text-danger'}`}
+                          >
+                            {e.deltaCents > 0 ? '+' : ''}
+                            <Money cents={e.deltaCents} />
+                          </td>
+                          <td>{e.reason ?? <span className="muted">—</span>}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </TableWrap>
+              )}
+            </Stack>
+          </Card>
+        )}
+
+        {summary && (
+          <Card title="Activity totals" data-testid="customer-totals">
+            <StatGrid cols={4}>
+              <StatTile label="Lifetime documents" value={summary.lifetime.documents} />
+              <StatTile
+                label="Lifetime total"
+                value={<Money cents={summary.lifetime.totalCents} />}
+              />
+              <StatTile label="YTD documents" value={summary.ytd.documents} />
+              <StatTile label="YTD total" value={<Money cents={summary.ytd.totalCents} />} />
+            </StatGrid>
+          </Card>
+        )}
+
+        {summary && summary.openOrders.length > 0 && (
+          <Card title="Open orders" flush data-testid="customer-open-orders">
+            <TableWrap>
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Order</th>
+                    <th>Status</th>
+                    <th>Requested</th>
+                    <th className="num">Total</th>
+                    <th className="num">Paid</th>
+                    <th className="num">Balance</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {summary.openOrders.map((o) => (
+                    <tr key={o.id}>
+                      <td>
+                        <Link href={`/orders/${o.id}`}>{o.number}</Link>
+                      </td>
+                      <td>
+                        <StatusBadge status={o.status} />
+                      </td>
+                      <td>{o.requestedDate ?? '—'}</td>
+                      <td className="num">
+                        <Money cents={o.totalCents} />
+                      </td>
+                      <td className="num">
+                        <Money cents={o.paidCents} />
+                      </td>
+                      <td className="num">
+                        <strong>
+                          <Money cents={o.balanceCents} />
+                        </strong>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </TableWrap>
+          </Card>
+        )}
+
+        <SectionHeading
+          title="Purchase history"
+          actions={
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={exporting}
+              onClick={() => void exportPurchases()}
+            >
+              {exporting ? 'Exporting…' : 'Export purchase history CSV'}
+            </Button>
+          }
+        />
+        <Stack data-testid="purchase-history">
+          {!history || history.length === 0 ? (
+            <Card>
+              <EmptyState title="No purchases yet">
+                Orders and register sales for this customer will show up here.
+              </EmptyState>
+            </Card>
+          ) : (
+            history.map((o) => (
+              <Card
                 key={o.id}
-                style={{
-                  border: '1px solid var(--border)',
-                  borderRadius: 'var(--radius-sm)',
-                  padding: '10px 12px',
-                }}
+                flush
                 data-testid="history-order"
-              >
-                <div
-                  className="flex flex-wrap items-center gap-2"
-                  style={{ justifyContent: 'space-between' }}
-                >
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Link
-                      href={o.docType === 'sale' ? `/sales/${o.id}` : `/orders/${o.id}`}
-                      style={{ fontWeight: 600 }}
-                    >
+                title={
+                  <span className="inline-flex flex-wrap items-center gap-2">
+                    <Link href={o.docType === 'sale' ? `/sales/${o.id}` : `/orders/${o.id}`}>
                       {o.number}
                     </Link>
                     <StatusBadge status={o.status} />
-                    {o.docType === 'sale' && (
-                      <span className="muted" style={{ fontSize: 12 }}>
-                        receipt
-                      </span>
-                    )}
-                    {o.orderKind === 'exchange' && (
-                      <span className="muted" style={{ fontSize: 12 }}>
-                        exchange
-                      </span>
-                    )}
-                    {o.importedAt && (
-                      <span className="muted" style={{ fontSize: 12 }}>
-                        imported from STORIS
-                      </span>
-                    )}
-                    <span className="muted" style={{ fontSize: 12.5 }}>
-                      {new Date(o.createdAt).toLocaleDateString()}
-                      {o.requestedDate ? ` · promised ${o.requestedDate}` : ''}
-                    </span>
-                  </div>
-                  <div style={{ fontSize: 13 }}>
-                    <Money cents={o.totalCents} />
+                  </span>
+                }
+                description={historyFacts(o)}
+                actions={
+                  <>
+                    <strong>
+                      <Money cents={o.totalCents} />
+                    </strong>
                     {o.balanceDueCents > 0 ? (
-                      <span style={{ color: 'var(--danger)', marginLeft: 8 }}>
+                      <span className="text-danger">
                         owes <Money cents={o.balanceDueCents} />
                       </span>
                     ) : (
-                      <span style={{ color: 'var(--success)', marginLeft: 8 }}>paid</span>
+                      <span className="text-success">paid</span>
                     )}
-                  </div>
-                </div>
+                  </>
+                }
+              >
                 {o.lines.length > 0 && (
-                  <div style={{ overflowX: 'auto', marginTop: 6 }}>
-                    <table className="table" style={{ fontSize: 13 }}>
+                  <TableWrap>
+                    <table className="table table-dense">
                       <thead>
                         <tr>
                           <th>Item</th>
@@ -615,20 +673,18 @@ export default function CustomerDetailPage() {
                             <td className="num">
                               <Money cents={l.totalCents + l.taxCents} />
                             </td>
-                            <td className="muted" style={{ fontSize: 12 }}>
-                              {lineStateLabel(l)}
-                            </td>
+                            <td className="muted">{lineStateLabel(l)}</td>
                           </tr>
                         ))}
                       </tbody>
                     </table>
-                  </div>
+                  </TableWrap>
                 )}
-              </div>
-            ))}
-          </div>
-        )}
-      </Card>
+              </Card>
+            ))
+          )}
+        </Stack>
+      </Stack>
     </div>
   );
 }

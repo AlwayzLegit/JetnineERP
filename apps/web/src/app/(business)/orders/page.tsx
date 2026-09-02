@@ -16,13 +16,19 @@ import {
 import { DateRangePicker } from '@/components/date-range-picker';
 import { Money } from '@/components/money';
 import {
-  PageHeader,
+  Alert,
+  Button,
+  Card,
+  DisplayStatusBadge,
+  EmptyState,
   Input,
-  Select,
   LinkButton,
   LoadingRows,
-  EmptyState,
-  DisplayStatusBadge,
+  PageHeader,
+  Select,
+  Stack,
+  TableWrap,
+  Toolbar,
 } from '@/components/ui';
 
 /**
@@ -235,6 +241,20 @@ export default function OrdersPage() {
     setRows(null);
   }
 
+  // The filters that shape the empty-state sentence and the Clear button.
+  const activeFilters = [
+    q.trim() && `search “${q.trim()}”`,
+    status && `status ${STATUS_FILTERS.find(([v]) => v === status)?.[1] ?? status}`,
+    view === 'past_due' && 'past due',
+    mine && 'my orders',
+    range.preset !== 'all' &&
+      (presetLabel(range.preset) === 'Custom'
+        ? formatRange(range)
+        : presetLabel(range.preset).toLowerCase()),
+    loginStore && atLoginStore && `at ${loginStore.name}`,
+  ].filter(Boolean);
+  const clearable = Boolean(q.trim() || status || view || mine || range.preset !== 'all');
+
   return (
     <div>
       <PageHeader
@@ -247,19 +267,18 @@ export default function OrdersPage() {
         }
       />
 
-      <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
+      <Toolbar>
         <Input
           data-testid="orders-search"
           placeholder="Search order # or customer…"
           value={q}
           onChange={(e) => setQ(e.target.value)}
-          style={{ maxWidth: 320 }}
         />
         <Select
           data-testid="orders-status-filter"
+          aria-label="Status"
           value={status}
           onChange={(e) => setStatus(e.target.value)}
-          style={{ maxWidth: 200 }}
         >
           {STATUS_FILTERS.map(([value, label]) => (
             <option key={value} value={value}>
@@ -278,14 +297,18 @@ export default function OrdersPage() {
           testid="orders-range"
         />
         <button
-          className={`btn btn-sm ${view === 'past_due' ? 'btn-danger' : 'btn-secondary'}`}
+          type="button"
+          className={`pill ${view === 'past_due' ? 'pill-active' : ''}`}
+          aria-pressed={view === 'past_due'}
           data-testid="past-due-chip"
           onClick={() => setView((v) => (v === 'past_due' ? '' : 'past_due'))}
         >
           Past due
         </button>
         <button
-          className={`btn btn-sm ${mine ? 'btn-primary' : 'btn-secondary'}`}
+          type="button"
+          className={`pill ${mine ? 'pill-active' : ''}`}
+          aria-pressed={mine}
           data-testid="mine-chip"
           onClick={() => setMine((v) => !v)}
         >
@@ -293,7 +316,9 @@ export default function OrdersPage() {
         </button>
         {loginStore && (
           <button
-            className={`btn btn-sm ${atLoginStore ? 'btn-primary' : 'btn-secondary'}`}
+            type="button"
+            className={`pill ${atLoginStore ? 'pill-active' : ''}`}
+            aria-pressed={atLoginStore}
             data-testid="login-store-chip"
             title="Orders at the store you logged into — click to see every store"
             onClick={() => setAtLoginStore((v) => !v)}
@@ -301,144 +326,147 @@ export default function OrdersPage() {
             At {loginStore.name}
           </button>
         )}
-      </div>
+      </Toolbar>
 
-      {error && <p style={{ color: 'var(--danger)', fontSize: 13 }}>{error}</p>}
-      {!rows && !error && <LoadingRows rows={6} />}
+      <Stack>
+        {error && <Alert tone="error">{error}</Alert>}
+        {!rows && !error && <LoadingRows rows={6} />}
 
-      {rows && rows.length === 0 && (
-        <EmptyState>
-          {(() => {
-            const active = [
-              q.trim() && `search “${q.trim()}”`,
-              status && `status ${STATUS_FILTERS.find(([v]) => v === status)?.[1] ?? status}`,
-              view === 'past_due' && 'past due',
-              mine && 'my orders',
-              range.preset !== 'all' &&
-                (presetLabel(range.preset) === 'Custom'
-                  ? formatRange(range)
-                  : presetLabel(range.preset).toLowerCase()),
-              loginStore && atLoginStore && `at ${loginStore.name}`,
-            ].filter(Boolean);
-            return active.length > 0
-              ? `No orders match ${active.join(' + ')}.`
-              : 'No orders yet — write the first one with New Sale.';
-          })()}
-          {(q.trim() || status || view || mine || range.preset !== 'all') && (
-            <div style={{ marginTop: 8 }}>
-              <button
-                className="btn btn-sm btn-secondary"
-                data-testid="clear-filters"
-                onClick={() => {
-                  setQ('');
-                  setStatus('');
-                  setView('');
-                  setMine(false);
-                  setRange(rangeFor('all'));
-                }}
-              >
-                Clear filters
-              </button>
-            </div>
-          )}
-        </EmptyState>
-      )}
-
-      {rows && rows.length > 0 && (
-        <div
-          className="card"
-          style={{ padding: 0, overflow: 'auto', maxHeight: 'calc(100vh - 210px)' }}
-        >
-          <table className="table table-dense table-sticky" data-testid="orders-table">
-            <thead>
-              <tr>
-                <SortTh id="number" label="Order #" sort={sort} dir={dir} onSort={toggleSort} />
-                <SortTh id="customer" label="Customer" sort={sort} dir={dir} onSort={toggleSort} />
-                <th>Status</th>
-                <SortTh
-                  id="deliveryDate"
-                  label="Delivery Date"
-                  sort={sort}
-                  dir={dir}
-                  onSort={toggleSort}
-                />
-                <SortTh
-                  id="balanceDue"
-                  label="Balance Due"
-                  sort={sort}
-                  dir={dir}
-                  onSort={toggleSort}
-                  align="right"
-                />
-                <th>Salesperson</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => (
-                <tr
-                  key={r.id}
-                  data-testid="order-row"
-                  onClick={() => router.push(`/orders/${r.id}`)}
-                  style={{ cursor: 'pointer' }}
+        {rows && rows.length === 0 && (
+          <EmptyState
+            title={activeFilters.length > 0 ? 'No orders match these filters' : 'No orders yet'}
+            action={
+              clearable ? (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  data-testid="clear-filters"
+                  onClick={() => {
+                    setQ('');
+                    setStatus('');
+                    setView('');
+                    setMine(false);
+                    setRange(rangeFor('all'));
+                  }}
                 >
-                  <td style={{ fontWeight: 600, whiteSpace: 'nowrap' }}>
-                    <Link
-                      href={`/orders/${r.id}`}
-                      data-testid="order-number-link"
-                      onClick={(e) => e.stopPropagation()}
-                      style={{ color: 'inherit', textDecoration: 'none' }}
-                    >
-                      {r.number}
-                    </Link>
-                  </td>
-                  <td>{r.customerName}</td>
-                  <td style={{ whiteSpace: 'nowrap' }}>
-                    <DisplayStatus row={r} />
-                    {r.lineSummary && r.lineSummary.units > 0 && (
-                      <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 6 }}>
-                        {r.lineSummary.fulfilled > 0 && `${r.lineSummary.fulfilled} delivered · `}
-                        {r.lineSummary.reserved} of {r.lineSummary.units} reserved
-                        {r.lineSummary.specialOrder > 0 && ` · ${r.lineSummary.specialOrder} SO`}
-                      </span>
-                    )}
-                  </td>
-                  <td style={{ whiteSpace: 'nowrap' }}>{r.deliveryDate ?? '—'}</td>
-                  <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
-                    {r.displayStatus === 'Cancelled' ? (
-                      // BA-0016: a cancelled order owes nothing — showing
-                      // its old balance made it read as a receivable.
-                      '—'
-                    ) : r.balanceDueCents > 0 ? (
-                      <Money cents={r.balanceDueCents} />
-                    ) : (r.creditDueCents ?? 0) > 0 ? (
-                      <span style={{ color: 'var(--danger)' }}>
-                        Credit <Money cents={r.creditDueCents} />
-                      </span>
-                    ) : (
-                      '—'
-                    )}
-                  </td>
-                  <td>{r.salespersonName ?? '—'}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {nextCursor && (
-        <div style={{ marginTop: 12, textAlign: 'center' }}>
-          <button
-            type="button"
-            className="btn"
-            data-testid="orders-load-more"
-            onClick={() => void loadMore()}
-            disabled={loadingMore}
+                  Clear filters
+                </Button>
+              ) : (
+                <LinkButton size="sm" variant="secondary" href="/orders/new">
+                  New Sale
+                </LinkButton>
+              )
+            }
           >
-            {loadingMore ? 'Loading…' : 'Load more'}
-          </button>
-        </div>
-      )}
+            {activeFilters.length > 0
+              ? `No orders match ${activeFilters.join(' + ')}.`
+              : 'Write the first one with New Sale.'}
+          </EmptyState>
+        )}
+
+        {rows && rows.length > 0 && (
+          <Card flush>
+            <TableWrap maxHeight="calc(100vh - 220px)">
+              <table className="table table-dense table-sticky" data-testid="orders-table">
+                <thead>
+                  <tr>
+                    <SortTh id="number" label="Order #" sort={sort} dir={dir} onSort={toggleSort} />
+                    <SortTh
+                      id="customer"
+                      label="Customer"
+                      sort={sort}
+                      dir={dir}
+                      onSort={toggleSort}
+                    />
+                    <th>Status</th>
+                    <SortTh
+                      id="deliveryDate"
+                      label="Delivery Date"
+                      sort={sort}
+                      dir={dir}
+                      onSort={toggleSort}
+                    />
+                    <SortTh
+                      id="balanceDue"
+                      label="Balance Due"
+                      sort={sort}
+                      dir={dir}
+                      onSort={toggleSort}
+                      align="right"
+                    />
+                    <th>Salesperson</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((r) => (
+                    <tr
+                      key={r.id}
+                      data-testid="order-row"
+                      onClick={() => router.push(`/orders/${r.id}`)}
+                      className="cursor-pointer"
+                    >
+                      <td className="nowrap font-semibold">
+                        <Link
+                          href={`/orders/${r.id}`}
+                          data-testid="order-number-link"
+                          onClick={(e) => e.stopPropagation()}
+                          className="text-inherit no-underline"
+                        >
+                          {r.number}
+                        </Link>
+                      </td>
+                      <td>{r.customerName}</td>
+                      <td className="nowrap">
+                        <DisplayStatus row={r} />
+                        {r.lineSummary && r.lineSummary.units > 0 && (
+                          <span className="muted ml-1.5 text-[11px]">
+                            {r.lineSummary.fulfilled > 0 &&
+                              `${r.lineSummary.fulfilled} delivered · `}
+                            {r.lineSummary.reserved} of {r.lineSummary.units} reserved
+                            {r.lineSummary.specialOrder > 0 &&
+                              ` · ${r.lineSummary.specialOrder} SO`}
+                          </span>
+                        )}
+                      </td>
+                      <td className="nowrap">{r.deliveryDate ?? '—'}</td>
+                      <td className="num">
+                        {r.displayStatus === 'Cancelled' ? (
+                          // BA-0016: a cancelled order owes nothing — showing
+                          // its old balance made it read as a receivable.
+                          '—'
+                        ) : r.balanceDueCents > 0 ? (
+                          <Money cents={r.balanceDueCents} />
+                        ) : (r.creditDueCents ?? 0) > 0 ? (
+                          <span className="text-danger">
+                            Credit <Money cents={r.creditDueCents} />
+                          </span>
+                        ) : (
+                          '—'
+                        )}
+                      </td>
+                      <td>{r.salespersonName ?? '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </TableWrap>
+          </Card>
+        )}
+
+        {nextCursor && (
+          <div className="text-center">
+            <Button
+              size="sm"
+              variant="secondary"
+              data-testid="orders-load-more"
+              onClick={() => void loadMore()}
+              disabled={loadingMore}
+            >
+              {loadingMore ? 'Loading…' : 'Load more'}
+            </Button>
+          </div>
+        )}
+      </Stack>
     </div>
   );
 }
@@ -463,22 +491,15 @@ function SortTh({
   return (
     <th
       aria-sort={active ? (dir === 'desc' ? 'descending' : 'ascending') : undefined}
-      style={align === 'right' ? { textAlign: 'right' } : undefined}
+      className={align === 'right' ? 'num' : undefined}
     >
+      {/* Inherits the header's type so the column reads as one label;
+          no shared sort-header class exists yet. */}
       <button
         type="button"
         onClick={() => onSort(id)}
         data-testid={`sort-${id}`}
-        style={{
-          border: 'none',
-          background: 'none',
-          cursor: 'pointer',
-          font: 'inherit',
-          color: 'inherit',
-          textTransform: 'inherit',
-          letterSpacing: 'inherit',
-          padding: 0,
-        }}
+        className="cursor-pointer border-0 bg-transparent p-0 font-[inherit] text-inherit [letter-spacing:inherit] [text-transform:inherit]"
       >
         {label}
         {active ? (dir === 'desc' ? ' ▼' : ' ▲') : ''}

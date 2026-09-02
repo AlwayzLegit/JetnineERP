@@ -1,7 +1,7 @@
 'use client';
 
 import { useSession } from '@/lib/auth-client';
-import { Card, LoadingRows } from '@/components/ui';
+import { Alert, LinkButton, LoadingRows, PageHeader } from '@/components/ui';
 import WarehouseDashboardView from '../dashboard/warehouse-dashboard';
 
 export default function WarehousePageClient() {
@@ -9,9 +9,19 @@ export default function WarehousePageClient() {
   if (session.isPending) return <LoadingRows />;
   if (!session.data) {
     return (
-      <Card title="Warehouse">
-        <p style={{ margin: 0, fontSize: 13 }}>You are not signed in.</p>
-      </Card>
+      <>
+        <PageHeader title="Warehouse" />
+        <Alert
+          tone="info"
+          action={
+            <LinkButton size="sm" variant="primary" href="/login">
+              Sign in
+            </LinkButton>
+          }
+        >
+          You are not signed in.
+        </Alert>
+      </>
     );
   }
   return <WarehouseDashboardView userName={session.data.user.name ?? session.data.user.email} />;

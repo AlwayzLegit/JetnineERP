@@ -1,11 +1,21 @@
 'use client';
 
-import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import { Money } from '@/components/money';
-import { Button, Card, EmptyState, LinkButton, LoadingRows, PageHeader } from '@/components/ui';
+import {
+  Alert,
+  BackLink,
+  Button,
+  Card,
+  EmptyState,
+  LinkButton,
+  LoadingRows,
+  PageHeader,
+  Stack,
+  TableWrap,
+} from '@/components/ui';
 
 interface DupProduct {
   id: string;
@@ -116,158 +126,141 @@ export default function DuplicateProductsPage() {
   return (
     <div data-testid="duplicate-products">
       <PageHeader
+        eyebrow={<BackLink href="/products">Back to products</BackLink>}
         title="Duplicate products"
+        sub={
+          groups && groups.length > 0
+            ? `${groups.length} name${groups.length === 1 ? '' : 's'} · ${count} products`
+            : undefined
+        }
         actions={
-          <>
-            <LinkButton href="/products" variant="secondary">
-              Back to products
-            </LinkButton>
-            {groups && groups.some((g) => canKeepImported(g)) && (
-              <Button
-                variant="primary"
-                disabled={busy != null}
-                onClick={() => void keepImported()}
-                data-testid="keep-imported-all"
-              >
-                Keep imported copies everywhere
-              </Button>
-            )}
-          </>
+          groups && groups.some((g) => canKeepImported(g)) ? (
+            <Button
+              variant="primary"
+              disabled={busy != null}
+              onClick={() => void keepImported()}
+              data-testid="keep-imported-all"
+            >
+              Keep imported copies everywhere
+            </Button>
+          ) : undefined
         }
       />
-      <p style={{ margin: '0 0 12px', fontSize: 13, color: 'var(--text-secondary)' }}>
-        Active products that share a name with another. Each row says where it came from (the
-        STORIS/CSV import, a Shopify sync, or built here). &ldquo;Keep imported&rdquo; deactivates
-        the non-import copies in a group so they stop showing at the register; nothing is deleted,
-        and a deactivated product can be switched back on from its page.
-        {groups && groups.length > 0 && (
-          <>
-            {' '}
-            <strong>
-              {groups.length} name{groups.length === 1 ? '' : 's'} · {count} products
-            </strong>
-          </>
-        )}
-      </p>
-      {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
-      {groups == null ? (
-        <LoadingRows />
-      ) : groups.length === 0 ? (
-        <Card>
-          <EmptyState>No two active products share a name.</EmptyState>
-        </Card>
-      ) : (
-        groups.map((g) => (
-          <Card
-            key={g.name}
-            title={g.name}
-            style={{ padding: 0, marginBottom: 12 }}
-            data-testid="duplicate-group"
-            actions={
-              canKeepImported(g) ? (
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  disabled={busy != null}
-                  onClick={() => void keepImported([g.name])}
-                  data-testid="keep-imported-group"
-                >
-                  Keep imported copy
-                </Button>
-              ) : undefined
-            }
-          >
-            <div className="overflow-x-auto">
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>SKU</th>
-                    <th>Source</th>
-                    <th className="num">Price</th>
-                    <th className="num">On hand</th>
-                    <th className="num">Reserved</th>
-                    <th className="num">Documents</th>
-                    <th>Created</th>
-                    <th>&nbsp;</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {g.products.map((p) => (
-                    <tr key={p.id}>
-                      <td>
-                        <code>{p.sku ?? '—'}</code>
-                        {p.variants > 1 && (
-                          <span className="muted" style={{ fontSize: 11, marginLeft: 6 }}>
-                            {p.variants} variants
-                          </span>
-                        )}
-                      </td>
-                      <td>
-                        <span
-                          className={`badge ${p.imported ? 'badge-success' : 'badge-neutral'}`}
-                          data-testid="duplicate-source"
-                        >
-                          {p.source ?? 'built here'}
-                        </span>
-                      </td>
-                      <td className="num">
-                        {p.priceCents != null ? <Money cents={p.priceCents} /> : '—'}
-                      </td>
-                      <td className="num">
-                        <strong style={{ color: p.onHand > 0 ? 'var(--success)' : undefined }}>
-                          {p.onHand}
-                        </strong>
-                      </td>
-                      <td className="num">{p.reserved}</td>
-                      <td className="num">{p.documents}</td>
-                      <td style={{ fontSize: 12.5, whiteSpace: 'nowrap' }}>
-                        {new Date(p.createdAt).toLocaleDateString()}
-                      </td>
-                      <td style={{ textAlign: 'right', whiteSpace: 'nowrap', fontSize: 13 }}>
-                        <Link href={`/products/${p.id}`}>Open</Link>
-                        <button
-                          type="button"
-                          disabled={busy === p.id}
-                          onClick={() => void deactivate(p)}
-                          style={{
-                            border: 'none',
-                            background: 'none',
-                            cursor: 'pointer',
-                            color: 'var(--text)',
-                            fontSize: 13,
-                            marginLeft: 12,
-                          }}
-                          data-testid="duplicate-deactivate"
-                        >
-                          Deactivate
-                        </button>
-                        {p.deletable && (
-                          <button
-                            type="button"
-                            disabled={busy === p.id}
-                            onClick={() => void remove(p)}
-                            style={{
-                              border: 'none',
-                              background: 'none',
-                              cursor: 'pointer',
-                              color: 'var(--danger)',
-                              fontSize: 13,
-                              marginLeft: 12,
-                            }}
-                            data-testid="duplicate-delete"
-                          >
-                            Delete
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+      <Stack>
+        <Alert tone="info">
+          Active products that share a name with another. Each row says where it came from (the
+          STORIS/CSV import, a Shopify sync, or built here). &ldquo;Keep imported&rdquo; deactivates
+          the non-import copies in a group so they stop showing at the register; nothing is deleted,
+          and a deactivated product can be switched back on from its page.
+        </Alert>
+        {error && <Alert tone="error">{error}</Alert>}
+        {groups == null ? (
+          <Card>
+            <LoadingRows />
           </Card>
-        ))
-      )}
+        ) : groups.length === 0 ? (
+          <Card>
+            <EmptyState title="No duplicates">No two active products share a name.</EmptyState>
+          </Card>
+        ) : (
+          groups.map((g) => (
+            <Card
+              key={g.name}
+              title={g.name}
+              flush
+              data-testid="duplicate-group"
+              actions={
+                canKeepImported(g) ? (
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    disabled={busy != null}
+                    onClick={() => void keepImported([g.name])}
+                    data-testid="keep-imported-group"
+                  >
+                    Keep imported copy
+                  </Button>
+                ) : undefined
+              }
+            >
+              <TableWrap>
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>SKU</th>
+                      <th>Source</th>
+                      <th className="num">Price</th>
+                      <th className="num">On hand</th>
+                      <th className="num">Reserved</th>
+                      <th className="num">Documents</th>
+                      <th>Created</th>
+                      <th className="actions" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {g.products.map((p) => (
+                      <tr key={p.id}>
+                        <td>
+                          <code>{p.sku ?? '—'}</code>
+                          {p.variants > 1 && (
+                            <span className="muted"> · {p.variants} variants</span>
+                          )}
+                        </td>
+                        <td>
+                          <span
+                            className={`badge ${p.imported ? 'badge-success' : 'badge-neutral'}`}
+                            data-testid="duplicate-source"
+                          >
+                            {p.source ?? 'built here'}
+                          </span>
+                        </td>
+                        <td className="num">
+                          {p.priceCents != null ? <Money cents={p.priceCents} /> : '—'}
+                        </td>
+                        <td className="num">
+                          <strong style={{ color: p.onHand > 0 ? 'var(--success)' : undefined }}>
+                            {p.onHand}
+                          </strong>
+                        </td>
+                        <td className="num">{p.reserved}</td>
+                        <td className="num">{p.documents}</td>
+                        <td className="nowrap">{new Date(p.createdAt).toLocaleDateString()}</td>
+                        <td className="actions">
+                          <LinkButton href={`/products/${p.id}`} variant="secondary" size="sm">
+                            Open
+                          </LinkButton>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="secondary"
+                            disabled={busy === p.id}
+                            onClick={() => void deactivate(p)}
+                            data-testid="duplicate-deactivate"
+                          >
+                            Deactivate
+                          </Button>
+                          {p.deletable && (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="danger"
+                              disabled={busy === p.id}
+                              onClick={() => void remove(p)}
+                              data-testid="duplicate-delete"
+                            >
+                              Delete
+                            </Button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </TableWrap>
+            </Card>
+          ))
+        )}
+      </Stack>
     </div>
   );
 }

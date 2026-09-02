@@ -1,10 +1,24 @@
 'use client';
 
-import Link from 'next/link';
 import { toast } from 'sonner';
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
-import { Button, Card, Input, LoadingRows, StatusBadge } from '@/components/ui';
+import {
+  Alert,
+  BackLink,
+  Button,
+  Card,
+  Field,
+  FormActions,
+  FormGrid,
+  Input,
+  LoadingRows,
+  PageHeader,
+  SectionHeading,
+  Stack,
+  StatusBadge,
+  TableWrap,
+} from '@/components/ui';
 import { api } from '@/lib/api';
 
 interface BusinessSummary {
@@ -29,6 +43,7 @@ export default function BusinessDetailPage() {
   const params = useParams<{ id: string }>();
   const id = (params?.id ?? '') as string;
   const [biz, setBiz] = useState<BusinessSummary | null>(null);
+  const [notFound, setNotFound] = useState(false);
   const [members, setMembers] = useState<Membership[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -41,6 +56,7 @@ export default function BusinessDetailPage() {
       const all = await api<BusinessSummary[]>('/v1/admin/businesses');
       const found = all.find((b) => b.id === id);
       setBiz(found ?? null);
+      setNotFound(!found);
       setMembers(null); // Members listing is Epic 1.6 territory.
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -66,91 +82,113 @@ export default function BusinessDetailPage() {
     }
   }
 
-  if (error) return <p style={{ color: 'var(--danger)' }}>{error}</p>;
+  const eyebrow = <BackLink href="/admin/businesses">All businesses</BackLink>;
+
+  if (error) {
+    return (
+      <div>
+        <PageHeader eyebrow={eyebrow} title="Business" />
+        <Alert tone="error">{error}</Alert>
+      </div>
+    );
+  }
+  if (notFound) {
+    return (
+      <div>
+        <PageHeader eyebrow={eyebrow} title="Business not found" />
+        <Alert tone="error">No business with id {id} exists.</Alert>
+      </div>
+    );
+  }
   if (!biz) return <LoadingRows />;
 
   return (
     <div>
-      <p style={{ margin: '0 0 12px' }}>
-        <Link href="/admin/businesses">← All businesses</Link>
-      </p>
-      <h1 className="page-title" style={{ marginBottom: 4 }}>
-        {biz.name}
-      </h1>
-      <p
-        style={{
-          color: 'var(--text-secondary)',
-          fontSize: 13,
-          margin: '0 0 24px',
-          display: 'flex',
-          alignItems: 'center',
-          gap: 6,
-          flexWrap: 'wrap',
-        }}
-      >
-        slug <code>{biz.slug}</code> · status <StatusBadge status={biz.status} /> · users{' '}
-        {biz.userCount} · locations {biz.locationCount}
-      </p>
-      <Card title="Members">
-        {members ? (
-          <div style={{ overflowX: 'auto' }}>
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Email</th>
-                  <th>Role</th>
-                  <th>Status</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {members.map((m) => (
-                  <tr key={m.membershipId}>
-                    <td>{m.email}</td>
-                    <td>{m.roleName}</td>
-                    <td>
-                      <StatusBadge status={m.status} />
-                    </td>
-                    <td>
-                      <Button size="sm" variant="primary" onClick={() => impersonate(m.userId)}>
-                        Impersonate
-                      </Button>
-                    </td>
+      <PageHeader
+        eyebrow={eyebrow}
+        title={biz.name}
+        meta={<StatusBadge status={biz.status} />}
+        sub={
+          <>
+            slug <code>{biz.slug}</code> · {biz.userCount} {biz.userCount === 1 ? 'user' : 'users'}{' '}
+            · {biz.locationCount} {biz.locationCount === 1 ? 'location' : 'locations'}
+          </>
+        }
+      />
+      <Stack>
+        <Card title="Members">
+          {members ? (
+            <TableWrap>
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Email</th>
+                    <th>Role</th>
+                    <th>Status</th>
+                    <th className="actions" />
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ) : (
-          <p style={{ color: 'var(--text-secondary)', fontSize: 13, marginTop: 0 }}>
-            Member listing API is Epic 1.6. Use the user&rsquo;s id directly:
-          </p>
-        )}
-        <DirectImpersonate onSubmit={impersonate} />
-      </Card>
+                </thead>
+                <tbody>
+                  {members.map((m) => (
+                    <tr key={m.membershipId}>
+                      <td>{m.email}</td>
+                      <td>{m.roleName}</td>
+                      <td>
+                        <StatusBadge status={m.status} />
+                      </td>
+                      <td className="actions">
+                        <Button size="sm" variant="primary" onClick={() => impersonate(m.userId)}>
+                          Impersonate
+                        </Button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </TableWrap>
+          ) : (
+            <p className="muted">
+              Member listing API is Epic 1.6. Use the user&rsquo;s id directly:
+            </p>
+          )}
+          <DirectImpersonate onSubmit={impersonate} />
+        </Card>
+      </Stack>
     </div>
   );
 }
 
-function DirectImpersonate({ onSubmit }: { onSubmit: (userId: string) => void }) {
+function DirectImpersonate({ onSubmit }: { onSubmit: (userId: string) => Promise<void> }) {
   const [userId, setUserId] = useState('');
+  const [pending, setPending] = useState(false);
   return (
     <form
-      onSubmit={(e) => {
+      onSubmit={async (e) => {
         e.preventDefault();
-        if (userId) onSubmit(userId);
+        if (!userId) return;
+        setPending(true);
+        try {
+          await onSubmit(userId);
+        } finally {
+          setPending(false);
+        }
       }}
-      className="mt-3 flex flex-wrap items-center gap-2"
     >
-      <Input
-        value={userId}
-        onChange={(e) => setUserId(e.target.value)}
-        placeholder="user uuid to impersonate"
-        className="min-w-[200px] flex-1"
-      />
-      <Button type="submit" variant="primary" size="sm">
-        Impersonate
-      </Button>
+      <FormGrid cols={2}>
+        <SectionHeading as="h3" title="Impersonate by user id" />
+        <Field label="User id" hint="UUID of the user to sign in as">
+          <Input
+            value={userId}
+            onChange={(e) => setUserId(e.target.value)}
+            placeholder="user uuid to impersonate"
+          />
+        </Field>
+      </FormGrid>
+      <FormActions>
+        <Button type="submit" variant="primary" disabled={pending || !userId}>
+          Impersonate
+        </Button>
+      </FormActions>
     </form>
   );
 }

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { formatMoney } from '@jetnine/shared';
-import { LoadingRows, PageHeader } from '@/components/ui';
+import { Alert, LoadingRows, PageHeader, StatGrid, StatTile } from '@/components/ui';
 import { api } from '@/lib/api';
 
 interface Metrics {
@@ -26,35 +26,37 @@ export default function AdminMetricsPage() {
     return (
       <div>
         <PageHeader title="Platform metrics" />
-        <p style={{ color: 'var(--danger)' }}>{error}</p>
+        <Alert tone="error">{error}</Alert>
       </div>
     );
   }
-  if (!metrics) return <LoadingRows />;
+  if (!metrics) {
+    return (
+      <div>
+        <PageHeader title="Platform metrics" />
+        <LoadingRows />
+      </div>
+    );
+  }
 
+  const sales = metrics.salesLast30Days;
   return (
     <div>
-      <PageHeader title="Platform metrics" />
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard label="Total businesses" value={String(metrics.totalBusinesses)} />
-        <StatCard label="Active businesses" value={String(metrics.activeBusinesses)} />
-        <StatCard label="Total users" value={String(metrics.totalUsers)} />
-        <StatCard
-          label="Sales (last 30d)"
-          value={`${metrics.salesLast30Days.count} · ${formatMoney(metrics.salesLast30Days.grossCents)}`}
+      <PageHeader title="Platform metrics" sub="Every tenant on the platform" />
+      <StatGrid cols={4}>
+        <StatTile label="Total businesses" value={metrics.totalBusinesses} />
+        <StatTile
+          label="Active businesses"
+          value={metrics.activeBusinesses}
+          sub={`of ${metrics.totalBusinesses}`}
         />
-      </div>
-    </div>
-  );
-}
-
-function StatCard({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="card" style={{ padding: 20, marginTop: 0 }}>
-      <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 6 }}>{label}</div>
-      <div style={{ fontSize: 24, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>
-        {value}
-      </div>
+        <StatTile label="Total users" value={metrics.totalUsers} />
+        <StatTile
+          label="Sales (last 30d)"
+          value={formatMoney(sales.grossCents)}
+          sub={`${sales.count} ${sales.count === 1 ? 'order' : 'orders'}`}
+        />
+      </StatGrid>
     </div>
   );
 }

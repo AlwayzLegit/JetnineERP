@@ -15,15 +15,22 @@ import { LoadMore } from '@/components/load-more';
 import { Money } from '@/components/money';
 import { SecurityOverrideDialog } from '@/components/security-override-dialog';
 import {
+  Alert,
   Button,
   Card,
   EmptyState,
   Field,
+  FormActions,
+  FormGrid,
   Input,
   LoadingRows,
   PageHeader,
+  SectionHeading,
   Select,
+  Stack,
   StatusBadge,
+  TableWrap,
+  Toolbar,
 } from '@/components/ui';
 
 interface ReturnRow {
@@ -76,18 +83,18 @@ export default function ReturnsPage() {
   return (
     <div>
       <PageHeader title="Returns" />
-      <NoOriginalCard onChanged={() => list.load()} />
-      {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
-      <Card style={{ padding: 0 }}>
+      <Stack>
+        <NoOriginalCard onChanged={() => list.load()} />
+        {error && <Alert tone="error">{error}</Alert>}
         {rows == null ? (
-          <div style={{ padding: 16 }}>
-            <LoadingRows />
-          </div>
+          <LoadingRows />
         ) : rows.length === 0 ? (
-          <EmptyState>No return documents yet.</EmptyState>
+          <EmptyState title="No return documents yet">
+            Returns authorized from an order, and no-original returns written above, show up here.
+          </EmptyState>
         ) : (
-          <>
-            <div className="overflow-x-auto">
+          <Card flush>
+            <TableWrap>
               <table className="table">
                 <thead>
                   <tr>
@@ -109,7 +116,7 @@ export default function ReturnsPage() {
                         {r.orderId ? (
                           <Link href={`/orders/${r.orderId}`}>View order</Link>
                         ) : (
-                          <span style={{ color: 'var(--text-secondary)' }}>
+                          <span className="muted">
                             No original
                             {r.referencedOrderNumber ? ` (claimed ${r.referencedOrderNumber})` : ''}
                           </span>
@@ -124,16 +131,16 @@ export default function ReturnsPage() {
                       <td className="num">
                         <Money cents={r.amountCents} />
                       </td>
-                      <td>{new Date(r.authorizedAt).toLocaleString()}</td>
+                      <td className="nowrap">{new Date(r.authorizedAt).toLocaleString()}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
-            </div>
+            </TableWrap>
             <LoadMore state={list} noun="returns" />
-          </>
+          </Card>
         )}
-      </Card>
+      </Stack>
     </div>
   );
 }
@@ -267,7 +274,17 @@ function NoOriginalCard({ onChanged }: { onChanged: () => Promise<void> | void }
   }, 0);
 
   return (
-    <Card title="Return without an original invoice" style={{ marginBottom: 16 }}>
+    <Card
+      title="Return without an original invoice"
+      description={
+        <>
+          For a customer whose invoice can&apos;t be found (pre-cutover sale, lost paperwork). Try
+          the invoice lookup on <Link href="/sales">Sales</Link> first — every imported STORIS
+          invoice is refundable normally. This path refunds as <strong>store credit only</strong>,
+          stages the goods in As-Is review, and is logged for loss prevention.
+        </>
+      }
+    >
       <SecurityOverrideDialog
         open={overrideOpen}
         title="No-original return — manager approval needed"
@@ -294,20 +311,14 @@ function NoOriginalCard({ onChanged }: { onChanged: () => Promise<void> | void }
           onCancel={() => setPickingCustomer(false)}
         />
       )}
-      <p style={{ color: 'var(--text-secondary)', fontSize: 12, margin: '0 0 8px' }}>
-        For a customer whose invoice can&apos;t be found (pre-cutover sale, lost paperwork). Try the
-        invoice lookup on <Link href="/sales">Sales</Link> first — every imported STORIS invoice is
-        refundable normally. This path refunds as <strong>store credit only</strong>, stages the
-        goods in As-Is review, and is logged for loss prevention.
-      </p>
 
-      <div className="flex flex-wrap items-end gap-2">
-        <Field label="Customer (receives the credit)">
+      <FormGrid cols={2}>
+        <Field label="Customer (receives the credit)" required>
           <Button variant="secondary" size="sm" onClick={() => setPickingCustomer(true)}>
             {customer ? customerDisplayName(customer) : 'Pick or create customer'}
           </Button>
         </Field>
-        <Field label="Location">
+        <Field label="Location" required>
           <Select value={locationId} onChange={(e) => setLocationId(e.target.value)}>
             {locations.map((l) => (
               <option key={l.id} value={l.id}>
@@ -316,16 +327,11 @@ function NoOriginalCard({ onChanged }: { onChanged: () => Promise<void> | void }
             ))}
           </Select>
         </Field>
-        <Field label="Order # the customer claims (optional)">
-          <Input
-            value={referenced}
-            onChange={(e) => setReferenced(e.target.value)}
-            placeholder="recorded verbatim"
-            style={{ width: 190 }}
-          />
+        <Field label="Order # the customer claims (optional)" hint="Recorded verbatim">
+          <Input value={referenced} onChange={(e) => setReferenced(e.target.value)} />
         </Field>
         {reasonCodes.length > 0 ? (
-          <Field label="Return reason">
+          <Field label="Return reason" required>
             <Select value={reasonCodeId} onChange={(e) => setReasonCodeId(e.target.value)}>
               <option value="">— Pick —</option>
               {reasonCodes.map((r) => (
@@ -337,134 +343,137 @@ function NoOriginalCard({ onChanged }: { onChanged: () => Promise<void> | void }
           </Field>
         ) : (
           <Field label="Reason">
-            <Input
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-              style={{ width: 190 }}
-            />
+            <Input value={reason} onChange={(e) => setReason(e.target.value)} />
           </Field>
         )}
-      </div>
+      </FormGrid>
 
-      <div className="mt-3 flex flex-wrap items-end gap-2">
-        <Field label="Add item (name, SKU, or barcode)">
-          <Input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault();
-                void searchVariants();
-              }
-            }}
-            style={{ width: 240 }}
-          />
-        </Field>
+      <SectionHeading as="h3" title="Items coming back" />
+      <Toolbar>
+        <Input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              void searchVariants();
+            }
+          }}
+          placeholder="Add item — name, SKU, or barcode"
+          aria-label="Add item (name, SKU, or barcode)"
+        />
         <Button variant="secondary" size="sm" onClick={() => void searchVariants()}>
           Search
         </Button>
-      </div>
+      </Toolbar>
       {results.length === 200 && (
-        <p style={{ color: 'var(--text-secondary)', fontSize: 12, margin: '8px 0 0' }}>
-          Many items match — refine your search to find the right one.
-        </p>
+        <Alert tone="info">Many items match — refine your search to find the right one.</Alert>
       )}
-      {results.length > 0 && (
-        <div className="mt-2 flex flex-wrap gap-2">
-          {results.slice(0, 8).map((r) => (
-            <Button
-              key={r.variantId}
-              size="sm"
-              variant="ghost"
-              disabled={lines.some((l) => l.variantId === r.variantId)}
-              onClick={() => {
-                setLines((prev) => [
-                  ...prev,
-                  {
-                    variantId: r.variantId,
-                    description: [r.productName, r.variantName].filter(Boolean).join(' — '),
-                    quantity: '1',
-                    refund: '0.00',
-                  },
-                ]);
-                setResults([]);
-                setSearch('');
-              }}
-            >
-              + {[r.productName, r.variantName].filter(Boolean).join(' — ')}
-              {r.sku ? ` (${r.sku})` : ''}
-            </Button>
-          ))}
-        </div>
-      )}
-
-      {lines.length > 0 && (
-        <table className="table" style={{ marginTop: 12 }}>
-          <thead>
-            <tr>
-              <th>Item</th>
-              <th className="num">Qty</th>
-              <th className="num">Refund each ($)</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {lines.map((l, i) => (
-              <tr key={l.variantId}>
-                <td>{l.description}</td>
-                <td className="num">
-                  <Input
-                    type="number"
-                    min={1}
-                    value={l.quantity}
-                    onChange={(e) =>
-                      setLines((prev) =>
-                        prev.map((x, j) => (j === i ? { ...x, quantity: e.target.value } : x)),
-                      )
-                    }
-                    style={{ width: 70, padding: '4px 6px' }}
-                  />
-                </td>
-                <td className="num">
-                  <Input
-                    type="number"
-                    step="0.01"
-                    min={0}
-                    value={l.refund}
-                    onChange={(e) =>
-                      setLines((prev) =>
-                        prev.map((x, j) => (j === i ? { ...x, refund: e.target.value } : x)),
-                      )
-                    }
-                    style={{ width: 90, padding: '4px 6px' }}
-                  />
-                </td>
-                <td>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => setLines((prev) => prev.filter((_, j) => j !== i))}
-                  >
-                    Remove
-                  </Button>
-                </td>
-              </tr>
+      <Stack>
+        {results.length > 0 && (
+          <div className="flex flex-wrap gap-2">
+            {results.slice(0, 8).map((r) => (
+              <Button
+                key={r.variantId}
+                size="sm"
+                variant="ghost"
+                disabled={lines.some((l) => l.variantId === r.variantId)}
+                onClick={() => {
+                  setLines((prev) => [
+                    ...prev,
+                    {
+                      variantId: r.variantId,
+                      description: [r.productName, r.variantName].filter(Boolean).join(' — '),
+                      quantity: '1',
+                      refund: '0.00',
+                    },
+                  ]);
+                  setResults([]);
+                  setSearch('');
+                }}
+              >
+                + {[r.productName, r.variantName].filter(Boolean).join(' — ')}
+                {r.sku ? ` (${r.sku})` : ''}
+              </Button>
             ))}
-          </tbody>
-        </table>
-      )}
+          </div>
+        )}
 
-      <div className="mt-3 flex flex-wrap items-center gap-3">
+        {lines.length > 0 && (
+          <TableWrap>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Item</th>
+                  <th className="num">Qty</th>
+                  <th className="num">Refund each ($)</th>
+                  <th className="actions" />
+                </tr>
+              </thead>
+              <tbody>
+                {lines.map((l, i) => (
+                  <tr key={l.variantId}>
+                    <td>{l.description}</td>
+                    <td className="num">
+                      <Input
+                        type="number"
+                        min={1}
+                        value={l.quantity}
+                        onChange={(e) =>
+                          setLines((prev) =>
+                            prev.map((x, j) => (j === i ? { ...x, quantity: e.target.value } : x)),
+                          )
+                        }
+                        className="w-[70px]"
+                        aria-label={`Quantity for ${l.description}`}
+                      />
+                    </td>
+                    <td className="num">
+                      <Input
+                        type="number"
+                        step="0.01"
+                        min={0}
+                        value={l.refund}
+                        onChange={(e) =>
+                          setLines((prev) =>
+                            prev.map((x, j) => (j === i ? { ...x, refund: e.target.value } : x)),
+                          )
+                        }
+                        className="w-[90px]"
+                        aria-label={`Refund each for ${l.description}`}
+                      />
+                    </td>
+                    <td className="actions">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => setLines((prev) => prev.filter((_, j) => j !== i))}
+                      >
+                        Remove
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </TableWrap>
+        )}
+      </Stack>
+
+      <FormActions
+        start={
+          total > 0 ? (
+            <span>
+              Store credit to issue: <Money cents={total} />
+            </span>
+          ) : undefined
+        }
+      >
         <Button variant="primary" onClick={() => void submit()} disabled={busy}>
           <Undo2 size={14} />
           {busy ? 'Working…' : 'Complete return'}
         </Button>
-        {total > 0 && (
-          <span style={{ fontSize: 13 }}>
-            Store credit to issue: <Money cents={total} />
-          </span>
-        )}
-      </div>
+      </FormActions>
     </Card>
   );
 }

@@ -6,12 +6,15 @@ import { api } from '@/lib/api';
 import { LoadMore } from '@/components/load-more';
 import { useCursorList } from '@/lib/use-cursor-list';
 import {
+  Alert,
   Card,
   EmptyState,
   LinkButton,
   LoadingRows,
   PageHeader,
+  Stack,
   StatusBadge,
+  TableWrap,
 } from '@/components/ui';
 
 interface TransferRow {
@@ -49,55 +52,54 @@ export default function TransfersPage() {
       <PageHeader
         title="Stock transfers"
         actions={
-          <div className="flex gap-2">
-            <LinkButton href="/transfers/manifests" variant="secondary">
+          <>
+            <LinkButton href="/transfers/manifests" variant="secondary" size="sm">
               Manifests
             </LinkButton>
             <LinkButton href="/transfers/new" variant="primary">
               + New transfer
             </LinkButton>
-          </div>
+          </>
         }
       />
-      {aging.length > 0 && (
-        <div
-          className="card"
-          data-testid="transfer-aging-alert"
-          style={{
-            padding: '10px 14px',
-            marginBottom: 12,
-            borderColor: 'var(--danger)',
-            fontSize: 13,
-          }}
-        >
-          <strong>In transit too long:</strong>{' '}
-          {aging.map((a, i) => (
-            <span key={a.id}>
-              {i > 0 && ' · '}
-              <Link href={`/transfers/${a.id}`}>
-                {a.number} ({a.daysInTransit}d)
-              </Link>
+      <Stack>
+        {aging.length > 0 && (
+          <Alert tone="error" title="In transit too long" data-testid="transfer-aging-alert">
+            {aging.map((a, i) => (
+              <span key={a.id}>
+                {i > 0 && ' · '}
+                <Link href={`/transfers/${a.id}`}>
+                  {a.number} ({a.daysInTransit}d)
+                </Link>
+              </span>
+            ))}
+            <span className="muted">
+              {' '}
+              — receive them or close them short; goods on the road are sellable nowhere.
             </span>
-          ))}
-          <span style={{ color: 'var(--text-secondary)' }}>
-            {' '}
-            — receive them or close them short; goods on the road are sellable nowhere.
-          </span>
-        </div>
-      )}
-      {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
-      <Card style={{ padding: 0 }}>
+          </Alert>
+        )}
+        {error && <Alert tone="error">{error}</Alert>}
         {rows == null ? (
-          <div style={{ padding: 16 }}>
+          <Card>
             <LoadingRows />
-          </div>
+          </Card>
         ) : rows.length === 0 ? (
-          <EmptyState>
-            No transfers yet. Create a transfer to move stock between locations.
-          </EmptyState>
+          <Card>
+            <EmptyState
+              title="No transfers yet"
+              action={
+                <LinkButton size="sm" href="/transfers/new">
+                  New transfer
+                </LinkButton>
+              }
+            >
+              Create a transfer to move stock between locations.
+            </EmptyState>
+          </Card>
         ) : (
-          <>
-            <div className="overflow-x-auto">
+          <Card flush>
+            <TableWrap>
               <table className="table">
                 <thead>
                   <tr>
@@ -108,7 +110,7 @@ export default function TransfersPage() {
                     <th>Status</th>
                     <th title="Auto transfers: the XFR-053 schedule date">Scheduled</th>
                     <th>Created</th>
-                    <th>&nbsp;</th>
+                    <th className="actions" />
                   </tr>
                 </thead>
                 <tbody>
@@ -119,19 +121,13 @@ export default function TransfersPage() {
                         {t.orderId && (
                           <>
                             {' '}
-                            <Link href={`/orders/${t.orderId}`} style={{ fontSize: 11.5 }}>
+                            <Link href={`/orders/${t.orderId}`} className="muted">
                               order
                             </Link>
                           </>
                         )}
                       </td>
-                      <td>
-                        {t.transferType === 'auto' ? (
-                          <span className="badge badge-info">auto</span>
-                        ) : (
-                          t.transferType.replace('_', ' ')
-                        )}
-                      </td>
+                      <td>{t.transferType.replace('_', ' ')}</td>
                       <td>{t.fromLocationName ?? '—'}</td>
                       <td>{t.toLocationName ?? '—'}</td>
                       <td>
@@ -143,18 +139,20 @@ export default function TransfersPage() {
                           : '—'}
                       </td>
                       <td>{new Date(t.createdAt).toLocaleDateString()}</td>
-                      <td style={{ textAlign: 'right' }}>
-                        <Link href={`/transfers/${t.id}`}>Open</Link>
+                      <td className="actions">
+                        <LinkButton size="sm" href={`/transfers/${t.id}`}>
+                          Open
+                        </LinkButton>
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
-            </div>
+            </TableWrap>
             <LoadMore state={list} noun="transfers" />
-          </>
+          </Card>
         )}
-      </Card>
+      </Stack>
     </div>
   );
 }

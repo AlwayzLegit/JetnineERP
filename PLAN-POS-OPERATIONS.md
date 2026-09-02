@@ -642,6 +642,33 @@ PO Cutting Date, Auto PO Replen): "we also need an Advanced Vendor Settings".
 - Tests: `vendor-settings.int.spec.ts` (6); `purchasing.int.spec.ts` still
   green.
 
+### 12.11 Layout contract — screen-by-screen design pass (amendment A15, owner 2026-09-02)
+
+Owner ask: "run a workflow and focus on every screen and every element
+individually. The heading placement in different sections isn't margined
+properly either."
+
+- **Contract** (`apps/web/src/app/globals.css` "Layout contract" block +
+  `components/ui.tsx`): one spacing scale (4 / 8 / 12 / 16 / 24 / 32 as
+  `--space-1..6`), and primitives that own every margin — `PageHeader`
+  (eyebrow / title / meta / sub / actions, 24px below), `BackLink`,
+  `Breadcrumbs`, `SectionHeading` (h2 15px, h3 13px, fixed rhythm),
+  `Stack` (16 / 8 / 24 gaps), `Toolbar`, `FormGrid` / `FormActions`,
+  `StatGrid` / `StatTile`, `TableWrap` / `TableEmpty`, `KeyValue`, `Alert`.
+  Pages never write `marginTop` / `marginBottom` / `mt-*` / `mb-*` on cards,
+  headings, toolbars or forms.
+- **Pass**: 117 web files — every business, POS, auth, print, super-admin
+  and public screen — rebuilt on the primitives: hand-rolled titles, back
+  links and subtitle paragraphs folded into `PageHeader`; inline-styled
+  `h2`/`h3` replaced by `SectionHeading`; card spacing via `Stack`; filter
+  rows via `Toolbar`; forms via `FormGrid` / `FormActions`; bespoke stat
+  tiles via `StatTile`; raw tables wrapped in `TableWrap`; inline colour /
+  weight styles replaced by token classes. Data-testids, labels and
+  behaviour unchanged.
+- **Verification**: typecheck, lint, web unit tests; the full Playwright
+  suite (auth, orders, operations, my-day, warehouse, sweep, PO specs) —
+  one spec updated for a renamed link ("open the order" → "Open order").
+
 ### 12.3 Cashier dashboard — "My Day" (amendment A7, owner 2026-09-01)
 
 Fixed by role, like Operations and Warehouse: `cashier.dashboard.view` is the

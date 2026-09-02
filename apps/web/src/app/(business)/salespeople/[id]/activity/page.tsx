@@ -6,7 +6,22 @@ import { useParams } from 'next/navigation';
 import { api } from '@/lib/api';
 import { localToday, type DateRange } from '@/lib/date-range';
 import { Money } from '@/components/money';
-import { Card, EmptyState, Skeleton } from '@/components/ui';
+import {
+  Alert,
+  BackLink,
+  Card,
+  EmptyState,
+  KeyValue,
+  LinkButton,
+  PageHeader,
+  Skeleton,
+  Stack,
+  StatGrid,
+  StatTile,
+  StatusBadge,
+  TableWrap,
+  Toolbar,
+} from '@/components/ui';
 import { DateRangePicker, useUrlDateRange } from '@/components/date-range-picker';
 
 /**
@@ -158,190 +173,184 @@ export default function SalespersonActivityPage() {
     window.history.replaceState(null, '', url.toString());
   }
 
-  if (error && !data) return <p style={{ color: 'var(--danger)' }}>{error}</p>;
+  const header = (
+    <PageHeader
+      eyebrow={<BackLink href="/salespeople">Salespeople</BackLink>}
+      title="View Salesperson Activity"
+      sub={data ? `${data.salesperson.code} · ${data.salesperson.name}` : undefined}
+      actions={
+        <LinkButton size="sm" href="/salespeople/activity">
+          Look up another salesperson
+        </LinkButton>
+      }
+    />
+  );
+
+  if (error && !data) {
+    return (
+      <div>
+        {header}
+        <Alert tone="error">{error}</Alert>
+      </div>
+    );
+  }
   if (!data) {
     return (
       <div data-testid="sp-activity-loading">
-        <Skeleton style={{ height: 28, width: 320, marginBottom: 12 }} />
-        <Skeleton style={{ height: 100, marginBottom: 16 }} />
-        <Skeleton style={{ height: 320 }} />
+        {header}
+        <Stack>
+          <Skeleton style={{ height: 100 }} />
+          <Skeleton style={{ height: 320 }} />
+        </Stack>
       </div>
     );
   }
   const s = data.salesperson;
   const rangeBar = (
-    <div style={{ display: 'flex', flexWrap: 'wrap', marginBottom: 12 }}>
+    <Toolbar>
       <DateRangePicker value={windowRange} onChange={pickWindow} align="left" testid="sp-range" />
-    </div>
+    </Toolbar>
   );
 
   return (
     <div data-testid="salesperson-activity">
-      <p style={{ margin: '0 0 12px' }}>
-        <Link href="/salespeople">← Salespeople</Link>
-        <span style={{ color: 'var(--text-muted)' }}> · </span>
-        <Link href="/salespeople/activity">Look up another salesperson</Link>
-      </p>
-      <h1 className="page-title" style={{ marginBottom: 12 }}>
-        View Salesperson Activity
-      </h1>
+      {header}
+      <Stack>
+        <Card data-testid="sp-header">
+          <KeyValue
+            rows={[
+              {
+                label: 'Salesperson',
+                value: (
+                  <>
+                    <code>{s.code}</code> <strong data-testid="sp-name">{s.name}</strong>
+                  </>
+                ),
+              },
+              { label: 'Email address', value: s.email ?? '—' },
+              { label: 'Status', value: <StatusBadge status={s.status} /> },
+              {
+                label: 'Selling location',
+                value: s.sellingLocations.length > 0 ? s.sellingLocations.join(', ') : 'All stores',
+              },
+            ]}
+          />
+        </Card>
 
-      <Card style={{ marginBottom: 16 }} data-testid="sp-header">
-        <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-          <div>
-            <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Salesperson</div>
-            <div style={{ fontWeight: 600, fontFamily: 'var(--font-mono, monospace)' }}>
-              {s.code}
-            </div>
-            <div style={{ fontSize: 16, fontWeight: 600, marginTop: 4 }} data-testid="sp-name">
-              {s.name}
-            </div>
-          </div>
-          <div>
-            <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Email address</div>
-            <div style={{ wordBreak: 'break-all' }}>{s.email ?? '—'}</div>
-          </div>
-          <div>
-            <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Status</div>
-            <div style={{ textTransform: 'capitalize' }}>{s.status}</div>
-          </div>
-          <div>
-            <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Selling location</div>
-            <div>
-              {s.sellingLocations.length > 0 ? s.sellingLocations.join(', ') : 'All stores'}
-            </div>
+        <div className="grid items-start gap-4 lg:grid-cols-[200px_minmax(0,1fr)]">
+          <nav
+            aria-label="Salesperson activity views"
+            className="flex gap-1 overflow-x-auto rounded-lg border border-[var(--border)] bg-[var(--surface)] p-1 lg:sticky lg:top-4 lg:flex-col lg:gap-0 lg:overflow-hidden lg:p-0"
+          >
+            {TABS.map((t) => {
+              const active = t.key === tab;
+              return (
+                <button
+                  key={t.key}
+                  type="button"
+                  onClick={() => pick(t.key)}
+                  aria-current={active ? 'page' : undefined}
+                  data-testid={`sp-tab-${t.key}`}
+                  className={`shrink-0 cursor-pointer whitespace-nowrap rounded-md bg-transparent px-3.5 py-2.5 text-left text-[13px] text-[var(--text)] lg:w-full lg:rounded-none lg:border-b lg:border-b-[var(--border)] lg:border-l-[3px] ${
+                    active
+                      ? 'bg-[var(--surface-muted)] font-bold lg:border-l-[var(--brand)]'
+                      : 'font-medium hover:bg-[var(--surface-muted)] lg:border-l-transparent'
+                  }`}
+                >
+                  {t.label}
+                </button>
+              );
+            })}
+          </nav>
+
+          <div className="min-w-0">
+            {tab === 'general' && <General data={data} />}
+            {tab === 'open' && (
+              <OrdersTable
+                title="Open orders"
+                testid="sp-open"
+                rows={data.openOrders}
+                variant="open"
+                empty="No open orders."
+              />
+            )}
+            {tab === 'completed' && (
+              <OrdersTable
+                title="Completed orders"
+                testid="sp-completed"
+                rows={data.completedOrders}
+                variant="completed"
+                empty="No orders completed in this window."
+                before={rangeBar}
+              />
+            )}
+            {tab === 'canceled' && (
+              <OrdersTable
+                title="Canceled orders"
+                testid="sp-canceled"
+                rows={data.canceledOrders}
+                variant="cancelled"
+                empty="No orders canceled in this window."
+                before={rangeBar}
+              />
+            )}
+            {tab === 'layaways' && (
+              <OrdersTable
+                title="Layaways"
+                testid="sp-layaways"
+                rows={data.layaways}
+                variant="open"
+                empty="No open layaways."
+              />
+            )}
+            {tab === 'carts' && (
+              <OrdersTable
+                title="Carts"
+                testid="sp-carts"
+                rows={data.carts}
+                variant="draft"
+                empty="No saved carts."
+              />
+            )}
+            {tab === 'quotes' && (
+              <OrdersTable
+                title="Quotes"
+                testid="sp-quotes"
+                rows={data.quotes}
+                variant="draft"
+                empty="No open quotes."
+              />
+            )}
+            {tab === 'leads' && <Leads data={data} />}
           </div>
         </div>
-      </Card>
-
-      <div
-        style={{ display: 'grid', gridTemplateColumns: '200px 1fr', gap: 16, alignItems: 'start' }}
-      >
-        <nav
-          aria-label="Salesperson activity views"
-          style={{
-            border: '1px solid var(--border)',
-            borderRadius: 8,
-            background: 'var(--surface)',
-            overflow: 'hidden',
-            position: 'sticky',
-            top: 16,
-          }}
-        >
-          {TABS.map((t) => {
-            const active = t.key === tab;
-            return (
-              <button
-                key={t.key}
-                type="button"
-                onClick={() => pick(t.key)}
-                aria-current={active ? 'page' : undefined}
-                data-testid={`sp-tab-${t.key}`}
-                style={{
-                  display: 'block',
-                  width: '100%',
-                  textAlign: 'left',
-                  padding: '10px 14px',
-                  border: 'none',
-                  borderLeft: `3px solid ${active ? 'var(--brand)' : 'transparent'}`,
-                  borderBottom: '1px solid var(--border)',
-                  background: active ? 'var(--surface-2, rgba(0,0,0,0.05))' : 'transparent',
-                  color: 'inherit',
-                  font: 'inherit',
-                  fontWeight: active ? 700 : 500,
-                  cursor: 'pointer',
-                }}
-              >
-                {t.label}
-              </button>
-            );
-          })}
-        </nav>
-
-        <div style={{ minWidth: 0 }}>
-          {tab === 'general' && <General data={data} />}
-          {tab === 'open' && (
-            <OrdersTable
-              title="Open orders"
-              testid="sp-open"
-              rows={data.openOrders}
-              variant="open"
-              empty="No open orders."
-            />
-          )}
-          {tab === 'completed' && (
-            <OrdersTable
-              title="Completed orders"
-              testid="sp-completed"
-              rows={data.completedOrders}
-              variant="completed"
-              empty="No orders completed in this window."
-              before={rangeBar}
-            />
-          )}
-          {tab === 'canceled' && (
-            <OrdersTable
-              title="Canceled orders"
-              testid="sp-canceled"
-              rows={data.canceledOrders}
-              variant="cancelled"
-              empty="No orders canceled in this window."
-              before={rangeBar}
-            />
-          )}
-          {tab === 'layaways' && (
-            <OrdersTable
-              title="Layaways"
-              testid="sp-layaways"
-              rows={data.layaways}
-              variant="open"
-              empty="No open layaways."
-            />
-          )}
-          {tab === 'carts' && (
-            <OrdersTable
-              title="Carts"
-              testid="sp-carts"
-              rows={data.carts}
-              variant="draft"
-              empty="No saved carts."
-            />
-          )}
-          {tab === 'quotes' && (
-            <OrdersTable
-              title="Quotes"
-              testid="sp-quotes"
-              rows={data.quotes}
-              variant="draft"
-              empty="No open quotes."
-            />
-          )}
-          {tab === 'leads' && <Leads data={data} />}
-        </div>
-      </div>
+      </Stack>
     </div>
   );
 }
 
 function MoneyBox({ label, cents, testid }: { label: string; cents: number; testid?: string }) {
   return (
-    <div>
-      <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{label}</div>
-      <div
-        style={{ fontWeight: 600, fontSize: 16, fontVariantNumeric: 'tabular-nums' }}
-        data-testid={testid}
-      >
-        <Money cents={cents} />
-      </div>
-    </div>
+    <StatTile
+      label={label}
+      value={
+        <span data-testid={testid}>
+          <Money cents={cents} />
+        </span>
+      }
+    />
   );
 }
 
 function General({ data }: { data: Activity }) {
   const g = data.general;
   return (
-    <Card title="Totals" data-testid="sp-general">
-      <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+    <Card
+      title="Totals"
+      description="Orders, layaways, quotes and carts are the open documents this salesperson wrote or shares. Written counts the day the order was taken; delivered counts the day it completed."
+      data-testid="sp-general"
+    >
+      <StatGrid cols={4}>
         <MoneyBox
           label={`Orders (${g.ordersCount})`}
           cents={g.ordersCents}
@@ -378,11 +387,7 @@ function General({ data }: { data: Activity }) {
           cents={g.deliveredMtdCents}
           testid="sp-delivered-mtd"
         />
-      </div>
-      <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 12 }}>
-        Orders, layaways, quotes and carts are the open documents this salesperson wrote or shares.
-        Written counts the day the order was taken; delivered counts the day it completed.
-      </p>
+      </StatGrid>
     </Card>
   );
 }
@@ -422,7 +427,7 @@ function OrdersTable({
       {rows.length === 0 ? (
         <EmptyState>{empty}</EmptyState>
       ) : (
-        <div style={{ overflowX: 'auto' }}>
+        <TableWrap>
           <table className="table">
             <thead>
               <tr>
@@ -467,15 +472,21 @@ function OrdersTable({
                   <td className="num">
                     <Money cents={r.amountPaidCents} />
                   </td>
-                  <td className="num" style={{ fontWeight: r.balanceCents > 0 ? 600 : undefined }}>
-                    <Money cents={r.balanceCents} />
+                  <td className="num">
+                    {r.balanceCents > 0 ? (
+                      <strong>
+                        <Money cents={r.balanceCents} />
+                      </strong>
+                    ) : (
+                      <Money cents={r.balanceCents} />
+                    )}
                   </td>
                   <td className="num">{r.salespeople}</td>
                 </tr>
               ))}
             </tbody>
             <tfoot>
-              <tr style={{ fontWeight: 700 }}>
+              <tr className="font-semibold">
                 <td colSpan={variant === 'open' ? 7 : 5}>Totals ({rows.length})</td>
                 <td className="num" data-testid={`${testid}-merch`}>
                   <Money cents={sum('merchandiseCents')} />
@@ -493,7 +504,7 @@ function OrdersTable({
               </tr>
             </tfoot>
           </table>
-        </div>
+        </TableWrap>
       )}
     </Card>
   );
@@ -502,14 +513,15 @@ function OrdersTable({
 function Leads({ data }: { data: Activity }) {
   const rows = data.leads;
   return (
-    <Card title="Leads" data-testid="sp-leads">
-      <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 0 }}>
-        Customers on this salesperson&apos;s quotes or carts who have not bought yet.
-      </p>
+    <Card
+      title="Leads"
+      description="Customers on this salesperson's quotes or carts who have not bought yet."
+      data-testid="sp-leads"
+    >
       {rows.length === 0 ? (
         <EmptyState>No open leads.</EmptyState>
       ) : (
-        <div style={{ overflowX: 'auto' }}>
+        <TableWrap>
           <table className="table">
             <thead>
               <tr>
@@ -538,7 +550,7 @@ function Leads({ data }: { data: Activity }) {
               ))}
             </tbody>
           </table>
-        </div>
+        </TableWrap>
       )}
     </Card>
   );

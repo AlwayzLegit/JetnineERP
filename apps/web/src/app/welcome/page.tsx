@@ -9,13 +9,14 @@ import { CURRENCY_LABELS, SUPPORTED_CURRENCIES, type CurrencyCode } from '@jetni
 import { AuthCard, AuthLink, AuthShell } from '@/components/auth/auth-shell';
 import {
   Form,
+  FormAlert,
   FormRootError,
   SelectField,
   SubmitButton,
   TextField,
   useZodForm,
 } from '@/components/form/form';
-import { Button, Skeleton } from '@/components/ui';
+import { Button, FormGrid, Skeleton, Stack } from '@/components/ui';
 import { api, ApiError } from '@/lib/api';
 
 interface MembershipSummary {
@@ -69,18 +70,21 @@ export default function WelcomePage() {
   let body: React.ReactNode;
   if (memberships == null && !error) {
     body = (
-      <div style={{ display: 'grid', gap: 10 }}>
+      <Stack gap="sm" aria-busy>
         <Skeleton style={{ height: 28, width: 220 }} />
         <Skeleton style={{ height: 48 }} />
         <Skeleton style={{ height: 48 }} />
-      </div>
+      </Stack>
     );
   } else if (error && memberships == null) {
     body = (
-      <AuthCard title="Something went wrong" subtitle={error}>
-        <Button variant="primary" onClick={() => window.location.reload()}>
-          Try again
-        </Button>
+      <AuthCard title="Something went wrong">
+        <FormAlert tone="error">{error}</FormAlert>
+        <div className="auth-actions">
+          <Button variant="primary" onClick={() => window.location.reload()}>
+            Try again
+          </Button>
+        </div>
       </AuthCard>
     );
   } else if (memberships && memberships.length > 0 && !creating) {
@@ -108,11 +112,11 @@ export default function WelcomePage() {
             >
               <span>
                 <strong>{m.businessName}</strong>
-                <span style={{ display: 'block', color: 'var(--text-muted)', fontSize: 12 }}>
+                <span className="muted block text-xs">
                   <code>{m.businessSlug}</code> · {m.roleName}
                 </span>
               </span>
-              <ChevronRight size={16} aria-hidden style={{ color: 'var(--text-muted)' }} />
+              <ChevronRight size={16} aria-hidden className="muted shrink-0" />
             </button>
           ))}
         </div>
@@ -128,22 +132,17 @@ export default function WelcomePage() {
 
   return (
     <AuthShell wide>
-      {body}
-      {/* Business-less users land here (dashboard redirects them), so
-          this page needs its own way out of the account. */}
-      <div
-        style={{
-          marginTop: 18,
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-        }}
-      >
-        <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-          Got an invite link? <AuthLink href="/accept-invite">Accept invite</AuthLink>
-        </span>
-        <SignOutButton />
-      </div>
+      <Stack>
+        {body}
+        {/* Business-less users land here (dashboard redirects them), so
+            this page needs its own way out of the account. */}
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span className="muted text-xs">
+            Got an invite link? <AuthLink href="/accept-invite">Accept invite</AuthLink>
+          </span>
+          <SignOutButton />
+        </div>
+      </Stack>
     </AuthShell>
   );
 }
@@ -254,7 +253,7 @@ function CreateBusiness({ onBack }: { onBack?: () => void }) {
           }}
           onBlur={(e) => form.setValue('slug', slugify(e.target.value), { shouldValidate: true })}
         />
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <FormGrid cols={2}>
           <SelectField<Values> name="currencyCode" label="Currency">
             {SUPPORTED_CURRENCIES.map((c: CurrencyCode) => (
               <option key={c} value={c}>
@@ -271,10 +270,10 @@ function CreateBusiness({ onBack }: { onBack?: () => void }) {
             inputMode="decimal"
             hint="Override per product or per store later."
           />
-        </div>
+        </FormGrid>
         <FormRootError testid="onboarding-error" />
         <SubmitButton pendingLabel="Creating…" className="w-full">
-          <Building2 size={14} aria-hidden style={{ marginRight: 6 }} />
+          <Building2 size={14} aria-hidden />
           Create business
         </SubmitButton>
       </Form>
