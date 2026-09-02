@@ -20,6 +20,7 @@ import {
   DisplayStatusBadge,
 } from '@/components/ui';
 import { SecurityOverrideDialog } from '@/components/security-override-dialog';
+import { OrderNotesCard } from '@/components/order-notes-card';
 import { ProductSearchDialog, type SearchRow } from '@/components/product-search-dialog';
 
 /**
@@ -1495,6 +1496,8 @@ export default function OrderDetailPage() {
           })()}
 
           <ReturnsCard order={order} busy={busy} onChanged={load} />
+
+          <OrderNotesCard orderId={order.id} />
 
           <Card title="Change history" style={{ marginBottom: 16 }}>
             {timeline.length === 0 ? (

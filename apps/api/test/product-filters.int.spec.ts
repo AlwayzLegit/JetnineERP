@@ -1,0 +1,280 @@
+/**
+ * Add Product popup filters (owner ask 2026-09-01): vendor, size,
+ * firmness and in-stock on /v1/pos/product-search. Size and firmness are
+ * read off the catalog — attributes first, then the product and variant
+ * names — so Shopify-shaped names like "Queen Helix Dusk 12" Medium Firm
+ * Hybrid Mattress" classify without anyone tagging them. Vendor matches
+ * the variant's preferred vendor, the product's brand, or a name that
+ * starts with the vendor's name.
+ */
+import { execFileSync } from 'node:child_process';
+import { join } from 'node:path';
+import { hashPassword } from 'better-auth/crypto';
+import { drizzle } from 'drizzle-orm/postgres-js';
+import postgres from 'postgres';
+import request from 'supertest';
+import { Test } from '@nestjs/testing';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import type { INestApplication } from '@nestjs/common';
+import { schema } from '@jetnine/db';
+import { SYSTEM_ROLES } from '@jetnine/shared';
+import { AppModule } from '../src/app.module';
+
+const TEST_DB_URL =
+  process.env.PRODUCT_FILTERS_TEST_DATABASE_URL ??
+  'postgres://postgres:postgres@localhost:5432/jetnine_product_filters';
+
+const dbPackageRoot = join(__dirname, '..', '..', '..', 'packages', 'db');
+const PASSWORD = 'FilterPass!2026x';
+
+let app: INestApplication;
+let businessId = '';
+let locationId = '';
+let helixVendorId = '';
+let purpleVendorId = '';
+let cookie = '';
+const bySku = new Map<string, string>();
+
+function withDb<T>(fn: (db: ReturnType<typeof drizzle>) => Promise<T>): Promise<T> {
+  const sql = postgres(TEST_DB_URL, { max: 1, prepare: false });
+  const db = drizzle(sql);
+  return fn(db).finally(() => sql.end({ timeout: 5 }));
+}
+
+async function resetTestDb() {
+  const env = { ...process.env, DATABASE_URL: TEST_DB_URL };
+  for (const script of ['src/reset.ts', 'src/migrate.ts']) {
+    execFileSync('pnpm', ['exec', 'tsx', script], { cwd: dbPackageRoot, env, stdio: 'inherit' });
+  }
+}
+
+const CATALOG: {
+  sku: string;
+  name: string;
+  variantName?: string;
+  attributes?: Record<string, string>;
+  brand?: string;
+  preferredVendor?: 'helix' | 'purple';
+  onHand?: number;
+}[] = [
+  // Shopify-shaped Helix names: size first, firmness inside, no vendor link.
+  { sku: 'HX-TW-DUSK', name: 'Twin Helix Dusk 12" Medium Firm Hybrid Mattress', onHand: 3 },
+  { sku: 'HX-TXL-DUSK', name: 'Twin XL Helix Dusk 12" Medium Firm Hybrid Mattress' },
+  { sku: 'HX-Q-TWI', name: 'Queen Helix Twilight 11.5" Firm Hybrid Mattress', onHand: 1 },
+  { sku: 'HX-CK-MID', name: 'Cal King Helix Midnight 12" Medium Hybrid Mattress' },
+  { sku: 'HX-SK-SUN', name: 'Split King Helix Sunset Luxe 13.5" Plush Hybrid Mattress' },
+  // Hand-built product: firmness/size in the variant attributes, brand set.
+  {
+    sku: 'PR-Q-REST',
+    name: 'Purple Restore',
+    variantName: 'Queen / Soft',
+    attributes: { size: 'Queen', firmness: 'Plush' },
+    brand: 'Purple',
+    onHand: 2,
+  },
+  // Preferred-vendor link only, nothing in the name.
+  { sku: 'BASE-K', name: 'Adjustable Base', variantName: 'King', preferredVendor: 'helix' },
+  // An Extra Firm King with a Purple preferred vendor.
+  { sku: 'PR-K-XF', name: 'Purple Extra Firm King Mattress', preferredVendor: 'purple' },
+];
+
+async function seed() {
+  await withDb(async (db) => {
+    const passwordHash = await hashPassword(PASSWORD);
+    const [biz] = await db
+      .insert(schema.businesses)
+      .values({ slug: 'filters-test', name: 'Filters Test Co', status: 'active' })
+      .returning();
+    businessId = biz!.id;
+    const roles = new Map<string, string>();
+    for (const role of SYSTEM_ROLES) {
+      const [r] = await db
+        .insert(schema.roles)
+        .values({ businessId, name: role.name, description: role.description, isSystem: true })
+        .returning();
+      roles.set(role.name, r!.id);
+      if (role.permissions.length > 0) {
+        await db
+          .insert(schema.rolePermissions)
+          .values(role.permissions.map((permission) => ({ roleId: r!.id, permission })));
+      }
+    }
+    const [u] = await db
+      .insert(schema.users)
+      .values({ email: 'cashier@filters-test.local', emailVerified: true, name: 'Cashier' })
+      .returning();
+    await db.insert(schema.accounts).values({
+      accountId: u!.id,
+      providerId: 'credential',
+      userId: u!.id,
+      password: passwordHash,
+    });
+    await db.insert(schema.memberships).values({
+      businessId,
+      userId: u!.id,
+      roleId: roles.get('Cashier')!,
+      status: 'active',
+      acceptedAt: new Date(),
+    });
+    const [loc] = await db
+      .insert(schema.locations)
+      .values({ businessId, name: 'Main', timezone: 'America/Los_Angeles' })
+      .returning();
+    locationId = loc!.id;
+    const vendors = await db
+      .insert(schema.vendors)
+      .values([
+        { businessId, name: 'Helix' },
+        { businessId, name: 'Purple' },
+      ])
+      .returning();
+    helixVendorId = vendors[0]!.id;
+    purpleVendorId = vendors[1]!.id;
+    const [purpleBrand] = await db
+      .insert(schema.brands)
+      .values({ businessId, name: 'Purple' })
+      .returning();
+
+    for (const item of CATALOG) {
+      const [p] = await db
+        .insert(schema.products)
+        .values({
+          businessId,
+          sku: item.sku,
+          name: item.name,
+          brandId: item.brand === 'Purple' ? purpleBrand!.id : null,
+        })
+        .returning();
+      const [v] = await db
+        .insert(schema.productVariants)
+        .values({
+          businessId,
+          productId: p!.id,
+          sku: `${item.sku}-V`,
+          name: item.variantName ?? null,
+          attributesJson: (item.attributes ?? null) as never,
+          priceCents: 100_000,
+          preferredVendorId:
+            item.preferredVendor === 'helix'
+              ? helixVendorId
+              : item.preferredVendor === 'purple'
+                ? purpleVendorId
+                : null,
+        })
+        .returning();
+      bySku.set(item.sku, v!.id);
+      if (item.onHand) {
+        await db.insert(schema.inventoryLevels).values({
+          businessId,
+          variantId: v!.id,
+          locationId,
+          onHand: item.onHand,
+        });
+      }
+    }
+  });
+}
+
+async function captureCookie(email: string): Promise<string> {
+  const res = await request(app.getHttpServer())
+    .post('/api/auth/sign-in/email')
+    .send({ email, password: PASSWORD })
+    .expect(200);
+  const cookies = res.get('Set-Cookie') ?? [];
+  const sessionCookie = cookies
+    .map((c) => c.split(';')[0])
+    .filter((c): c is string => Boolean(c?.startsWith('jetnine.session_token=')))
+    .find((c) => !c.endsWith('='));
+  if (!sessionCookie) throw new Error(`no session cookie for ${email}`);
+  return sessionCookie;
+}
+
+async function search(params: Record<string, string>) {
+  const qs = new URLSearchParams({ locationId, limit: '50', ...params }).toString();
+  const res = await request(app.getHttpServer())
+    .get(`/v1/pos/product-search?${qs}`)
+    .set('Cookie', cookie)
+    .set('x-business-id', businessId)
+    .expect(200);
+  return res.body as { sku: string; size: string | null; firmness: string | null }[];
+}
+const skus = (rows: { sku: string }[]) => rows.map((r) => r.sku.replace(/-V$/, '')).sort();
+
+beforeAll(async () => {
+  await resetTestDb();
+  await seed();
+  process.env.DATABASE_URL = TEST_DB_URL;
+  process.env.BETTER_AUTH_URL ??= 'http://localhost';
+  process.env.BETTER_AUTH_SECRET ??= 'filters-test-secret-filters-test-secret';
+  process.env.AUTH_TRUSTED_ORIGINS ??= 'http://localhost';
+  process.env.NODE_ENV ??= 'test';
+  delete process.env.STRIPE_SECRET_KEY;
+  const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
+  app = moduleRef.createNestApplication({ bufferLogs: true, rawBody: true });
+  await app.init();
+  cookie = await captureCookie('cashier@filters-test.local');
+}, 180_000);
+
+afterAll(async () => {
+  if (app) await app.close();
+});
+
+describe('Add Product filters', () => {
+  it('classifies size and firmness off names and attributes', async () => {
+    const rows = await search({});
+    const by = new Map(rows.map((r) => [r.sku.replace(/-V$/, ''), r]));
+    expect(by.get('HX-TW-DUSK')).toMatchObject({ size: 'Twin', firmness: 'Medium Firm' });
+    expect(by.get('HX-TXL-DUSK')).toMatchObject({ size: 'Twin XL', firmness: 'Medium Firm' });
+    expect(by.get('HX-Q-TWI')).toMatchObject({ size: 'Queen', firmness: 'Firm' });
+    expect(by.get('HX-CK-MID')).toMatchObject({ size: 'Cal King', firmness: 'Medium' });
+    expect(by.get('HX-SK-SUN')).toMatchObject({ size: 'Split King', firmness: 'Plush' });
+    expect(by.get('PR-Q-REST')).toMatchObject({ size: 'Queen', firmness: 'Plush' });
+    expect(by.get('BASE-K')).toMatchObject({ size: 'King', firmness: null });
+    expect(by.get('PR-K-XF')).toMatchObject({ size: 'King', firmness: 'Extra Firm' });
+  });
+
+  it('filters by size', async () => {
+    expect(skus(await search({ size: 'Queen' }))).toEqual(['HX-Q-TWI', 'PR-Q-REST']);
+    expect(skus(await search({ size: 'Twin' }))).toEqual(['HX-TW-DUSK']);
+    expect(skus(await search({ size: 'King' }))).toEqual(['BASE-K', 'PR-K-XF']);
+    expect(skus(await search({ size: 'cal king' }))).toEqual(['HX-CK-MID']);
+  });
+
+  it('filters by firmness', async () => {
+    expect(skus(await search({ firmness: 'Medium Firm' }))).toEqual(['HX-TW-DUSK', 'HX-TXL-DUSK']);
+    expect(skus(await search({ firmness: 'Firm' }))).toEqual(['HX-Q-TWI']);
+    expect(skus(await search({ firmness: 'Plush' }))).toEqual(['HX-SK-SUN', 'PR-Q-REST']);
+  });
+
+  it('filters by vendor through the preferred vendor, the brand, or the name', async () => {
+    // Helix: five named products + the base linked by preferred vendor.
+    expect(skus(await search({ vendorId: helixVendorId }))).toEqual([
+      'BASE-K',
+      'HX-CK-MID',
+      'HX-Q-TWI',
+      'HX-SK-SUN',
+      'HX-TW-DUSK',
+      'HX-TXL-DUSK',
+    ]);
+    // Purple: brand link, name, and preferred vendor.
+    expect(skus(await search({ vendorId: purpleVendorId }))).toEqual(['PR-K-XF', 'PR-Q-REST']);
+  });
+
+  it('combines with in-stock and with each other', async () => {
+    expect(skus(await search({ inStock: '1' }))).toEqual(['HX-Q-TWI', 'HX-TW-DUSK', 'PR-Q-REST']);
+    expect(skus(await search({ size: 'Queen', inStock: '1', vendorId: helixVendorId }))).toEqual([
+      'HX-Q-TWI',
+    ]);
+    expect(skus(await search({ size: 'Queen', firmness: 'Plush' }))).toEqual(['PR-Q-REST']);
+    expect(await search({ size: 'Twin XL', inStock: '1' })).toEqual([]);
+  });
+
+  it('rejects an unknown size or firmness', async () => {
+    const qs = new URLSearchParams({ locationId, size: 'Enormous' }).toString();
+    await request(app.getHttpServer())
+      .get(`/v1/pos/product-search?${qs}`)
+      .set('Cookie', cookie)
+      .set('x-business-id', businessId)
+      .expect(400);
+  });
+});

@@ -28,6 +28,8 @@ export interface SearchRow {
   priceCents: number;
   vendorId: string | null;
   vendorName: string | null;
+  size: string | null;
+  firmness: string | null;
   availableHere: number;
   availableTotal: number;
   atpDate: string | null;
@@ -36,6 +38,17 @@ interface VendorRow {
   id: string;
   name: string;
 }
+const SIZES = [
+  'Twin',
+  'Twin XL',
+  'Full',
+  'Queen',
+  'King',
+  'Cal King',
+  'Split King',
+  'Split Cal King',
+];
+const FIRMNESS = ['Plush', 'Medium', 'Medium Firm', 'Firm', 'Extra Firm'];
 export function ProductSearchDialog({
   locationId,
   locationName,
@@ -56,6 +69,8 @@ export function ProductSearchDialog({
   const [q, setQ] = useState('');
   const [vendorId, setVendorId] = useState('');
   const [stockFilter, setStockFilter] = useState<'' | '1' | '0'>('');
+  const [size, setSize] = useState('');
+  const [firmness, setFirmness] = useState('');
   const [rows, setRows] = useState<SearchRow[]>([]);
   const [vendors, setVendors] = useState<VendorRow[]>([]);
   // BA-0010: arrow keys move a visible highlight through the results,
@@ -132,6 +147,8 @@ export function ProductSearchDialog({
       if (q.trim()) params.set('q', q.trim());
       if (vendorId) params.set('vendorId', vendorId);
       if (stockFilter) params.set('inStock', stockFilter);
+      if (size) params.set('size', size);
+      if (firmness) params.set('firmness', firmness);
       params.set('locationId', locationId);
       params.set('limit', '100');
       void api<SearchRow[]>(`/v1/pos/product-search?${params.toString()}`)
@@ -141,7 +158,7 @@ export function ProductSearchDialog({
         })
         .catch(() => setRows([]));
     }, 250);
-  }, [q, vendorId, stockFilter, locationId]);
+  }, [q, vendorId, stockFilter, size, firmness, locationId]);
 
   return (
     <div
@@ -189,11 +206,38 @@ export function ProductSearchDialog({
               value={vendorId}
               onChange={(e) => setVendorId(e.target.value)}
               aria-label="Vendor filter"
+              data-testid="vendor-filter"
             >
               <option value="">All vendors</option>
               {vendors.map((v) => (
                 <option key={v.id} value={v.id}>
                   {v.name}
+                </option>
+              ))}
+            </Select>
+            <Select
+              value={size}
+              onChange={(e) => setSize(e.target.value)}
+              aria-label="Size filter"
+              data-testid="size-filter"
+            >
+              <option value="">All sizes</option>
+              {SIZES.map((x) => (
+                <option key={x} value={x}>
+                  {x}
+                </option>
+              ))}
+            </Select>
+            <Select
+              value={firmness}
+              onChange={(e) => setFirmness(e.target.value)}
+              aria-label="Firmness filter"
+              data-testid="firmness-filter"
+            >
+              <option value="">All firmness</option>
+              {FIRMNESS.map((x) => (
+                <option key={x} value={x}>
+                  {x}
                 </option>
               ))}
             </Select>

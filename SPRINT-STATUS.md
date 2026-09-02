@@ -4332,3 +4332,47 @@ cards), and customer address entry fills city/state from the ZIP.
 - Tests: `apps/api/test/cashier.int.spec.ts` (18: role/permission,
   every card from real rows, the picker, the ZIP endpoint) and
   `apps/web/e2e/my-day.spec.ts`. CI gets `jetnine_cashier`.
+
+### Checkpoint — 2026-09-01 (Helix mattress names)
+
+Owner ask: shorten every Helix mattress to "<size> <mattress> <firmness>",
+e.g. `Twin Helix Twilight 11.5" Firm Hybrid Mattress`.
+
+- The names came from the Shopify sync as one product per Shopify
+  variant, `"<title> — <size> / <cover> / <support>"`, all in
+  `products.name`. Data migration `0083_helix_mattress_names` rewrites
+  them in place (idempotent; non-mattress Helix items and already-short
+  names untouched; SKUs, prices, stock and historical line descriptions
+  unchanged; `search_tsv` is generated and follows).
+- The Shopify connector applies the same rule (`helixMattressName`) so a
+  re-sync never writes the long names back. Unit-tested.
+
+### Checkpoint — 2026-09-01 (order notes)
+
+Owner ask: a section on every order where all users can leave notes.
+
+- Amendment A8. `order_notes` (0084): order, author membership, body,
+  time; RLS like every tenant table.
+- `GET/POST /v1/orders/:id/notes` gated on `orders.view` (every system
+  role holds it), store-scoped members fenced by `salesScopeCond`;
+  append-only; each add is an `order.note.add` audit entry so it shows
+  in the order's change history.
+- Notes card on the order page above Change history: textarea +
+  Add note (Ctrl/⌘+Enter), newest first with "You" / author name and
+  time. `apps/api/test/order-notes.int.spec.ts` (7). CI gets
+  `jetnine_order_notes`.
+
+### Checkpoint — 2026-09-01 (Add Product filters: vendor, size, firmness, in stock)
+
+Owner ask on New Sale's Add Product popup.
+
+- `/v1/pos/product-search` takes `size` and `firmness` (canonical lists
+  `MATTRESS_SIZES` / `FIRMNESS_LEVELS`), returns both per row, and the
+  vendor filter now also matches the product's brand or a name starting
+  with the vendor's name — imported catalogs rarely carry a preferred
+  vendor on the variant. Classification is a SQL CASE over attributes +
+  product + variant names ("Twin XL" before "Twin", "Cal King" before
+  "King", "Medium Firm" before "Medium"/"Firm").
+- Dialog gains Size and Firmness selects beside Vendor and Stock.
+- `apps/api/test/product-filters.int.spec.ts` (6). CI gets
+  `jetnine_product_filters`.

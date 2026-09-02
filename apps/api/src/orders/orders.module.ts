@@ -10,6 +10,7 @@ import { TenancyModule } from '../tenancy/tenancy.module';
 import { TransfersModule } from '../transfers/transfers.module';
 import { OrdersController } from './orders.controller';
 import { PublicOrderController } from './public-order.controller';
+import { OrderNotesController } from './order-notes.controller';
 import { OrdersService } from './orders.service';
 
 @Module({
@@ -23,7 +24,7 @@ import { OrdersService } from './orders.service';
     TransfersModule,
     CostingModule,
   ],
-  controllers: [OrdersController, PublicOrderController],
+  controllers: [OrdersController, PublicOrderController, OrderNotesController],
   providers: [OrdersService, TicketFlagsService],
   // Deliveries (Day 3) reserve, release, and reprice through the same
   // service rather than reimplementing the stock math.

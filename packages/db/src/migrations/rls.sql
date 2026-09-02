@@ -146,6 +146,7 @@ DECLARE
     'exchanges',
     'daily_closeouts',
     'ops_reviews',
+    'order_notes',
     'delivery_runs',
     'serial_units',
     'payment_plans',
