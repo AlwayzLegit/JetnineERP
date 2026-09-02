@@ -194,7 +194,13 @@ export default function VendorsPage() {
                 {rows.map((v) => (
                   <tr key={v.id}>
                     <td>
-                      <strong>{v.name}</strong>
+                      <Link
+                        href={`/vendors/${v.id}/settings`}
+                        style={{ fontWeight: 700 }}
+                        data-testid="vendor-settings-link"
+                      >
+                        {v.name}
+                      </Link>
                     </td>
                     <td>{v.contactName ?? '—'}</td>
                     <td>{v.email ?? '—'}</td>
@@ -225,7 +231,10 @@ export default function VendorsPage() {
                     <td>
                       <StatusBadge status={v.isActive ? 'active' : 'inactive'} />
                     </td>
-                    <td style={{ textAlign: 'right' }}>
+                    <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                      <Link href={`/vendors/${v.id}/settings`} style={{ marginRight: 10 }}>
+                        Settings
+                      </Link>
                       <Button size="sm" variant="danger" onClick={() => destroy(v.id)}>
                         Delete
                       </Button>

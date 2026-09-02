@@ -39,6 +39,13 @@ import { OrdersService } from '../orders/orders.service';
 import { SpecialOrdersService } from '../special-orders/special-orders.service';
 import { WebhookDispatcher } from '../webhooks/webhook-dispatcher.service';
 import { RequirePermission, TenantScoped } from '../tenancy/decorators';
+import {
+  cuttingDateMessage,
+  defaultFreightCents,
+  loadLandedCost,
+  pastCuttingDate,
+  todayIso,
+} from './vendor-settings';
 import type { RequestTenantContext } from '../tenancy/request-context';
 
 interface PoLineInput {
@@ -343,6 +350,15 @@ export class PurchaseOrdersController {
     }
 
     const subtotalCents = body.lines.reduce((s, l) => s + l.quantity! * l.unitCostCents!, 0);
+    // Advanced Vendor Settings (owner 2026-09-02): a collection past its PO
+    // cutting date cannot be ordered; active landed-cost lines default the
+    // freight when the caller leaves it out.
+    const cut = await pastCuttingDate(this.db, body.vendorId, variantIds, todayIso());
+    if (cut.length > 0) throw new BadRequestException(cuttingDateMessage(cut));
+    const freightCents =
+      body.freightCents === undefined
+        ? defaultFreightCents(await loadLandedCost(this.db, body.vendorId), subtotalCents)
+        : body.freightCents;
     const number = await this.generatePoNumber(tenant.businessId!);
     const place = body.place !== false;
     const expectedAt = parseDate(body.expectedAt);
@@ -358,7 +374,7 @@ export class PurchaseOrdersController {
         expectedAt,
         placedAt: place ? new Date() : null,
         subtotalCents,
-        freightCents: body.freightCents ?? null,
+        freightCents: freightCents ?? null,
         notes: body.notes ?? null,
         createdByUserId: actor.id,
       })
@@ -446,6 +462,17 @@ export class PurchaseOrdersController {
     if (po.status !== 'draft') {
       throw new ForbiddenException(`Cannot place a ${po.status} purchase order`);
     }
+    const placingLines = await this.db
+      .select({ variantId: schema.purchaseOrderLines.variantId })
+      .from(schema.purchaseOrderLines)
+      .where(eq(schema.purchaseOrderLines.purchaseOrderId, id));
+    const cut = await pastCuttingDate(
+      this.db,
+      po.vendorId,
+      placingLines.map((l) => l.variantId),
+      todayIso(),
+    );
+    if (cut.length > 0) throw new BadRequestException(cuttingDateMessage(cut));
     await this.db
       .update(schema.purchaseOrders)
       .set({ status: 'ordered', placedAt: new Date(), updatedAt: new Date() })

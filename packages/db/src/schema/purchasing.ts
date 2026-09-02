@@ -12,7 +12,7 @@ import {
 } from 'drizzle-orm/pg-core';
 import { businesses, users } from './platform';
 import { locations } from './tenancy';
-import { productVariants } from './catalog';
+import { collections, productVariants } from './catalog';
 
 /**
  * Suppliers / vendors that the business buys from. Kept lightweight —
@@ -48,6 +48,15 @@ export const vendors = pgTable(
      * vendor not enabled for sales-rate replenishment.
      */
     replenishmentJson: jsonb('replenishment_json'),
+    /**
+     * Advanced Vendor Settings → Shipping (owner 2026-09-02, STORIS):
+     * landed-cost lines — freight, import fee, misc fee and two custom
+     * lines — each {active, type: percent|dollar|calculate, percent,
+     * cents, label}. Active percent/dollar lines default a new PO's
+     * freight (landed cost lean, Q1); "calculate" lines are entered from
+     * the vendor invoice. Null = nothing configured.
+     */
+    landedCostJson: jsonb('landed_cost_json'),
     isActive: boolean('is_active').notNull().default(true),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -247,5 +256,39 @@ export const vendorInvoices = pgTable(
     // One row per vendor invoice number per vendor — re-recording the
     // same bill is a mistake, not a new payable.
     numberUnique: uniqueIndex('vendor_invoices_vendor_number_unique').on(t.vendorId, t.number),
+  }),
+);
+
+/**
+ * Advanced Vendor Settings → PO Cutting Date (owner 2026-09-02, STORIS
+ * "Collection Exceptions"): the last day a purchase order may be cut for
+ * a vendor's collection. After it, PO creation and placement refuse
+ * lines from that collection and sales-rate replenishment drops them.
+ */
+export const vendorPoCuttingDates = pgTable(
+  'vendor_po_cutting_dates',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    businessId: uuid('business_id')
+      .notNull()
+      .references(() => businesses.id, { onDelete: 'cascade' }),
+    vendorId: uuid('vendor_id')
+      .notNull()
+      .references(() => vendors.id, { onDelete: 'cascade' }),
+    collectionId: uuid('collection_id')
+      .notNull()
+      .references(() => collections.id, { onDelete: 'cascade' }),
+    cuttingDate: date('cutting_date').notNull(),
+    notes: text('notes'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    vendorCollectionUnique: uniqueIndex('vendor_po_cutting_dates_vendor_collection_uniq').on(
+      t.vendorId,
+      t.collectionId,
+    ),
+    businessIdx: index('vendor_po_cutting_dates_business_id_idx').on(t.businessId),
+    vendorIdx: index('vendor_po_cutting_dates_vendor_id_idx').on(t.vendorId),
   }),
 );

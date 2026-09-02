@@ -1,5 +1,7 @@
 'use client';
 
+import Link from 'next/link';
+
 import { useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { api } from '@/lib/api';
@@ -306,7 +308,14 @@ export default function ReplenishmentPage() {
       </Card>
 
       {vendorId && settingsLoaded ? (
-        <Card title="Vendor replenishment settings">
+        <Card
+          title="Vendor replenishment settings"
+          actions={
+            <Link href={`/vendors/${vendorId}/settings?tab=replen`}>
+              Advanced vendor settings →
+            </Link>
+          }
+        >
           {settings ? null : (
             <p className="mb-3 text-sm text-neutral-500">
               Not configured — this vendor is skipped by every run mode until enabled.

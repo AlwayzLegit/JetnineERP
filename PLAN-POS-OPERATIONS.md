@@ -600,6 +600,48 @@ this built".
   carries the parameters.
 - Tests: `written-sales.int.spec.ts` (6).
 
+### 12.10 Advanced Vendor Settings (amendment A14, owner 2026-09-02)
+
+Owner ask (STORIS Advanced Vendor Settings screenshots — General, Shipping,
+PO Cutting Date, Auto PO Replen): "we also need an Advanced Vendor Settings".
+
+- **Page** `/vendors/:id/settings` (vendor name and a Settings link on the
+  Vendors list; `?tab=` deep links), four tabs that each save on their own.
+- **General**: the vendor master (name, contact, email, phone, remit-to,
+  notes, active) plus the purchasing defaults that already lived in the
+  replenishment document — minimum stock days, lead days, default requested
+  date on POs.
+- **Shipping** (`vendors.landed_cost_json`, `PATCH /v1/vendors/:id/shipping`):
+  five landed-cost lines exactly as STORIS lays them out — Landed Freight
+  (percent | dollar), Import Fee, Misc. Fee and two custom lines (percent |
+  dollar | calculate, custom lines carry a label). Active percent/dollar
+  lines are summed into a new PO's freight when the caller does not send
+  one (landed cost lean, Q1: one whole-PO amount spread per unit at
+  receipt); "calculate" lines are entered from the vendor invoice. Applies
+  to manual POs and to sales-rate replenishment POs.
+- **PO Cutting Date** (new tenant table `vendor_po_cutting_dates`, unique
+  per vendor + collection, `PUT /v1/vendors/:id/po-cutting-dates` replaces
+  the list): the STORIS "Collection Exceptions" grid — collection code,
+  description/notes, PO cutting date. Past the date (strictly before
+  today), PO creation and placement refuse lines from that collection with
+  a message naming it, and replenishment drops those lines (noted on the
+  PO). Another vendor's POs are not affected.
+- **Auto PO Replen** (the replenishment document, `PATCH
+/v1/purchasing/replenishment/vendors/:id/settings`): the STORIS fields —
+  Generate Automatic POs, Automatically Hold POs, Weekly Sales Rate
+  Calculation, Include All Back Orders, Days For Replenishment, **First /
+  Second Average Units Period** (new, 1–156 weeks, defaults 4 / 12), Variance
+  Starting / Ending Date, Variance Percentage, Minimum Sales Rate, Build POs
+  (weekday checkboxes), **Sort Criteria** (new: vendor model | product |
+  category | group). Sort criteria orders the replenishment grid and the PO
+  lines it writes; "group" sorts by category (Jetnine has no product
+  groups). The average-units periods are stored and returned; the grid's
+  average-units columns are follow-up work.
+- Read model: `GET /v1/vendors/:id/advanced-settings` returns all four tabs
+  plus the collection picker (the vendor's own collections first).
+- Tests: `vendor-settings.int.spec.ts` (6); `purchasing.int.spec.ts` still
+  green.
+
 ### 12.3 Cashier dashboard — "My Day" (amendment A7, owner 2026-09-01)
 
 Fixed by role, like Operations and Warehouse: `cashier.dashboard.view` is the

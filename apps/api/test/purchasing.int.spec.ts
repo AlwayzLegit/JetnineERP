@@ -1569,7 +1569,7 @@ describe('Sales-rate PO replenishment — run modes over live data (T-28/T-29/T-
     const step = (run.body.results as { jobId: string; status: string }[]).find(
       (r) => r.jobId === 'sales_rate_replenishment',
     );
-    expect(step?.status).toBe('succeeded');
+    expect(step?.status, JSON.stringify(step)).toBe('succeeded');
 
     const pos = await asOwner().get('/v1/purchase-orders?status=draft');
     const drafts = (pos.body.data as { id: string; vendorId: string }[]).filter(

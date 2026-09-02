@@ -4643,3 +4643,20 @@ sample PDF) — "We also need this built".
   `written-sales.int.spec.ts` (6 tests, new CI db `jetnine_written_sales`).
 - Web `/reports/written-sales` with the STORIS parameter card, linked
   from Reports. PLAN §12.9 (A13).
+
+### Checkpoint — 2026-09-02 (Advanced Vendor Settings)
+
+Owner ask: STORIS Advanced Vendor Settings (General / Shipping / PO
+Cutting Date / Auto PO Replen).
+
+- Schema: `vendors.landed_cost_json`, new `vendor_po_cutting_dates`
+  (RLS), migration 0085.
+- API: `GET /v1/vendors/:id/advanced-settings`, `PATCH
+/v1/vendors/:id/shipping`, `PUT /v1/vendors/:id/po-cutting-dates`;
+  replenishment settings gain first/second average units period and sort
+  criteria (grid + PO line order). Landed-cost lines default PO freight;
+  cutting dates block PO create/place and drop replenishment lines.
+  `vendor-settings.int.spec.ts` (6, CI db `jetnine_vendor_settings`).
+- Web `/vendors/[id]/settings` with the four STORIS tabs; Vendors list
+  links to it; replenishment page links to the Auto PO Replen tab.
+  PLAN §12.10 (A14).

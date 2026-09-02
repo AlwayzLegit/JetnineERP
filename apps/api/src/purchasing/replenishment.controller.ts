@@ -21,6 +21,13 @@ import {
 } from '../auth/current-user.decorator';
 import { DRIZZLE } from '../database/database.module';
 import { RequirePermission, TenantScoped } from '../tenancy/decorators';
+import {
+  cuttingDateMessage,
+  defaultFreightCents,
+  loadLandedCost,
+  pastCuttingDate,
+  todayIso,
+} from './vendor-settings';
 import type { RequestTenantContext } from '../tenancy/request-context';
 import {
   runReplenishment,
@@ -158,8 +165,22 @@ export class ReplenishmentRunService {
         sku: null,
         vendorSku: null,
         costCents: null,
+        categoryName: null,
       }),
     }));
+    // Advanced Vendor Settings → Sort Criteria (owner 2026-09-02).
+    const key = (r: ReplenishmentGridRow): string => {
+      switch (vendor.sortCriteria ?? 'vendor_model') {
+        case 'product':
+          return `${r.productName}\u0000${r.variantName ?? ''}`;
+        case 'category':
+        case 'group':
+          return `${r.categoryName ?? '~'}\u0000${r.productName}\u0000${r.variantName ?? ''}`;
+        default:
+          return `${r.vendorSku ?? r.sku ?? '~'}\u0000${r.productName}`;
+      }
+    };
+    rows.sort((a, b) => key(a).localeCompare(key(b)));
     return { rows, vendor, control };
   }
 
@@ -229,9 +250,30 @@ export class ReplenishmentRunService {
       )[0]?.businessId;
     if (!businessId) throw new NotFoundException('Vendor not found');
 
+    // Advanced Vendor Settings → PO Cutting Date: a collection past its
+    // cutting date never lands on an automatic PO.
+    const cut = await pastCuttingDate(
+      db,
+      opts.vendorId,
+      lines.map((l) => l.variantId),
+      todayIso(),
+    );
+    if (cut.length > 0) {
+      const cutIds = new Set(cut.map((c) => c.variantId));
+      const kept = lines.filter((l) => !cutIds.has(l.variantId));
+      if (kept.length === 0) return null;
+      lines.splice(0, lines.length, ...kept);
+    }
+
     const hold = vendor.automaticallyHoldPos;
     const number = await this.generatePoNumber(db, businessId);
     const subtotalCents = lines.reduce((s, l) => s + l.orderQty * (l.costCents ?? 0), 0);
+    // Advanced Vendor Settings → Shipping: active landed-cost lines default
+    // the PO's freight (landed cost lean, Q1).
+    const freightCents = defaultFreightCents(
+      await loadLandedCost(db, opts.vendorId),
+      subtotalCents,
+    );
     const [po] = await db
       .insert(schema.purchaseOrders)
       .values({
@@ -243,9 +285,12 @@ export class ReplenishmentRunService {
         placedAt: hold ? null : new Date(),
         expectedAt,
         subtotalCents,
+        freightCents,
         notes:
           opts.notes ??
-          `Sales-rate replenishment${hold ? ' — held for review (vendor setting)' : ''}`,
+          `Sales-rate replenishment${hold ? ' — held for review (vendor setting)' : ''}${
+            cut.length ? ` — ${cuttingDateMessage(cut)}` : ''
+          }`,
         createdByUserId: opts.actorUserId ?? null,
       })
       .returning();
@@ -395,6 +440,12 @@ export class ReplenishmentController {
     }
     if (s.minimumSalesRate < 0) {
       throw new BadRequestException('minimumSalesRate must be ≥ 0');
+    }
+    for (const [k, v] of [
+      ['firstAverageUnitsPeriodWeeks', s.firstAverageUnitsPeriodWeeks],
+      ['secondAverageUnitsPeriodWeeks', s.secondAverageUnitsPeriodWeeks],
+    ] as const) {
+      if (v != null && (v < 1 || v > 156)) throw new BadRequestException(`${k} must be 1–156`);
     }
     if (s.includeAllBackOrders && s.daysForReplenishment != null) {
       throw new BadRequestException(

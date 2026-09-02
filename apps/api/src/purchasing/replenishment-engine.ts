@@ -48,6 +48,15 @@ export interface VendorReplenishment {
   minimumSalesRate: number;
   /** §3.1 EOD gate: weekdays 0(Sun)–6(Sat) the vendor builds POs. */
   buildDays: number[];
+  /**
+   * Advanced Vendor Settings → Auto PO Replen (owner 2026-09-02): the two
+   * average-units windows STORIS shows beside the sales rate, in weeks.
+   * Stored and reported; the grid's average-units columns read them.
+   */
+  firstAverageUnitsPeriodWeeks?: number;
+  secondAverageUnitsPeriodWeeks?: number;
+  /** Grid / PO line order: vendor model (vendor SKU), product, category, group. */
+  sortCriteria?: 'vendor_model' | 'product' | 'category' | 'group';
   categoryExceptions?: {
     categoryId: string;
     minimumStockDays?: number;
