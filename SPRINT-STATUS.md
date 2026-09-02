@@ -4496,3 +4496,22 @@ order page, not the side panel.
   a real link (`order-number-link`) so middle-click / new tab work. The
   slide-over component and its detail fetch are removed. §8 amended.
 - E2E `orders.spec.ts` updated (row click → full page). 3/3 pass locally.
+
+### Checkpoint — 2026-09-02 (View Customer Activity)
+
+Owner ask (nine STORIS screenshots): a View Customer Activity section with
+General Information, Open Orders, Order Line Details, Historical
+Purchases, Current Deposits, Historical Deposits, Open A/R Items and Open
+Service Orders.
+
+- `GET /v1/customers/:id/activity` (`customer-activity.controller.ts`):
+  one derived payload for all eight views — yearly totals, open orders
+  with display status + money split, per-order line details with PO
+  linkage, purchase history across orders / register sales / returns,
+  deposits current + historical, receivables (open installments,
+  delivered balances), open service orders. `customer-activity.int.spec.ts`
+  (8) wired into CI.
+- Web: `/customers/:id/activity` (left nav, `?tab=` deep link, sticky
+  header with code / phones / email / store credit), `/customers/activity`
+  lookup screen, links from the customer record and the Customers list.
+  PLAN §12.4 (A8).

@@ -80,10 +80,15 @@ export default function CustomersPage() {
       <PageHeader
         title="Customers"
         actions={
-          <LinkButton href="/customers/new" variant="primary">
-            <UserPlus size={14} aria-hidden />
-            Add customer
-          </LinkButton>
+          <>
+            <LinkButton href="/customers/activity" data-testid="customers-activity-link">
+              View customer activity
+            </LinkButton>
+            <LinkButton href="/customers/new" variant="primary">
+              <UserPlus size={14} aria-hidden />
+              Add customer
+            </LinkButton>
+          </>
         }
       />
 

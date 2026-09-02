@@ -410,6 +410,28 @@ Routing mirrors §12.1: `/dashboard` opens here for the **Warehouse** role;
 and Manager included). Card 10 (bins/floor-sample health) was considered
 and cut by the owner.
 
+### 12.4 View Customer Activity (amendment A8, owner 2026-09-02)
+
+STORIS "View Customer Activity", rebuilt as `/customers/:id/activity` (lookup
+screen at `/customers/activity`; linked from the customer record and the
+Customers list). One read (`GET /v1/customers/:id/activity`) feeds eight views
+down the left, every figure derived from the documents:
+
+| #   | View                 | Shows                                                                                                                                                                                                |
+| --- | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | General Information  | Address, ship-from location (stock location of the latest order), credit remarks (customer notes), and Sales / Returns / Service totals with counts for this year, last year, lifetime.              |
+| 2   | Open Orders          | Credit limit (unlimited), total orders, deposits, total A/R, unpaid balance; one row per open order: type, fulfillment, date, salesperson, merchandise, other, total, paid, balance, display status. |
+| 3   | Order Line Details   | Pick an order: product, description, qty reserved / ordered / backorder, fulfillment date, qty received, PO # (link), PO delivery date, PO qty, fulfillment method, status.                          |
+| 4   | Historical Purchases | Document filter (all / delivered orders / register sales / returns): number, type, invoice date, product, description, quantity (returns negative), price.                                           |
+| 5   | Current Deposits     | Per open order: deposit held, order amount, type, date, deposit type (method of the latest payment), A/R credit (overpayment).                                                                       |
+| 6   | Historical Deposits  | Total deposit liability (money held on undelivered orders); every payment and completed-return refund with its reason.                                                                               |
+| 7   | Open A/R Items       | Earliest / latest date filter; unpaid layaway or plan installments and delivered orders still owing, with due date and memo.                                                                         |
+| 8   | Open Service Orders  | Unfinished service tickets: number, date, warranty/service, coordinator (technician), status, product, issue, scheduled date.                                                                        |
+
+The header carries customer code (short id), name, phones, email and store
+credit balance (this ERP has no reward points). Read-only; every row links to
+its document.
+
 ## 13. Explicit v1 Exclusions (do not build)
 
 Barcode scanning · bundle/kit pricing · MSRP display · coupon-code validation ·

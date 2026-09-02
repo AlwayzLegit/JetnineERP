@@ -258,9 +258,19 @@ export default function CustomerDetailPage() {
       <p style={{ margin: '0 0 12px' }}>
         <Link href="/customers">← All customers</Link>
       </p>
-      <h1 className="page-title" style={{ marginBottom: 4 }}>
-        {name}
-      </h1>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 4 }}>
+        <h1 className="page-title" style={{ margin: 0 }}>
+          {name}
+        </h1>
+        <Link
+          href={`/customers/${id}/activity`}
+          className="btn"
+          data-testid="view-activity"
+          style={{ marginLeft: 'auto' }}
+        >
+          View customer activity
+        </Link>
+      </div>
       <p style={{ color: 'var(--text-secondary)', fontSize: 13, margin: '0 0 24px' }}>
         Customer since {new Date(c.createdAt).toLocaleDateString()}
       </p>
