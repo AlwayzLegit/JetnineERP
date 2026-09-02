@@ -93,6 +93,11 @@ const operationsPermissions: Permission[] = [
 const cashierPermissions: Permission[] = [
   // My Day (owner 2026-09-01, §12.3): the register's own home.
   'cashier.dashboard.view',
+  // Store list (owner report 2026-09-02): Inventory, Receive, Counts,
+  // Returns, Exchanges, Replenishment and the order page all load
+  // /v1/business/locations first — without this the page dies on a 403
+  // before the role's own permissions ever matter.
+  'locations.view',
   'pos.access',
   'pos.transaction.create',
   'pos.transaction.discount',
@@ -126,6 +131,11 @@ const cashierPermissions: Permission[] = [
  */
 const warehousePermissions: Permission[] = [
   'warehouse.dashboard.view',
+  // Store list (owner report 2026-09-02): Inventory, Receive, Counts,
+  // Returns, Exchanges, Replenishment and the order page all load
+  // /v1/business/locations first — without this the page dies on a 403
+  // before the role's own permissions ever matter.
+  'locations.view',
 
   'products.view',
   'inventory.view',
@@ -149,6 +159,8 @@ const warehousePermissions: Permission[] = [
 ];
 
 const bookkeeperPermissions: Permission[] = [
+  // Store list — see the cashier note; the books read per-store too.
+  'locations.view',
   // In-house GL (owner 2026-08-28): the books own the ledger.
   'gl.view',
   'gl.post',

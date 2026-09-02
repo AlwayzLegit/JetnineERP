@@ -92,6 +92,28 @@ interface AsIsRow {
   notes: string | null;
   reviewedAt: Date | null;
   createdAt: Date;
+  /** Where the piece came from — resolved from reference_type/id (owner 2026-09-02). */
+  origin: AsIsOrigin | null;
+}
+
+/**
+ * The document the piece walked in on, resolved for the review screen:
+ * the invoice (sale or order) with its customer, the RMA when a return
+ * authorized it, the transfer or PO for consolidation/defect intake.
+ * `manual` intake has no origin.
+ */
+export interface AsIsOrigin {
+  kind: 'sale' | 'order' | 'order_return' | 'stock_transfer' | 'purchase_order';
+  /** The clickable document: a sale, order, transfer or purchase order. */
+  documentId: string;
+  documentNumber: string;
+  /** RMA number when a return authorization produced the piece. */
+  rmaNumber: string | null;
+  customerId: string | null;
+  customerName: string | null;
+  /** Transfer origin store / PO vendor — the "from" of the piece. */
+  fromName: string | null;
+  documentDate: Date | null;
 }
 
 /**
@@ -134,6 +156,214 @@ export class AsIsController {
 
   /** The shared list query — cursor-ordered newest-first. */
   private async queryRows(conditions: SQL[], limit: number): Promise<AsIsRow[]> {
+    const rows = await this.queryBaseRows(conditions, limit);
+    const origins = await this.resolveOrigins(rows);
+    return rows.map((r) => ({ ...r, origin: origins.get(r.id) ?? null }));
+  }
+
+  /**
+   * Batch-resolve every row's reference to the document it came from:
+   * one query per reference type, never one per row.
+   */
+  private async resolveOrigins(rows: Omit<AsIsRow, 'origin'>[]): Promise<Map<string, AsIsOrigin>> {
+    const out = new Map<string, AsIsOrigin>();
+    const idsOf = (type: string) => [
+      ...new Set(
+        rows.filter((r) => r.referenceType === type && r.referenceId).map((r) => r.referenceId!),
+      ),
+    ];
+    const assign = (type: string, byRef: Map<string, AsIsOrigin>) => {
+      for (const r of rows) {
+        if (r.referenceType === type && r.referenceId && byRef.has(r.referenceId)) {
+          out.set(r.id, byRef.get(r.referenceId)!);
+        }
+      }
+    };
+    const customerName = (first: string | null, last: string | null) =>
+      [first, last].filter(Boolean).join(' ') || null;
+
+    // Register refunds → the sale (invoice) and its customer.
+    const refundIds = idsOf('refund');
+    if (refundIds.length) {
+      const hits = await this.db
+        .select({
+          refundId: schema.refunds.id,
+          saleId: schema.sales.id,
+          number: schema.sales.number,
+          customerId: schema.sales.customerId,
+          first: schema.customers.firstName,
+          last: schema.customers.lastName,
+          date: schema.sales.createdAt,
+        })
+        .from(schema.refunds)
+        .innerJoin(schema.sales, eq(schema.sales.id, schema.refunds.saleId))
+        .leftJoin(schema.customers, eq(schema.customers.id, schema.sales.customerId))
+        .where(inArray(schema.refunds.id, refundIds));
+      assign(
+        'refund',
+        new Map(
+          hits.map((h) => [
+            h.refundId,
+            {
+              kind: 'sale' as const,
+              documentId: h.saleId,
+              documentNumber: h.number,
+              rmaNumber: null,
+              customerId: h.customerId,
+              customerName: customerName(h.first, h.last),
+              fromName: null,
+              documentDate: h.date,
+            },
+          ]),
+        ),
+      );
+    }
+
+    // Order returns → the RMA and the order it was authorized against.
+    const orderReturnIds = idsOf('order_return');
+    if (orderReturnIds.length) {
+      const hits = await this.db
+        .select({
+          returnId: schema.orderReturns.id,
+          rma: schema.orderReturns.rmaNumber,
+          orderId: schema.orders.id,
+          number: schema.orders.number,
+          customerId: schema.orders.customerId,
+          first: schema.customers.firstName,
+          last: schema.customers.lastName,
+          date: schema.orders.createdAt,
+        })
+        .from(schema.orderReturns)
+        .innerJoin(schema.orders, eq(schema.orders.id, schema.orderReturns.orderId))
+        .leftJoin(schema.customers, eq(schema.customers.id, schema.orders.customerId))
+        .where(inArray(schema.orderReturns.id, orderReturnIds));
+      assign(
+        'order_return',
+        new Map(
+          hits.map((h) => [
+            h.returnId,
+            {
+              kind: 'order_return' as const,
+              documentId: h.orderId,
+              documentNumber: h.number,
+              rmaNumber: h.rma,
+              customerId: h.customerId,
+              customerName: customerName(h.first, h.last),
+              fromName: null,
+              documentDate: h.date,
+            },
+          ]),
+        ),
+      );
+    }
+
+    // Straight order references (older return flows).
+    const orderIds = idsOf('order');
+    if (orderIds.length) {
+      const hits = await this.db
+        .select({
+          orderId: schema.orders.id,
+          number: schema.orders.number,
+          customerId: schema.orders.customerId,
+          first: schema.customers.firstName,
+          last: schema.customers.lastName,
+          date: schema.orders.createdAt,
+        })
+        .from(schema.orders)
+        .leftJoin(schema.customers, eq(schema.customers.id, schema.orders.customerId))
+        .where(inArray(schema.orders.id, orderIds));
+      assign(
+        'order',
+        new Map(
+          hits.map((h) => [
+            h.orderId,
+            {
+              kind: 'order' as const,
+              documentId: h.orderId,
+              documentNumber: h.number,
+              rmaNumber: null,
+              customerId: h.customerId,
+              customerName: customerName(h.first, h.last),
+              fromName: null,
+              documentDate: h.date,
+            },
+          ]),
+        ),
+      );
+    }
+
+    // Consolidation transfers → the transfer and the store it left.
+    const transferIds = idsOf('stock_transfer');
+    if (transferIds.length) {
+      const hits = await this.db
+        .select({
+          transferId: schema.stockTransfers.id,
+          number: schema.stockTransfers.number,
+          fromName: schema.locations.name,
+          date: schema.stockTransfers.createdAt,
+        })
+        .from(schema.stockTransfers)
+        .leftJoin(schema.locations, eq(schema.locations.id, schema.stockTransfers.fromLocationId))
+        .where(inArray(schema.stockTransfers.id, transferIds));
+      assign(
+        'stock_transfer',
+        new Map(
+          hits.map((h) => [
+            h.transferId,
+            {
+              kind: 'stock_transfer' as const,
+              documentId: h.transferId,
+              documentNumber: h.number,
+              rmaNumber: null,
+              customerId: null,
+              customerName: null,
+              fromName: h.fromName,
+              documentDate: h.date,
+            },
+          ]),
+        ),
+      );
+    }
+
+    // Defects found at receiving → the PO and its vendor.
+    const poIds = idsOf('purchase_order');
+    if (poIds.length) {
+      const hits = await this.db
+        .select({
+          poId: schema.purchaseOrders.id,
+          number: schema.purchaseOrders.number,
+          vendorName: schema.vendors.name,
+          date: schema.purchaseOrders.createdAt,
+        })
+        .from(schema.purchaseOrders)
+        .leftJoin(schema.vendors, eq(schema.vendors.id, schema.purchaseOrders.vendorId))
+        .where(inArray(schema.purchaseOrders.id, poIds));
+      assign(
+        'purchase_order',
+        new Map(
+          hits.map((h) => [
+            h.poId,
+            {
+              kind: 'purchase_order' as const,
+              documentId: h.poId,
+              documentNumber: h.number,
+              rmaNumber: null,
+              customerId: null,
+              customerName: null,
+              fromName: h.vendorName,
+              documentDate: h.date,
+            },
+          ]),
+        ),
+      );
+    }
+    return out;
+  }
+
+  private async queryBaseRows(
+    conditions: SQL[],
+    limit: number,
+  ): Promise<Omit<AsIsRow, 'origin'>[]> {
     return this.db
       .select({
         id: schema.asIsItems.id,
@@ -671,6 +901,7 @@ export class AsIsController {
       .where(inArray(schema.asIsItems.id, [id]))
       .limit(1);
     if (!rows[0]) throw new NotFoundException('As-Is item not found');
-    return rows[0];
+    const origins = await this.resolveOrigins(rows);
+    return { ...rows[0], origin: origins.get(rows[0].id) ?? null };
   }
 }
