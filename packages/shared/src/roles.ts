@@ -27,6 +27,8 @@ const managerExclusions = new Set<Permission>([
   'business.billing.update',
   'roles.delete',
   'users.disable',
+  // Owner 2026-09-02: removing a member is the owner's call.
+  'users.delete',
 ]);
 
 const managerPermissions: Permission[] = businessPermissions.filter(

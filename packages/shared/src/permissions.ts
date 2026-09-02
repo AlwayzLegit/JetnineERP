@@ -8,6 +8,7 @@ export const PERMISSIONS = {
   'users.invite': 'Invite new users',
   'users.update': 'Update user details',
   'users.disable': 'Disable users',
+  'users.delete': 'Remove members from the business (history is kept)',
   'roles.view': 'View roles',
   'roles.create': 'Create custom roles',
   'roles.update': 'Update roles',

@@ -10,7 +10,7 @@ import {
   Patch,
   Post,
 } from '@nestjs/common';
-import { asc, eq } from 'drizzle-orm';
+import { asc, eq, sql } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { schema } from '@jetnine/db';
 import { AuditService } from '../audit/audit.service';
@@ -19,6 +19,20 @@ import { CurrentTenant } from '../auth/current-user.decorator';
 import { DRIZZLE } from '../database/database.module';
 import { RequirePermission, TenantScoped } from '../tenancy/decorators';
 import type { RequestTenantContext } from '../tenancy/request-context';
+
+/**
+ * What we carry from a vendor (owner 2026-09-02): products in the
+ * catalog, units and products sitting in inventory, units still to come
+ * on open POs. Each number is a door: the products, inventory and
+ * purchase-orders pages all take `vendorId`.
+ */
+export interface VendorStats {
+  productsCarried: number;
+  inStockProducts: number;
+  inStockUnits: number;
+  onPoUnits: number;
+  openPos: number;
+}
 
 interface VendorRow {
   id: string;
@@ -57,8 +71,95 @@ export class VendorsController {
 
   @Get()
   @RequirePermission('vendors.view')
-  async list(@CurrentTenant() _tenant: RequestTenantContext): Promise<VendorRow[]> {
-    return this.db.select(SELECT_COLS).from(schema.vendors).orderBy(asc(schema.vendors.name));
+  async list(
+    @CurrentTenant() tenant: RequestTenantContext,
+  ): Promise<(VendorRow & { stats: VendorStats })[]> {
+    const rows = await this.db
+      .select(SELECT_COLS)
+      .from(schema.vendors)
+      .orderBy(asc(schema.vendors.name));
+    const stats = await this.stats(tenant.businessId!);
+    const empty: VendorStats = {
+      productsCarried: 0,
+      inStockProducts: 0,
+      inStockUnits: 0,
+      onPoUnits: 0,
+      openPos: 0,
+    };
+    return rows.map((r) => ({ ...r, stats: stats.get(r.id) ?? empty }));
+  }
+
+  /**
+   * One pass over the catalog per vendor, in SQL: a variant belongs to a
+   * vendor by preferred vendor, brand name, or the vendor's name as a
+   * whole word in the product name (see common/vendor-match — this is
+   * the same rule the Add Product popup filters by, in set form).
+   */
+  private async stats(businessId: string): Promise<Map<string, VendorStats>> {
+    const rows = (await this.db.execute(sql`
+      WITH v AS (
+        SELECT id, name,
+               '\\m' || regexp_replace(name, '([.*+?^$\{}()|[\\]\\\\])', '\\\\\\1', 'g') || '\\M' AS word
+          FROM vendors WHERE business_id = ${businessId}
+      ),
+      owned AS (
+        SELECT v.id AS vendor_id, pv.id AS variant_id
+          FROM v
+          JOIN product_variants pv ON pv.business_id = ${businessId} AND pv.is_active
+          JOIN products p ON p.id = pv.product_id AND p.is_active
+          LEFT JOIN brands b ON b.id = p.brand_id
+         WHERE pv.preferred_vendor_id = v.id
+            OR lower(b.name) = lower(v.name)
+            OR p.name ~* v.word
+      ),
+      stock AS (
+        SELECT o.vendor_id,
+               count(DISTINCT o.variant_id) FILTER (WHERE il.on_hand > 0) AS in_stock_products,
+               coalesce(sum(il.on_hand), 0) AS in_stock_units
+          FROM owned o
+          JOIN inventory_levels il ON il.variant_id = o.variant_id
+         GROUP BY o.vendor_id
+      ),
+      po AS (
+        SELECT po.vendor_id,
+               count(DISTINCT po.id) AS open_pos,
+               coalesce(sum(pl.quantity_ordered - pl.quantity_received), 0) AS on_po_units
+          FROM purchase_orders po
+          JOIN purchase_order_lines pl ON pl.purchase_order_id = po.id
+         WHERE po.business_id = ${businessId}
+           AND po.deleted_at IS NULL
+           AND po.status IN ('draft', 'ordered', 'partially_received')
+           AND pl.quantity_ordered > pl.quantity_received
+         GROUP BY po.vendor_id
+      )
+      SELECT v.id,
+             (SELECT count(*) FROM owned o WHERE o.vendor_id = v.id)::int AS products_carried,
+             coalesce(s.in_stock_products, 0)::int AS in_stock_products,
+             coalesce(s.in_stock_units, 0)::int AS in_stock_units,
+             coalesce(po.on_po_units, 0)::int AS on_po_units,
+             coalesce(po.open_pos, 0)::int AS open_pos
+        FROM v
+        LEFT JOIN stock s ON s.vendor_id = v.id
+        LEFT JOIN po ON po.vendor_id = v.id`)) as unknown as {
+      id: string;
+      products_carried: number;
+      in_stock_products: number;
+      in_stock_units: number;
+      on_po_units: number;
+      open_pos: number;
+    }[];
+    return new Map(
+      rows.map((r) => [
+        r.id,
+        {
+          productsCarried: r.products_carried,
+          inStockProducts: r.in_stock_products,
+          inStockUnits: r.in_stock_units,
+          onPoUnits: r.on_po_units,
+          openPos: r.open_pos,
+        },
+      ]),
+    );
   }
 
   @Get(':id')

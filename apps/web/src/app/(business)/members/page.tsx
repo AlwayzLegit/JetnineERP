@@ -51,6 +51,10 @@ export default function MembersPage() {
   // sent (no mail transport configured). The invite is real either way, so
   // we show the link and let the inviter pass it on themselves.
   const [inviteLink, setInviteLink] = useState<string | null>(null);
+  // Owner 2026-09-02: Delete shows only to who holds users.delete, never on self.
+  const [me, setMe] = useState<{ membershipId: string | null; canDeleteMembers: boolean } | null>(
+    null,
+  );
 
   async function load() {
     try {
@@ -58,6 +62,11 @@ export default function MembersPage() {
         api<Member[]>('/v1/business/members'),
         api<Role[]>('/v1/business/roles'),
       ]);
+      void api<{ membershipId: string | null; canDeleteMembers: boolean }>(
+        '/v1/business/members/me',
+      )
+        .then((r) => setMe({ membershipId: r.membershipId, canDeleteMembers: r.canDeleteMembers }))
+        .catch(() => setMe(null));
       setMembers(m);
       setRoles(r);
     } catch (err) {
@@ -97,6 +106,31 @@ export default function MembersPage() {
       );
       e.currentTarget.reset();
       await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  async function removeMember(m: Member) {
+    if (
+      !confirm(
+        `Delete ${m.name || m.email} from this business? They lose access now. Anything they wrote stays on record under their name.`,
+      )
+    )
+      return;
+    try {
+      const r = await api<{ mode: 'deleted' | 'archived' }>(
+        `/v1/business/members/${m.membershipId}`,
+        {
+          method: 'DELETE',
+        },
+      );
+      setSuccess(
+        r.mode === 'deleted'
+          ? `${m.name || m.email} deleted.`
+          : `${m.name || m.email} removed — their history is kept.`,
+      );
+      setMembers((prev) => (prev ?? []).filter((x) => x.membershipId !== m.membershipId));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -282,6 +316,16 @@ export default function MembersPage() {
                       <LinkButton size="sm" variant="secondary" href={`/members/${m.membershipId}`}>
                         Manage
                       </LinkButton>
+                      {me?.canDeleteMembers && me.membershipId !== m.membershipId && (
+                        <Button
+                          size="sm"
+                          variant="danger"
+                          onClick={() => void removeMember(m)}
+                          data-testid="member-delete"
+                        >
+                          Delete
+                        </Button>
+                      )}
                     </span>
                   </td>
                 </tr>

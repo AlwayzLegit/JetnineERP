@@ -4431,3 +4431,36 @@ permission: locations.view" before anything loaded.
 - `locations.view` added to the Cashier, Warehouse and Bookkeeper
   system roles (read-only store list; create/update/delete unchanged).
   The boot sync backfills existing tenants' roles on deploy.
+
+### Checkpoint — 2026-09-02 (vendor counts with doors)
+
+Owner ask: each vendor row shows how many of their products we carry,
+how many are in inventory, how many are on PO — and each number opens
+the page filtered to that vendor.
+
+- `common/vendor-match.ts`: the one rule for "this vendor's products"
+  (preferred vendor, brand name, or the vendor's name as a whole word in
+  the product name), shared by the Add Product popup, the products list
+  (`?vendorId`), the inventory levels (`?vendorId`, any/all locations)
+  and the vendor stats.
+- `GET /v1/vendors` rows carry `stats` (products carried, in-stock
+  products + units, on-PO units + open POs) from one SQL pass.
+- Vendors page: three count columns linking to `/products?vendorId`,
+  `/inventory?vendorId&locationId=all` (new "All locations" option) and
+  `/purchase-orders?vendorId`; each destination shows a vendor chip with
+  clear. `product-filters.int.spec.ts` +2.
+
+### Checkpoint — 2026-09-02 (delete member)
+
+Owner ask: the Owner needs a Delete button on Members.
+
+- New permission `users.delete` (Owner only among system roles — the
+  Manager exclusion list carries it beside `users.disable`).
+- `DELETE /v1/business/members/:id`: a seat nothing refers to is
+  deleted outright; one with history (orders written, deliveries driven,
+  commission, notes, returns, register sales) is archived — status
+  `removed`, store scopes dropped, locked out by the tenancy guard — so
+  every document keeps its name. Never yourself, never the last active
+  Owner. Both paths audit-logged; removed members leave the roster.
+- Members list and member page: Delete (danger) for holders of the
+  permission, never on their own row. `business.int.spec.ts` +3.
