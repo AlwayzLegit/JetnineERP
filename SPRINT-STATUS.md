@@ -4515,3 +4515,20 @@ Service Orders.
   header with code / phones / email / store credit), `/customers/activity`
   lookup screen, links from the customer record and the Customers list.
   PLAN §12.4 (A8).
+
+### Checkpoint — 2026-09-02 (View Salesperson Activity)
+
+Owner ask (three STORIS screenshots): the same activity screen for
+salespeople — General, Open Orders, Completed Orders, Canceled Orders,
+Layaways, Carts, Quotes, Leads.
+
+- `GET /v1/salespeople/:membershipId/activity` (money module,
+  `salesperson-activity.controller.ts`, `reports.sales.view`): open /
+  completed / canceled / layaway / cart / quote rows with customer, type,
+  fulfillment, display status, money split and salespeople count; general
+  totals incl. written and delivered today / MTD (client sends its local
+  `today`); leads = quote/cart customers without a real order.
+  `salesperson-activity.int.spec.ts` wired into CI.
+- Web: `/salespeople/:id/activity` (left nav, `?tab=`, date window on
+  completed / canceled), `/salespeople/activity` lookup, "View activity"
+  per row and a header button on Salespeople. PLAN §12.5 (A9).

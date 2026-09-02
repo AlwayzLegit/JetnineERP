@@ -432,6 +432,28 @@ The header carries customer code (short id), name, phones, email and store
 credit balance (this ERP has no reward points). Read-only; every row links to
 its document.
 
+### 12.5 View Salesperson Activity (amendment A9, owner 2026-09-02)
+
+STORIS "View Salesperson Activity", rebuilt as `/salespeople/:membershipId/activity`
+(lookup at `/salespeople/activity`; linked from every row of the Salespeople
+page). One read (`GET /v1/salespeople/:membershipId/activity?from&to&today`)
+counts every order the member wrote or shares (primary or second salesperson):
+
+| #   | View             | Shows                                                                                                                                                                            |
+| --- | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | General          | Open orders / layaways / quotes / carts totals with counts; written sales today and month-to-date (order date); delivered sales today and MTD (completion date).                 |
+| 2   | Open Orders      | Order, customer, type, fulfillment type, fulfillment status (display ladder), order date, fulfillment date, merchandise, total, paid, balance, salespeople count; footer totals. |
+| 3   | Completed Orders | Start / end date window (default: first of last month → end of this month); same columns keyed on completed date.                                                                |
+| 4   | Canceled Orders  | Same window, keyed on cancel date.                                                                                                                                               |
+| 5   | Layaways         | Open layaway orders.                                                                                                                                                             |
+| 6   | Carts            | Draft orders.                                                                                                                                                                    |
+| 7   | Quotes           | Quotes.                                                                                                                                                                          |
+| 8   | Leads            | Customers on this member's quotes or carts who have no real order yet (this ERP has no separate leads table).                                                                    |
+
+Header: initials code, name, email, membership status, selling locations
+(approved list, else "All stores"). Read-only; rows link to the order and to
+the customer's activity screen.
+
 ## 13. Explicit v1 Exclusions (do not build)
 
 Barcode scanning · bundle/kit pricing · MSRP display · coupon-code validation ·

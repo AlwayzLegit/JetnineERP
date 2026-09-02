@@ -3,7 +3,16 @@
 import { RefreshCw } from 'lucide-react';
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
-import { Button, Card, EmptyState, Field, Input, LoadingRows, PageHeader } from '@/components/ui';
+import {
+  Button,
+  Card,
+  EmptyState,
+  Field,
+  Input,
+  LinkButton,
+  LoadingRows,
+  PageHeader,
+} from '@/components/ui';
 import { api } from '@/lib/api';
 import { Money } from '@/components/money';
 
@@ -113,7 +122,14 @@ export default function SalespeoplePage() {
 
   return (
     <div>
-      <PageHeader title="Salespeople" />
+      <PageHeader
+        title="Salespeople"
+        actions={
+          <LinkButton href="/salespeople/activity" data-testid="salespeople-activity-link">
+            View salesperson activity
+          </LinkButton>
+        }
+      />
       {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
       <Card>
         <div className="mb-3 flex flex-wrap items-end gap-2">
@@ -154,10 +170,22 @@ export default function SalespeoplePage() {
                     <td className="num">
                       <Money cents={r.totalCents} />
                     </td>
-                    <td>
+                    <td style={{ whiteSpace: 'nowrap' }}>
                       <Button size="sm" variant="ghost" onClick={() => void drill(r)}>
                         Documents
                       </Button>
+                      {(() => {
+                        const member = members.find((m) => m.userId === r.key);
+                        return member ? (
+                          <Link
+                            href={`/salespeople/${member.membershipId}/activity`}
+                            style={{ marginLeft: 8, fontSize: 13 }}
+                            data-testid="salesperson-activity"
+                          >
+                            View activity
+                          </Link>
+                        ) : null;
+                      })()}
                     </td>
                   </tr>
                 ))}
