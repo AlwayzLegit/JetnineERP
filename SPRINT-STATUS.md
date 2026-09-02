@@ -4399,3 +4399,6 @@ now share one name after A7's shortening.
   that has an imported one — deactivate only, audit-logged, groups with
   no imported copy skipped. Page: "Keep imported copy" per group and
   "Keep imported copies everywhere".
+- Owner 2026-09-02: Orders (`/orders/**`) and New Sale (`/pos`) render
+  25% wider — the shell's content cap is 1500px on those routes, 1200px
+  elsewhere — so a product line fits without a sideways scroll.
