@@ -4672,3 +4672,21 @@ and margins.
   wraps, token classes. PLAN §12.11 (A15).
 - Typecheck, lint, unit tests and the full Playwright suite pass (one
   spec updated for a renamed link).
+
+### Checkpoint — 2026-09-03 (catalog replacement from STORIS Active Inventory)
+
+Owner ask: replace the product catalog with the ACTIVE_INVENTORY export
+(group, SKU, brand, category, replacement cost, vendor, description), load
+stock / as-is / minimum stock per store, delete non-matching products,
+keep order lines matched.
+
+- Import pipeline: product spec + brand / group, inventory spec + as-is /
+  min stock (new `inventory_levels.reorder_point`, migration 0086),
+  tolerant store-name matching, commit `replaceCatalog` (delete vs
+  deactivate by live FK scan). `import.int.spec.ts` 15 tests.
+- Converter `docs/scripts/convert-active-inventory.py`; CSVs under
+  `docs/imports/2026-09-03/`. PLAN §12.12 (A16).
+- **Ops (owner)**: after deploy, Settings → Import: upload products.csv
+  (entity product, tick Replace catalog, validate, commit), then
+  inventory.csv (entity inventory). Validation lists any store name that
+  did not match an ERP location.

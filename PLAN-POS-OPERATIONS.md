@@ -669,6 +669,48 @@ properly either."
   suite (auth, orders, operations, my-day, warehouse, sweep, PO specs) —
   one spec updated for a renamed link ("open the order" → "Open order").
 
+### 12.12 Catalog replacement from the STORIS Active Inventory export (amendment A16, owner 2026-09-03)
+
+Owner ask: "replace all of the current Products in the ERP with these
+Products. Include the Group, SKU, Brands, Category, Replacement Cost,
+Vendor, Product Description … Match the products that are on sales orders
+with the new Products List." Decisions (owner answers, 2026-09-03):
+
+- **Stores**: 01 = 201 Western, 02 = West LA, 03 = Hancock Park / La Brea,
+  04 = Studio City, 88 = Warehouse. Codes 05, 06, 08, 09, 10, 11, 12 do not
+  exist — their stock rows are dropped; their SKUs still become products.
+- **Replace** = every product the file does not name is **deleted** when
+  nothing outside the stock ledger references it, and **deactivated**
+  (product + variants) when sales, purchasing, returns, as-is, write-off,
+  serial, count or transfer history does. The foreign keys are discovered
+  from `pg_catalog` at run time so a new history table can never be
+  missed. Order and sale lines keep their variant links; their written
+  description and price are untouched.
+- **Stock**: ON_HAND = Stock + Quantity As-Is (Jetnine counts as-is pieces
+  in on hand), AS_IS becomes that many import-sourced as-is pieces
+  (reconciled on re-import while still pending review), MIN_STOCK is the
+  store's reorder point (new `inventory_levels.reorder_point`, migration 0086) and rolls up into the variant's reorder point as the sum across
+  stores (REPL-040 sums availability the same way).
+- **No selling price**: existing SKUs keep their price, new SKUs land at $0
+  (D12). **Vendors** are created under the STORIS codes. **Group** (QUEEN,
+  CAKING, QUFND, …) is the variant's `group` attribute, not a category;
+  **Catg** is the category; **Brand** is the brand (created on the fly).
+- **Pipeline**: the existing import wizard (Settings → Import). Product
+  spec gains `brand` and `group` columns (category headers are now
+  CATEGORY / CAT / CATG — GROUP no longer maps to category); inventory spec
+  gains `asIsQty` and `reorderPoint`; store names match tolerantly (exact,
+  order prefix, unique contains-match on letters and digits). Commit takes
+  `{ replaceCatalog: true }` (checkbox on the product entity) and returns
+  `{ kept, deleted, deactivated }`.
+- **Files**: `docs/scripts/convert-active-inventory.py` turns the export
+  into `products.csv` (1,948 SKUs) and `inventory.csv` (3,246 SKU@store
+  rows); both are committed under `docs/imports/2026-09-03/`.
+- **Run order**: products.csv as entity _product_ with "Replace catalog"
+  ticked, then inventory.csv as entity _inventory_. Both are idempotent.
+- Tests: `import.int.spec.ts` gains three cases (brand / category / group /
+  vendor / cost; tolerant stores, as-is pieces and per-store minimum
+  stock; replace deletes vs deactivates and keeps order links).
+
 ### 12.3 Cashier dashboard — "My Day" (amendment A7, owner 2026-09-01)
 
 Fixed by role, like Operations and Warehouse: `cashier.dashboard.view` is the

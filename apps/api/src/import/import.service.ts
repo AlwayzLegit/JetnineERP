@@ -30,7 +30,30 @@ interface Lookups {
   orderRefs: Map<string, string>;
   saleRefs: Map<string, string>;
   locations: Map<string, string>;
+  /** Every location, for tolerant matching (name, order prefix, contains). */
+  locationList: { id: string; name: string; prefix: string | null }[];
   variants: Map<string, { variantId: string; productId: string; costCents: number | null }>;
+}
+
+/**
+ * STORIS store names rarely match the ERP's letter for letter ("201
+ * WESTERN" vs "201 Western", "WEST LA MATTRESS STOR" vs "West LA"). Exact
+ * name first, then the order prefix, then a unique contains-match on the
+ * letters and digits alone.
+ */
+export function resolveLocation(lookups: Lookups, raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const exact = lookups.locations.get(raw.trim().toLowerCase());
+  if (exact) return exact;
+  const norm = (v: string) => v.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const key = norm(raw);
+  if (!key) return null;
+  const hits = lookups.locationList.filter((l) => {
+    const n = norm(l.name);
+    const pfx = l.prefix ? norm(l.prefix) : '';
+    return n === key || (pfx !== '' && pfx === key) || n.includes(key) || key.includes(n);
+  });
+  return hits.length === 1 ? hits[0]!.id : null;
 }
 
 const MAX_ROWS = 100_000;
@@ -261,7 +284,7 @@ export class ImportService {
     if (
       ['inventory', 'order', 'sale'].includes(entity) &&
       locKey &&
-      !lookups.locations.has(locKey)
+      !resolveLocation(lookups, n.location)
     ) {
       errors.push({ field: 'location', message: `unknown location "${String(n.location)}"` });
     }
@@ -316,6 +339,7 @@ export class ImportService {
       orderRefs: new Map(),
       saleRefs: new Map(),
       locations: new Map(),
+      locationList: [],
       variants: new Map(),
     };
     const wantCustomers = ['order', 'sale'].includes(entity);
@@ -357,10 +381,15 @@ export class ImportService {
     }
     if (wantLocations) {
       const locs = await this.db
-        .select({ id: schema.locations.id, name: schema.locations.name })
+        .select({
+          id: schema.locations.id,
+          name: schema.locations.name,
+          prefix: schema.locations.orderPrefix,
+        })
         .from(schema.locations)
         .where(eq(schema.locations.businessId, businessId));
       for (const l of locs) lookups.locations.set(l.name.toLowerCase(), l.id);
+      lookups.locationList = locs.map((l) => ({ id: l.id, name: l.name, prefix: l.prefix }));
     }
     if (wantVariants) {
       const variants = await this.db
@@ -387,7 +416,7 @@ export class ImportService {
 
   // --- Commit ---
 
-  async commit(businessId: string, batchId: string) {
+  async commit(businessId: string, batchId: string, options: { replaceCatalog?: boolean } = {}) {
     const batch = await this.getBatch(batchId);
     if (!['validated', 'committed'].includes(batch.status)) {
       throw new BadRequestException('Validate the batch before committing');
@@ -404,6 +433,7 @@ export class ImportService {
       .orderBy(schema.importRows.rowNumber);
     const lookups = await this.loadLookups(businessId, batch.entity);
     const categoryCache = new Map<string, string>();
+    const brandCache = new Map<string, string>();
 
     let committed = 0;
     let failed = 0;
@@ -413,6 +443,7 @@ export class ImportService {
         const jetnineId = await this.commitRow(businessId, batch, row.legacyId!, n, {
           lookups,
           categoryCache,
+          brandCache,
         });
         await this.db
           .update(schema.importRows)
@@ -442,7 +473,128 @@ export class ImportService {
       })
       .where(eq(schema.importBatches.id, batchId))
       .returning();
-    return { batch: updated, committed, failed };
+    // Owner 2026-09-03 catalog load: this file IS the catalog. Everything
+    // it did not touch goes — deleted where nothing references it,
+    // deactivated where sales, purchasing or returns history does.
+    const replaced =
+      options.replaceCatalog && batch.entity === 'product'
+        ? await this.replaceCatalog(businessId, batchId)
+        : null;
+    return { batch: updated, committed, failed, replaced };
+  }
+
+  /**
+   * Delete or deactivate every product of the business that this batch
+   * did not commit. A product is deletable only when no row outside the
+   * stock ledger points at it or its variants — order / sale / PO /
+   * service lines, returns, as-is pieces, write-offs, serials, counts,
+   * transfers all count as history and flip it to inactive instead. The
+   * foreign keys are read live from the catalog so a new table can never
+   * be forgotten.
+   */
+  async replaceCatalog(
+    businessId: string,
+    batchId: string,
+  ): Promise<{ kept: number; deleted: number; deactivated: number }> {
+    const keptRows = await this.db
+      .select({ id: schema.importRows.jetnineId })
+      .from(schema.importRows)
+      .where(
+        and(eq(schema.importRows.batchId, batchId), eq(schema.importRows.status, 'committed')),
+      );
+    const keep = new Set(keptRows.map((r) => r.id).filter((id): id is string => Boolean(id)));
+    const candidates = await this.db
+      .select({
+        productId: schema.products.id,
+        variantId: schema.productVariants.id,
+        isActive: schema.products.isActive,
+      })
+      .from(schema.products)
+      .leftJoin(schema.productVariants, eq(schema.productVariants.productId, schema.products.id))
+      .where(eq(schema.products.businessId, businessId));
+    const byProduct = new Map<string, string[]>();
+    const wasActive = new Set<string>();
+    for (const c of candidates) {
+      if (keep.has(c.productId)) continue;
+      const arr = byProduct.get(c.productId) ?? [];
+      if (c.variantId) arr.push(c.variantId);
+      byProduct.set(c.productId, arr);
+      if (c.isActive) wasActive.add(c.productId);
+    }
+    if (byProduct.size === 0) return { kept: keep.size, deleted: 0, deactivated: 0 };
+
+    // Stock ledger tables follow the product out; everything else is history.
+    const ledger = new Set([
+      'product_variants',
+      'inventory_levels',
+      'inventory_movements',
+      'cost_layers',
+      'cost_consumptions',
+    ]);
+    // pg_catalog, not information_schema: the latter hides constraints on
+    // tables the request role does not own (the app role owns none).
+    const fks = (await this.db.execute(sql`
+      SELECT c.conrelid::regclass::text AS table_name,
+             a.attname AS column_name,
+             c.confrelid::regclass::text AS target
+        FROM pg_constraint c
+        JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY (c.conkey)
+       WHERE c.contype = 'f'
+         AND c.confrelid IN ('products'::regclass, 'product_variants'::regclass)`)) as unknown as {
+      table_name: string;
+      column_name: string;
+      target: string;
+    }[];
+    const productIds = [...byProduct.keys()];
+    const variantIds = [...byProduct.values()].flat();
+    const variantToProduct = new Map<string, string>();
+    for (const [pid, vids] of byProduct) for (const v of vids) variantToProduct.set(v, pid);
+    const blocked = new Set<string>();
+    for (const fk of fks) {
+      if (ledger.has(fk.table_name)) continue;
+      const ids = fk.target === 'products' ? productIds : variantIds;
+      if (ids.length === 0) continue;
+      const refs = (await this.db.execute(
+        sql`SELECT DISTINCT ${sql.identifier(fk.column_name)} AS id FROM ${sql.identifier(fk.table_name)} WHERE ${sql.identifier(fk.column_name)} = ANY(${sql`ARRAY[${sql.join(
+          ids.map((id) => sql`${id}::uuid`),
+          sql`, `,
+        )}]`})`,
+      )) as unknown as { id: string }[];
+      for (const r of refs) {
+        blocked.add(fk.target === 'products' ? r.id : (variantToProduct.get(r.id) ?? r.id));
+      }
+    }
+    const toDelete = productIds.filter((id) => !blocked.has(id));
+    const toDeactivate = productIds.filter((id) => blocked.has(id));
+    if (toDelete.length > 0) {
+      const deletedVariantIds = toDelete.flatMap((id) => byProduct.get(id) ?? []);
+      await this.db
+        .delete(schema.legacyRefs)
+        .where(
+          and(
+            eq(schema.legacyRefs.businessId, businessId),
+            inArray(schema.legacyRefs.entity, ['product', 'inventory']),
+            inArray(schema.legacyRefs.jetnineId, [...toDelete, ...deletedVariantIds]),
+          ),
+        );
+      await this.db.delete(schema.products).where(inArray(schema.products.id, toDelete));
+    }
+    if (toDeactivate.length > 0) {
+      await this.db
+        .update(schema.products)
+        .set({ isActive: false, updatedAt: new Date() })
+        .where(inArray(schema.products.id, toDeactivate));
+      await this.db
+        .update(schema.productVariants)
+        .set({ isActive: false })
+        .where(inArray(schema.productVariants.productId, toDeactivate));
+    }
+    // Re-running the same file is a no-op: only newly retired products count.
+    return {
+      kept: keep.size,
+      deleted: toDelete.length,
+      deactivated: toDeactivate.filter((id) => wasActive.has(id)).length,
+    };
   }
 
   private async commitRow(
@@ -450,7 +602,7 @@ export class ImportService {
     batch: { id: string; entity: string },
     legacyId: string,
     n: Record<string, unknown>,
-    ctx: { lookups: Lookups; categoryCache: Map<string, string> },
+    ctx: { lookups: Lookups; categoryCache: Map<string, string>; brandCache: Map<string, string> },
   ): Promise<string> {
     switch (batch.entity) {
       case 'customer':
@@ -458,7 +610,14 @@ export class ImportService {
       case 'vendor':
         return this.commitVendor(businessId, batch.id, legacyId, n);
       case 'product':
-        return this.commitProduct(businessId, batch.id, legacyId, n, ctx.categoryCache);
+        return this.commitProduct(
+          businessId,
+          batch.id,
+          legacyId,
+          n,
+          ctx.categoryCache,
+          ctx.brandCache,
+        );
       case 'inventory':
         return this.commitInventory(businessId, batch.id, legacyId, n, ctx.lookups);
       case 'order':
@@ -595,8 +754,36 @@ export class ImportService {
     legacyId: string,
     n: Record<string, unknown>,
     categoryCache: Map<string, string>,
+    brandCache: Map<string, string> = new Map(),
   ): Promise<string> {
     const sku = n.sku as string;
+    // Brand (owner 2026-09-03): find-or-create by name, case-insensitive;
+    // only touched when the file carries a BRAND column.
+    let brandId: string | null | undefined;
+    if (typeof n.brand === 'string' && n.brand.trim() !== '') {
+      const key = n.brand.trim().toLowerCase();
+      if (!brandCache.has(key)) {
+        const [existing] = await this.db
+          .select({ id: schema.brands.id })
+          .from(schema.brands)
+          .where(
+            and(
+              eq(schema.brands.businessId, businessId),
+              sql`lower(${schema.brands.name}) = ${key}`,
+            ),
+          )
+          .limit(1);
+        if (existing) brandCache.set(key, existing.id);
+        else {
+          const [created] = await this.db
+            .insert(schema.brands)
+            .values({ businessId, name: n.brand.trim() })
+            .returning({ id: schema.brands.id });
+          brandCache.set(key, created!.id);
+        }
+      }
+      brandId = brandCache.get(key)!;
+    }
     let categoryId: string | null = null;
     if (typeof n.category === 'string' && n.category !== '') {
       const key = n.category.toLowerCase();
@@ -640,6 +827,9 @@ export class ImportService {
       categoryId,
       serialTracked: n.serialTracked === true,
       updatedAt: new Date(),
+      ...(brandId !== undefined ? { brandId } : {}),
+      // A replaced catalog row is live again even if it was retired before.
+      isActive: true,
     };
     if (productId) {
       await this.db
@@ -675,12 +865,25 @@ export class ImportService {
       variantValues.preferredVendorId = await this.vendorIdByName(businessId, n.vendorName.trim());
     }
     const [variant] = await this.db
-      .select({ id: schema.productVariants.id })
+      .select({
+        id: schema.productVariants.id,
+        attributesJson: schema.productVariants.attributesJson,
+      })
       .from(schema.productVariants)
       .where(
         and(eq(schema.productVariants.productId, productId), eq(schema.productVariants.sku, sku)),
       )
       .limit(1);
+    // STORIS Group (QUEEN, CAKING, QUFND, …) rides on the variant's
+    // attributes; other attributes are kept.
+    if (typeof n.group === 'string' && n.group.trim() !== '') {
+      const prior =
+        variant?.attributesJson && typeof variant.attributesJson === 'object'
+          ? (variant.attributesJson as Record<string, unknown>)
+          : {};
+      variantValues.attributesJson = { ...prior, group: n.group.trim() } as never;
+    }
+    variantValues.isActive = true;
     if (variant) {
       await this.db
         .update(schema.productVariants)
@@ -733,7 +936,7 @@ export class ImportService {
   ): Promise<string> {
     const variant = lookups.variants.get((n.sku as string).toLowerCase());
     if (!variant) throw new BadRequestException(`unknown SKU "${String(n.sku)}"`);
-    const locationId = lookups.locations.get((n.location as string).toLowerCase());
+    const locationId = resolveLocation(lookups, n.location);
     if (!locationId) throw new BadRequestException(`unknown location "${String(n.location)}"`);
     const onHand = n.onHand as number;
 
@@ -747,8 +950,16 @@ export class ImportService {
       variant.costCents = n.unitCostCents;
     }
 
+    const reorderPoint =
+      typeof n.reorderPoint === 'number' && Number.isInteger(n.reorderPoint)
+        ? n.reorderPoint
+        : undefined;
     const [level] = await this.db
-      .select({ id: schema.inventoryLevels.id, onHand: schema.inventoryLevels.onHand })
+      .select({
+        id: schema.inventoryLevels.id,
+        onHand: schema.inventoryLevels.onHand,
+        reorderPoint: schema.inventoryLevels.reorderPoint,
+      })
       .from(schema.inventoryLevels)
       .where(
         and(
@@ -762,19 +973,80 @@ export class ImportService {
     if (level) {
       delta = onHand - level.onHand;
       levelId = level.id;
-      if (delta !== 0) {
+      if (delta !== 0 || (reorderPoint !== undefined && reorderPoint !== level.reorderPoint)) {
         await this.db
           .update(schema.inventoryLevels)
-          .set({ onHand, updatedAt: new Date() })
+          .set({
+            onHand,
+            ...(reorderPoint !== undefined ? { reorderPoint } : {}),
+            updatedAt: new Date(),
+          })
           .where(eq(schema.inventoryLevels.id, level.id));
       }
     } else {
       delta = onHand;
       const [created] = await this.db
         .insert(schema.inventoryLevels)
-        .values({ businessId, variantId: variant.variantId, locationId, onHand, reserved: 0 })
+        .values({
+          businessId,
+          variantId: variant.variantId,
+          locationId,
+          onHand,
+          reserved: 0,
+          reorderPoint: reorderPoint ?? null,
+        })
         .returning({ id: schema.inventoryLevels.id });
       levelId = created!.id;
+    }
+    // Per-store minimum stock rolls up into the variant's reorder point
+    // (REPL-040 sums availability across locations, so the sum matches).
+    if (reorderPoint !== undefined) {
+      await this.db
+        .update(schema.productVariants)
+        .set({
+          reorderPoint: sql`(SELECT COALESCE(SUM(${schema.inventoryLevels.reorderPoint}), 0)::int FROM ${schema.inventoryLevels} WHERE ${schema.inventoryLevels.variantId} = ${variant.variantId})`,
+        })
+        .where(eq(schema.productVariants.id, variant.variantId));
+    }
+    // As-is pieces (owner 2026-09-03): the file's as-is count at this
+    // store becomes that many import-sourced as-is rows, reconciled on
+    // re-import (added or removed while still pending review). ON_HAND
+    // already includes them.
+    if (typeof n.asIsQty === 'number' && Number.isInteger(n.asIsQty) && n.asIsQty >= 0) {
+      const existing = await this.db
+        .select({ id: schema.asIsItems.id })
+        .from(schema.asIsItems)
+        .where(
+          and(
+            eq(schema.asIsItems.variantId, variant.variantId),
+            eq(schema.asIsItems.locationId, locationId),
+            eq(schema.asIsItems.referenceType, 'import_batch'),
+            eq(schema.asIsItems.status, 'pending_review'),
+          ),
+        )
+        .orderBy(desc(schema.asIsItems.createdAt));
+      const want = n.asIsQty;
+      if (want > existing.length) {
+        await this.db.insert(schema.asIsItems).values(
+          Array.from({ length: want - existing.length }, () => ({
+            businessId,
+            variantId: variant.variantId,
+            locationId,
+            quantity: 1,
+            source: 'import',
+            referenceType: 'import_batch',
+            referenceId: batchId,
+            notes: 'STORIS as-is snapshot',
+          })),
+        );
+      } else if (want < existing.length) {
+        await this.db.delete(schema.asIsItems).where(
+          inArray(
+            schema.asIsItems.id,
+            existing.slice(0, existing.length - want).map((r) => r.id),
+          ),
+        );
+      }
     }
     // The movement keeps the on-hand ledger honest (D3): the snapshot
     // change is visible as an explicit legacy-import correction.
@@ -804,7 +1076,7 @@ export class ImportService {
     const customerId = lookups.customerRefs.get(n.customerAccountNo as string);
     if (!customerId)
       throw new BadRequestException(`unknown customer "${String(n.customerAccountNo)}"`);
-    const locationId = lookups.locations.get((n.location as string).toLowerCase());
+    const locationId = resolveLocation(lookups, n.location);
     if (!locationId) throw new BadRequestException(`unknown location "${String(n.location)}"`);
 
     const totalCents = n.totalCents as number;
@@ -917,7 +1189,7 @@ export class ImportService {
     n: Record<string, unknown>,
     lookups: Lookups,
   ): Promise<string> {
-    const locationId = lookups.locations.get((n.location as string).toLowerCase());
+    const locationId = resolveLocation(lookups, n.location);
     if (!locationId) throw new BadRequestException(`unknown location "${String(n.location)}"`);
     const customerId =
       typeof n.customerAccountNo === 'string'

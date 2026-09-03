@@ -76,6 +76,8 @@ const money = (cents: number) => `$${(cents / 100).toFixed(2)}`;
 export default function ImportWizardPage() {
   const [entities, setEntities] = useState<EntityInfo[]>([]);
   const [entity, setEntity] = useState('customer');
+  const [replaceCatalog, setReplaceCatalog] = useState(false);
+  const [replaceSummary, setReplaceSummary] = useState<string | null>(null);
   const [batches, setBatches] = useState<Batch[]>([]);
   const [active, setActive] = useState<Batch | null>(null);
   const [recon, setRecon] = useState<Recon | null>(null);
@@ -147,7 +149,21 @@ export default function ImportWizardPage() {
     setBusy(true);
     setError(null);
     try {
-      await api(`/v1/import/batches/${active.id}/${step}`, { method: 'POST', body: '{}' });
+      const result = await api<{
+        replaced?: { kept: number; deleted: number; deactivated: number } | null;
+      }>(`/v1/import/batches/${active.id}/${step}`, {
+        method: 'POST',
+        body: JSON.stringify(
+          step === 'commit' && entity === 'product' && replaceCatalog
+            ? { replaceCatalog: true }
+            : {},
+        ),
+      });
+      if (result?.replaced) {
+        setReplaceSummary(
+          `Catalog replaced: ${result.replaced.kept} kept, ${result.replaced.deleted} deleted, ${result.replaced.deactivated} deactivated (had history).`,
+        );
+      }
       await refreshActive(active.id);
       if (step === 'commit') await loadRecon();
     } catch (err) {
@@ -290,6 +306,22 @@ export default function ImportWizardPage() {
                 >
                   Validate
                 </Button>
+                {entity === 'product' && (
+                  <label className="flex items-center gap-2 text-sm" data-testid="replace-catalog">
+                    <input
+                      type="checkbox"
+                      checked={replaceCatalog}
+                      onChange={(e) => setReplaceCatalog(e.target.checked)}
+                    />
+                    Replace catalog: delete every product not in this file (products with sales,
+                    purchasing or returns history are deactivated instead)
+                  </label>
+                )}
+                {replaceSummary && (
+                  <p className="text-sm" data-testid="replace-summary">
+                    {replaceSummary}
+                  </p>
+                )}
                 <Button
                   variant="primary"
                   size="sm"

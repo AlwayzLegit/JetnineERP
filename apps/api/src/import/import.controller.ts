@@ -104,8 +104,14 @@ export class ImportController {
 
   @Post('batches/:id/commit')
   @RequirePermission('import.run')
-  async commit(@CurrentTenant() tenant: RequestTenantContext, @Param('id') id: string) {
-    const result = await this.importService.commit(tenant.businessId!, id);
+  async commit(
+    @CurrentTenant() tenant: RequestTenantContext,
+    @Param('id') id: string,
+    @Body() body?: { replaceCatalog?: boolean },
+  ) {
+    const result = await this.importService.commit(tenant.businessId!, id, {
+      replaceCatalog: body?.replaceCatalog === true,
+    });
     await this.audit.log({
       action: 'import.commit',
       targetType: 'import_batch',
@@ -114,6 +120,7 @@ export class ImportController {
         entity: result.batch!.entity,
         committed: result.committed,
         failed: result.failed,
+        ...(result.replaced ? { replaced: result.replaced } : {}),
       },
     });
     return result;
