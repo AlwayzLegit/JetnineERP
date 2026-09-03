@@ -12,7 +12,7 @@ import {
   TextField,
   useZodForm,
 } from '@/components/form/form';
-import { LinkButton } from '@/components/ui';
+import { Button, LinkButton, Stack } from '@/components/ui';
 import { twoFactor, useSession } from '@/lib/auth-client';
 import { authErrorMessage } from '@/lib/auth-errors';
 
@@ -123,76 +123,63 @@ function Confirm({ enrolment, reset }: { enrolment: EnrollmentSecret; reset: () 
         </button>
       }
     >
-      <pre
-        data-testid="totp-uri"
-        style={{
-          background: 'var(--surface-muted)',
-          border: '1px solid var(--border)',
-          padding: '8px 10px',
-          borderRadius: 'var(--radius-sm)',
-          fontSize: 12,
-          overflow: 'auto',
-          margin: '0 0 8px',
-        }}
-      >
-        {enrolment.totpURI}
-      </pre>
-      <button
-        type="button"
-        className="btn btn-secondary btn-sm"
-        style={{ marginBottom: 12 }}
-        onClick={() => {
-          void navigator.clipboard?.writeText(enrolment.totpURI).then(() => {
-            setCopied(true);
-            toast.success('Secret copied.');
-          });
-        }}
-      >
-        {copied ? 'Copied' : 'Copy secret'}
-      </button>
-      <details style={{ marginBottom: 16 }}>
-        <summary style={{ fontSize: 13, cursor: 'pointer', color: 'var(--text-secondary)' }}>
-          Backup codes (save these)
-        </summary>
-        <ul
-          data-testid="backup-codes"
-          style={{
-            fontSize: 12,
-            marginTop: 8,
-            display: 'grid',
-            gridTemplateColumns: '1fr 1fr',
-            gap: 4,
-            listStyle: 'none',
-            padding: 0,
+      <Stack>
+        <Stack gap="sm">
+          <pre
+            data-testid="totp-uri"
+            className="m-0 overflow-auto rounded-md border border-(--border) bg-(--surface-muted) px-2.5 py-2 text-xs"
+          >
+            {enrolment.totpURI}
+          </pre>
+          <div>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => {
+                void navigator.clipboard?.writeText(enrolment.totpURI).then(() => {
+                  setCopied(true);
+                  toast.success('Secret copied.');
+                });
+              }}
+            >
+              {copied ? 'Copied' : 'Copy secret'}
+            </Button>
+          </div>
+        </Stack>
+        <details>
+          <summary className="muted cursor-pointer text-sm">Backup codes (save these)</summary>
+          <ul
+            data-testid="backup-codes"
+            className="mt-2 grid list-none grid-cols-2 gap-1 p-0 text-xs"
+          >
+            {enrolment.backupCodes.map((c) => (
+              <li key={c}>
+                <code>{c}</code>
+              </li>
+            ))}
+          </ul>
+        </details>
+        <Form<CodeValues>
+          form={form}
+          onSubmit={async (values) => {
+            const res = await twoFactor.verifyTotp({ code: values.code });
+            if (res.error) throw new Error(authErrorMessage(res.error, 'That code did not work.'));
+            toast.success('Two-factor authentication is on.');
+            setEnabled(true);
           }}
         >
-          {enrolment.backupCodes.map((c) => (
-            <li key={c}>
-              <code>{c}</code>
-            </li>
-          ))}
-        </ul>
-      </details>
-      <Form<CodeValues>
-        form={form}
-        onSubmit={async (values) => {
-          const res = await twoFactor.verifyTotp({ code: values.code });
-          if (res.error) throw new Error(authErrorMessage(res.error, 'That code did not work.'));
-          toast.success('Two-factor authentication is on.');
-          setEnabled(true);
-        }}
-      >
-        <TextField<CodeValues>
-          name="code"
-          label="6-digit code"
-          inputMode="numeric"
-          autoComplete="one-time-code"
-          maxLength={6}
-          placeholder="123456"
-        />
-        <FormRootError />
-        <SubmitButton pendingLabel="Checking…">Verify and turn on</SubmitButton>
-      </Form>
+          <TextField<CodeValues>
+            name="code"
+            label="6-digit code"
+            inputMode="numeric"
+            autoComplete="one-time-code"
+            maxLength={6}
+            placeholder="123456"
+          />
+          <FormRootError />
+          <SubmitButton pendingLabel="Checking…">Verify and turn on</SubmitButton>
+        </Form>
+      </Stack>
     </AuthCard>
   );
 }

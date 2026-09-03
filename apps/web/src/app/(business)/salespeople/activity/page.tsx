@@ -1,11 +1,21 @@
 'use client';
 
-import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Search } from 'lucide-react';
 import { api } from '@/lib/api';
-import { Card, EmptyState, Input, LoadingRows, PageHeader } from '@/components/ui';
+import {
+  Alert,
+  BackLink,
+  Card,
+  EmptyState,
+  Input,
+  LinkButton,
+  LoadingRows,
+  PageHeader,
+  TableEmpty,
+  TableWrap,
+  Toolbar,
+} from '@/components/ui';
 
 /**
  * View Salesperson Activity — lookup (owner 2026-09-02, STORIS-style):
@@ -41,81 +51,75 @@ export default function SalespersonActivityLookupPage() {
 
   return (
     <div>
-      <p style={{ margin: '0 0 12px' }}>
-        <Link href="/salespeople">← Salespeople</Link>
-      </p>
       <PageHeader
+        eyebrow={<BackLink href="/salespeople">Salespeople</BackLink>}
         title="View Salesperson Activity"
         sub="Pick a salesperson to see their open, completed and canceled orders, layaways, carts, quotes and leads."
       />
       <Card>
-        <label style={{ display: 'grid', gap: 4, maxWidth: 480 }}>
-          <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Salesperson</span>
-          <div style={{ position: 'relative' }}>
-            <Input
-              autoFocus
-              placeholder="Name or email"
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && hits[0]) {
-                  router.push(`/salespeople/${hits[0].membershipId}/activity`);
-                }
-              }}
-              data-testid="sp-lookup"
-              style={{ paddingRight: 32 }}
-            />
-            <Search
-              size={16}
-              aria-hidden
-              style={{
-                position: 'absolute',
-                right: 10,
-                top: '50%',
-                transform: 'translateY(-50%)',
-                color: 'var(--text-muted)',
-              }}
-            />
-          </div>
-        </label>
-        {error && <p style={{ color: 'var(--danger)', fontSize: 13 }}>{error}</p>}
+        <Toolbar>
+          <Input
+            type="search"
+            autoFocus
+            aria-label="Salesperson"
+            placeholder="Search by name or email"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && hits[0]) {
+                router.push(`/salespeople/${hits[0].membershipId}/activity`);
+              }
+            }}
+            data-testid="sp-lookup"
+          />
+        </Toolbar>
+        {error && <Alert tone="error">{error}</Alert>}
         {!members && !error && <LoadingRows rows={4} />}
-        {members && hits.length === 0 && <EmptyState>No salespeople match.</EmptyState>}
-        {members && hits.length > 0 && (
-          <div style={{ overflowX: 'auto', marginTop: 12 }}>
+        {members && members.length === 0 && (
+          <EmptyState title="No salespeople yet">
+            Invite members to the business to look up their activity.
+          </EmptyState>
+        )}
+        {members && members.length > 0 && (
+          <TableWrap>
             <table className="table">
               <thead>
                 <tr>
                   <th>Salesperson</th>
                   <th>Email</th>
                   <th>Role</th>
-                  <th></th>
+                  <th className="actions" />
                 </tr>
               </thead>
               <tbody>
+                {hits.length === 0 && <TableEmpty colSpan={4}>No salespeople match.</TableEmpty>}
                 {hits.map((m) => (
                   <tr
                     key={m.membershipId}
                     data-testid="sp-lookup-hit"
                     onClick={() => router.push(`/salespeople/${m.membershipId}/activity`)}
-                    style={{ cursor: 'pointer' }}
+                    className="cursor-pointer"
                   >
-                    <td style={{ fontWeight: 600 }}>{m.name ?? '(no name)'}</td>
+                    <td>
+                      <strong>{m.name ?? '(no name)'}</strong>
+                    </td>
                     <td>{m.email}</td>
                     <td>{m.roleName ?? '—'}</td>
-                    <td style={{ textAlign: 'right' }}>
-                      <Link
+                    <td className="actions">
+                      <LinkButton
+                        size="sm"
+                        variant="ghost"
                         href={`/salespeople/${m.membershipId}/activity`}
                         onClick={(e) => e.stopPropagation()}
                       >
                         View activity
-                      </Link>
+                      </LinkButton>
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
-          </div>
+          </TableWrap>
         )}
       </Card>
     </div>

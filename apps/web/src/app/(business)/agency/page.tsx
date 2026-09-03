@@ -2,7 +2,18 @@
 
 import { Building2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { Card, EmptyState, LoadingRows, PageHeader, StatusBadge } from '@/components/ui';
+import {
+  Alert,
+  Button,
+  Card,
+  EmptyState,
+  LoadingRows,
+  PageHeader,
+  Stack,
+  StatGrid,
+  StatTile,
+  StatusBadge,
+} from '@/components/ui';
 import { api } from '@/lib/api';
 import { Money } from '@/components/money';
 import { readActiveBusinessId } from '@/lib/offline';
@@ -63,129 +74,105 @@ export default function AgencyPage() {
         title="All businesses"
         sub="Every business you belong to, with today's numbers where your role can see them."
       />
-      {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
+      <Stack>
+        {error && <Alert tone="error">{error}</Alert>}
 
-      {rows == null ? (
-        <Card>
-          <LoadingRows />
-        </Card>
-      ) : rows.length === 0 ? (
-        <Card>
-          <EmptyState>You don&apos;t belong to any businesses yet.</EmptyState>
-        </Card>
-      ) : (
-        <>
-          {rows.length > 1 && (
-            <p className="page-sub" data-testid="agency-total">
-              Today across all businesses: <strong>{<Money cents={totalToday} />}</strong>
-            </p>
-          )}
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {rows.map((b) => {
-              const display = b.branding?.publicName ?? b.businessName;
-              const accent = b.branding?.accentColor ?? 'var(--brand)';
-              return (
-                <div
-                  key={b.businessId}
-                  className="card card-hover"
-                  style={{ borderTop: `3px solid ${accent}`, marginTop: 0 }}
-                  data-testid={`agency-card-${b.businessSlug}`}
-                >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                    {b.branding?.logoUrl ? (
-                      // eslint-disable-next-line @next/next/no-img-element -- tenant-supplied remote URL
-                      <img
-                        src={b.branding.logoUrl}
-                        alt=""
-                        style={{ width: 32, height: 32, borderRadius: 8, objectFit: 'contain' }}
-                      />
-                    ) : (
-                      <span
-                        aria-hidden
-                        style={{
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          width: 32,
-                          height: 32,
-                          borderRadius: 8,
-                          background: accent,
-                          color: '#fff',
-                        }}
-                      >
-                        <Building2 size={16} />
-                      </span>
-                    )}
-                    <div style={{ minWidth: 0, flex: 1 }}>
-                      <div style={{ fontWeight: 600, fontSize: 14 }} className="truncate">
-                        {display}
+        {rows == null ? (
+          <Card>
+            <LoadingRows />
+          </Card>
+        ) : rows.length === 0 ? (
+          <EmptyState title="No businesses yet">
+            You don&apos;t belong to any businesses yet.
+          </EmptyState>
+        ) : (
+          <>
+            {rows.length > 1 && (
+              <StatGrid cols={4}>
+                <StatTile
+                  label="Today across all businesses"
+                  value={<Money cents={totalToday} />}
+                  sub={`${rows.length} businesses`}
+                  data-testid="agency-total"
+                />
+              </StatGrid>
+            )}
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {rows.map((b) => {
+                const display = b.branding?.publicName ?? b.businessName;
+                const accent = b.branding?.accentColor ?? 'var(--brand)';
+                return (
+                  <Card
+                    key={b.businessId}
+                    className="card-hover"
+                    style={{ borderTop: `3px solid ${accent}` }}
+                    data-testid={`agency-card-${b.businessSlug}`}
+                  >
+                    <div className="grid gap-3">
+                      <div className="flex items-center gap-2.5">
+                        {b.branding?.logoUrl ? (
+                          // eslint-disable-next-line @next/next/no-img-element -- tenant-supplied remote URL
+                          <img
+                            src={b.branding.logoUrl}
+                            alt=""
+                            className="h-8 w-8 rounded-lg object-contain"
+                          />
+                        ) : (
+                          <span
+                            aria-hidden
+                            className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-white"
+                            style={{ background: accent }}
+                          >
+                            <Building2 size={16} />
+                          </span>
+                        )}
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate font-semibold">{display}</div>
+                          <div className="muted text-xs">{b.roleName}</div>
+                        </div>
+                        <StatusBadge status={b.status} />
                       </div>
-                      <div className="muted" style={{ fontSize: 11.5 }}>
-                        {b.roleName}
+
+                      <StatGrid cols={3}>
+                        <StatTile
+                          label="Today"
+                          value={
+                            b.todaySalesCents != null ? <Money cents={b.todaySalesCents} /> : '—'
+                          }
+                        />
+                        <StatTile
+                          label="Sales"
+                          value={b.todaySaleCount != null ? String(b.todaySaleCount) : '—'}
+                        />
+                        <StatTile
+                          label="Open orders"
+                          value={b.openOrdersCount != null ? String(b.openOrdersCount) : '—'}
+                        />
+                      </StatGrid>
+
+                      <div>
+                        {b.businessId === activeId ? (
+                          <span className="muted">Currently active</span>
+                        ) : (
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            disabled={switching}
+                            onClick={() => void switchTo(b.businessId)}
+                            data-testid={`switch-${b.businessSlug}`}
+                          >
+                            Switch to this business
+                          </Button>
+                        )}
                       </div>
                     </div>
-                    <StatusBadge status={b.status} />
-                  </div>
-
-                  <div
-                    style={{
-                      display: 'grid',
-                      gridTemplateColumns: '1fr 1fr 1fr',
-                      gap: 8,
-                      margin: '12px 0',
-                    }}
-                  >
-                    <MiniStat
-                      label="Today"
-                      value={b.todaySalesCents != null ? <Money cents={b.todaySalesCents} /> : '—'}
-                    />
-                    <MiniStat
-                      label="Sales"
-                      value={b.todaySaleCount != null ? String(b.todaySaleCount) : '—'}
-                    />
-                    <MiniStat
-                      label="Open orders"
-                      value={b.openOrdersCount != null ? String(b.openOrdersCount) : '—'}
-                    />
-                  </div>
-
-                  {b.businessId === activeId ? (
-                    <p className="muted" style={{ fontSize: 12, margin: 0 }}>
-                      Currently active
-                    </p>
-                  ) : (
-                    <button
-                      type="button"
-                      className="btn btn-secondary btn-sm"
-                      disabled={switching}
-                      onClick={() => void switchTo(b.businessId)}
-                      data-testid={`switch-${b.businessSlug}`}
-                    >
-                      Switch to this business
-                    </button>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
-
-function MiniStat({ label, value }: { label: string; value: React.ReactNode }) {
-  return (
-    <div
-      style={{
-        background: 'var(--surface-muted)',
-        border: '1px solid var(--border)',
-        borderRadius: 'var(--radius-sm)',
-        padding: '6px 8px',
-      }}
-    >
-      <div style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--text-muted)' }}>{label}</div>
-      <div style={{ fontSize: 14, fontWeight: 700 }}>{value}</div>
+                  </Card>
+                );
+              })}
+            </div>
+          </>
+        )}
+      </Stack>
     </div>
   );
 }

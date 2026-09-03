@@ -5,14 +5,18 @@ import { Plus } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import {
+  Alert,
   Button,
   Card,
   EmptyState,
   Field,
+  FormActions,
+  FormGrid,
   Input,
   LoadingRows,
   PageHeader,
   Select,
+  Stack,
 } from '@/components/ui';
 
 interface Flat {
@@ -30,6 +34,7 @@ export default function CategoriesPage() {
   const [tree, setTree] = useState<Node[] | null>(null);
   const [flat, setFlat] = useState<Flat[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
   async function load() {
     try {
@@ -48,8 +53,10 @@ export default function CategoriesPage() {
   async function create(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setError(null);
+    setSaving(true);
+    const form = e.currentTarget;
     try {
-      const data = new FormData(e.currentTarget);
+      const data = new FormData(form);
       await api('/v1/categories', {
         method: 'POST',
         body: JSON.stringify({
@@ -57,10 +64,12 @@ export default function CategoriesPage() {
           parentId: String(data.get('parentId') ?? '') || null,
         }),
       });
-      e.currentTarget.reset();
+      form.reset();
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -92,46 +101,50 @@ export default function CategoriesPage() {
     <div>
       <PageHeader title="Categories" />
 
-      <Card title="Add category" style={{ marginBottom: 16 }}>
-        <form onSubmit={create}>
-          <div className="grid grid-cols-1 items-end gap-3 sm:grid-cols-[2fr_2fr_auto]">
-            <Field label="Name">
-              <Input name="name" required style={{ width: '100%' }} />
-            </Field>
-            <Field label="Parent (optional)">
-              <Select name="parentId" defaultValue="" style={{ width: '100%' }}>
-                <option value="">— top level —</option>
-                {flat.map((f) => (
-                  <option key={f.id} value={f.id}>
-                    {f.name}
-                  </option>
-                ))}
-              </Select>
-            </Field>
-            <Button type="submit" variant="primary">
-              <Plus size={14} />
-              Add
-            </Button>
-          </div>
-          {error && <p style={{ color: 'var(--danger)', fontSize: 13, marginTop: 8 }}>{error}</p>}
-        </form>
-      </Card>
+      <Stack>
+        <Card title="Add category">
+          <form onSubmit={create}>
+            <FormGrid cols={2}>
+              <Field label="Name" required>
+                <Input name="name" required />
+              </Field>
+              <Field label="Parent (optional)">
+                <Select name="parentId" defaultValue="">
+                  <option value="">— top level —</option>
+                  {flat.map((f) => (
+                    <option key={f.id} value={f.id}>
+                      {f.name}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+            </FormGrid>
+            {error && <Alert tone="error">{error}</Alert>}
+            <FormActions>
+              <Button type="submit" variant="primary" disabled={saving}>
+                <Plus size={14} />
+                Add
+              </Button>
+            </FormActions>
+          </form>
+        </Card>
 
-      <Card>
-        {tree == null ? (
-          <LoadingRows />
-        ) : tree.length === 0 ? (
-          <EmptyState>
-            No categories yet. Add your first category above to organize products.
-          </EmptyState>
-        ) : (
-          <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
-            {tree.map((root) => (
-              <CategoryNode key={root.id} node={root} onRename={rename} onDelete={remove} />
-            ))}
-          </ul>
-        )}
-      </Card>
+        <Card title="Category tree">
+          {tree == null ? (
+            <LoadingRows />
+          ) : tree.length === 0 ? (
+            <EmptyState title="No categories yet">
+              Add your first category above to organize products.
+            </EmptyState>
+          ) : (
+            <ul className="m-0 list-none p-0">
+              {tree.map((root) => (
+                <CategoryNode key={root.id} node={root} onRename={rename} onDelete={remove} />
+              ))}
+            </ul>
+          )}
+        </Card>
+      </Stack>
     </div>
   );
 }
@@ -146,23 +159,18 @@ function CategoryNode({
   onDelete: (n: Node) => void;
 }) {
   return (
-    <li style={{ marginLeft: node.depth * 16, padding: '4px 0', fontSize: 13 }}>
-      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+    <li className="py-1" style={{ marginLeft: node.depth * 16 }}>
+      <span className="inline-flex items-center gap-2">
         <strong>{node.name}</strong>
         <Button size="sm" variant="ghost" onClick={() => onRename(node)}>
           rename
         </Button>
-        <Button
-          size="sm"
-          variant="ghost"
-          style={{ color: 'var(--danger)' }}
-          onClick={() => onDelete(node)}
-        >
+        <Button size="sm" variant="danger" onClick={() => onDelete(node)}>
           delete
         </Button>
       </span>
       {node.children.length > 0 && (
-        <ul style={{ listStyle: 'none', paddingLeft: 0, margin: 0 }}>
+        <ul className="m-0 list-none p-0">
           {node.children.map((c) => (
             <CategoryNode key={c.id} node={c} onRename={onRename} onDelete={onDelete} />
           ))}

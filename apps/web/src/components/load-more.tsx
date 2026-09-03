@@ -12,10 +12,10 @@ export function LoadMore<T>({ state, noun = 'rows' }: { state: CursorList<T>; no
   if (!state.rows) return null;
   return (
     <div
-      className="flex items-center justify-between"
-      style={{ padding: '10px 12px', fontSize: 12.5, color: 'var(--text-secondary)' }}
+      className="flex flex-wrap items-center justify-between gap-2 px-3 py-2.5 text-[12.5px] text-secondary"
+      data-testid="load-more-footer"
     >
-      <span>
+      <span aria-live="polite">
         {state.rows.length} {noun} loaded
         {state.nextCursor ? ' — more available' : state.rows.length > 0 ? ' — end of list' : ''}
       </span>

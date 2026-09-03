@@ -1,6 +1,5 @@
 'use client';
 
-import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { Printer, RotateCcw } from 'lucide-react';
@@ -8,7 +7,23 @@ import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import { Money } from '@/components/money';
 import { PrintableReceipt, type ReceiptBusiness } from '@/components/printable-receipt';
-import { Button, Field, Input, LoadingRows, StatusBadge } from '@/components/ui';
+import {
+  Alert,
+  BackLink,
+  Button,
+  Card,
+  Field,
+  FormActions,
+  FormGrid,
+  Input,
+  KeyValue,
+  LoadingRows,
+  PageHeader,
+  Stack,
+  StatusBadge,
+  TableEmpty,
+  TableWrap,
+} from '@/components/ui';
 
 interface SaleLine {
   id: string;
@@ -113,35 +128,36 @@ export default function SaleDetailPage() {
     }
   }
 
-  if (error) return <p style={{ color: 'var(--danger)' }}>{error}</p>;
+  if (error) {
+    return (
+      <div>
+        <PageHeader title="Sale not found" eyebrow={<BackLink href="/sales">All sales</BackLink>} />
+        <Alert tone="error">{error}</Alert>
+      </div>
+    );
+  }
   if (!sale) return <LoadingRows rows={4} />;
 
   const refundable = sale.status === 'completed' || sale.status === 'partially_refunded';
+  const lineCols = refundable ? 6 : 5;
 
   return (
     <div>
-      <p style={{ marginBottom: 12 }}>
-        <Link href="/sales">← All sales</Link>
-      </p>
-      <div className="page-header" style={{ marginBottom: 4 }}>
-        <h1 className="page-title" style={{ fontSize: 22 }}>
-          <code>{sale.number}</code>
-        </h1>
-        <StatusBadge status={sale.status} />
-        <div style={{ marginLeft: 'auto' }}>
+      <PageHeader
+        eyebrow={<BackLink href="/sales">All sales</BackLink>}
+        title={<code>{sale.number}</code>}
+        meta={<StatusBadge status={sale.status} />}
+        sub={new Date(sale.completedAt ?? sale.createdAt).toLocaleString()}
+        actions={
           <Button
             variant="primary"
-            size="sm"
             className="inline-flex items-center gap-1.5"
             onClick={() => window.print()}
           >
             <Printer size={14} /> Print receipt
           </Button>
-        </div>
-      </div>
-      <p className="page-sub" style={{ margin: '0 0 24px' }}>
-        {sale.status} · {new Date(sale.completedAt ?? sale.createdAt).toLocaleString()}
-      </p>
+        }
+      />
       <PrintableReceipt
         sale={{
           number: sale.number,
@@ -161,151 +177,159 @@ export default function SaleDetailPage() {
         business={business}
       />
 
-      <div className="card">
-        <h2 className="card-title">Lines</h2>
-        <div className="overflow-x-auto">
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Item</th>
-                <th className="num">Sold</th>
-                <th className="num">Refunded</th>
-                <th className="num">Unit</th>
-                <th className="num">Total</th>
-                {refundable && <th>Refund qty</th>}
-              </tr>
-            </thead>
-            <tbody>
-              {sale.lines.map((l) => {
-                const remaining = l.quantity - l.refundedQuantity;
-                return (
-                  <tr key={l.id}>
-                    <td>{l.description}</td>
-                    <td className="num">{l.quantity}</td>
-                    <td className="num">{l.refundedQuantity}</td>
-                    <td className="num">
-                      <Money cents={l.unitPriceCents} />
-                    </td>
-                    <td className="num">
-                      <Money cents={l.totalCents} />
-                    </td>
-                    {refundable && (
-                      <td>
-                        {remaining > 0 ? (
-                          <input
-                            type="number"
-                            min={0}
-                            max={remaining}
-                            className="input"
-                            value={refundQty[l.id] ?? 0}
-                            onChange={(e) =>
-                              setRefundQty((prev) => ({
-                                ...prev,
-                                [l.id]: Math.max(
-                                  0,
-                                  Math.min(remaining, Number(e.target.value) || 0),
-                                ),
-                              }))
-                            }
-                            style={{ width: 64, padding: '5px 6px' }}
-                          />
-                        ) : (
-                          <span className="muted" style={{ fontSize: 12 }}>
-                            fully refunded
-                          </span>
-                        )}
-                      </td>
-                    )}
+      <div className="grid gap-4 lg:grid-cols-[2fr_1fr]">
+        <Stack>
+          <Card title="Lines" flush>
+            <TableWrap>
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Item</th>
+                    <th className="num">Sold</th>
+                    <th className="num">Refunded</th>
+                    <th className="num">Unit</th>
+                    <th className="num">Total</th>
+                    {refundable && <th className="num">Refund qty</th>}
                   </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </div>
+                </thead>
+                <tbody>
+                  {sale.lines.map((l) => {
+                    const remaining = l.quantity - l.refundedQuantity;
+                    return (
+                      <tr key={l.id}>
+                        <td>{l.description}</td>
+                        <td className="num">{l.quantity}</td>
+                        <td className="num">{l.refundedQuantity}</td>
+                        <td className="num">
+                          <Money cents={l.unitPriceCents} />
+                        </td>
+                        <td className="num">
+                          <Money cents={l.totalCents} />
+                        </td>
+                        {refundable && (
+                          <td className="num">
+                            {remaining > 0 ? (
+                              <input
+                                type="number"
+                                min={0}
+                                max={remaining}
+                                className="input w-16"
+                                aria-label={`Refund quantity for ${l.description}`}
+                                value={refundQty[l.id] ?? 0}
+                                onChange={(e) =>
+                                  setRefundQty((prev) => ({
+                                    ...prev,
+                                    [l.id]: Math.max(
+                                      0,
+                                      Math.min(remaining, Number(e.target.value) || 0),
+                                    ),
+                                  }))
+                                }
+                              />
+                            ) : (
+                              <span className="muted">fully refunded</span>
+                            )}
+                          </td>
+                        )}
+                      </tr>
+                    );
+                  })}
+                  {sale.lines.length === 0 && (
+                    <TableEmpty colSpan={lineCols}>This sale has no lines.</TableEmpty>
+                  )}
+                </tbody>
+              </table>
+            </TableWrap>
+          </Card>
 
-      <div className="card">
-        <h2 className="card-title">Totals</h2>
-        <Row label="Subtotal" cents={sale.subtotalCents} />
-        {sale.discountCents > 0 && <Row label="Discount" cents={-sale.discountCents} />}
-        <Row label="Tax" cents={sale.taxCents} />
-        <Row label="Total" cents={sale.totalCents} bold />
-      </div>
-
-      <div className="card">
-        <h2 className="card-title">Payments</h2>
-        {sale.payments.map((p) => (
-          <Row key={p.id} label={`${p.method.toUpperCase()} (${p.status})`} cents={p.amountCents} />
-        ))}
-      </div>
-
-      {sale.refunds.length > 0 && (
-        <div className="card">
-          <h2 className="card-title">Refunds</h2>
-          {sale.refunds.map((r) => (
-            <div
-              key={r.id}
-              style={{
-                fontSize: 13,
-                paddingBottom: 6,
-                marginBottom: 6,
-                borderBottom: '1px solid var(--border)',
-              }}
+          {refundable && (
+            <Card
+              title="New refund"
+              description="Set a quantity in the table above for the lines you want to refund. Inventory is restored automatically."
             >
-              {new Date(r.createdAt).toLocaleString()} —{' '}
-              <strong>
-                <Money cents={r.amountCents} />
-              </strong>
-              {r.reason && <span style={{ color: 'var(--text-secondary)' }}> · {r.reason}</span>}
-            </div>
-          ))}
-        </div>
-      )}
+              <FormGrid cols={2}>
+                <Field label="Reason (optional)" className="form-span">
+                  <Input value={reason} onChange={(e) => setReason(e.target.value)} />
+                </Field>
+              </FormGrid>
+              <FormActions>
+                <Button
+                  variant="primary"
+                  onClick={submitRefund}
+                  disabled={busy}
+                  className="inline-flex items-center gap-1.5"
+                >
+                  <RotateCcw size={14} /> {busy ? 'Processing…' : 'Process refund'}
+                </Button>
+              </FormActions>
+            </Card>
+          )}
+        </Stack>
 
-      {refundable && (
-        <div className="card">
-          <h2 className="card-title">New refund</h2>
-          <p style={{ color: 'var(--text-secondary)', fontSize: 12, marginBottom: 8 }}>
-            Set a quantity in the table above for the lines you want to refund. Inventory is
-            restored automatically.
-          </p>
-          <Field label="Reason (optional)" style={{ marginBottom: 12 }}>
-            <Input
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-              style={{ display: 'block', width: '100%' }}
+        <Stack>
+          <Card title="Totals">
+            <KeyValue
+              rows={[
+                { label: 'Subtotal', value: <Money cents={sale.subtotalCents} /> },
+                ...(sale.discountCents > 0
+                  ? [{ label: 'Discount', value: <Money cents={-sale.discountCents} /> }]
+                  : []),
+                { label: 'Tax', value: <Money cents={sale.taxCents} /> },
+                {
+                  label: <strong>Total</strong>,
+                  value: (
+                    <strong>
+                      <Money cents={sale.totalCents} />
+                    </strong>
+                  ),
+                },
+              ]}
             />
-          </Field>
-          <Button
-            variant="primary"
-            onClick={submitRefund}
-            disabled={busy}
-            className="min-h-11 inline-flex items-center gap-1.5"
-          >
-            <RotateCcw size={14} /> {busy ? 'Processing…' : 'Process refund'}
-          </Button>
-        </div>
-      )}
-    </div>
-  );
-}
+          </Card>
 
-function Row({ label, cents, bold }: { label: string; cents: number; bold?: boolean }) {
-  return (
-    <div
-      style={{
-        display: 'flex',
-        justifyContent: 'space-between',
-        fontSize: 13,
-        fontWeight: bold ? 700 : 400,
-        fontVariantNumeric: 'tabular-nums',
-        marginBottom: 4,
-      }}
-    >
-      <span>{label}</span>
-      <span>
-        <Money cents={cents} />
-      </span>
+          <Card title="Payments">
+            {sale.payments.length === 0 ? (
+              <p className="muted">No payments recorded.</p>
+            ) : (
+              <KeyValue
+                rows={sale.payments.map((p) => ({
+                  label: `${p.method.toUpperCase()} (${p.status})`,
+                  value: <Money cents={p.amountCents} />,
+                }))}
+              />
+            )}
+          </Card>
+
+          {sale.refunds.length > 0 && (
+            <Card title="Refunds" flush>
+              <TableWrap>
+                <table className="table table-dense">
+                  <thead>
+                    <tr>
+                      <th>When</th>
+                      <th className="num">Amount</th>
+                      <th>Reason</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sale.refunds.map((r) => (
+                      <tr key={r.id}>
+                        <td className="nowrap">{new Date(r.createdAt).toLocaleString()}</td>
+                        <td className="num">
+                          <strong>
+                            <Money cents={r.amountCents} />
+                          </strong>
+                        </td>
+                        <td>{r.reason ?? <span className="muted">—</span>}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </TableWrap>
+            </Card>
+          )}
+        </Stack>
+      </div>
     </div>
   );
 }

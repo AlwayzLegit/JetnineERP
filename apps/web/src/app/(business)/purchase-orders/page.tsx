@@ -9,13 +9,19 @@ import { LoadMore } from '@/components/load-more';
 import { useCursorList } from '@/lib/use-cursor-list';
 import { Money } from '@/components/money';
 import {
+  Alert,
   Button,
   Card,
   EmptyState,
   LinkButton,
   LoadingRows,
   PageHeader,
+  SectionHeading,
+  Stack,
   StatusBadge,
+  TableEmpty,
+  TableWrap,
+  Toolbar,
 } from '@/components/ui';
 
 interface PoRow {
@@ -94,6 +100,8 @@ export default function PurchaseOrdersPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const filtered = vendor != null || showDeleted;
+
   return (
     <div>
       <PageHeader
@@ -104,218 +112,229 @@ export default function PurchaseOrdersPage() {
           </LinkButton>
         }
       />
-      {(error ?? list.error) && <p style={{ color: 'var(--danger)' }}>{error ?? list.error}</p>}
+      <Stack>
+        {(error ?? list.error) && <Alert tone="error">{error ?? list.error}</Alert>}
 
-      {suggestions != null && suggestions.length > 0 && (
-        <Card
-          title="Reorder suggestions"
-          actions={
-            <Button
-              size="sm"
-              onClick={() => void loadSuggestions()}
-              aria-label="Refresh suggestions"
+        {suggestions != null && suggestions.length > 0 && (
+          <Card
+            title="Reorder suggestions"
+            description={
+              <>
+                Items at or below their reorder point (available = on hand − committed, all
+                locations). Set points on each product&apos;s variants.{' '}
+                <strong>Review &amp; order</strong> opens the builder with these lines staged —
+                nothing is written until you save there.
+              </>
+            }
+            actions={
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => void loadSuggestions()}
+                aria-label="Refresh suggestions"
+              >
+                <RefreshCw size={13} aria-hidden />
+              </Button>
+            }
+            data-testid="reorder-suggestions"
+          >
+            <Stack>
+              {suggestions.map((g) => (
+                <div key={g.vendorId ?? 'unassigned'}>
+                  <SectionHeading
+                    as="h3"
+                    title={g.vendorName ?? 'No preferred vendor set'}
+                    description={
+                      g.vendorId ? undefined : (
+                        <>
+                          <Link href="/vendors">Create a vendor</Link> and assign it on the variant
+                          to draft automatically.
+                        </>
+                      )
+                    }
+                    actions={
+                      g.vendorId ? (
+                        // CR 2026-08-31: this used to POST a numbered draft on
+                        // the first click, which is how the list filled with
+                        // $0.00 shells. It now opens the staging screen with
+                        // the suggestions loaded but nothing written.
+                        <LinkButton
+                          size="sm"
+                          variant="primary"
+                          href={`/purchase-orders/new?vendorId=${g.vendorId}&preload=reorder`}
+                          data-testid={`review-po-${g.vendorName}`}
+                        >
+                          Review &amp; order ({g.lines.length} item{g.lines.length === 1 ? '' : 's'}
+                          )
+                        </LinkButton>
+                      ) : undefined
+                    }
+                  />
+                  <TableWrap>
+                    <table className="table">
+                      <thead>
+                        <tr>
+                          <th>Product</th>
+                          <th>SKU</th>
+                          <th className="num">Available</th>
+                          <th className="num">Point</th>
+                          <th className="num">Suggested</th>
+                          <th className="num">Unit cost</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {g.lines.map((l) => (
+                          <tr key={l.variantId}>
+                            <td>
+                              {l.productName}
+                              {l.variantName && <span className="muted"> — {l.variantName}</span>}
+                            </td>
+                            <td>
+                              <code>{l.vendorSku ?? l.sku ?? '—'}</code>
+                              {l.vendorSku && l.sku && l.vendorSku !== l.sku && (
+                                <div className="muted">ours: {l.sku}</div>
+                              )}
+                            </td>
+                            <td className="num">
+                              <span className="badge badge-danger">{l.available}</span>
+                            </td>
+                            <td className="num">{l.reorderPoint}</td>
+                            <td className="num">
+                              <strong>{l.suggestedQty}</strong>
+                            </td>
+                            <td className="num">
+                              {l.unitCostCents != null ? <Money cents={l.unitCostCents} /> : '—'}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </TableWrap>
+                </div>
+              ))}
+            </Stack>
+          </Card>
+        )}
+
+        <div>
+          <Toolbar
+            end={
+              <label className="muted flex items-center gap-2" data-testid="show-deleted-toggle">
+                <input
+                  type="checkbox"
+                  checked={showDeleted}
+                  onChange={(e) => {
+                    setShowDeleted(e.target.checked);
+                    void reload(e.target.checked);
+                  }}
+                />
+                Show deleted
+              </label>
+            }
+          >
+            {vendor ? (
+              <span className="pill" data-testid="po-vendor-chip">
+                Vendor: <strong>{vendor.name}</strong>
+                <button
+                  type="button"
+                  className="btn-link"
+                  onClick={() => {
+                    setVendor(null);
+                    window.history.replaceState(null, '', '/purchase-orders');
+                    void reload(showDeleted, null);
+                  }}
+                >
+                  clear
+                </button>
+              </span>
+            ) : (
+              <span className="muted">All vendors</span>
+            )}
+          </Toolbar>
+
+          {rows == null ? (
+            <LoadingRows />
+          ) : rows.length === 0 && !filtered ? (
+            <EmptyState
+              title="No purchase orders yet"
+              action={
+                <LinkButton size="sm" variant="secondary" href="/purchase-orders/new">
+                  + New PO
+                </LinkButton>
+              }
             >
-              <RefreshCw size={13} aria-hidden />
-            </Button>
-          }
-          data-testid="reorder-suggestions"
-        >
-          <p className="muted" style={{ fontSize: 12.5, marginTop: 0 }}>
-            Items at or below their reorder point (available = on hand − committed, all locations).
-            Set points on each product&apos;s variants. <strong>Review &amp; order</strong> opens
-            the builder with these lines staged — nothing is written until you save there.
-          </p>
-          {suggestions.map((g) => (
-            <div key={g.vendorId ?? 'unassigned'} style={{ marginBottom: 14 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
-                <strong style={{ fontSize: 13.5 }}>
-                  {g.vendorName ?? 'No preferred vendor set'}
-                </strong>
-                {g.vendorId ? (
-                  // CR 2026-08-31: this used to POST a numbered draft on
-                  // the first click, which is how the list filled with
-                  // $0.00 shells. It now opens the staging screen with
-                  // the suggestions loaded but nothing written.
-                  <LinkButton
-                    size="sm"
-                    variant="primary"
-                    href={`/purchase-orders/new?vendorId=${g.vendorId}&preload=reorder`}
-                    data-testid={`review-po-${g.vendorName}`}
-                  >
-                    Review &amp; order ({g.lines.length} item{g.lines.length === 1 ? '' : 's'})
-                  </LinkButton>
-                ) : (
-                  <span className="muted" style={{ fontSize: 12 }}>
-                    <Link href="/vendors" style={{ color: 'inherit' }}>
-                      create a vendor
-                    </Link>{' '}
-                    and assign it on the variant to draft automatically
-                  </span>
-                )}
-              </div>
-              <div className="overflow-x-auto">
+              Create a PO to restock from a vendor.
+            </EmptyState>
+          ) : (
+            <Card flush>
+              <TableWrap>
                 <table className="table">
                   <thead>
                     <tr>
-                      <th>Product</th>
-                      <th>SKU</th>
-                      <th className="num">Available</th>
-                      <th className="num">Point</th>
-                      <th className="num">Suggested</th>
-                      <th className="num">Unit cost</th>
+                      <th>PO</th>
+                      <th>Vendor</th>
+                      <th>Status</th>
+                      <th className="num">Subtotal</th>
+                      <th>Created</th>
+                      <th className="actions" />
                     </tr>
                   </thead>
                   <tbody>
-                    {g.lines.map((l) => (
-                      <tr key={l.variantId}>
+                    {rows.length === 0 && (
+                      <TableEmpty colSpan={6}>No purchase orders match these filters.</TableEmpty>
+                    )}
+                    {rows.map((p) => (
+                      <tr
+                        key={p.id}
+                        data-testid={p.deletedAt ? 'po-row-deleted' : 'po-row'}
+                        style={p.deletedAt ? { opacity: 0.55 } : undefined}
+                      >
                         <td>
-                          {l.productName}
-                          {l.variantName && (
-                            <span style={{ color: 'var(--text-secondary)' }}>
-                              {' '}
-                              — {l.variantName}
-                            </span>
+                          <code>{p.number}</code>
+                          {p.deletedAt && (
+                            <div className="muted">
+                              deleted {new Date(p.deletedAt).toLocaleString()}
+                              {p.deletedByEmail ? ` by ${p.deletedByEmail}` : ''}
+                            </div>
                           )}
                         </td>
+                        <td>{p.vendorName ?? '—'}</td>
                         <td>
-                          <code>{l.vendorSku ?? l.sku ?? '—'}</code>
-                          {l.vendorSku && l.sku && l.vendorSku !== l.sku && (
-                            <span className="muted" style={{ fontSize: 11, display: 'block' }}>
-                              ours: {l.sku}
-                            </span>
+                          <StatusBadge status={p.status} />
+                        </td>
+                        <td className="num">
+                          <Money cents={p.subtotalCents} />
+                        </td>
+                        <td>{new Date(p.createdAt).toLocaleDateString()}</td>
+                        <td className="actions">
+                          {p.deletedAt && (
+                            <Button
+                              size="sm"
+                              variant="secondary"
+                              onClick={() => void restore(p)}
+                              data-testid={`restore-${p.number}`}
+                            >
+                              Restore
+                            </Button>
                           )}
-                        </td>
-                        <td className="num" style={{ color: 'var(--danger)', fontWeight: 600 }}>
-                          {l.available}
-                        </td>
-                        <td className="num">{l.reorderPoint}</td>
-                        <td className="num">
-                          <strong>{l.suggestedQty}</strong>
-                        </td>
-                        <td className="num">
-                          {l.unitCostCents != null ? <Money cents={l.unitCostCents} /> : '—'}
+                          <LinkButton
+                            size="sm"
+                            variant="secondary"
+                            href={`/purchase-orders/${p.id}`}
+                          >
+                            Open
+                          </LinkButton>
                         </td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
-              </div>
-            </div>
-          ))}
-        </Card>
-      )}
-
-      <Card style={{ padding: 0 }}>
-        <div
-          style={{
-            display: 'flex',
-            justifyContent: 'flex-end',
-            alignItems: 'center',
-            gap: 14,
-            padding: '10px 12px',
-            borderBottom: '1px solid var(--border)',
-          }}
-        >
-          {vendor && (
-            <span style={{ fontSize: 12.5, marginRight: 'auto' }} data-testid="po-vendor-chip">
-              Vendor: <strong>{vendor.name}</strong>{' '}
-              <button
-                type="button"
-                className="btn btn-ghost btn-sm"
-                style={{ padding: '0 6px', fontSize: 12 }}
-                onClick={() => {
-                  setVendor(null);
-                  window.history.replaceState(null, '', '/purchase-orders');
-                  void reload(showDeleted, null);
-                }}
-              >
-                clear
-              </button>
-            </span>
+              </TableWrap>
+              <LoadMore state={list} noun="purchase orders" />
+            </Card>
           )}
-          <label
-            style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12.5 }}
-            data-testid="show-deleted-toggle"
-          >
-            <input
-              type="checkbox"
-              checked={showDeleted}
-              onChange={(e) => {
-                setShowDeleted(e.target.checked);
-                void reload(e.target.checked);
-              }}
-            />
-            Show deleted
-          </label>
         </div>
-        {rows == null ? (
-          <div style={{ padding: 16 }}>
-            <LoadingRows />
-          </div>
-        ) : rows.length === 0 ? (
-          <EmptyState>No purchase orders yet. Create a PO to restock from a vendor.</EmptyState>
-        ) : (
-          <>
-            <div className="overflow-x-auto">
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>PO</th>
-                    <th>Vendor</th>
-                    <th>Status</th>
-                    <th className="num">Subtotal</th>
-                    <th>Created</th>
-                    <th>&nbsp;</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((p) => (
-                    <tr
-                      key={p.id}
-                      data-testid={p.deletedAt ? 'po-row-deleted' : 'po-row'}
-                      style={p.deletedAt ? { opacity: 0.55 } : undefined}
-                    >
-                      <td>
-                        <code>{p.number}</code>
-                        {p.deletedAt && (
-                          <div className="muted" style={{ fontSize: 11 }}>
-                            deleted {new Date(p.deletedAt).toLocaleString()}
-                            {p.deletedByEmail ? ` by ${p.deletedByEmail}` : ''}
-                          </div>
-                        )}
-                      </td>
-                      <td>{p.vendorName ?? '—'}</td>
-                      <td>
-                        <StatusBadge status={p.status} />
-                      </td>
-                      <td className="num">
-                        <Money cents={p.subtotalCents} />
-                      </td>
-                      <td>{new Date(p.createdAt).toLocaleDateString()}</td>
-                      <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
-                        {p.deletedAt && (
-                          <>
-                            <button
-                              type="button"
-                              className="btn btn-sm btn-secondary"
-                              onClick={() => void restore(p)}
-                              data-testid={`restore-${p.number}`}
-                            >
-                              Restore
-                            </button>{' '}
-                          </>
-                        )}
-                        <Link href={`/purchase-orders/${p.id}`}>Open</Link>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <LoadMore state={list} noun="purchase orders" />
-          </>
-        )}
-      </Card>
+      </Stack>
     </div>
   );
 }

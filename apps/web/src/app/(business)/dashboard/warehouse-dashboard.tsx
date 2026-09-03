@@ -2,9 +2,22 @@
 
 import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
-import { Card, EmptyState, LinkButton, LoadingRows, StatusBadge } from '@/components/ui';
+import {
+  Alert,
+  Card,
+  KeyValue,
+  LinkButton,
+  LoadingRows,
+  PageHeader,
+  Select,
+  Stack,
+  StatGrid,
+  StatTile,
+  StatusBadge,
+} from '@/components/ui';
 import { Money } from '@/components/money';
 import { api } from '@/lib/api';
+import { TableCard } from './dashboard-kit';
 
 /**
  * The Warehouse home (owner 2026-09-01, §12.2): a day in the building,
@@ -138,6 +151,12 @@ function ago(iso: string): string {
   return `${days}d`;
 }
 
+/** The location line under a number — only in the combined view. */
+function LocationSub({ show, name }: { show: boolean; name: string | null }) {
+  if (!show || !name) return null;
+  return <div className="muted">{name}</div>;
+}
+
 export default function WarehouseDashboardView({ userName }: { userName: string }) {
   const [summary, setSummary] = useState<Summary | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -169,14 +188,24 @@ export default function WarehouseDashboardView({ userName }: { userName: string 
     void load(null);
   }, [load]);
 
+  const title = `Warehouse — ${userName}`;
+
   if (error) {
     return (
-      <Card title="Warehouse">
-        <p style={{ color: 'var(--danger)', margin: 0, fontSize: 13 }}>{error}</p>
-      </Card>
+      <>
+        <PageHeader title={title} />
+        <Alert tone="error">{error}</Alert>
+      </>
     );
   }
-  if (!summary) return <LoadingRows />;
+  if (!summary) {
+    return (
+      <>
+        <PageHeader title={title} />
+        <LoadingRows />
+      </>
+    );
+  }
 
   const allMode = summary.location.id === 'all';
   const overdueCount = summary.inbound.filter((r) => r.overdue).length;
@@ -185,172 +214,156 @@ export default function WarehouseDashboardView({ userName }: { userName: string 
 
   return (
     <div data-testid="warehouse-dashboard">
-      <div className="page-header" style={{ flexWrap: 'wrap', gap: 10 }}>
-        <div>
-          <h1 className="page-title">Warehouse — {userName}</h1>
-          <p style={{ margin: '2px 0 0', color: 'var(--text-secondary)', fontSize: 13 }}>
+      <PageHeader
+        title={title}
+        sub={
+          <>
             {summary.date} ·{' '}
             <strong>
               {summary.location.id === 'all'
                 ? `All locations (${summary.locations.length})`
                 : summary.location.name}
             </strong>
-          </p>
-        </div>
-        <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
-          {summary.locations.length > 1 && (
-            <select
-              data-testid="warehouse-location-picker"
-              value={locationId ?? 'all'}
-              onChange={(e) => {
-                setSummary(null);
-                setLoadout(null);
-                setPicklist(null);
-                void load(e.target.value);
-              }}
-              style={{ fontSize: 13 }}
-            >
-              <option value="all">All locations</option>
-              {summary.locations.map((l) => (
-                <option key={l.id} value={l.id}>
-                  {l.name}
-                  {l.locationType === 'warehouse' ? ' (warehouse)' : ''}
-                </option>
-              ))}
-            </select>
-          )}
-          <LinkButton size="sm" variant="secondary" href={`/deliveries/day/${summary.date}`}>
-            Day sheet
-          </LinkButton>
-        </div>
-      </div>
+          </>
+        }
+        actions={
+          <>
+            {summary.locations.length > 1 && (
+              <Select
+                aria-label="Location"
+                data-testid="warehouse-location-picker"
+                value={locationId ?? 'all'}
+                onChange={(e) => {
+                  setSummary(null);
+                  setLoadout(null);
+                  setPicklist(null);
+                  void load(e.target.value);
+                }}
+              >
+                <option value="all">All locations</option>
+                {summary.locations.map((l) => (
+                  <option key={l.id} value={l.id}>
+                    {l.name}
+                    {l.locationType === 'warehouse' ? ' (warehouse)' : ''}
+                  </option>
+                ))}
+              </Select>
+            )}
+            <LinkButton size="sm" variant="secondary" href={`/deliveries/day/${summary.date}`}>
+              Day sheet
+            </LinkButton>
+          </>
+        }
+      />
 
-      <div
-        className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5"
-        style={{ marginBottom: 16 }}
-      >
-        <Tile
-          label="Inbound POs"
-          testid="wh-kpi-inbound"
-          tone={overdueCount > 0 ? 'danger' : undefined}
-          main={String(summary.inbound.length)}
-          sub={overdueCount > 0 ? `${overdueCount} overdue` : 'none overdue'}
-        />
-        <Tile
-          label="On the dock"
-          testid="wh-kpi-dock"
-          tone={dockUnits > 0 ? 'danger' : undefined}
-          main={String(dockUnits)}
-          sub="units received, not accepted"
-        />
-        <Tile
-          label="Load-out today"
-          testid="wh-kpi-loadout"
-          main={
-            loadout
-              ? loadout.cap != null
-                ? `${loadout.stops}/${loadout.cap}`
-                : String(loadout.stops)
-              : '—'
-          }
-          sub={loadout ? `${loadout.pieces} pieces` : 'loading…'}
-        />
-        <Tile
-          label="Pickups waiting"
-          testid="wh-kpi-pickups"
-          tone={stalePickups > 0 ? 'danger' : undefined}
-          main={String(summary.pickups.length)}
-          sub={stalePickups > 0 ? `${stalePickups} waiting 7d+` : 'all fresh'}
-        />
-        <Tile
-          label="Arrived, unscheduled"
-          testid="wh-kpi-arrived"
-          tone={summary.arrived.length > 0 ? 'danger' : undefined}
-          main={String(summary.arrived.length)}
-          sub="special orders to book"
-        />
-      </div>
+      <Stack>
+        <StatGrid cols={5}>
+          <StatTile
+            label="Inbound POs"
+            data-testid="wh-kpi-inbound"
+            tone={overdueCount > 0 ? 'danger' : undefined}
+            value={String(summary.inbound.length)}
+            sub={overdueCount > 0 ? `${overdueCount} overdue` : 'none overdue'}
+          />
+          <StatTile
+            label="On the dock"
+            data-testid="wh-kpi-dock"
+            tone={dockUnits > 0 ? 'danger' : undefined}
+            value={String(dockUnits)}
+            sub="units received, not accepted"
+          />
+          <StatTile
+            label="Load-out today"
+            data-testid="wh-kpi-loadout"
+            value={
+              loadout
+                ? loadout.cap != null
+                  ? `${loadout.stops}/${loadout.cap}`
+                  : String(loadout.stops)
+                : '—'
+            }
+            sub={loadout ? `${loadout.pieces} pieces` : 'loading…'}
+          />
+          <StatTile
+            label="Pickups waiting"
+            data-testid="wh-kpi-pickups"
+            tone={stalePickups > 0 ? 'danger' : undefined}
+            value={String(summary.pickups.length)}
+            sub={stalePickups > 0 ? `${stalePickups} waiting 7d+` : 'all fresh'}
+          />
+          <StatTile
+            label="Arrived, unscheduled"
+            data-testid="wh-kpi-arrived"
+            tone={summary.arrived.length > 0 ? 'danger' : undefined}
+            value={String(summary.arrived.length)}
+            sub="special orders to book"
+          />
+        </StatGrid>
 
-      {/* Card 6 first when it has rows — the highest-value queue. */}
-      {summary.arrived.length > 0 && (
-        <Card
-          title="Arrived — book the delivery or call the customer"
-          style={{ padding: 0, marginBottom: 16 }}
-        >
-          <table
-            style={{ width: '100%', fontSize: 12.5, borderCollapse: 'collapse' }}
-            data-testid="wh-arrived"
+        {/* Card 6 first when it has rows — the highest-value queue. */}
+        {summary.arrived.length > 0 && (
+          <TableCard
+            title="Arrived — book the delivery or call the customer"
+            isEmpty={false}
+            empty={null}
           >
-            <tbody>
-              {summary.arrived.map((r) => (
-                <tr
-                  key={`${r.orderId}-${r.description}`}
-                  style={{ borderTop: '1px solid var(--border)' }}
-                >
-                  <td style={{ padding: '7px 12px', whiteSpace: 'nowrap' }}>
-                    <Link href={`/orders/${r.orderId}`}>{r.orderNumber}</Link>
-                    {allMode && r.locationName && (
-                      <span className="muted" style={{ fontSize: 11, display: 'block' }}>
-                        {r.locationName}
-                      </span>
-                    )}
-                  </td>
-                  <td style={{ padding: '7px 12px' }}>{r.customerName ?? '—'}</td>
-                  <td style={{ padding: '7px 12px', color: 'var(--text-secondary)' }}>
-                    {r.quantity} × {r.description}
-                  </td>
-                  <td
-                    style={{
-                      padding: '7px 12px',
-                      textAlign: 'right',
-                      color: 'var(--text-muted)',
-                      whiteSpace: 'nowrap',
-                    }}
-                  >
-                    arrived {ago(r.arrivedAt)} ago
-                  </td>
+            <table className="table table-dense" data-testid="wh-arrived">
+              <thead>
+                <tr>
+                  <th>Order</th>
+                  <th>Customer</th>
+                  <th>Goods</th>
+                  <th className="num">Arrived</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </Card>
-      )}
+              </thead>
+              <tbody>
+                {summary.arrived.map((r) => (
+                  <tr key={`${r.orderId}-${r.description}`}>
+                    <td className="nowrap">
+                      <Link href={`/orders/${r.orderId}`}>{r.orderNumber}</Link>
+                      <LocationSub show={allMode} name={r.locationName} />
+                    </td>
+                    <td>{r.customerName ?? '—'}</td>
+                    <td className="muted">
+                      {r.quantity} × {r.description}
+                    </td>
+                    <td className="num muted nowrap">arrived {ago(r.arrivedAt)} ago</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </TableCard>
+        )}
 
-      <div className="grid gap-3 lg:grid-cols-2" style={{ marginBottom: 16 }}>
-        <Card title="Inbound — due and overdue" style={{ padding: 0 }} data-testid="wh-inbound">
-          {summary.inbound.length === 0 ? (
-            <Pad>Nothing on the way to this location.</Pad>
-          ) : (
-            <table style={{ width: '100%', fontSize: 12.5, borderCollapse: 'collapse' }}>
+        <div className="grid gap-4 lg:grid-cols-2">
+          <TableCard
+            title="Inbound — due and overdue"
+            data-testid="wh-inbound"
+            isEmpty={summary.inbound.length === 0}
+            empty="Nothing on the way to this location."
+          >
+            <table className="table table-dense">
+              <thead>
+                <tr>
+                  <th>PO</th>
+                  <th>Vendor</th>
+                  <th>Received</th>
+                  <th className="num">Expected</th>
+                </tr>
+              </thead>
               <tbody>
                 {summary.inbound.map((r) => (
-                  <tr key={r.id} style={{ borderTop: '1px solid var(--border)' }}>
-                    <td style={{ padding: '7px 12px', whiteSpace: 'nowrap' }}>
+                  <tr key={r.id}>
+                    <td className="nowrap">
                       <Link href={`/purchase-orders/${r.id}`}>{r.number}</Link>
-                      {allMode && r.locationName && (
-                        <span className="muted" style={{ fontSize: 11, display: 'block' }}>
-                          {r.locationName}
-                        </span>
-                      )}
+                      <LocationSub show={allMode} name={r.locationName} />
                     </td>
-                    <td style={{ padding: '7px 12px' }}>{r.vendorName ?? '—'}</td>
-                    <td
-                      style={{
-                        padding: '7px 12px',
-                        color: 'var(--text-secondary)',
-                        whiteSpace: 'nowrap',
-                      }}
-                    >
+                    <td>{r.vendorName ?? '—'}</td>
+                    <td className="muted nowrap">
                       {r.receivedUnits}/{r.orderedUnits} units
                     </td>
                     <td
-                      style={{
-                        padding: '7px 12px',
-                        textAlign: 'right',
-                        whiteSpace: 'nowrap',
-                        color: r.overdue ? 'var(--danger)' : 'var(--text-muted)',
-                        fontWeight: r.overdue ? 600 : 400,
-                      }}
+                      className={`num nowrap ${r.overdue ? 'text-danger font-semibold' : 'muted'}`}
                     >
                       {r.expectedAt
                         ? `${r.overdue ? 'overdue — ' : ''}${new Date(r.expectedAt).toLocaleDateString()}`
@@ -360,185 +373,153 @@ export default function WarehouseDashboardView({ userName }: { userName: string 
                 ))}
               </tbody>
             </table>
-          )}
-        </Card>
+          </TableCard>
 
-        <Card
-          title="Dock in progress — received, not accepted"
-          style={{ padding: 0 }}
-          data-testid="wh-dock"
-        >
-          {summary.dock.length === 0 ? (
-            <Pad>The dock is clear — everything received has been dispositioned.</Pad>
-          ) : (
-            <table style={{ width: '100%', fontSize: 12.5, borderCollapse: 'collapse' }}>
+          <TableCard
+            title="Dock in progress — received, not accepted"
+            data-testid="wh-dock"
+            isEmpty={summary.dock.length === 0}
+            empty="The dock is clear — everything received has been dispositioned."
+          >
+            <table className="table table-dense">
+              <thead>
+                <tr>
+                  <th>PO</th>
+                  <th>Vendor</th>
+                  <th>Open</th>
+                  <th className="num">Idle</th>
+                </tr>
+              </thead>
               <tbody>
                 {summary.dock.map((r) => (
-                  <tr key={r.id} style={{ borderTop: '1px solid var(--border)' }}>
-                    <td style={{ padding: '7px 12px', whiteSpace: 'nowrap' }}>
+                  <tr key={r.id}>
+                    <td className="nowrap">
                       <Link href={`/purchase-orders/${r.id}`}>{r.number}</Link>
-                      {allMode && r.locationName && (
-                        <span className="muted" style={{ fontSize: 11, display: 'block' }}>
-                          {r.locationName}
-                        </span>
-                      )}
+                      <LocationSub show={allMode} name={r.locationName} />
                     </td>
-                    <td style={{ padding: '7px 12px' }}>{r.vendorName ?? '—'}</td>
-                    <td
-                      style={{
-                        padding: '7px 12px',
-                        color: 'var(--danger)',
-                        fontWeight: 600,
-                        whiteSpace: 'nowrap',
-                      }}
-                    >
-                      {r.unitsInProgress} units
+                    <td>{r.vendorName ?? '—'}</td>
+                    <td className="nowrap">
+                      <strong className="text-danger">{r.unitsInProgress} units</strong>
                     </td>
-                    <td
-                      style={{
-                        padding: '7px 12px',
-                        textAlign: 'right',
-                        color: 'var(--text-muted)',
-                        whiteSpace: 'nowrap',
-                      }}
-                    >
-                      idle {ago(r.lastActivityAt)}
-                    </td>
+                    <td className="num muted nowrap">idle {ago(r.lastActivityAt)}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
-          )}
-        </Card>
-      </div>
+          </TableCard>
+        </div>
 
-      <div className="grid gap-3 lg:grid-cols-2" style={{ marginBottom: 16 }}>
-        <Card
-          title={`Today's truck — ${loadout ? `${loadout.stops} stop${loadout.stops === 1 ? '' : 's'}` : '…'}`}
-          style={{ padding: 0 }}
-          data-testid="wh-loadout"
-        >
-          {loadout == null ? (
-            <Pad>Loading…</Pad>
-          ) : loadout.rows.length === 0 ? (
-            <Pad>No deliveries scheduled from here today.</Pad>
-          ) : (
-            <table style={{ width: '100%', fontSize: 12.5, borderCollapse: 'collapse' }}>
+        <div className="grid gap-4 lg:grid-cols-2">
+          <TableCard
+            title={`Today's truck — ${loadout ? `${loadout.stops} stop${loadout.stops === 1 ? '' : 's'}` : '…'}`}
+            data-testid="wh-loadout"
+            loading={loadout == null}
+            isEmpty={loadout?.rows.length === 0}
+            empty="No deliveries scheduled from here today."
+          >
+            <table className="table table-dense">
+              <thead>
+                <tr>
+                  <th>Order</th>
+                  <th>Customer</th>
+                  <th>Load</th>
+                  <th className="actions">Status</th>
+                </tr>
+              </thead>
               <tbody>
-                {loadout.rows.map((r) => (
-                  <tr key={r.deliveryId} style={{ borderTop: '1px solid var(--border)' }}>
-                    <td style={{ padding: '7px 12px', whiteSpace: 'nowrap' }}>
+                {(loadout?.rows ?? []).map((r) => (
+                  <tr key={r.deliveryId}>
+                    <td className="nowrap">
                       <Link href={`/orders/${r.orderId}`}>{r.orderNumber}</Link>
                     </td>
-                    <td style={{ padding: '7px 12px' }}>
+                    <td>
                       {r.customerName ?? '—'}
                       {r.serialShort && (
-                        <span style={{ color: 'var(--danger)', fontWeight: 600 }}>
-                          {' '}
-                          · serials unpicked
-                        </span>
+                        <strong className="text-danger"> · serials unpicked</strong>
                       )}
                     </td>
-                    <td
-                      style={{
-                        padding: '7px 12px',
-                        color: 'var(--text-secondary)',
-                        whiteSpace: 'nowrap',
-                      }}
-                    >
+                    <td className="muted nowrap">
                       {r.pieces} pc · {r.route ?? 'no route'}
                       {r.driverName ? ` · ${r.driverName}` : ''}
                       {allMode && r.locationName ? ` · from ${r.locationName}` : ''}
                     </td>
-                    <td style={{ padding: '7px 12px', textAlign: 'right' }}>
+                    <td className="actions">
                       <StatusBadge status={r.status} />
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
-          )}
-        </Card>
+          </TableCard>
 
-        <Card
-          title={`Pick list — tomorrow${picklist ? ` (${picklist.date})` : ''}`}
-          style={{ padding: 0 }}
-          data-testid="wh-picklist"
-        >
-          {picklist == null ? (
-            <Pad>Loading…</Pad>
-          ) : picklist.rows.length === 0 ? (
-            <Pad>Nothing scheduled to pull for tomorrow yet.</Pad>
-          ) : (
-            <table style={{ width: '100%', fontSize: 12.5, borderCollapse: 'collapse' }}>
+          <TableCard
+            title={`Pick list — tomorrow${picklist ? ` (${picklist.date})` : ''}`}
+            data-testid="wh-picklist"
+            loading={picklist == null}
+            isEmpty={picklist?.rows.length === 0}
+            empty="Nothing scheduled to pull for tomorrow yet."
+          >
+            <table className="table table-dense">
+              <thead>
+                <tr>
+                  <th>Item</th>
+                  <th>Bin</th>
+                  <th className="num">Pull</th>
+                </tr>
+              </thead>
               <tbody>
-                {picklist.rows.map((r) => (
-                  <tr
-                    key={`${r.variantId}:${r.locationId}`}
-                    style={{ borderTop: '1px solid var(--border)' }}
-                  >
-                    <td style={{ padding: '7px 12px' }}>
+                {(picklist?.rows ?? []).map((r) => (
+                  <tr key={`${r.variantId}:${r.locationId}`}>
+                    <td>
                       {r.productName}
                       {r.variantName ? ` — ${r.variantName}` : ''}
-                      {r.sku && <span style={{ color: 'var(--text-muted)' }}> ({r.sku})</span>}
+                      {r.sku && <span className="muted"> ({r.sku})</span>}
                     </td>
-                    <td style={{ padding: '7px 12px', whiteSpace: 'nowrap' }}>
+                    <td className="nowrap">
                       <code>{r.bin ?? 'unbinned'}</code>
-                      {allMode && r.locationName && (
-                        <span className="muted" style={{ fontSize: 11, display: 'block' }}>
-                          {r.locationName}
-                        </span>
-                      )}
+                      <LocationSub show={allMode} name={r.locationName} />
                     </td>
-                    <td style={{ padding: '7px 12px', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                    <td className="num nowrap">
                       pull <strong>{r.quantity}</strong>
                       {r.short && (
-                        <span style={{ color: 'var(--danger)', fontWeight: 600 }}>
-                          {' '}
-                          · only {r.onHand} on hand
-                        </span>
+                        <strong className="text-danger"> · only {r.onHand} on hand</strong>
                       )}
-                      {r.serialShort && (
-                        <span style={{ color: 'var(--danger)', fontWeight: 600 }}> · serials</span>
-                      )}
+                      {r.serialShort && <strong className="text-danger"> · serials</strong>}
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
-          )}
-        </Card>
-      </div>
+          </TableCard>
+        </div>
 
-      <div className="grid gap-3 lg:grid-cols-2" style={{ marginBottom: 16 }}>
-        <Card title="Customer pickups waiting" style={{ padding: 0 }} data-testid="wh-pickups">
-          {summary.pickups.length === 0 ? (
-            <Pad>No pickup orders waiting.</Pad>
-          ) : (
-            <table style={{ width: '100%', fontSize: 12.5, borderCollapse: 'collapse' }}>
+        <div className="grid gap-4 lg:grid-cols-2">
+          <TableCard
+            title="Customer pickups waiting"
+            data-testid="wh-pickups"
+            isEmpty={summary.pickups.length === 0}
+            empty="No pickup orders waiting."
+          >
+            <table className="table table-dense">
+              <thead>
+                <tr>
+                  <th>Order</th>
+                  <th>Customer</th>
+                  <th>Stock</th>
+                  <th className="num">Waiting</th>
+                </tr>
+              </thead>
               <tbody>
                 {summary.pickups.map((r) => (
-                  <tr key={r.orderId} style={{ borderTop: '1px solid var(--border)' }}>
-                    <td style={{ padding: '7px 12px', whiteSpace: 'nowrap' }}>
+                  <tr key={r.orderId}>
+                    <td className="nowrap">
                       <Link href={`/orders/${r.orderId}`}>{r.number}</Link>
-                      {allMode && r.locationName && (
-                        <span className="muted" style={{ fontSize: 11, display: 'block' }}>
-                          {r.locationName}
-                        </span>
-                      )}
+                      <LocationSub show={allMode} name={r.locationName} />
                     </td>
-                    <td style={{ padding: '7px 12px' }}>{r.customerName ?? '—'}</td>
-                    <td style={{ padding: '7px 12px', color: 'var(--text-secondary)' }}>
-                      {r.ready ? 'ready to stage' : 'stock short'}
-                    </td>
+                    <td>{r.customerName ?? '—'}</td>
+                    <td className="muted">{r.ready ? 'ready to stage' : 'stock short'}</td>
                     <td
-                      style={{
-                        padding: '7px 12px',
-                        textAlign: 'right',
-                        whiteSpace: 'nowrap',
-                        color: r.ageDays >= 7 ? 'var(--danger)' : 'var(--text-muted)',
-                        fontWeight: r.ageDays >= 7 ? 600 : 400,
-                      }}
+                      className={`num nowrap ${r.ageDays >= 7 ? 'text-danger font-semibold' : 'muted'}`}
                     >
                       waiting {r.ageDays}d
                     </td>
@@ -546,43 +527,38 @@ export default function WarehouseDashboardView({ userName }: { userName: string 
                 ))}
               </tbody>
             </table>
-          )}
-        </Card>
+          </TableCard>
 
-        <Card
-          title={`Transfers in motion${summary.transfers.closedShort30d > 0 ? ` · ${summary.transfers.closedShort30d} closed short (30d)` : ''}`}
-          style={{ padding: 0 }}
-          data-testid="wh-transfers"
-        >
-          {summary.transfers.rows.length === 0 ? (
-            <Pad>No transfers touching this location.</Pad>
-          ) : (
-            <table style={{ width: '100%', fontSize: 12.5, borderCollapse: 'collapse' }}>
+          <TableCard
+            title={`Transfers in motion${summary.transfers.closedShort30d > 0 ? ` · ${summary.transfers.closedShort30d} closed short (30d)` : ''}`}
+            data-testid="wh-transfers"
+            isEmpty={summary.transfers.rows.length === 0}
+            empty="No transfers touching this location."
+          >
+            <table className="table table-dense">
+              <thead>
+                <tr>
+                  <th>Transfer</th>
+                  <th>Route</th>
+                  <th>Units</th>
+                  <th className="actions">Status</th>
+                </tr>
+              </thead>
               <tbody>
                 {summary.transfers.rows.map((r) => (
-                  <tr key={r.id} style={{ borderTop: '1px solid var(--border)' }}>
-                    <td style={{ padding: '7px 12px', whiteSpace: 'nowrap' }}>
+                  <tr key={r.id}>
+                    <td className="nowrap">
                       <Link href="/transfers">{r.number}</Link>
                     </td>
-                    <td style={{ padding: '7px 12px' }}>
+                    <td>
                       {r.fromName ?? '—'} → {r.toName ?? '—'}
                     </td>
-                    <td
-                      style={{
-                        padding: '7px 12px',
-                        color: 'var(--text-secondary)',
-                        whiteSpace: 'nowrap',
-                      }}
-                    >
-                      {r.units} units
-                    </td>
-                    <td style={{ padding: '7px 12px', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                    <td className="muted nowrap">{r.units} units</td>
+                    <td className="actions">
                       {r.awaitingTicket ? (
-                        <span style={{ color: 'var(--danger)' }}>awaiting ticket</span>
+                        <span className="text-danger">awaiting ticket</span>
                       ) : r.days != null && r.days >= 3 ? (
-                        <span style={{ color: 'var(--danger)', fontWeight: 600 }}>
-                          in transit {r.days}d
-                        </span>
+                        <strong className="text-danger">in transit {r.days}d</strong>
                       ) : (
                         <StatusBadge status={r.status} />
                       )}
@@ -591,147 +567,99 @@ export default function WarehouseDashboardView({ userName }: { userName: string 
                 ))}
               </tbody>
             </table>
-          )}
-        </Card>
-      </div>
+          </TableCard>
+        </div>
 
-      <div className="grid gap-3 lg:grid-cols-2" style={{ marginBottom: 16 }}>
-        <Card
-          title={
-            <>
-              As-is review — {summary.asIs.count} pc, <Money cents={summary.asIs.costCents} /> at
-              cost
-            </>
-          }
-          style={{ padding: 0 }}
-          data-testid="wh-asis"
-        >
-          {summary.asIs.rows.length === 0 ? (
-            <Pad>Nothing waiting for disposition.</Pad>
-          ) : (
-            <table style={{ width: '100%', fontSize: 12.5, borderCollapse: 'collapse' }}>
+        <div className="grid gap-4 lg:grid-cols-2">
+          <TableCard
+            title={
+              <>
+                As-is review — {summary.asIs.count} pc, <Money cents={summary.asIs.costCents} /> at
+                cost
+              </>
+            }
+            data-testid="wh-asis"
+            actions={
+              <Link href="/as-is" className="btn-link">
+                Open the review queue →
+              </Link>
+            }
+            isEmpty={summary.asIs.rows.length === 0}
+            empty="Nothing waiting for disposition."
+          >
+            <table className="table table-dense">
+              <thead>
+                <tr>
+                  <th>Item</th>
+                  <th>Condition</th>
+                  <th className="num">Waiting</th>
+                </tr>
+              </thead>
               <tbody>
                 {summary.asIs.rows.map((r) => (
-                  <tr key={r.id} style={{ borderTop: '1px solid var(--border)' }}>
-                    <td style={{ padding: '7px 12px' }}>
+                  <tr key={r.id}>
+                    <td>
                       {r.quantity} × {r.productName}
                     </td>
-                    <td style={{ padding: '7px 12px', color: 'var(--text-secondary)' }}>
+                    <td className="muted">
                       {r.condition ?? '—'}
                       {allMode && r.locationName ? ` · ${r.locationName}` : ''}
                     </td>
-                    <td
-                      style={{
-                        padding: '7px 12px',
-                        textAlign: 'right',
-                        color: 'var(--text-muted)',
-                        whiteSpace: 'nowrap',
-                      }}
-                    >
-                      waiting {ago(r.createdAt)}
-                    </td>
+                    <td className="num muted nowrap">waiting {ago(r.createdAt)}</td>
                   </tr>
                 ))}
-                <tr style={{ borderTop: '1px solid var(--border)' }}>
-                  <td colSpan={3} style={{ padding: '7px 12px' }}>
-                    <Link href="/as-is" style={{ fontSize: 12 }}>
-                      Open the review queue →
-                    </Link>
-                  </td>
-                </tr>
               </tbody>
             </table>
-          )}
-        </Card>
+          </TableCard>
 
-        <Card title="Counts & stock health" data-testid="wh-counts">
-          <p style={{ margin: '0 0 6px', fontSize: 13 }}>
-            {summary.counts.open.length > 0 ? (
-              <>
-                <strong>{summary.counts.open.length}</strong> count
-                {summary.counts.open.length === 1 ? '' : 's'} open —{' '}
-                <Link href="/inventory/counts">continue counting</Link>
-              </>
-            ) : (
-              'No counts in progress.'
-            )}
-          </p>
-          <p style={{ margin: '0 0 6px', fontSize: 13, color: 'var(--text-secondary)' }}>
-            Last posted count:{' '}
-            {summary.counts.lastPostedDate
-              ? new Date(summary.counts.lastPostedDate).toLocaleDateString()
-              : 'never'}
-          </p>
-          {summary.counts.negative.length > 0 ? (
-            <div style={{ fontSize: 13, color: 'var(--danger)' }} data-testid="wh-negative">
-              <strong>{summary.counts.negative.length} negative on-hand</strong> — count these
-              first:
-              <ul style={{ margin: '4px 0 0', paddingLeft: 16 }}>
-                {summary.counts.negative.map((n) => (
-                  <li key={`${n.variantId}:${n.locationName ?? ''}`}>
-                    {n.productName}
-                    {n.sku ? ` (${n.sku})` : ''}: {n.onHand}
-                    {allMode && n.locationName ? ` — ${n.locationName}` : ''}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ) : (
-            <p style={{ margin: 0, fontSize: 13, color: 'var(--success)' }}>
-              No negative on-hand here.
-            </p>
-          )}
-        </Card>
-      </div>
-    </div>
-  );
-}
-
-function Tile({
-  label,
-  main,
-  sub,
-  tone,
-  testid,
-}: {
-  label: string;
-  main: string;
-  sub: string;
-  tone?: 'danger';
-  testid: string;
-}) {
-  return (
-    <div
-      data-testid={testid}
-      style={{
-        background: 'var(--surface)',
-        border: '1px solid var(--border)',
-        borderRadius: 'var(--radius)',
-        boxShadow: 'var(--shadow-sm)',
-        padding: '12px 14px',
-        height: '100%',
-      }}
-    >
-      <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)' }}>{label}</div>
-      <div
-        style={{
-          fontSize: 18,
-          fontWeight: 700,
-          color: tone === 'danger' ? 'var(--danger)' : 'var(--text)',
-          marginTop: 2,
-        }}
-      >
-        {main}
-      </div>
-      <div style={{ fontSize: 11.5, color: 'var(--text-secondary)', marginTop: 2 }}>{sub}</div>
-    </div>
-  );
-}
-
-function Pad({ children }: { children: React.ReactNode }) {
-  return (
-    <div style={{ padding: 14 }}>
-      <EmptyState>{children}</EmptyState>
+          <Card title="Counts & stock health" data-testid="wh-counts">
+            <Stack>
+              <KeyValue
+                rows={[
+                  {
+                    label: 'Counts open',
+                    value:
+                      summary.counts.open.length > 0 ? (
+                        <>
+                          <strong>{summary.counts.open.length}</strong> count
+                          {summary.counts.open.length === 1 ? '' : 's'} open —{' '}
+                          <Link href="/inventory/counts">continue counting</Link>
+                        </>
+                      ) : (
+                        'No counts in progress.'
+                      ),
+                  },
+                  {
+                    label: 'Last posted count',
+                    value: summary.counts.lastPostedDate
+                      ? new Date(summary.counts.lastPostedDate).toLocaleDateString()
+                      : 'never',
+                  },
+                ]}
+              />
+              {summary.counts.negative.length > 0 ? (
+                <Alert
+                  tone="error"
+                  title={`${summary.counts.negative.length} negative on-hand — count these first:`}
+                  data-testid="wh-negative"
+                >
+                  <ul className="list-disc pl-4">
+                    {summary.counts.negative.map((n) => (
+                      <li key={`${n.variantId}:${n.locationName ?? ''}`}>
+                        {n.productName}
+                        {n.sku ? ` (${n.sku})` : ''}: {n.onHand}
+                        {allMode && n.locationName ? ` — ${n.locationName}` : ''}
+                      </li>
+                    ))}
+                  </ul>
+                </Alert>
+              ) : (
+                <Alert tone="success">No negative on-hand here.</Alert>
+              )}
+            </Stack>
+          </Card>
+        </div>
+      </Stack>
     </div>
   );
 }

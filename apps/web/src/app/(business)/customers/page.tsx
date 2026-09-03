@@ -1,9 +1,9 @@
 'use client';
 
-import Link from 'next/link';
 import { Search, UserPlus } from 'lucide-react';
 import { useEffect, useState, type FormEvent } from 'react';
 import {
+  Alert,
   Button,
   Card,
   EmptyState,
@@ -11,6 +11,10 @@ import {
   LinkButton,
   LoadingRows,
   PageHeader,
+  Stack,
+  TableEmpty,
+  TableWrap,
+  Toolbar,
 } from '@/components/ui';
 import { api } from '@/lib/api';
 
@@ -75,13 +79,15 @@ export default function CustomersPage() {
     void load(q);
   }
 
+  const showEmptyPage = rows !== null && rows.length === 0 && !q;
+
   return (
     <div>
       <PageHeader
         title="Customers"
         actions={
           <>
-            <LinkButton href="/customers/activity" data-testid="customers-activity-link">
+            <LinkButton href="/customers/activity" size="sm" data-testid="customers-activity-link">
               View customer activity
             </LinkButton>
             <LinkButton href="/customers/new" variant="primary">
@@ -92,85 +98,99 @@ export default function CustomersPage() {
         }
       />
 
-      <form onSubmit={search} className="mb-4 flex flex-wrap gap-2">
-        <Input
-          name="q"
-          placeholder="Search by name, email, or phone"
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          className="min-w-[200px] flex-1"
-        />
-        <Button type="submit" variant="primary">
-          <Search size={14} aria-hidden />
-          Search
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          onClick={() => {
-            setQ('');
-            void load('');
-          }}
-        >
-          Clear
-        </Button>
-      </form>
-
-      {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
-      {!rows && !error && (
-        <Card>
-          <LoadingRows />
-        </Card>
-      )}
-      {rows && (
-        <Card style={{ padding: 0, overflowX: 'auto' }}>
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>Email</th>
-                <th>Phone</th>
-                <th>&nbsp;</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.length === 0 && (
-                <tr>
-                  <td colSpan={4}>
-                    <EmptyState>No customers match{q ? ` "${q}"` : ' yet'}.</EmptyState>
-                  </td>
-                </tr>
-              )}
-              {rows.map((c) => (
-                <tr key={c.id}>
-                  <td>
-                    <strong>
-                      {displayName(c) || <em style={{ color: 'var(--text-muted)' }}>—</em>}
-                    </strong>
-                  </td>
-                  <td>{c.email ?? '—'}</td>
-                  <td>{c.phone ?? '—'}</td>
-                  <td style={{ textAlign: 'right' }}>
-                    <Link href={`/customers/${c.id}`}>Open</Link>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </Card>
-      )}
-      {nextCursor && (
-        <div style={{ marginTop: 12, textAlign: 'center' }}>
+      <form onSubmit={search}>
+        <Toolbar>
+          <Input
+            name="q"
+            placeholder="Search by name, email, or phone"
+            aria-label="Search customers"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+          />
+          <Button type="submit" variant="primary" size="sm">
+            <Search size={14} aria-hidden />
+            Search
+          </Button>
           <Button
             type="button"
-            variant="secondary"
-            onClick={() => void loadMore()}
-            disabled={loadingMore}
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              setQ('');
+              void load('');
+            }}
           >
-            {loadingMore ? 'Loading…' : 'Load more'}
+            Clear
           </Button>
-        </div>
-      )}
+        </Toolbar>
+      </form>
+
+      {error && <Alert tone="error">{error}</Alert>}
+
+      <Stack>
+        {!rows && !error && <LoadingRows />}
+        {showEmptyPage && (
+          <EmptyState
+            title="No customers yet"
+            action={
+              <LinkButton size="sm" href="/customers/new">
+                Add customer
+              </LinkButton>
+            }
+          >
+            Add the first one here, or create customers inline while writing a sale.
+          </EmptyState>
+        )}
+        {rows && !showEmptyPage && (
+          <Card flush>
+            <TableWrap>
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>Email</th>
+                    <th>Phone</th>
+                    <th className="actions">
+                      <span className="sr-only">Actions</span>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.length === 0 && (
+                    <TableEmpty colSpan={4}>No customers match &ldquo;{q}&rdquo;.</TableEmpty>
+                  )}
+                  {rows.map((c) => (
+                    <tr key={c.id}>
+                      <td>
+                        <strong>{displayName(c) || <span className="muted">—</span>}</strong>
+                      </td>
+                      <td>{c.email ?? '—'}</td>
+                      <td>{c.phone ?? '—'}</td>
+                      <td className="actions">
+                        <LinkButton size="sm" href={`/customers/${c.id}`}>
+                          Open
+                        </LinkButton>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </TableWrap>
+          </Card>
+        )}
+        {nextCursor && (
+          <div className="flex justify-center">
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => void loadMore()}
+              disabled={loadingMore}
+            >
+              {loadingMore ? 'Loading…' : 'Load more'}
+            </Button>
+          </div>
+        )}
+      </Stack>
     </div>
   );
 }

@@ -1,9 +1,22 @@
 'use client';
 
-import Link from 'next/link';
 import { toast } from 'sonner';
 import { useEffect, useState, type FormEvent } from 'react';
-import { Button, Card, EmptyState, Field, Input, LoadingRows, PageHeader } from '@/components/ui';
+import {
+  Alert,
+  BackLink,
+  Button,
+  Card,
+  EmptyState,
+  Field,
+  FormActions,
+  FormGrid,
+  Input,
+  LoadingRows,
+  PageHeader,
+  Stack,
+  TableWrap,
+} from '@/components/ui';
 import { api } from '@/lib/api';
 
 interface TaxClass {
@@ -32,6 +45,7 @@ export default function TaxClassesPage() {
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const [expanded, setExpanded] = useState<string | null>(null);
 
   async function load() {
@@ -54,8 +68,10 @@ export default function TaxClassesPage() {
   async function create(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setError(null);
+    setSubmitting(true);
+    const form = e.currentTarget;
     try {
-      const data = new FormData(e.currentTarget);
+      const data = new FormData(form);
       await api('/v1/business/tax-classes', {
         method: 'POST',
         body: JSON.stringify({
@@ -65,11 +81,13 @@ export default function TaxClassesPage() {
           isDefault: data.get('isDefault') === 'on',
         }),
       });
-      e.currentTarget.reset();
+      form.reset();
       setCreating(false);
       void load();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSubmitting(false);
     }
   }
 
@@ -102,10 +120,8 @@ export default function TaxClassesPage() {
 
   return (
     <div>
-      <p style={{ margin: '0 0 12px' }}>
-        <Link href="/settings">← Settings</Link>
-      </p>
       <PageHeader
+        eyebrow={<BackLink href="/settings">Settings</BackLink>}
         title="Tax classes"
         sub={
           <>
@@ -124,82 +140,84 @@ export default function TaxClassesPage() {
         }
       />
 
-      {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
+      <Stack>
+        {error && <Alert tone="error">{error}</Alert>}
 
-      {creating && (
-        <Card style={{ maxWidth: 560, marginBottom: 16 }}>
-          <form onSubmit={create} style={{ display: 'grid', gap: 8 }}>
-            <Field label="Name *">
-              <Input name="name" required style={{ width: '100%' }} />
-            </Field>
-            <Field label="Rate (%) *">
-              <Input
-                name="rate"
-                type="number"
-                step="0.01"
-                min={0}
-                max={1000}
-                required
-                style={{ width: '100%' }}
-              />
-            </Field>
-            <Field label="Description">
-              <Input name="description" style={{ width: '100%' }} />
-            </Field>
-            <label style={{ display: 'flex', gap: 6, fontSize: 13, alignItems: 'center' }}>
-              <input name="isDefault" type="checkbox" style={{ accentColor: 'var(--brand)' }} />
-              Use as the default class for new products
-            </label>
-            <Button type="submit" variant="primary" style={{ width: 'fit-content' }}>
-              Create class
-            </Button>
-          </form>
-        </Card>
-      )}
+        {creating && (
+          <Card title="New tax class" className="form-narrow">
+            <form onSubmit={create}>
+              <FormGrid cols={2}>
+                <Field label="Name" required>
+                  <Input name="name" required />
+                </Field>
+                <Field label="Rate (%)" required>
+                  <Input name="rate" type="number" step="0.01" min={0} max={1000} required />
+                </Field>
+                <Field label="Description" className="form-span">
+                  <Input name="description" />
+                </Field>
+                <label className="form-span flex items-center gap-2">
+                  <input name="isDefault" type="checkbox" />
+                  Use as the default class for new products
+                </label>
+              </FormGrid>
+              <FormActions>
+                <Button type="submit" variant="primary" disabled={submitting}>
+                  {submitting ? 'Creating…' : 'Create class'}
+                </Button>
+              </FormActions>
+            </form>
+          </Card>
+        )}
 
-      <Card>
         {rows == null ? (
           <LoadingRows />
         ) : rows.length === 0 ? (
-          <EmptyState>No tax classes yet.</EmptyState>
+          <EmptyState title="No tax classes yet">
+            Products use the location/business default rate until you add a class.
+          </EmptyState>
         ) : (
-          <div style={{ overflowX: 'auto' }}>
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Name</th>
-                  <th>Rate</th>
-                  <th>Default</th>
-                  <th>Products</th>
-                  <th>&nbsp;</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((r) =>
-                  editing === r.id ? (
-                    <EditRow
-                      key={r.id}
-                      row={r}
-                      onSave={(patch) => save(r.id, patch)}
-                      onCancel={() => setEditing(null)}
-                    />
-                  ) : (
-                    <FragmentRow
-                      key={r.id}
-                      row={r}
-                      locations={locations}
-                      expanded={expanded === r.id}
-                      onToggleExpand={() => setExpanded(expanded === r.id ? null : r.id)}
-                      onEdit={() => setEditing(r.id)}
-                      onDelete={() => destroy(r)}
-                    />
-                  ),
-                )}
-              </tbody>
-            </table>
-          </div>
+          <Card flush>
+            <TableWrap>
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th className="num">Rate</th>
+                    <th>Default</th>
+                    <th className="num">Products</th>
+                    <th className="actions">
+                      <span className="sr-only">Actions</span>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((r) =>
+                    editing === r.id ? (
+                      <EditRow
+                        key={r.id}
+                        row={r}
+                        onSave={(patch) => save(r.id, patch)}
+                        onCancel={() => setEditing(null)}
+                      />
+                    ) : (
+                      <FragmentRow
+                        key={r.id}
+                        row={r}
+                        locations={locations}
+                        expanded={expanded === r.id}
+                        onToggleExpand={() => setExpanded(expanded === r.id ? null : r.id)}
+                        onEdit={() => setEditing(r.id)}
+                        onDelete={() => destroy(r)}
+                      />
+                    ),
+                  )}
+                </tbody>
+              </table>
+            </TableWrap>
+          </Card>
         )}
-      </Card>
+      </Stack>
     </div>
   );
 }
@@ -224,30 +242,26 @@ function FragmentRow({
       <tr>
         <td>
           <strong>{row.name}</strong>
-          {row.description && (
-            <div style={{ color: 'var(--text-secondary)', fontSize: 12 }}>{row.description}</div>
-          )}
+          {row.description && <div className="muted">{row.description}</div>}
         </td>
-        <td>{(row.rateBps / 100).toFixed(2)}%</td>
+        <td className="num">{(row.rateBps / 100).toFixed(2)}%</td>
         <td>{row.isDefault ? <span className="badge badge-brand">yes</span> : '—'}</td>
-        <td>{row.productCount}</td>
-        <td>
-          <span style={{ display: 'inline-flex', gap: 6 }}>
-            <Button size="sm" variant="ghost" onClick={onToggleExpand}>
-              {expanded ? 'Hide overrides' : 'Per-location'}
-            </Button>
-            <Button size="sm" variant="ghost" onClick={onEdit}>
-              Edit
-            </Button>
-            <Button size="sm" variant="danger" onClick={onDelete}>
-              Delete
-            </Button>
-          </span>
+        <td className="num">{row.productCount}</td>
+        <td className="actions">
+          <Button size="sm" variant="ghost" onClick={onToggleExpand} aria-expanded={expanded}>
+            {expanded ? 'Hide overrides' : 'Per-location'}
+          </Button>
+          <Button size="sm" variant="ghost" onClick={onEdit}>
+            Edit
+          </Button>
+          <Button size="sm" variant="danger" onClick={onDelete}>
+            Delete
+          </Button>
         </td>
       </tr>
       {expanded && (
         <tr>
-          <td colSpan={5} style={{ background: 'var(--surface-muted)', padding: 12 }}>
+          <td colSpan={5} className="bg-[var(--surface-muted)] p-3">
             <OverridesPanel taxClass={row} locations={locations} />
           </td>
         </tr>
@@ -318,29 +332,28 @@ function OverridesPanel({ taxClass, locations }: { taxClass: TaxClass; locations
     }
   }
 
-  if (overrides == null)
-    return <p style={{ color: 'var(--text-muted)', fontSize: 12, margin: 0 }}>Loading…</p>;
+  if (overrides == null) return <LoadingRows rows={2} />;
   if (locations.length === 0) {
-    return (
-      <p style={{ color: 'var(--text-secondary)', fontSize: 12, margin: 0 }}>No locations yet.</p>
-    );
+    return <EmptyState>No locations yet.</EmptyState>;
   }
 
   return (
-    <div>
-      <p style={{ color: 'var(--text-secondary)', fontSize: 12, margin: '0 0 8px' }}>
+    <Stack gap="sm">
+      <p className="muted">
         Override the <strong>{(taxClass.rateBps / 100).toFixed(2)}%</strong> fallback per location.
         Leave blank to use the fallback. Empty input + Save removes the override.
       </p>
-      {error && <p style={{ color: 'var(--danger)', fontSize: 12 }}>{error}</p>}
-      <div className="overflow-x-auto">
-        <table className="table">
+      {error && <Alert tone="error">{error}</Alert>}
+      <TableWrap>
+        <table className="table table-dense">
           <thead>
             <tr>
               <th>Location</th>
               <th>Rate (%)</th>
               <th>Source</th>
-              <th />
+              <th className="actions">
+                <span className="sr-only">Actions</span>
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -357,13 +370,12 @@ function OverridesPanel({ taxClass, locations }: { taxClass: TaxClass; locations
                       placeholder={(taxClass.rateBps / 100).toFixed(2)}
                       value={drafts[l.id] ?? ''}
                       onChange={(e) => setDrafts((prev) => ({ ...prev, [l.id]: e.target.value }))}
-                      style={{ width: 90 }}
+                      aria-label={`Rate for ${l.name}`}
+                      className="w-24"
                     />
                   </td>
-                  <td style={{ color: 'var(--text-secondary)', fontSize: 12 }}>
-                    {ov ? 'override' : 'class fallback'}
-                  </td>
-                  <td>
+                  <td className="muted">{ov ? 'override' : 'class fallback'}</td>
+                  <td className="actions">
                     <Button
                       size="sm"
                       variant="primary"
@@ -378,8 +390,8 @@ function OverridesPanel({ taxClass, locations }: { taxClass: TaxClass; locations
             })}
           </tbody>
         </table>
-      </div>
-    </div>
+      </TableWrap>
+    </Stack>
   );
 }
 
@@ -399,16 +411,22 @@ function EditRow({
   return (
     <tr>
       <td>
-        <Input value={name} onChange={(e) => setName(e.target.value)} style={{ width: '100%' }} />
+        <Input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          aria-label="Name"
+          className="w-full"
+        />
       </td>
-      <td>
+      <td className="num">
         <Input
           type="number"
           step="0.01"
           min={0}
           value={rate}
           onChange={(e) => setRate(e.target.value)}
-          style={{ width: 90 }}
+          aria-label="Rate (%)"
+          className="w-24"
         />
       </td>
       <td>
@@ -416,29 +434,27 @@ function EditRow({
           type="checkbox"
           checked={isDefault}
           onChange={(e) => setIsDefault(e.target.checked)}
-          style={{ accentColor: 'var(--brand)' }}
+          aria-label="Default class"
         />
       </td>
-      <td>{row.productCount}</td>
-      <td>
-        <span style={{ display: 'inline-flex', gap: 6 }}>
-          <Button
-            size="sm"
-            variant="primary"
-            onClick={() =>
-              onSave({
-                name,
-                rateBps: Math.round(Number(rate) * 100),
-                isDefault,
-              })
-            }
-          >
-            Save
-          </Button>
-          <Button size="sm" variant="ghost" onClick={onCancel}>
-            Cancel
-          </Button>
-        </span>
+      <td className="num">{row.productCount}</td>
+      <td className="actions">
+        <Button
+          size="sm"
+          variant="primary"
+          onClick={() =>
+            onSave({
+              name,
+              rateBps: Math.round(Number(rate) * 100),
+              isDefault,
+            })
+          }
+        >
+          Save
+        </Button>
+        <Button size="sm" variant="ghost" onClick={onCancel}>
+          Cancel
+        </Button>
       </td>
     </tr>
   );

@@ -1,18 +1,23 @@
 'use client';
 
-import Link from 'next/link';
 import { toast } from 'sonner';
 import { useEffect, useState, type FormEvent } from 'react';
 import {
+  Alert,
+  BackLink,
   Button,
   Card,
   EmptyState,
   Field,
+  FormActions,
+  FormGrid,
   Input,
   LoadingRows,
   PageHeader,
   Select,
+  Stack,
   StatusBadge,
+  TableWrap,
 } from '@/components/ui';
 import { api } from '@/lib/api';
 import { Money } from '@/components/money';
@@ -36,6 +41,7 @@ export default function DiscountsPage() {
   const [rows, setRows] = useState<DiscountCode[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const [kind, setKind] = useState<'percent' | 'fixed'>('percent');
 
   async function load() {
@@ -53,8 +59,10 @@ export default function DiscountsPage() {
   async function create(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setError(null);
+    setSubmitting(true);
+    const form = e.currentTarget;
     try {
-      const data = new FormData(e.currentTarget);
+      const data = new FormData(form);
       const valueRaw = String(data.get('value') ?? '');
       const value =
         kind === 'percent'
@@ -74,12 +82,14 @@ export default function DiscountsPage() {
           minSubtotalCents: parseDollarsOrNull(data.get('minSubtotal')),
         }),
       });
-      e.currentTarget.reset();
+      form.reset();
       setKind('percent');
       setCreating(false);
       void load();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSubmitting(false);
     }
   }
 
@@ -111,10 +121,8 @@ export default function DiscountsPage() {
 
   return (
     <div>
-      <p style={{ margin: '0 0 12px' }}>
-        <Link href="/settings">← Settings</Link>
-      </p>
       <PageHeader
+        eyebrow={<BackLink href="/settings">Settings</BackLink>}
         title="Discount codes"
         sub="Codes apply at the POS as an order-level discount. Cashiers enter the code on the payment screen; the system validates window, limits, and minimum subtotal before the sale completes."
         actions={
@@ -127,152 +135,132 @@ export default function DiscountsPage() {
         }
       />
 
-      {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
+      <Stack>
+        {error && <Alert tone="error">{error}</Alert>}
 
-      {creating && (
-        <Card style={{ maxWidth: 720, marginBottom: 16 }}>
-          <form onSubmit={create} style={{ display: 'grid', gap: 8 }}>
-            <div className="grid gap-2 sm:grid-cols-2">
-              <Field label="Code *">
-                <Input
-                  name="code"
+        {creating && (
+          <Card title="New discount code" className="form-narrow">
+            <form onSubmit={create}>
+              <FormGrid cols={2}>
+                <Field label="Code" required>
+                  <Input name="code" required placeholder="SAVE15" className="uppercase" />
+                </Field>
+                <Field label="Kind" required>
+                  <Select
+                    value={kind}
+                    onChange={(e) => setKind(e.target.value as 'percent' | 'fixed')}
+                  >
+                    <option value="percent">% off</option>
+                    <option value="fixed">$ off</option>
+                  </Select>
+                </Field>
+                <Field
+                  label={kind === 'percent' ? 'Percent (e.g. 15 = 15%)' : 'Amount in dollars'}
                   required
-                  placeholder="SAVE15"
-                  style={{ width: '100%', textTransform: 'uppercase' }}
-                />
-              </Field>
-              <Field label="Kind *">
-                <Select
-                  value={kind}
-                  onChange={(e) => setKind(e.target.value as 'percent' | 'fixed')}
-                  style={{ width: '100%' }}
                 >
-                  <option value="percent">% off</option>
-                  <option value="fixed">$ off</option>
-                </Select>
-              </Field>
-            </div>
-            <Field label={kind === 'percent' ? 'Percent (e.g. 15 = 15%) *' : 'Amount in dollars *'}>
-              <Input
-                name="value"
-                type="number"
-                step="0.01"
-                min={0.01}
-                required
-                style={{ width: '100%' }}
-              />
-            </Field>
-            <Field label="Description (optional)">
-              <Input name="description" style={{ width: '100%' }} />
-            </Field>
-            <div className="grid gap-2 sm:grid-cols-2">
-              <Field label="Starts (optional)">
-                <Input name="startsAt" type="datetime-local" style={{ width: '100%' }} />
-              </Field>
-              <Field label="Ends (optional)">
-                <Input name="endsAt" type="datetime-local" style={{ width: '100%' }} />
-              </Field>
-            </div>
-            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-              <Field label="Total uses (optional)">
-                <Input name="usageLimit" type="number" min={1} style={{ width: '100%' }} />
-              </Field>
-              <Field label="Uses per customer (optional)">
-                <Input name="perCustomerLimit" type="number" min={1} style={{ width: '100%' }} />
-              </Field>
-              <Field label="Min subtotal $ (optional)">
-                <Input
-                  name="minSubtotal"
-                  type="number"
-                  step="0.01"
-                  min={0}
-                  style={{ width: '100%' }}
-                />
-              </Field>
-            </div>
-            <Button type="submit" variant="primary" style={{ width: 'fit-content' }}>
-              Create code
-            </Button>
-          </form>
-        </Card>
-      )}
+                  <Input name="value" type="number" step="0.01" min={0.01} required />
+                </Field>
+                <Field label="Description (optional)">
+                  <Input name="description" />
+                </Field>
+                <Field label="Starts (optional)">
+                  <Input name="startsAt" type="datetime-local" />
+                </Field>
+                <Field label="Ends (optional)">
+                  <Input name="endsAt" type="datetime-local" />
+                </Field>
+                <FormGrid cols={3} className="form-span">
+                  <Field label="Total uses (optional)">
+                    <Input name="usageLimit" type="number" min={1} />
+                  </Field>
+                  <Field label="Uses per customer (optional)">
+                    <Input name="perCustomerLimit" type="number" min={1} />
+                  </Field>
+                  <Field label="Min subtotal $ (optional)">
+                    <Input name="minSubtotal" type="number" step="0.01" min={0} />
+                  </Field>
+                </FormGrid>
+              </FormGrid>
+              <FormActions>
+                <Button type="submit" variant="primary" disabled={submitting}>
+                  {submitting ? 'Creating…' : 'Create code'}
+                </Button>
+              </FormActions>
+            </form>
+          </Card>
+        )}
 
-      <Card>
         {rows == null ? (
           <LoadingRows />
         ) : rows.length === 0 ? (
-          <EmptyState>No discount codes yet.</EmptyState>
+          <EmptyState title="No discount codes yet">
+            Create a code and cashiers can apply it on the payment screen.
+          </EmptyState>
         ) : (
-          <div style={{ overflowX: 'auto' }}>
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Code</th>
-                  <th>Discount</th>
-                  <th>Window</th>
-                  <th>Used</th>
-                  <th>Status</th>
-                  <th>&nbsp;</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((r) => (
-                  <tr key={r.id} style={{ verticalAlign: 'top' }}>
-                    <td>
-                      <code>{r.code}</code>
-                      {r.description && (
-                        <div style={{ color: 'var(--text-secondary)', fontSize: 12 }}>
-                          {r.description}
-                        </div>
-                      )}
-                    </td>
-                    <td>
-                      {r.kind === 'percent' ? (
-                        `${(r.value / 100).toFixed(2)}%`
-                      ) : (
-                        <Money cents={r.value} />
-                      )}
-                      {r.minSubtotalCents != null && (
-                        <div style={{ color: 'var(--text-secondary)', fontSize: 12 }}>
-                          min <Money cents={r.minSubtotalCents} />
-                        </div>
-                      )}
-                    </td>
-                    <td>
-                      <div style={{ fontSize: 12 }}>
+          <Card flush>
+            <TableWrap>
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Code</th>
+                    <th>Discount</th>
+                    <th>Window</th>
+                    <th className="num">Used</th>
+                    <th>Status</th>
+                    <th className="actions">
+                      <span className="sr-only">Actions</span>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((r) => (
+                    <tr key={r.id}>
+                      <td>
+                        <code>{r.code}</code>
+                        {r.description && <div className="muted">{r.description}</div>}
+                      </td>
+                      <td>
+                        {r.kind === 'percent' ? (
+                          `${(r.value / 100).toFixed(2)}%`
+                        ) : (
+                          <Money cents={r.value} />
+                        )}
+                        {r.minSubtotalCents != null && (
+                          <div className="muted">
+                            min <Money cents={r.minSubtotalCents} />
+                          </div>
+                        )}
+                      </td>
+                      <td className="nowrap">
                         {r.startsAt ? new Date(r.startsAt).toLocaleDateString() : '—'} →{' '}
                         {r.endsAt ? new Date(r.endsAt).toLocaleDateString() : '∞'}
-                      </div>
-                    </td>
-                    <td>
-                      {r.usageCount}
-                      {r.usageLimit != null && ` / ${r.usageLimit}`}
-                      {r.perCustomerLimit != null && (
-                        <div style={{ color: 'var(--text-secondary)', fontSize: 12 }}>
-                          {r.perCustomerLimit}/customer
-                        </div>
-                      )}
-                    </td>
-                    <td>
-                      <StatusBadge status={r.isActive ? 'active' : 'inactive'} />
-                    </td>
-                    <td>
-                      <span style={{ display: 'inline-flex', gap: 6 }}>
+                      </td>
+                      <td className="num">
+                        {r.usageCount}
+                        {r.usageLimit != null && ` / ${r.usageLimit}`}
+                        {r.perCustomerLimit != null && (
+                          <div className="muted">{r.perCustomerLimit}/customer</div>
+                        )}
+                      </td>
+                      <td>
+                        <StatusBadge status={r.isActive ? 'active' : 'inactive'} />
+                      </td>
+                      <td className="actions">
                         <Button size="sm" variant="ghost" onClick={() => toggleActive(r)}>
                           {r.isActive ? 'Disable' : 'Enable'}
                         </Button>
                         <Button size="sm" variant="danger" onClick={() => destroy(r)}>
                           Delete
                         </Button>
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </TableWrap>
+          </Card>
         )}
-      </Card>
+      </Stack>
     </div>
   );
 }

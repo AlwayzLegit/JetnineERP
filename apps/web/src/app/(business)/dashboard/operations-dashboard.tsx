@@ -2,11 +2,27 @@
 
 import Link from 'next/link';
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
-import { Button, Card, EmptyState, LinkButton, LoadingRows } from '@/components/ui';
+import {
+  Alert,
+  Button,
+  Card,
+  EmptyState,
+  LinkButton,
+  LoadingRows,
+  PageHeader,
+  SectionHeading,
+  Stack,
+  StatGrid,
+  StatTile,
+  TableEmpty,
+  TableWrap,
+  Toolbar,
+} from '@/components/ui';
 import { DateRangePicker, useUrlDateRange } from '@/components/date-range-picker';
 import { Money } from '@/components/money';
 import { api } from '@/lib/api';
 import { formatRange, presetLabel, type DateRange } from '@/lib/date-range';
+import { TableCard, usd } from './dashboard-kit';
 
 /**
  * The Operations home (owner 2026-08-31).
@@ -126,9 +142,6 @@ interface ActivityGroup {
   events: { action: string; actorName: string | null; createdAt: string }[];
 }
 
-const usd = (cents: number) =>
-  `$${(cents / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-
 const SEVERITY_COLOR: Record<Severity, string> = {
   critical: 'var(--danger)',
   warning: 'var(--warning, #b26a00)',
@@ -153,6 +166,17 @@ function ago(iso: string): string {
   const hours = Math.floor(mins / 60);
   if (hours < 24) return `${hours}h ago`;
   return `${Math.floor(hours / 24)}d ago`;
+}
+
+/** The severity dot: colour is the data. */
+function SeverityDot({ severity }: { severity: Severity }) {
+  return (
+    <span
+      title={severity}
+      className="inline-block size-2 rounded-full align-middle"
+      style={{ background: SEVERITY_COLOR[severity] }}
+    />
+  );
 }
 
 export default function OperationsDashboardView({ userName }: { userName: string }) {
@@ -253,440 +277,371 @@ export default function OperationsDashboardView({ userName }: { userName: string
     }
   }
 
+  const title = `Operations — ${userName}`;
+
   if (error) {
     return (
-      <Card title="Operations">
-        <p style={{ color: 'var(--danger)', margin: 0, fontSize: 13 }}>{error}</p>
-      </Card>
+      <>
+        <PageHeader title={title} />
+        <Alert tone="error">{error}</Alert>
+      </>
     );
   }
-  if (!summary) return <LoadingRows />;
+  if (!summary) {
+    return (
+      <>
+        <PageHeader title={title} />
+        <LoadingRows />
+      </>
+    );
+  }
 
   const { money } = summary;
 
   return (
     <div data-testid="operations-dashboard">
-      <div className="page-header" style={{ flexWrap: 'wrap', gap: 10 }}>
-        <div>
-          <h1 className="page-title">Operations — {userName}</h1>
-          <p style={{ margin: '2px 0 0', color: 'var(--text-secondary)', fontSize: 13 }}>
+      <PageHeader
+        title={title}
+        sub={
+          <>
             {summary.date} · {summary.stores.length} store
             {summary.stores.length === 1 ? '' : 's'}
-          </p>
-        </div>
-        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
-          <DateRangePicker value={range} onChange={setRange} align="right" testid="ops-range" />
-          <LinkButton size="sm" variant="primary" href="/orders/new">
-            New Sale
-          </LinkButton>
-        </div>
-      </div>
-
-      {/* ---- The feed. Everything else on this page is context for it. ---- */}
-      <Card
-        title={
-          feedTotal === 0
-            ? 'Nothing needs you today'
-            : `${feedTotal} thing${feedTotal === 1 ? '' : 's'} need${feedTotal === 1 ? 's' : ''} you today`
+          </>
         }
-        style={{ padding: 0, marginBottom: 16 }}
-      >
-        {feed == null ? (
-          <div style={{ padding: 12 }}>
+        actions={
+          <>
+            <DateRangePicker value={range} onChange={setRange} align="right" testid="ops-range" />
+            <LinkButton variant="primary" href="/orders/new">
+              New Sale
+            </LinkButton>
+          </>
+        }
+      />
+
+      <Stack>
+        {/* ---- The feed. Everything else on this page is context for it. ---- */}
+        <Card
+          title={
+            feedTotal === 0
+              ? 'Nothing needs you today'
+              : `${feedTotal} thing${feedTotal === 1 ? '' : 's'} need${feedTotal === 1 ? 's' : ''} you today`
+          }
+        >
+          {feed == null ? (
             <LoadingRows rows={4} />
-          </div>
-        ) : feed.length === 0 ? (
-          <div style={{ padding: 14 }}>
+          ) : feed.length === 0 ? (
             <EmptyState>
               Every refund, override, adjustment and drawer count in the last{' '}
               {thresholds?.lookbackDays ?? 7} days has been reviewed.
             </EmptyState>
-          </div>
-        ) : (
-          <>
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 10,
-                padding: '8px 12px',
-                borderBottom: '1px solid var(--border)',
-              }}
-            >
-              <label style={{ fontSize: 12.5, display: 'flex', alignItems: 'center', gap: 6 }}>
-                <input
-                  type="checkbox"
-                  data-testid="ops-feed-select-all"
-                  checked={selected.size === feed.length && feed.length > 0}
-                  onChange={(e) =>
-                    setSelected(e.target.checked ? new Set(feed.map(subjectKey)) : new Set())
-                  }
-                />
-                Select all
-              </label>
-              <Button
-                size="sm"
-                data-testid="ops-feed-clear"
-                disabled={selected.size === 0 || clearing}
-                onClick={() => void clearSelected()}
-              >
-                {clearing ? 'Clearing…' : `Clear selected (${selected.size})`}
-              </Button>
-              {clearError && (
-                <span style={{ fontSize: 12, color: 'var(--danger)' }}>{clearError}</span>
-              )}
-              <span style={{ marginLeft: 'auto', fontSize: 11.5, color: 'var(--text-muted)' }}>
-                Clearing records your name and the time — it does not approve anything.
-              </span>
-            </div>
-            <div style={{ maxHeight: 460, overflowY: 'auto' }}>
-              <table style={{ width: '100%', fontSize: 12.5, borderCollapse: 'collapse' }}>
-                <tbody>
-                  {feed.map((r) => {
-                    const key = subjectKey(r);
-                    return (
-                      <tr
-                        key={key}
-                        data-testid="ops-feed-row"
-                        style={{ borderTop: '1px solid var(--border)' }}
-                      >
-                        <td style={{ padding: '7px 10px', width: 28 }}>
-                          <input
-                            type="checkbox"
-                            aria-label={`Clear ${r.kind}`}
-                            checked={selected.has(key)}
-                            onChange={(e) =>
-                              setSelected((prev) => {
-                                const next = new Set(prev);
-                                if (e.target.checked) next.add(key);
-                                else next.delete(key);
-                                return next;
-                              })
-                            }
-                          />
-                        </td>
-                        <td style={{ padding: '7px 4px', width: 10 }}>
-                          <span
-                            title={r.severity}
-                            style={{
-                              display: 'inline-block',
-                              width: 8,
-                              height: 8,
-                              borderRadius: '50%',
-                              background: SEVERITY_COLOR[r.severity],
-                            }}
-                          />
-                        </td>
-                        <td style={{ padding: '7px 10px' }}>
-                          <div style={{ fontWeight: 600 }}>{r.kind}</div>
-                          <div style={{ color: 'var(--text-secondary)' }}>{r.summary}</div>
-                        </td>
-                        <td style={{ padding: '7px 10px', color: 'var(--text-secondary)' }}>
-                          {r.actorName ?? '—'}
-                        </td>
-                        <td style={{ padding: '7px 10px', color: 'var(--text-secondary)' }}>
-                          {r.locationName ?? '—'}
-                        </td>
-                        <td
-                          style={{
-                            padding: '7px 10px',
-                            textAlign: 'right',
-                            color: (r.amountCents ?? 0) < 0 ? 'var(--danger)' : 'var(--text)',
-                            whiteSpace: 'nowrap',
-                          }}
-                        >
-                          {r.amountCents == null ? '' : usd(r.amountCents)}
-                        </td>
-                        <td
-                          style={{
-                            padding: '7px 10px',
-                            color: 'var(--text-muted)',
-                            whiteSpace: 'nowrap',
-                          }}
-                        >
-                          {ago(r.occurredAt)}
-                        </td>
-                        <td style={{ padding: '7px 10px' }}>
-                          {r.href && (
-                            <Link href={r.href} style={{ fontSize: 12 }}>
-                              Open
-                            </Link>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-            {feedTotal > feed.length && (
-              <div style={{ padding: '8px 12px', fontSize: 12, color: 'var(--text-muted)' }}>
-                Showing {feed.length} of {feedTotal}. Clear some to see the rest.
-              </div>
-            )}
-          </>
-        )}
-      </Card>
-
-      {/* ---- Money in the window, all stores ---- */}
-      <h3 style={{ margin: '0 0 8px', fontSize: 14 }}>Money — {windowLabel(range)}, every store</h3>
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4" style={{ marginBottom: 16 }}>
-        <Tile
-          label="Money in"
-          testid="ops-kpi-in"
-          main={<Money cents={money.inCents} />}
-          sub={`${money.byTender.length} tender${money.byTender.length === 1 ? '' : 's'}`}
-        />
-        <Tile
-          label="Money out"
-          testid="ops-kpi-out"
-          tone={money.outCents > 0 ? 'danger' : undefined}
-          main={<Money cents={money.outCents} />}
-          sub={`${usd(money.out.refundsCents)} refunds · ${usd(money.out.returnsCents)} returns · ${usd(money.out.writeOffsCents)} write-offs`}
-        />
-        <Tile
-          label="Net"
-          testid="ops-kpi-net"
-          main={<Money cents={money.netCents} />}
-          sub="in − out"
-        />
-        <Tile
-          label="Exchanges entered"
-          testid="ops-kpi-exchanges"
-          main={String(money.exchanges.count)}
-          sub={`${usd(money.exchanges.restockingFeeCents)} in restocking fees`}
-        />
-      </div>
-
-      <div className="grid gap-3 lg:grid-cols-2" style={{ marginBottom: 16 }}>
-        <Card title="Money in by tender">
-          {money.byTender.length === 0 ? (
-            <EmptyState>
-              {range.preset === 'today'
-                ? 'Nothing collected yet today.'
-                : 'Nothing collected in the window.'}
-            </EmptyState>
           ) : (
-            <table style={{ width: '100%', fontSize: 12.5 }}>
+            <>
+              <Toolbar
+                end={
+                  <>
+                    {feedTotal > feed.length && (
+                      <span className="muted">
+                        Showing {feed.length} of {feedTotal}. Clear some to see the rest.
+                      </span>
+                    )}
+                    <span className="muted">
+                      Clearing records your name and the time — it does not approve anything.
+                    </span>
+                  </>
+                }
+              >
+                <label className="flex items-center gap-1.5">
+                  <input
+                    type="checkbox"
+                    data-testid="ops-feed-select-all"
+                    checked={selected.size === feed.length && feed.length > 0}
+                    onChange={(e) =>
+                      setSelected(e.target.checked ? new Set(feed.map(subjectKey)) : new Set())
+                    }
+                  />
+                  Select all
+                </label>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  data-testid="ops-feed-clear"
+                  disabled={selected.size === 0 || clearing}
+                  onClick={() => void clearSelected()}
+                >
+                  {clearing ? 'Clearing…' : `Clear selected (${selected.size})`}
+                </Button>
+              </Toolbar>
+              {clearError && <Alert tone="error">{clearError}</Alert>}
+              <TableWrap maxHeight={460}>
+                <table className="table table-dense table-sticky">
+                  <thead>
+                    <tr>
+                      <th aria-label="Select" />
+                      <th aria-label="Severity" />
+                      <th>What</th>
+                      <th>Who</th>
+                      <th>Store</th>
+                      <th className="num">Amount</th>
+                      <th>When</th>
+                      <th className="actions" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {feed.map((r) => {
+                      const key = subjectKey(r);
+                      return (
+                        <tr key={key} data-testid="ops-feed-row">
+                          <td>
+                            <input
+                              type="checkbox"
+                              aria-label={`Clear ${r.kind}`}
+                              checked={selected.has(key)}
+                              onChange={(e) =>
+                                setSelected((prev) => {
+                                  const next = new Set(prev);
+                                  if (e.target.checked) next.add(key);
+                                  else next.delete(key);
+                                  return next;
+                                })
+                              }
+                            />
+                          </td>
+                          <td>
+                            <SeverityDot severity={r.severity} />
+                          </td>
+                          <td>
+                            <strong>{r.kind}</strong>
+                            <div className="muted">{r.summary}</div>
+                          </td>
+                          <td className="muted">{r.actorName ?? '—'}</td>
+                          <td className="muted">{r.locationName ?? '—'}</td>
+                          <td
+                            className="num nowrap"
+                            style={{
+                              color: (r.amountCents ?? 0) < 0 ? 'var(--danger)' : undefined,
+                            }}
+                          >
+                            {r.amountCents == null ? '' : usd(r.amountCents)}
+                          </td>
+                          <td className="muted nowrap">{ago(r.occurredAt)}</td>
+                          <td className="actions">
+                            {r.href && (
+                              <Link href={r.href} className="btn-link">
+                                Open
+                              </Link>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </TableWrap>
+            </>
+          )}
+        </Card>
+
+        {/* ---- Money in the window, all stores ---- */}
+        <SectionHeading title={`Money — ${windowLabel(range)}, every store`} />
+        <StatGrid cols={4}>
+          <StatTile
+            label="Money in"
+            data-testid="ops-kpi-in"
+            value={<Money cents={money.inCents} />}
+            sub={`${money.byTender.length} tender${money.byTender.length === 1 ? '' : 's'}`}
+          />
+          <StatTile
+            label="Money out"
+            data-testid="ops-kpi-out"
+            tone={money.outCents > 0 ? 'danger' : undefined}
+            value={<Money cents={money.outCents} />}
+            sub={`${usd(money.out.refundsCents)} refunds · ${usd(money.out.returnsCents)} returns · ${usd(money.out.writeOffsCents)} write-offs`}
+          />
+          <StatTile
+            label="Net"
+            data-testid="ops-kpi-net"
+            value={<Money cents={money.netCents} />}
+            sub="in − out"
+          />
+          <StatTile
+            label="Exchanges entered"
+            data-testid="ops-kpi-exchanges"
+            value={String(money.exchanges.count)}
+            sub={`${usd(money.exchanges.restockingFeeCents)} in restocking fees`}
+          />
+        </StatGrid>
+
+        <div className="grid gap-4 lg:grid-cols-2">
+          <TableCard
+            title="Money in by tender"
+            isEmpty={money.byTender.length === 0}
+            empty={
+              range.preset === 'today'
+                ? 'Nothing collected yet today.'
+                : 'Nothing collected in the window.'
+            }
+          >
+            <table className="table table-dense">
+              <thead>
+                <tr>
+                  <th>Tender</th>
+                  <th className="num">Count</th>
+                  <th className="num">Amount</th>
+                </tr>
+              </thead>
               <tbody>
                 {money.byTender.map((t) => (
                   <tr key={t.method}>
-                    <td style={{ padding: '3px 0', textTransform: 'capitalize' }}>
-                      {t.method.replace(/_/g, ' ')}
-                    </td>
-                    <td style={{ padding: '3px 0', color: 'var(--text-muted)' }}>×{t.count}</td>
-                    <td style={{ padding: '3px 0', textAlign: 'right' }}>{usd(t.cents)}</td>
+                    <td className="capitalize">{t.method.replace(/_/g, ' ')}</td>
+                    <td className="num muted">×{t.count}</td>
+                    <td className="num">{usd(t.cents)}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
-          )}
-        </Card>
-        <Card title="Written business — 14 days, all stores">
-          <SalesByDayChart points={summary.salesByDay} />
-        </Card>
-      </div>
+          </TableCard>
+          <Card title="Written business — 14 days, all stores">
+            <SalesByDayChart points={summary.salesByDay} />
+          </Card>
+        </div>
 
-      {/* ---- Every store, every salesperson ---- */}
-      <h3 style={{ margin: '0 0 8px', fontSize: 14 }}>Selling — {windowLabel(range)}</h3>
-      <div className="grid gap-3" style={{ marginBottom: 16 }}>
-        <Card title={`By store — ${windowLabel(range)}`} style={{ padding: 0 }}>
-          <StoreTable rows={summary.byStore} />
-        </Card>
-
-        <Card
-          title={`By salesperson — ${windowLabel(spRange)}`}
-          style={{ padding: 0 }}
-          actions={
-            // The card has no padding (its table runs edge to edge), so the
-            // picker carries its own inset from the right border.
-            <span style={{ display: 'inline-flex', marginRight: 12 }}>
-              <DateRangePicker
-                compact
-                align="right"
-                value={spRange}
-                onChange={setSpRange}
-                testid="ops-salespeople-range"
-              />
-            </span>
-          }
+        {/* ---- Every store, every salesperson ---- */}
+        <SectionHeading title={`Selling — ${windowLabel(range)}`} />
+        <TableCard
+          title={`By store — ${windowLabel(range)}`}
+          description="Click a store to see its orders. Cost is the standard cost of the lines; profit is merchandise minus cost — tax, delivery and fees are not counted."
+          isEmpty={summary.byStore.length === 0}
+          empty="No stores yet."
+          maxHeight={420}
         >
-          {salespeople == null ? (
-            <div style={{ padding: 12 }}>
-              <LoadingRows rows={3} />
-            </div>
-          ) : (
-            <ScrollTable
-              head={['Salesperson', 'Written', 'Sales', 'Collected', 'Refunded', 'Discount']}
-              align={['left', 'right', 'right', 'right', 'right', 'right']}
-              rows={salespeople.map((s) => [
-                s.name,
-                usd(s.writtenCents),
-                String(s.writtenCount),
-                usd(s.collectedCents),
-                s.refundedCents > 0 ? usd(s.refundedCents) : '—',
-                `${s.discountPct}%`,
-              ])}
-              empty="Nobody has written business in the window."
-              testid="ops-by-salesperson"
+          <StoreTable rows={summary.byStore} />
+        </TableCard>
+
+        <TableCard
+          title={`By salesperson — ${windowLabel(spRange)}`}
+          actions={
+            <DateRangePicker
+              compact
+              align="right"
+              value={spRange}
+              onChange={setSpRange}
+              testid="ops-salespeople-range"
             />
-          )}
-        </Card>
-      </div>
-
-      {/* ---- Who is generating the exceptions ---- */}
-      <div className="grid gap-3 lg:grid-cols-2" style={{ marginBottom: 16 }}>
-        <Card title="Flagged activity by person" style={{ padding: 0 }}>
-          {digest == null ? (
-            <div style={{ padding: 12 }}>
-              <LoadingRows rows={3} />
-            </div>
-          ) : digest.length === 0 ? (
-            <div style={{ padding: 14 }}>
-              <EmptyState>Nobody has tripped a threshold in the window.</EmptyState>
-            </div>
-          ) : (
-            <table style={{ width: '100%', fontSize: 12.5, borderCollapse: 'collapse' }}>
-              <tbody>
-                {digest.map((d) => (
-                  <tr
-                    key={d.actorUserId ?? 'system'}
-                    style={{ borderTop: '1px solid var(--border)' }}
-                  >
-                    <td style={{ padding: '7px 12px' }}>
-                      <span
-                        style={{
-                          display: 'inline-block',
-                          width: 8,
-                          height: 8,
-                          borderRadius: '50%',
-                          background: SEVERITY_COLOR[d.worstSeverity],
-                          marginRight: 7,
-                        }}
-                      />
-                      <strong>{d.actorName ?? 'System'}</strong>
-                      <div style={{ color: 'var(--text-secondary)', marginLeft: 15 }}>
-                        {Object.entries(d.byKind)
-                          .map(([kind, n]) => `${n} × ${kind.toLowerCase()}`)
-                          .join(' · ')}
-                      </div>
-                    </td>
-                    <td style={{ padding: '7px 12px', textAlign: 'right', whiteSpace: 'nowrap' }}>
-                      {d.amountCents > 0 ? usd(d.amountCents) : ''}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </Card>
-
-        <Card title="Open & close — today" style={{ padding: 0 }}>
+          }
+          loading={salespeople == null}
+          isEmpty={false}
+          empty={null}
+          maxHeight={320}
+        >
           <ScrollTable
-            head={['Store', 'Drawer', 'Variance', 'Close-out']}
-            align={['left', 'left', 'right', 'left']}
-            rows={summary.ritual.map((r) => [
-              r.locationName,
-              r.drawerSuspended
-                ? 'suspended'
-                : r.drawerOpen
-                  ? 'open'
-                  : r.drawerClosed
-                    ? 'closed'
-                    : 'never opened',
-              r.varianceCents == null ? '—' : usd(r.varianceCents),
-              r.closeoutRan ? `ran · ${r.closeoutExceptions} flagged` : 'not run',
+            head={['Salesperson', 'Written', 'Sales', 'Collected', 'Refunded', 'Discount']}
+            align={['left', 'right', 'right', 'right', 'right', 'right']}
+            rows={(salespeople ?? []).map((s) => [
+              s.name,
+              usd(s.writtenCents),
+              String(s.writtenCount),
+              usd(s.collectedCents),
+              s.refundedCents > 0 ? usd(s.refundedCents) : '—',
+              `${s.discountPct}%`,
             ])}
-            empty="No stores yet."
-            testid="ops-ritual"
+            empty="Nobody has written business in the window."
+            testid="ops-by-salesperson"
           />
-        </Card>
-      </div>
+        </TableCard>
 
-      {/* ---- Store activity ---- */}
-      <Card title="Store activity — grouped by order" style={{ padding: 0 }}>
-        {activity == null ? (
-          <div style={{ padding: 12 }}>
-            <LoadingRows rows={3} />
-          </div>
-        ) : activity.length === 0 ? (
-          <div style={{ padding: 14 }}>
-            <EmptyState>No order changes recorded yet.</EmptyState>
-          </div>
-        ) : (
-          <div style={{ maxHeight: 340, overflowY: 'auto' }}>
-            <table style={{ width: '100%', fontSize: 12.5, borderCollapse: 'collapse' }}>
+        {/* ---- Who is generating the exceptions ---- */}
+        <div className="grid gap-4 lg:grid-cols-2">
+          <TableCard
+            title="Flagged activity by person"
+            loading={digest == null}
+            isEmpty={digest?.length === 0}
+            empty="Nobody has tripped a threshold in the window."
+          >
+            <table className="table table-dense">
+              <thead>
+                <tr>
+                  <th>Who</th>
+                  <th>Flags</th>
+                  <th className="num">Amount</th>
+                </tr>
+              </thead>
               <tbody>
-                {activity.map((g) => (
-                  <tr key={g.orderId} style={{ borderTop: '1px solid var(--border)' }}>
-                    <td style={{ padding: '7px 12px', whiteSpace: 'nowrap' }}>
-                      <Link href={`/orders/${g.orderId}`}>{g.orderNumber}</Link>
+                {(digest ?? []).map((d) => (
+                  <tr key={d.actorUserId ?? 'system'}>
+                    <td className="nowrap">
+                      <SeverityDot severity={d.worstSeverity} />{' '}
+                      <strong>{d.actorName ?? 'System'}</strong>
                     </td>
-                    <td style={{ padding: '7px 12px', color: 'var(--text-secondary)' }}>
-                      {g.events
-                        .slice(0, 4)
-                        .map((e) => `${e.action}${e.actorName ? ` (${e.actorName})` : ''}`)
+                    <td className="muted">
+                      {Object.entries(d.byKind)
+                        .map(([kind, n]) => `${n} × ${kind.toLowerCase()}`)
                         .join(' · ')}
-                      {g.events.length > 4 ? ` +${g.events.length - 4} more` : ''}
                     </td>
-                    <td
-                      style={{
-                        padding: '7px 12px',
-                        textAlign: 'right',
-                        color: 'var(--text-muted)',
-                        whiteSpace: 'nowrap',
-                      }}
-                    >
-                      {ago(g.latestAt)}
-                    </td>
+                    <td className="num nowrap">{d.amountCents > 0 ? usd(d.amountCents) : ''}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
-          </div>
-        )}
-      </Card>
-    </div>
-  );
-}
+          </TableCard>
 
-function Tile({
-  label,
-  main,
-  sub,
-  tone,
-  testid,
-}: {
-  label: string;
-  main: React.ReactNode;
-  sub: string;
-  tone?: 'danger';
-  testid: string;
-}) {
-  return (
-    <div
-      data-testid={testid}
-      style={{
-        background: 'var(--surface)',
-        border: '1px solid var(--border)',
-        borderRadius: 'var(--radius)',
-        boxShadow: 'var(--shadow-sm)',
-        padding: '12px 14px',
-        height: '100%',
-      }}
-    >
-      <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)' }}>{label}</div>
-      <div
-        style={{
-          fontSize: 18,
-          fontWeight: 700,
-          color: tone === 'danger' ? 'var(--danger)' : 'var(--text)',
-          marginTop: 2,
-        }}
-      >
-        {main}
-      </div>
-      <div style={{ fontSize: 11.5, color: 'var(--text-secondary)', marginTop: 2 }}>{sub}</div>
+          <TableCard title="Open & close — today" isEmpty={false} empty={null} maxHeight={320}>
+            <ScrollTable
+              head={['Store', 'Drawer', 'Variance', 'Close-out']}
+              align={['left', 'left', 'right', 'left']}
+              rows={summary.ritual.map((r) => [
+                r.locationName,
+                r.drawerSuspended
+                  ? 'suspended'
+                  : r.drawerOpen
+                    ? 'open'
+                    : r.drawerClosed
+                      ? 'closed'
+                      : 'never opened',
+                r.varianceCents == null ? '—' : usd(r.varianceCents),
+                r.closeoutRan ? `ran · ${r.closeoutExceptions} flagged` : 'not run',
+              ])}
+              empty="No stores yet."
+              testid="ops-ritual"
+            />
+          </TableCard>
+        </div>
+
+        {/* ---- Store activity ---- */}
+        <TableCard
+          title="Store activity — grouped by order"
+          loading={activity == null}
+          isEmpty={activity?.length === 0}
+          empty="No order changes recorded yet."
+          maxHeight={340}
+        >
+          <table className="table table-dense table-sticky">
+            <thead>
+              <tr>
+                <th>Order</th>
+                <th>Changes</th>
+                <th className="num">Latest</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(activity ?? []).map((g) => (
+                <tr key={g.orderId}>
+                  <td className="nowrap">
+                    <Link href={`/orders/${g.orderId}`}>{g.orderNumber}</Link>
+                  </td>
+                  <td className="muted">
+                    {g.events
+                      .slice(0, 4)
+                      .map((e) => `${e.action}${e.actorName ? ` (${e.actorName})` : ''}`)
+                      .join(' · ')}
+                    {g.events.length > 4 ? ` +${g.events.length - 4} more` : ''}
+                  </td>
+                  <td className="num muted nowrap">{ago(g.latestAt)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </TableCard>
+      </Stack>
     </div>
   );
 }
@@ -699,139 +654,95 @@ function Tile({
  */
 function StoreTable({ rows }: { rows: StoreRow[] }) {
   const [open, setOpen] = useState<Record<string, boolean>>({});
-  if (rows.length === 0) {
-    return (
-      <div style={{ padding: 14 }}>
-        <EmptyState>No stores yet.</EmptyState>
-      </div>
-    );
-  }
-  const th = (label: string, right = false) => (
-    <th
-      key={label}
-      style={{
-        padding: '7px 12px',
-        textAlign: right ? 'right' : 'left',
-        fontSize: 11,
-        color: 'var(--text-muted)',
-        fontWeight: 600,
-      }}
-    >
-      {label}
-    </th>
-  );
-  const td = (content: React.ReactNode, right = false, extra?: React.CSSProperties) => (
-    <td
-      style={{
-        padding: '7px 12px',
-        textAlign: right ? 'right' : 'left',
-        fontVariantNumeric: right ? 'tabular-nums' : undefined,
-        whiteSpace: 'nowrap',
-        ...extra,
-      }}
-    >
-      {content}
-    </td>
-  );
   return (
-    <div style={{ maxHeight: 420, overflowY: 'auto' }} data-testid="ops-by-store">
-      <table style={{ width: '100%', fontSize: 12.5, borderCollapse: 'collapse' }}>
-        <thead>
-          <tr>
-            {th('Store')}
-            {th('Written', true)}
-            {th('Orders', true)}
-            {th('Cost', true)}
-            {th('Profit', true)}
-            {th('Collected', true)}
-            {th('Refunded', true)}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((s) => {
-            const expandable = s.documents.length > 0;
-            const isOpen = !!open[s.locationId];
-            return (
-              <Fragment key={s.locationId}>
-                <tr
-                  style={{
-                    borderTop: '1px solid var(--border)',
-                    cursor: expandable ? 'pointer' : undefined,
-                  }}
-                  onClick={() =>
-                    expandable && setOpen((o) => ({ ...o, [s.locationId]: !o[s.locationId] }))
-                  }
-                  data-testid="ops-store-row"
-                  aria-expanded={expandable ? isOpen : undefined}
+    <table className="table table-dense table-sticky" data-testid="ops-by-store">
+      <thead>
+        <tr>
+          <th>Store</th>
+          <th className="num">Written</th>
+          <th className="num">Orders</th>
+          <th className="num">Cost</th>
+          <th className="num">Profit</th>
+          <th className="num">Collected</th>
+          <th className="num">Refunded</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((s) => {
+          const expandable = s.documents.length > 0;
+          const isOpen = !!open[s.locationId];
+          return (
+            <Fragment key={s.locationId}>
+              <tr
+                className={expandable ? 'cursor-pointer' : undefined}
+                onClick={() =>
+                  expandable && setOpen((o) => ({ ...o, [s.locationId]: !o[s.locationId] }))
+                }
+                data-testid="ops-store-row"
+                aria-expanded={expandable ? isOpen : undefined}
+              >
+                <td className="nowrap">
+                  <span
+                    aria-hidden
+                    className="muted inline-block w-3"
+                    style={{ visibility: expandable ? 'visible' : 'hidden' }}
+                  >
+                    {isOpen ? '▾' : '▸'}
+                  </span>
+                  {s.locationName}
+                </td>
+                <td className="num nowrap">{usd(s.writtenCents)}</td>
+                <td className="num nowrap">{s.writtenCount}</td>
+                <td className="num nowrap">{s.writtenCount > 0 ? usd(s.costCents) : '—'}</td>
+                <td
+                  className="num nowrap"
+                  style={{ color: s.profitCents < 0 ? 'var(--danger)' : undefined }}
                 >
-                  {td(
-                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                      <span
-                        aria-hidden
-                        style={{
-                          display: 'inline-block',
-                          width: 12,
-                          color: 'var(--text-muted)',
-                          visibility: expandable ? 'visible' : 'hidden',
-                        }}
+                  {s.writtenCount > 0 ? usd(s.profitCents) : '—'}
+                </td>
+                <td className="num nowrap">{usd(s.collectedCents)}</td>
+                <td className="num nowrap">{s.refundedCents > 0 ? usd(s.refundedCents) : '—'}</td>
+              </tr>
+              {isOpen &&
+                s.documents.map((d) => (
+                  <tr
+                    key={d.id}
+                    style={{ background: 'var(--surface-muted)' }}
+                    data-testid="ops-store-doc"
+                  >
+                    <td className="nowrap pl-8">
+                      <Link
+                        href={d.kind === 'sale' ? `/sales/${d.id}` : `/orders/${d.id}`}
+                        onClick={(e) => e.stopPropagation()}
                       >
-                        {isOpen ? '▾' : '▸'}
+                        {d.number}
+                      </Link>{' '}
+                      <span className="muted">
+                        {d.customerName ?? (d.kind === 'sale' ? 'Register sale' : 'Walk-in')}
                       </span>
-                      {s.locationName}
-                    </span>,
-                  )}
-                  {td(usd(s.writtenCents), true)}
-                  {td(String(s.writtenCount), true)}
-                  {td(s.writtenCount > 0 ? usd(s.costCents) : '—', true)}
-                  {td(s.writtenCount > 0 ? usd(s.profitCents) : '—', true, {
-                    color: s.profitCents < 0 ? 'var(--danger)' : undefined,
-                  })}
-                  {td(usd(s.collectedCents), true)}
-                  {td(s.refundedCents > 0 ? usd(s.refundedCents) : '—', true)}
-                </tr>
-                {isOpen &&
-                  s.documents.map((d) => (
-                    <tr
-                      key={d.id}
-                      style={{ background: 'var(--surface-2, rgba(0,0,0,0.03))' }}
-                      data-testid="ops-store-doc"
+                    </td>
+                    <td className="num nowrap">{usd(d.writtenCents)}</td>
+                    <td />
+                    <td className="num nowrap">{usd(d.costCents)}</td>
+                    <td
+                      className="num nowrap"
+                      style={{ color: d.profitCents < 0 ? 'var(--danger)' : undefined }}
                     >
-                      {td(
-                        <span style={{ paddingLeft: 26, display: 'inline-flex', gap: 8 }}>
-                          <Link
-                            href={d.kind === 'sale' ? `/sales/${d.id}` : `/orders/${d.id}`}
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            {d.number}
-                          </Link>
-                          <span style={{ color: 'var(--text-muted)' }}>
-                            {d.customerName ?? (d.kind === 'sale' ? 'Register sale' : 'Walk-in')}
-                          </span>
-                        </span>,
-                      )}
-                      {td(usd(d.writtenCents), true)}
-                      {td('', true)}
-                      {td(usd(d.costCents), true)}
-                      {td(usd(d.profitCents), true, {
-                        color: d.profitCents < 0 ? 'var(--danger)' : undefined,
-                      })}
-                      {td('', true)}
-                      {td('', true)}
-                    </tr>
-                  ))}
-              </Fragment>
-            );
-          })}
-        </tbody>
-      </table>
-      <p style={{ margin: 0, padding: '6px 12px 10px', fontSize: 11, color: 'var(--text-muted)' }}>
-        Click a store to see its orders. Cost is the standard cost of the lines; profit is
-        merchandise minus cost — tax, delivery and fees are not counted.
-      </p>
-    </div>
+                      {usd(d.profitCents)}
+                    </td>
+                    <td />
+                    <td />
+                  </tr>
+                ))}
+            </Fragment>
+          );
+        })}
+      </tbody>
+    </table>
   );
 }
 
+/** A plain header + string-cell table; empty rows keep the header. */
 function ScrollTable({
   head,
   align,
@@ -845,69 +756,49 @@ function ScrollTable({
   empty: string;
   testid: string;
 }) {
-  if (rows.length === 0) {
-    return (
-      <div style={{ padding: 14 }}>
-        <EmptyState>{empty}</EmptyState>
-      </div>
-    );
-  }
   return (
-    <div style={{ maxHeight: 320, overflowY: 'auto' }} data-testid={testid}>
-      <table style={{ width: '100%', fontSize: 12.5, borderCollapse: 'collapse' }}>
-        <thead>
-          <tr>
-            {head.map((h, i) => (
-              <th
-                key={h}
-                style={{
-                  padding: '7px 12px',
-                  textAlign: align[i] ?? 'left',
-                  fontSize: 11,
-                  color: 'var(--text-muted)',
-                  fontWeight: 600,
-                }}
-              >
-                {h}
-              </th>
+    <table className="table table-dense table-sticky" data-testid={testid}>
+      <thead>
+        <tr>
+          {head.map((h, i) => (
+            <th key={h} className={align[i] === 'right' ? 'num' : undefined}>
+              {h}
+            </th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {rows.length === 0 && <TableEmpty colSpan={head.length}>{empty}</TableEmpty>}
+        {rows.map((r) => (
+          <tr key={r.join('|')}>
+            {r.map((cell, i) => (
+              <td key={head[i] ?? String(i)} className={align[i] === 'right' ? 'num' : undefined}>
+                {cell}
+              </td>
             ))}
           </tr>
-        </thead>
-        <tbody>
-          {rows.map((r) => (
-            <tr key={r.join('|')} style={{ borderTop: '1px solid var(--border)' }}>
-              {r.map((cell, i) => (
-                <td
-                  key={head[i] ?? String(i)}
-                  style={{ padding: '7px 12px', textAlign: align[i] ?? 'left' }}
-                >
-                  {cell}
-                </td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+        ))}
+      </tbody>
+    </table>
   );
 }
 
 function SalesByDayChart({ points }: { points: { day: string; writtenCents: number }[] }) {
   const max = Math.max(1, ...points.map((p) => p.writtenCents));
   return (
-    <div style={{ display: 'flex', alignItems: 'flex-end', gap: 4, height: 110 }}>
+    <div className="flex items-end gap-1" style={{ height: 110 }}>
       {points.map((p) => (
         <div
           key={p.day}
           title={`${p.day}: ${usd(p.writtenCents)}`}
-          style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}
+          className="flex flex-1 flex-col justify-end"
         >
           <div
+            className="rounded-t"
             style={{
               height: `${Math.round((p.writtenCents / max) * 100)}%`,
               minHeight: p.writtenCents > 0 ? 2 : 0,
               background: 'var(--accent)',
-              borderRadius: '3px 3px 0 0',
             }}
           />
         </div>

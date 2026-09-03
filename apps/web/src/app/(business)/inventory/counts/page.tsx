@@ -2,19 +2,26 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { ClipboardList } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import { LoadMore } from '@/components/load-more';
 import { useCursorList } from '@/lib/use-cursor-list';
 import {
+  Alert,
+  BackLink,
   Button,
   Card,
-  EmptyState,
+  Field,
+  FormActions,
+  FormGrid,
   LinkButton,
   LoadingRows,
   PageHeader,
   Select,
+  Stack,
+  StatusBadge,
+  TableEmpty,
+  TableWrap,
 } from '@/components/ui';
 
 interface Location {
@@ -34,13 +41,6 @@ interface CountRow {
   lineCount: number;
   countedCount: number;
 }
-
-const STATUS_LABEL: Record<string, string> = {
-  open: 'Open',
-  counting: 'Counting',
-  posted: 'Posted',
-  cancelled: 'Cancelled',
-};
 
 export default function PhysicalCountsPage() {
   const router = useRouter();
@@ -85,53 +85,50 @@ export default function PhysicalCountsPage() {
   return (
     <div>
       <PageHeader
+        eyebrow={<BackLink href="/inventory">Inventory</BackLink>}
         title="Physical counts"
-        actions={
-          <LinkButton href="/inventory" variant="ghost">
-            Back to inventory
-          </LinkButton>
-        }
       />
 
-      <Card className="mb-4">
-        <div className="flex flex-wrap items-center gap-2">
-          <ClipboardList size={16} />
-          <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
-            Start a count — freezes a snapshot of stock at:
-          </span>
-          <Select value={newLocationId} onChange={(e) => setNewLocationId(e.target.value)}>
-            <option value="">— Pick a location —</option>
-            {locations.map((l) => (
-              <option key={l.id} value={l.id}>
-                {l.name}
-              </option>
-            ))}
-          </Select>
-          <Button
-            type="button"
-            variant="primary"
-            disabled={!newLocationId || creating}
-            onClick={() => void startCount()}
+      <Stack>
+        <Card
+          title="Start a count"
+          description="Freezes a snapshot of stock at the chosen location. The store keeps selling during the count — mid-count sales are netted out at post time."
+        >
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              void startCount();
+            }}
           >
-            {creating ? 'Freezing…' : 'Start count'}
-          </Button>
-          <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-            The store keeps selling during the count — mid-count sales are netted out at post time.
-          </span>
-        </div>
-      </Card>
+            <FormGrid cols={3}>
+              <Field label="Location" required>
+                <Select value={newLocationId} onChange={(e) => setNewLocationId(e.target.value)}>
+                  <option value="">— Pick a location —</option>
+                  {locations.map((l) => (
+                    <option key={l.id} value={l.id}>
+                      {l.name}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+            </FormGrid>
+            <FormActions>
+              <Button type="submit" variant="primary" disabled={!newLocationId || creating}>
+                {creating ? 'Freezing…' : 'Start count'}
+              </Button>
+            </FormActions>
+          </form>
+        </Card>
 
-      {(error ?? list.error) && <p style={{ color: 'var(--danger)' }}>{error ?? list.error}</p>}
-      <Card style={{ padding: 0 }}>
+        {(error ?? list.error) && <Alert tone="error">{error ?? list.error}</Alert>}
+
         {counts == null ? (
-          <div style={{ padding: 16 }}>
+          <Card>
             <LoadingRows />
-          </div>
-        ) : counts.length === 0 ? (
-          <EmptyState>No physical counts yet. Start one above.</EmptyState>
+          </Card>
         ) : (
-          <>
-            <div className="overflow-x-auto">
+          <Card flush>
+            <TableWrap>
               <table className="table">
                 <thead>
                   <tr>
@@ -140,31 +137,47 @@ export default function PhysicalCountsPage() {
                     <th>Status</th>
                     <th className="num">Progress</th>
                     <th>Posted</th>
+                    <th className="actions" />
                   </tr>
                 </thead>
                 <tbody>
+                  {counts.length === 0 && (
+                    <TableEmpty colSpan={6}>No physical counts yet. Start one above.</TableEmpty>
+                  )}
                   {counts.map((c) => (
                     <tr
                       key={c.id}
-                      style={{ cursor: 'pointer' }}
+                      className="cursor-pointer"
                       onClick={() => router.push(`/inventory/counts/${c.id}`)}
                     >
                       <td>{new Date(`${c.countDate}T00:00:00`).toLocaleDateString()}</td>
                       <td>{c.locationName}</td>
-                      <td>{STATUS_LABEL[c.status] ?? c.status}</td>
+                      <td>
+                        <StatusBadge status={c.status} />
+                      </td>
                       <td className="num">
                         {c.countedCount}/{c.lineCount} counted
                       </td>
                       <td>{c.postedAt ? new Date(c.postedAt).toLocaleString() : '—'}</td>
+                      <td className="actions">
+                        <LinkButton
+                          size="sm"
+                          variant="ghost"
+                          href={`/inventory/counts/${c.id}`}
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          Open
+                        </LinkButton>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
-            </div>
+            </TableWrap>
             <LoadMore state={list} noun="counts" />
-          </>
+          </Card>
         )}
-      </Card>
+      </Stack>
     </div>
   );
 }

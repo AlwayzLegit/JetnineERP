@@ -1,7 +1,19 @@
 'use client';
 
 import { useEffect, useState, type FormEvent } from 'react';
-import { Button, Card, EmptyState, Field, Input, LoadingRows, PageHeader } from '@/components/ui';
+import {
+  Alert,
+  Button,
+  Card,
+  Field,
+  Input,
+  LoadingRows,
+  PageHeader,
+  Stack,
+  TableEmpty,
+  TableWrap,
+  Toolbar,
+} from '@/components/ui';
 import { DateRangePicker, useUrlDateRange } from '@/components/date-range-picker';
 import { useSession } from '@/lib/auth-client';
 import { api, apiUrl } from '@/lib/api';
@@ -82,18 +94,22 @@ export default function AuditLogPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session.data?.user.id, rangeReady, range]);
 
-  if (session.isPending)
+  if (session.isPending) {
     return (
-      <Wrapper>
+      <div>
+        <PageHeader title="Audit log" />
         <LoadingRows />
-      </Wrapper>
+      </div>
     );
-  if (!session.data)
+  }
+  if (!session.data) {
     return (
-      <Wrapper>
-        <p style={{ color: 'var(--text-secondary)' }}>Sign in required.</p>
-      </Wrapper>
+      <div>
+        <PageHeader title="Audit log" />
+        <Alert tone="warning">Sign in required.</Alert>
+      </div>
     );
+  }
 
   const exportHref = (() => {
     const qs = auditParams(filters, range).toString();
@@ -101,7 +117,7 @@ export default function AuditLogPage() {
   })();
 
   return (
-    <Wrapper>
+    <div>
       <PageHeader
         title="Audit log"
         actions={
@@ -122,77 +138,67 @@ export default function AuditLogPage() {
         filters={filters}
         onChange={setFilters}
         onSubmit={(next) => fetchRows(next, range)}
+        pending={loading}
       />
-      {error && (
-        <p data-testid="audit-error" style={{ color: 'var(--danger)' }}>
-          {error}
-        </p>
-      )}
-      {loading && !rows && <LoadingRows />}
-      {rows && (
-        <Card style={{ padding: 0, overflowX: 'auto' }}>
-          <table data-testid="audit-table" className="table">
-            <thead>
-              <tr>
-                <th>When</th>
-                <th>Actor</th>
-                <th>Action</th>
-                <th>Target</th>
-                <th>Diff</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.length === 0 && (
-                <tr>
-                  <td colSpan={5}>
-                    <EmptyState>No audit log entries match these filters.</EmptyState>
-                  </td>
-                </tr>
-              )}
-              {rows.map((r) => (
-                <tr key={r.id} style={{ verticalAlign: 'top' }}>
-                  <td style={{ whiteSpace: 'nowrap' }}>{new Date(r.createdAt).toLocaleString()}</td>
-                  <td>{r.actorEmail ?? <em>system</em>}</td>
-                  <td>
-                    <code>{r.action}</code>
-                  </td>
-                  <td>
-                    {r.targetType ? (
-                      <span>
-                        {r.targetType}
-                        {r.targetId ? `:${r.targetId.slice(0, 8)}…` : ''}
-                      </span>
-                    ) : (
-                      <em style={{ color: 'var(--text-muted)' }}>—</em>
-                    )}
-                  </td>
-                  <td>
-                    {r.changesJson ? (
-                      <pre
-                        style={{
-                          margin: 0,
-                          whiteSpace: 'pre-wrap',
-                          fontSize: 12,
-                          fontFamily: 'var(--font-mono)',
-                          background: 'var(--surface-muted)',
-                          border: '1px solid var(--border)',
-                          padding: 6,
-                          borderRadius: 'var(--radius-sm)',
-                        }}
-                      >
-                        {JSON.stringify(r.changesJson, null, 2)}
-                      </pre>
-                    ) : (
-                      <em style={{ color: 'var(--text-muted)' }}>—</em>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </Card>
-      )}
-    </Wrapper>
+      <Stack>
+        {error && (
+          <Alert tone="error" data-testid="audit-error">
+            {error}
+          </Alert>
+        )}
+        {loading && !rows && <LoadingRows />}
+        {rows && (
+          <Card flush>
+            <TableWrap>
+              <table data-testid="audit-table" className="table">
+                <thead>
+                  <tr>
+                    <th>When</th>
+                    <th>Actor</th>
+                    <th>Action</th>
+                    <th>Target</th>
+                    <th>Diff</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.length === 0 && (
+                    <TableEmpty colSpan={5}>No audit log entries match these filters.</TableEmpty>
+                  )}
+                  {rows.map((r) => (
+                    <tr key={r.id} className="align-top">
+                      <td className="nowrap">{new Date(r.createdAt).toLocaleString()}</td>
+                      <td>{r.actorEmail ?? <em>system</em>}</td>
+                      <td>
+                        <code>{r.action}</code>
+                      </td>
+                      <td>
+                        {r.targetType ? (
+                          <span>
+                            {r.targetType}
+                            {r.targetId ? `:${r.targetId.slice(0, 8)}…` : ''}
+                          </span>
+                        ) : (
+                          <em className="muted">—</em>
+                        )}
+                      </td>
+                      <td>
+                        {r.changesJson ? (
+                          <pre className="m-0 whitespace-pre-wrap rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--surface-muted)] p-1.5 font-mono text-xs">
+                            {JSON.stringify(r.changesJson, null, 2)}
+                          </pre>
+                        ) : (
+                          <em className="muted">—</em>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </TableWrap>
+          </Card>
+        )}
+      </Stack>
+    </div>
   );
 }
 
@@ -200,55 +206,40 @@ function FilterForm({
   filters,
   onChange,
   onSubmit,
+  pending,
 }: {
   filters: Filters;
   onChange: (next: Filters) => void;
   onSubmit: (next: Filters) => void;
+  pending: boolean;
 }) {
   function handle(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     onSubmit(filters);
   }
   return (
-    <form
-      onSubmit={handle}
-      className="mb-6 grid items-end gap-3 sm:grid-cols-2 lg:grid-cols-[repeat(2,1fr)_auto]"
-    >
-      <Field label="Action">
-        <Input
-          name="action"
-          value={filters.action}
-          onChange={(e) => onChange({ ...filters, action: e.target.value })}
-          placeholder="product.variant.price.update"
-          style={{ width: '100%' }}
-        />
-      </Field>
-      <Field label="Actor user id">
-        <Input
-          name="actorUserId"
-          value={filters.actorUserId}
-          onChange={(e) => onChange({ ...filters, actorUserId: e.target.value })}
-          placeholder="uuid"
-          style={{ width: '100%' }}
-        />
-      </Field>
-      <Button type="submit" variant="primary" className="w-fit">
-        Apply
-      </Button>
+    <form onSubmit={handle}>
+      <Toolbar className="items-end">
+        <Field label="Action" className="min-w-[220px] max-w-[340px] flex-1">
+          <Input
+            name="action"
+            value={filters.action}
+            onChange={(e) => onChange({ ...filters, action: e.target.value })}
+            placeholder="product.variant.price.update"
+          />
+        </Field>
+        <Field label="Actor user id" className="min-w-[220px] max-w-[340px] flex-1">
+          <Input
+            name="actorUserId"
+            value={filters.actorUserId}
+            onChange={(e) => onChange({ ...filters, actorUserId: e.target.value })}
+            placeholder="uuid"
+          />
+        </Field>
+        <Button type="submit" variant="primary" disabled={pending}>
+          Apply
+        </Button>
+      </Toolbar>
     </form>
-  );
-}
-
-function Wrapper({ children }: { children: React.ReactNode }) {
-  return (
-    <main
-      style={{
-        maxWidth: 1100,
-        margin: '48px auto',
-        padding: '0 16px',
-      }}
-    >
-      {children}
-    </main>
   );
 }

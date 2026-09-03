@@ -1,0 +1,1 @@
+ALTER TABLE "inventory_levels" ADD COLUMN "reorder_point" integer;

@@ -1,10 +1,19 @@
 'use client';
 
-import Link from 'next/link';
 import { toast } from 'sonner';
 import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { Button, Card, LoadingRows, PageHeader } from '@/components/ui';
+import {
+  Alert,
+  BackLink,
+  Button,
+  Card,
+  KeyValue,
+  LoadingRows,
+  PageHeader,
+  Stack,
+  StatusBadge,
+} from '@/components/ui';
 import { api } from '@/lib/api';
 
 interface StripeStatus {
@@ -108,124 +117,85 @@ function BillingPageInner() {
 
   return (
     <div>
-      <p style={{ margin: '0 0 12px' }}>
-        <Link href="/settings">← Settings</Link>
-      </p>
-      <PageHeader title="Billing" />
+      <PageHeader
+        eyebrow={<BackLink href="/settings">Settings</BackLink>}
+        title="Billing"
+        sub="Card processing through your own Stripe account, and the plan this business is on."
+      />
 
-      {banner && (
-        <div
-          style={{
-            background: banner.kind === 'ok' ? 'var(--success-soft)' : 'var(--danger-soft)',
-            border: `1px solid ${banner.kind === 'ok' ? 'var(--success)' : 'var(--danger)'}`,
-            color: banner.kind === 'ok' ? 'var(--success-soft-text)' : 'var(--danger-soft-text)',
-            padding: 12,
-            borderRadius: 'var(--radius)',
-            marginBottom: 16,
-            fontSize: 13,
-          }}
-        >
-          {banner.message}
-        </div>
-      )}
-
-      {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
-
-      {sub?.readOnly && (
-        <div
-          style={{
-            background: 'var(--warning-soft)',
-            border: '1px solid var(--warning)',
-            color: 'var(--warning-soft-text)',
-            padding: 12,
-            borderRadius: 'var(--radius)',
-            marginBottom: 16,
-            fontSize: 13,
-          }}
-        >
-          <strong>Read-only mode.</strong> Subscription is <code>{sub.status}</code>
-          {sub.trialExpired && ' (trial expired)'}. Sales, refunds, and inventory writes are blocked
-          until reactivated.
-        </div>
-      )}
-
-      <Card title="Stripe">
-        <p style={{ color: 'var(--text-secondary)', fontSize: 13, margin: '0 0 12px' }}>
-          Connect your Stripe account so card payments at the POS go straight to your bank. Money
-          never touches LA Mattress ERP — we only orchestrate the charge on your behalf.
-        </p>
-
-        {stripe?.stubMode && (
-          <p
-            style={{
-              color: 'var(--warning-soft-text)',
-              fontSize: 12,
-              background: 'var(--warning-soft)',
-              padding: 8,
-              borderRadius: 'var(--radius-sm)',
-              marginBottom: 12,
-            }}
-          >
-            <strong>Stub mode:</strong> the API has no <code>STRIPE_SECRET_KEY</code> set, so
-            connecting + charging use deterministic fakes. Useful for local dev. Set the env vars in
-            production to flip to real Stripe.
-          </p>
+      <Stack>
+        {banner && (
+          <Alert tone={banner.kind === 'ok' ? 'success' : 'error'}>{banner.message}</Alert>
         )}
 
-        {stripe?.connected ? (
-          <>
-            <Row label="Connected as" value={stripe.accountEmail ?? '(no email on file)'} />
-            <Row
-              label="Account"
-              value={`${stripe.stripeAccountId} (${stripe.livemode ? 'live' : 'test'})`}
-            />
-            <Row label="Charges enabled" value={stripe.chargesEnabled ? 'yes' : 'no'} />
-            <Row label="Payouts enabled" value={stripe.payoutsEnabled ? 'yes' : 'no'} />
-            <div style={{ marginTop: 12 }}>
-              <Button variant="danger" onClick={disconnect} disabled={busy}>
+        {error && <Alert tone="error">{error}</Alert>}
+
+        {sub?.readOnly && (
+          <Alert tone="warning" title="Read-only mode.">
+            Subscription is <code>{sub.status}</code>
+            {sub.trialExpired && ' (trial expired)'}. Sales, refunds, and inventory writes are
+            blocked until reactivated.
+          </Alert>
+        )}
+
+        <Card
+          title="Stripe"
+          description="Connect your Stripe account so card payments at the POS go straight to your bank. Money never touches LA Mattress ERP — we only orchestrate the charge on your behalf."
+          actions={
+            stripe?.connected ? (
+              <Button size="sm" variant="danger" onClick={disconnect} disabled={busy}>
                 Disconnect Stripe
               </Button>
-            </div>
-          </>
-        ) : (
-          <Button variant="primary" onClick={connect} disabled={busy}>
-            {busy ? 'Redirecting…' : 'Connect Stripe'}
-          </Button>
-        )}
-      </Card>
+            ) : undefined
+          }
+        >
+          {stripe?.stubMode && (
+            <Alert tone="warning" title="Stub mode:">
+              the API has no <code>STRIPE_SECRET_KEY</code> set, so connecting + charging use
+              deterministic fakes. Useful for local dev. Set the env vars in production to flip to
+              real Stripe.
+            </Alert>
+          )}
 
-      {sub && (
-        <Card title="Subscription">
-          <p style={{ color: 'var(--text-secondary)', fontSize: 12, margin: '0 0 12px' }}>
-            Track your subscription state. Self-serve plan changes are paused while we transition
-            the platform billing model — your super admin will set the plan for now.
-          </p>
-          <Row label="Status" value={sub.status} />
-          <Row label="Plan" value={sub.plan} />
-          <Row label="Locations" value={String(sub.locationCount)} />
-          {sub.trialEndsAt && (
-            <Row label="Trial ends" value={new Date(sub.trialEndsAt).toLocaleString()} />
+          {stripe == null ? (
+            <LoadingRows rows={2} />
+          ) : stripe.connected ? (
+            <KeyValue
+              rows={[
+                { label: 'Connected as', value: stripe.accountEmail ?? '(no email on file)' },
+                {
+                  label: 'Account',
+                  value: `${stripe.stripeAccountId} (${stripe.livemode ? 'live' : 'test'})`,
+                },
+                { label: 'Charges enabled', value: stripe.chargesEnabled ? 'yes' : 'no' },
+                { label: 'Payouts enabled', value: stripe.payoutsEnabled ? 'yes' : 'no' },
+              ]}
+            />
+          ) : (
+            <Button variant="primary" onClick={connect} disabled={busy}>
+              {busy ? 'Redirecting…' : 'Connect Stripe'}
+            </Button>
           )}
         </Card>
-      )}
-    </div>
-  );
-}
 
-function Row({ label, value }: { label: string; value: string }) {
-  return (
-    <div
-      style={{
-        display: 'flex',
-        justifyContent: 'space-between',
-        fontSize: 13,
-        marginBottom: 4,
-      }}
-    >
-      <span style={{ color: 'var(--text-secondary)' }}>{label}</span>
-      <span>
-        <strong>{value}</strong>
-      </span>
+        {sub && (
+          <Card
+            title="Subscription"
+            description="Track your subscription state. Self-serve plan changes are paused while we transition the platform billing model — your super admin will set the plan for now."
+          >
+            <KeyValue
+              rows={[
+                { label: 'Status', value: <StatusBadge status={sub.status} /> },
+                { label: 'Plan', value: sub.plan },
+                { label: 'Locations', value: String(sub.locationCount) },
+                ...(sub.trialEndsAt
+                  ? [{ label: 'Trial ends', value: new Date(sub.trialEndsAt).toLocaleString() }]
+                  : []),
+              ]}
+            />
+          </Card>
+        )}
+      </Stack>
     </div>
   );
 }

@@ -50,6 +50,10 @@ export function useZodForm<S extends AnySchema>(
 /**
  * The form element. `onSubmit` may throw — the message lands in the
  * form's root error (rendered by `<FormRootError />`).
+ *
+ * Lays its children out as a one-column `form-grid` (12px row gap, the
+ * layout contract's form rhythm), so fields carry no margin of their own
+ * and a nested `<FormGrid cols={2}>` composes without doubling gaps.
  */
 export function Form<T extends FieldValues>({
   form,
@@ -83,7 +87,13 @@ export function Form<T extends FieldValues>({
   };
   return (
     <FormProvider {...form}>
-      <form onSubmit={submit} noValidate className={className} style={style} {...rest}>
+      <form
+        onSubmit={submit}
+        noValidate
+        className={cx('form-grid', 'form-grid-1', className)}
+        style={style}
+        {...rest}
+      >
         {children}
       </form>
     </FormProvider>
@@ -120,12 +130,12 @@ function FieldFrame({
   children,
 }: FieldChrome & { id: string; error?: string; children: ReactNode }) {
   return (
-    <div className={className ?? 'mb-3'}>
-      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
+    <div className={cx('field', className)}>
+      <div className="flex items-baseline justify-between gap-2">
         <label htmlFor={id} className="field-label">
           {label}
         </label>
-        {labelAside && <span style={{ fontSize: 12 }}>{labelAside}</span>}
+        {labelAside && <span className="text-xs">{labelAside}</span>}
       </div>
       {children}
       {error ? (
@@ -260,11 +270,13 @@ export function PasswordField<T extends FieldValues>({
       error={error}
       className={className}
     >
-      <div style={{ position: 'relative' }}>
+      <div className="relative">
         <input
           id={id}
           type={visible ? 'text' : 'password'}
           className="input w-full"
+          // Room for the show/hide adornment; `.input` owns its padding so a
+          // utility class cannot override it (Tailwind layers lose to it).
           style={{ paddingRight: 40 }}
           aria-invalid={error ? 'true' : undefined}
           aria-describedby={error ? `${id}-error` : hint ? `${id}-hint` : undefined}
@@ -320,7 +332,7 @@ export function SubmitButton({
       type="submit"
       disabled={isSubmitting || rest.disabled}
       aria-busy={isSubmitting}
-      className={`btn btn-${variant} ${className ?? 'w-full'}`}
+      className={cx('btn', `btn-${variant}`, className ?? 'w-full')}
       {...rest}
     >
       {isSubmitting && <Loader2 size={15} aria-hidden className="spin" />}
@@ -349,7 +361,7 @@ export function FormAlert({
       role={tone === 'error' ? 'alert' : 'status'}
       data-testid={testid}
     >
-      <div style={{ minWidth: 0 }}>
+      <div className="min-w-0">
         {title && <div className="alert-title">{title}</div>}
         {children && <div className="alert-body">{children}</div>}
       </div>
@@ -370,4 +382,8 @@ export function FormRootError({ testid = 'auth-error' }: { testid?: string }) {
       {message}
     </FormAlert>
   );
+}
+
+function cx(...parts: (string | false | undefined | null)[]): string {
+  return parts.filter(Boolean).join(' ');
 }

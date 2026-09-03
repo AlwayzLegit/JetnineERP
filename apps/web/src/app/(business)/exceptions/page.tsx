@@ -10,13 +10,17 @@ import { DateRangePicker, useUrlDateRange } from '@/components/date-range-picker
 import { LoadMore } from '@/components/load-more';
 import { useCursorList } from '@/lib/use-cursor-list';
 import {
+  Alert,
   Button,
   Card,
   EmptyState,
   LoadingRows,
   PageHeader,
   Select,
+  Stack,
   StatusBadge,
+  TableWrap,
+  Toolbar,
 } from '@/components/ui';
 
 /**
@@ -115,145 +119,153 @@ export default function ExceptionsPage() {
       <PageHeader
         title="Exception register"
         sub="Overrides, unlocks, over-capacity bookings, write-offs. Acknowledge what you've seen."
-        actions={
-          <span className="flex items-center gap-2">
-            <Select
-              value={openOnly ? '1' : ''}
-              onChange={(e) => setOpenOnly(e.target.value === '1')}
-              style={{ width: 150 }}
-            >
-              <option value="1">Unacknowledged</option>
-              <option value="">All</option>
-            </Select>
-            <Select
-              value={severity}
-              onChange={(e) => setSeverity(e.target.value)}
-              style={{ width: 130 }}
-            >
-              <option value="">Any severity</option>
-              <option value="info">Info</option>
-              <option value="warning">Warning</option>
-              <option value="critical">Critical</option>
-            </Select>
-          </span>
-        }
       />
 
-      {error && <p style={{ color: 'var(--danger)', fontSize: 13 }}>{error}</p>}
+      <Stack>
+        {error && <Alert tone="error">{error}</Alert>}
 
-      <div className="grid gap-4 lg:grid-cols-[2fr_1fr]">
-        <div className="min-w-0">
-          {!rows && !error && <LoadingRows rows={4} />}
-          {rows && rows.length === 0 && <EmptyState>Nothing waiting. Good.</EmptyState>}
-          {rows && rows.length > 0 && (
-            <div className="card" style={{ padding: 0 }}>
-              <div style={{ overflowX: 'auto' }}>
-                <table className="table" data-testid="exceptions-table">
-                  <thead>
-                    <tr>
-                      <th>When</th>
-                      <th>Type</th>
-                      <th>Who</th>
-                      <th>Order</th>
-                      <th>What</th>
-                      <th>Severity</th>
-                      <th />
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {rows.map((r) => (
-                      <tr key={r.id} data-testid="exception-row">
-                        <td style={{ whiteSpace: 'nowrap' }}>
-                          {new Date(r.createdAt).toLocaleString()}
-                        </td>
-                        <td>{TYPE_LABELS[r.type] ?? r.type.replace(/_/g, ' ')}</td>
-                        <td>{r.actorEmail ?? 'system'}</td>
-                        <td style={{ whiteSpace: 'nowrap' }}>
-                          {r.orderId && r.orderNumber ? (
-                            <Link href={`/orders/${r.orderId}`} data-testid="exception-order">
-                              {r.orderNumber}
-                            </Link>
-                          ) : (
-                            '—'
-                          )}
-                        </td>
-                        <td>{r.summary}</td>
-                        <td>
-                          <StatusBadge status={r.severity} />
-                        </td>
-                        <td style={{ whiteSpace: 'nowrap' }}>
-                          {r.acknowledgedAt ? (
-                            <span style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>
-                              ack&apos;d by {r.acknowledgedByEmail ?? '—'}
-                            </span>
-                          ) : (
-                            <Button
-                              size="sm"
-                              variant="secondary"
-                              disabled={busy}
-                              data-testid="ack-exception"
-                              onClick={() => void ack(r.id)}
-                            >
-                              Acknowledge
-                            </Button>
-                          )}
-                        </td>
+        <div className="grid gap-4 lg:grid-cols-[2fr_1fr]">
+          <div className="min-w-0">
+            <Toolbar>
+              <Select
+                aria-label="Acknowledgement"
+                value={openOnly ? '1' : ''}
+                onChange={(e) => setOpenOnly(e.target.value === '1')}
+              >
+                <option value="1">Unacknowledged</option>
+                <option value="">All</option>
+              </Select>
+              <Select
+                aria-label="Severity"
+                value={severity}
+                onChange={(e) => setSeverity(e.target.value)}
+              >
+                <option value="">Any severity</option>
+                <option value="info">Info</option>
+                <option value="warning">Warning</option>
+                <option value="critical">Critical</option>
+              </Select>
+            </Toolbar>
+
+            {!rows && !error && <LoadingRows rows={4} />}
+            {rows && rows.length === 0 && (
+              <EmptyState title="Nothing waiting. Good.">
+                {openOnly || severity
+                  ? 'No exceptions match these filters.'
+                  : 'No exceptions have been logged yet.'}
+              </EmptyState>
+            )}
+            {rows && rows.length > 0 && (
+              <Card flush>
+                <TableWrap>
+                  <table className="table" data-testid="exceptions-table">
+                    <thead>
+                      <tr>
+                        <th>When</th>
+                        <th>Type</th>
+                        <th>Who</th>
+                        <th>Order</th>
+                        <th>What</th>
+                        <th>Severity</th>
+                        <th className="actions" />
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              <LoadMore state={list} noun="exceptions" />
-            </div>
-          )}
-        </div>
+                    </thead>
+                    <tbody>
+                      {rows.map((r) => (
+                        <tr key={r.id} data-testid="exception-row">
+                          <td className="nowrap">{new Date(r.createdAt).toLocaleString()}</td>
+                          <td>{TYPE_LABELS[r.type] ?? r.type.replace(/_/g, ' ')}</td>
+                          <td>{r.actorEmail ?? 'system'}</td>
+                          <td className="nowrap">
+                            {r.orderId && r.orderNumber ? (
+                              <Link href={`/orders/${r.orderId}`} data-testid="exception-order">
+                                {r.orderNumber}
+                              </Link>
+                            ) : (
+                              '—'
+                            )}
+                          </td>
+                          <td>{r.summary}</td>
+                          <td>
+                            <StatusBadge status={r.severity} />
+                          </td>
+                          <td className="actions">
+                            {r.acknowledgedAt ? (
+                              <span className="muted">
+                                ack&apos;d by {r.acknowledgedByEmail ?? '—'}
+                              </span>
+                            ) : (
+                              <Button
+                                size="sm"
+                                variant="secondary"
+                                disabled={busy}
+                                data-testid="ack-exception"
+                                onClick={() => void ack(r.id)}
+                              >
+                                Acknowledge
+                              </Button>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </TableWrap>
+                <LoadMore state={list} noun="exceptions" />
+              </Card>
+            )}
+          </div>
 
-        <Card
-          title={`${windowTitle(digestRange)} — by associate (ranked)`}
-          actions={
-            <DateRangePicker
-              compact
-              align="right"
-              value={digestRange}
-              onChange={setDigestRange}
-              testid="digest-range"
-            />
-          }
-        >
-          {!digest && <LoadingRows rows={3} />}
-          {digest && digest.length === 0 && (
-            <p className="muted" style={{ fontSize: 13, margin: 0 }}>
-              No exceptions in this window.
-            </p>
-          )}
-          {digest && digest.length > 0 && (
-            <table className="table" data-testid="exceptions-digest">
-              <thead>
-                <tr>
-                  <th>Associate</th>
-                  <th className="num">Total</th>
-                  <th>Breakdown</th>
-                </tr>
-              </thead>
-              <tbody>
-                {digest.map((d) => (
-                  <tr key={d.actorUserId ?? 'system'}>
-                    <td>{d.actorEmail ?? 'system'}</td>
-                    <td className="num" style={{ fontWeight: 600 }}>
-                      {d.total}
-                    </td>
-                    <td style={{ fontSize: 11.5, color: 'var(--text-secondary)' }}>
-                      {Object.entries(d.byType)
-                        .map(([t, n]) => `${TYPE_LABELS[t] ?? t.replace(/_/g, ' ')} ×${n}`)
-                        .join(' · ')}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </Card>
-      </div>
+          <div className="min-w-0">
+            <Card
+              title="By associate (ranked)"
+              description={windowTitle(digestRange)}
+              actions={
+                <DateRangePicker
+                  compact
+                  align="right"
+                  value={digestRange}
+                  onChange={setDigestRange}
+                  testid="digest-range"
+                />
+              }
+            >
+              {!digest && <LoadingRows rows={3} />}
+              {digest && digest.length === 0 && (
+                <p className="muted">No exceptions in this window.</p>
+              )}
+              {digest && digest.length > 0 && (
+                <TableWrap>
+                  <table className="table" data-testid="exceptions-digest">
+                    <thead>
+                      <tr>
+                        <th>Associate</th>
+                        <th className="num">Total</th>
+                        <th>Breakdown</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {digest.map((d) => (
+                        <tr key={d.actorUserId ?? 'system'}>
+                          <td>{d.actorEmail ?? 'system'}</td>
+                          <td className="num">
+                            <strong>{d.total}</strong>
+                          </td>
+                          <td className="muted">
+                            {Object.entries(d.byType)
+                              .map(([t, n]) => `${TYPE_LABELS[t] ?? t.replace(/_/g, ' ')} ×${n}`)
+                              .join(' · ')}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </TableWrap>
+              )}
+            </Card>
+          </div>
+        </div>
+      </Stack>
     </div>
   );
 }

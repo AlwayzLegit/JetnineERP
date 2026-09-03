@@ -4,7 +4,23 @@ import { useRouter } from 'next/navigation';
 import { Fragment, useEffect, useState, type FormEvent } from 'react';
 import { Plus, Search } from 'lucide-react';
 import { api } from '@/lib/api';
-import { Button, Card, EmptyState, Field, Input, PageHeader, Select } from '@/components/ui';
+import {
+  Alert,
+  BackLink,
+  Button,
+  Card,
+  EmptyState,
+  Field,
+  FormActions,
+  FormGrid,
+  Input,
+  LinkButton,
+  PageHeader,
+  Select,
+  Stack,
+  TableWrap,
+  Toolbar,
+} from '@/components/ui';
 
 interface LocationRow {
   id: string;
@@ -43,6 +59,7 @@ export default function NewTransferPage() {
   const [lines, setLines] = useState<Line[]>([]);
   const [search, setSearch] = useState('');
   const [results, setResults] = useState<VariantRow[]>([]);
+  const [searching, setSearching] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -64,6 +81,7 @@ export default function NewTransferPage() {
       setResults([]);
       return;
     }
+    setSearching(true);
     try {
       const rows = await api<VariantRow[]>(
         `/v1/pos/lookup?q=${encodeURIComponent(search.trim())}&limit=200`,
@@ -71,6 +89,8 @@ export default function NewTransferPage() {
       setResults(rows);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSearching(false);
     }
   }
 
@@ -172,230 +192,247 @@ export default function NewTransferPage() {
 
   return (
     <div>
-      <PageHeader title="New stock transfer" />
-      <form onSubmit={submit} style={{ display: 'grid', gap: 16 }}>
-        <Card>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <Field label="From location">
-              <Select
-                value={fromLocationId}
-                onChange={(e) => setFromLocationId(e.target.value)}
-                style={{ width: '100%' }}
-              >
-                {locations.map((l) => (
-                  <option key={l.id} value={l.id}>
-                    {l.name}
-                  </option>
-                ))}
-              </Select>
-            </Field>
-            <Field label="To location">
-              <Select
-                value={toLocationId}
-                onChange={(e) => setToLocationId(e.target.value)}
-                style={{ width: '100%' }}
-              >
-                {locations.map((l) => (
-                  <option key={l.id} value={l.id}>
-                    {l.name}
-                  </option>
-                ))}
-              </Select>
-            </Field>
-          </div>
-          <Field label="Transfer type" style={{ marginTop: 8 }}>
-            <Select
-              value={transferType}
-              onChange={(e) => setTransferType(e.target.value)}
-              data-testid="transfer-type"
-              style={{ width: '100%' }}
-            >
-              <option value="replenishment">Replenishment</option>
-              <option value="floor_sample">Floor sample</option>
-              <option value="customer">Customer-driven</option>
-              <option value="as_is">As-Is consolidation</option>
-            </Select>
-          </Field>
-          <Field label="Notes" style={{ marginTop: 8 }}>
-            <textarea
-              className="textarea"
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              rows={2}
-              style={{ width: '100%', resize: 'vertical' }}
-            />
-          </Field>
-          <label
-            style={{ display: 'flex', gap: 6, fontSize: 13, marginTop: 8, alignItems: 'center' }}
-          >
-            <input
-              type="checkbox"
-              checked={shipNow}
-              onChange={(e) => setShipNow(e.target.checked)}
-            />
-            Ship immediately (skip the draft step)
-          </label>
-          {shipNow && (
-            <p style={{ fontSize: 12, color: 'var(--text-secondary)', margin: '4px 0 0' }}>
-              Blocked when a printed transfer ticket is required before shipping (the default) —
-              create the draft, print the ticket, then ship.
-            </p>
-          )}
-        </Card>
-
-        <Card title="Add items">
-          <div className="flex flex-wrap gap-2">
-            <Input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault();
-                  void searchVariants();
-                }
-              }}
-              placeholder="Search by name, SKU, or barcode"
-              className="min-w-[200px] flex-1"
-            />
-            <Button type="button" variant="primary" onClick={searchVariants}>
-              <Search size={14} />
-              Search
-            </Button>
-          </div>
-          {results.length > 0 && (
-            <div style={{ marginTop: 8 }}>
-              {results.map((r) => (
-                <button
-                  key={r.variantId}
-                  type="button"
-                  onClick={() => addLine(r)}
-                  style={{
-                    display: 'block',
-                    width: '100%',
-                    textAlign: 'left',
-                    padding: '6px 8px',
-                    background: 'var(--surface)',
-                    border: '1px solid var(--border)',
-                    borderRadius: 'var(--radius-sm)',
-                    marginBottom: 4,
-                    cursor: 'pointer',
-                    fontSize: 13,
-                    fontFamily: 'var(--font)',
-                    color: 'var(--text)',
-                  }}
+      <PageHeader
+        eyebrow={<BackLink href="/transfers">All transfers</BackLink>}
+        title="New stock transfer"
+      />
+      <form onSubmit={submit}>
+        <Stack>
+          <Card title="Details">
+            <FormGrid cols={2}>
+              <Field label="From location" required>
+                <Select value={fromLocationId} onChange={(e) => setFromLocationId(e.target.value)}>
+                  {locations.map((l) => (
+                    <option key={l.id} value={l.id}>
+                      {l.name}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <Field label="To location" required>
+                <Select value={toLocationId} onChange={(e) => setToLocationId(e.target.value)}>
+                  {locations.map((l) => (
+                    <option key={l.id} value={l.id}>
+                      {l.name}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <Field label="Transfer type">
+                <Select
+                  value={transferType}
+                  onChange={(e) => setTransferType(e.target.value)}
+                  data-testid="transfer-type"
                 >
-                  <strong>{r.productName}</strong> {r.variantName && <>— {r.variantName}</>}{' '}
-                  <span style={{ color: 'var(--text-secondary)' }}>{r.sku ?? '—'}</span>
-                </button>
-              ))}
-              {results.length >= 200 && (
-                <p style={{ color: 'var(--text-secondary)', fontSize: 12, marginTop: 4 }}>
-                  Showing first 200 matches — refine your search.
-                </p>
-              )}
-            </div>
-          )}
-        </Card>
+                  <option value="replenishment">Replenishment</option>
+                  <option value="floor_sample">Floor sample</option>
+                  <option value="customer">Customer-driven</option>
+                  <option value="as_is">As-Is consolidation</option>
+                </Select>
+              </Field>
+              <Field label="Notes" className="form-span">
+                <textarea
+                  className="textarea"
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                  rows={2}
+                />
+              </Field>
+              <div className="form-span">
+                <label className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={shipNow}
+                    onChange={(e) => setShipNow(e.target.checked)}
+                  />
+                  Ship immediately (skip the draft step)
+                </label>
+                {shipNow && (
+                  <p className="field-hint">
+                    Blocked when a printed transfer ticket is required before shipping (the default)
+                    — create the draft, print the ticket, then ship.
+                  </p>
+                )}
+              </div>
+            </FormGrid>
+          </Card>
 
-        <Card title="Lines">
-          {lines.length === 0 ? (
-            <EmptyState>
-              No lines yet. Search for an item above to add it to the transfer.
-            </EmptyState>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>Item</th>
-                    <th>Quantity</th>
-                    <th>Ordered (hold)</th>
-                    <th>&nbsp;</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {lines.map((l, i) => (
-                    <Fragment key={l.variantId}>
-                      <tr>
-                        <td>{l.description}</td>
-                        <td>
-                          <Input
-                            type="number"
-                            min={1}
-                            value={l.quantity}
-                            onChange={(e) => setLine(i, { quantity: Number(e.target.value) })}
-                            style={{ width: 80 }}
-                          />
-                        </td>
-                        <td>
-                          <Input
-                            type="number"
-                            min={l.quantity}
-                            placeholder="—"
-                            title="Total wanted (D18): anything above the shipped quantity is held and rolls into a new draft on receipt"
-                            value={l.quantityOrdered}
-                            onChange={(e) => setLine(i, { quantityOrdered: e.target.value })}
-                            style={{ width: 80 }}
-                          />
-                        </td>
-                        <td style={{ textAlign: 'right' }}>
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => void togglePicker(i)}
-                          >
-                            {l.serialIds.length > 0 ? `Pieces (${l.serialIds.length})` : 'Pieces'}
-                          </Button>{' '}
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="danger"
-                            onClick={() => removeLine(i)}
-                          >
-                            Remove
-                          </Button>
-                        </td>
-                      </tr>
-                      {pickerLine === i && (
-                        <tr>
-                          <td colSpan={3} style={{ background: 'var(--surface-2, transparent)' }}>
-                            {pickerSerials.length === 0 ? (
-                              <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-                                No in-stock serial pieces of this item at the origin.
-                              </span>
-                            ) : (
-                              <div className="flex flex-wrap gap-2">
-                                {pickerSerials.map((su) => (
-                                  <label key={su.id} style={{ fontSize: 12.5 }}>
-                                    <input
-                                      type="checkbox"
-                                      checked={l.serialIds.includes(su.id)}
-                                      onChange={() => toggleSerial(i, su.id)}
-                                    />{' '}
-                                    <code>{su.serial}</code>
-                                  </label>
-                                ))}
-                              </div>
-                            )}
+          <Card title="Add items">
+            <Toolbar>
+              <Input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    void searchVariants();
+                  }
+                }}
+                placeholder="Search by name, SKU, or barcode"
+                aria-label="Search items"
+              />
+              <Button
+                type="button"
+                variant="primary"
+                size="sm"
+                onClick={searchVariants}
+                disabled={searching}
+              >
+                <Search size={14} aria-hidden />
+                {searching ? 'Searching…' : 'Search'}
+              </Button>
+            </Toolbar>
+            {results.length > 0 && (
+              <TableWrap>
+                <table className="table table-dense">
+                  <thead>
+                    <tr>
+                      <th>Item</th>
+                      <th>SKU</th>
+                      <th className="actions" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {results.map((r) => {
+                      const staged = lines.some((l) => l.variantId === r.variantId);
+                      return (
+                        <tr key={r.variantId}>
+                          <td>
+                            <strong>{r.productName}</strong>
+                            {r.variantName && <span className="muted"> — {r.variantName}</span>}
+                          </td>
+                          <td>
+                            <code>{r.sku ?? '—'}</code>
+                          </td>
+                          <td className="actions">
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="secondary"
+                              disabled={staged}
+                              onClick={() => addLine(r)}
+                            >
+                              {staged ? 'Added' : 'Add'}
+                            </Button>
                           </td>
                         </tr>
-                      )}
-                    </Fragment>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </Card>
+                      );
+                    })}
+                  </tbody>
+                </table>
+                {results.length >= 200 && (
+                  <div className="table-empty">Showing first 200 matches — refine your search.</div>
+                )}
+              </TableWrap>
+            )}
+          </Card>
 
-        {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
-        <div>
-          <Button type="submit" variant="primary" disabled={saving}>
-            <Plus size={14} />
-            {saving ? 'Saving…' : shipNow ? 'Create + ship' : 'Create draft'}
-          </Button>
-        </div>
+          <Card title="Lines" flush={lines.length > 0}>
+            {lines.length === 0 ? (
+              <EmptyState title="No lines yet">
+                Search for an item above to add it to the transfer.
+              </EmptyState>
+            ) : (
+              <TableWrap>
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Item</th>
+                      <th className="num">Quantity</th>
+                      <th className="num">Ordered (hold)</th>
+                      <th className="actions" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {lines.map((l, i) => (
+                      <Fragment key={l.variantId}>
+                        <tr>
+                          <td>{l.description}</td>
+                          <td className="num">
+                            <Input
+                              type="number"
+                              min={1}
+                              aria-label={`Quantity for ${l.description}`}
+                              value={l.quantity}
+                              onChange={(e) => setLine(i, { quantity: Number(e.target.value) })}
+                              className="w-20"
+                            />
+                          </td>
+                          <td className="num">
+                            <Input
+                              type="number"
+                              min={l.quantity}
+                              placeholder="—"
+                              aria-label={`Ordered quantity for ${l.description}`}
+                              title="Total wanted (D18): anything above the shipped quantity is held and rolls into a new draft on receipt"
+                              value={l.quantityOrdered}
+                              onChange={(e) => setLine(i, { quantityOrdered: e.target.value })}
+                              className="w-20"
+                            />
+                          </td>
+                          <td className="actions">
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="ghost"
+                              aria-expanded={pickerLine === i}
+                              onClick={() => void togglePicker(i)}
+                            >
+                              {l.serialIds.length > 0 ? `Pieces (${l.serialIds.length})` : 'Pieces'}
+                            </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="danger"
+                              onClick={() => removeLine(i)}
+                            >
+                              Remove
+                            </Button>
+                          </td>
+                        </tr>
+                        {pickerLine === i && (
+                          <tr>
+                            <td colSpan={4} className="bg-surface-muted">
+                              {pickerSerials.length === 0 ? (
+                                <span className="muted">
+                                  No in-stock serial pieces of this item at the origin.
+                                </span>
+                              ) : (
+                                <div className="flex flex-wrap gap-2">
+                                  {pickerSerials.map((su) => (
+                                    <label key={su.id} className="flex items-center gap-1.5">
+                                      <input
+                                        type="checkbox"
+                                        checked={l.serialIds.includes(su.id)}
+                                        onChange={() => toggleSerial(i, su.id)}
+                                      />
+                                      <code>{su.serial}</code>
+                                    </label>
+                                  ))}
+                                </div>
+                              )}
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
+                    ))}
+                  </tbody>
+                </table>
+              </TableWrap>
+            )}
+          </Card>
+
+          {error && <Alert tone="error">{error}</Alert>}
+          <FormActions>
+            <LinkButton href="/transfers" variant="secondary">
+              Cancel
+            </LinkButton>
+            <Button type="submit" variant="primary" disabled={saving}>
+              <Plus size={14} aria-hidden />
+              {saving ? 'Saving…' : shipNow ? 'Create + ship' : 'Create draft'}
+            </Button>
+          </FormActions>
+        </Stack>
       </form>
     </div>
   );

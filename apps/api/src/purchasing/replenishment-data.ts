@@ -52,6 +52,7 @@ export interface ReplenishmentCandidateMeta {
   sku: string | null;
   vendorSku: string | null;
   costCents: number | null;
+  categoryName: string | null;
 }
 
 /**
@@ -109,9 +110,11 @@ export async function buildReplenishmentInputs(
       vendorSku: schema.productVariants.vendorSku,
       costCents: schema.productVariants.costCents,
       capacityUnits: schema.productVariants.capacityUnits,
+      categoryName: schema.categories.name,
     })
     .from(schema.productVariants)
     .innerJoin(schema.products, eq(schema.products.id, schema.productVariants.productId))
+    .leftJoin(schema.categories, eq(schema.categories.id, schema.products.categoryId))
     .where(
       and(
         biz(schema.productVariants),
@@ -134,6 +137,7 @@ export async function buildReplenishmentInputs(
         sku: c.sku,
         vendorSku: c.vendorSku,
         costCents: c.costCents,
+        categoryName: c.categoryName,
       },
     ]),
   );
@@ -424,6 +428,15 @@ export function parseVendorReplenishment(raw: unknown): VendorReplenishmentSetti
           }))
       : undefined,
     defaultRequestedDate: r.defaultRequestedDate === 'today' ? 'today' : 'vendor_lead_days',
+    firstAverageUnitsPeriodWeeks: asInt(r.firstAverageUnitsPeriodWeeks, 4),
+    secondAverageUnitsPeriodWeeks: asInt(r.secondAverageUnitsPeriodWeeks, 12),
+    sortCriteria:
+      r.sortCriteria === 'product' ||
+      r.sortCriteria === 'category' ||
+      r.sortCriteria === 'group' ||
+      r.sortCriteria === 'vendor_model'
+        ? r.sortCriteria
+        : 'vendor_model',
   };
 }
 

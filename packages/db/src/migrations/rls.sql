@@ -165,7 +165,8 @@ DECLARE
     'membership_permission_overrides',
     'report_dictionaries',
     'report_definitions',
-    'report_archives'
+    'report_archives',
+    'vendor_po_cutting_dates'
   ];
 BEGIN
   FOREACH t IN ARRAY tenant_tables LOOP

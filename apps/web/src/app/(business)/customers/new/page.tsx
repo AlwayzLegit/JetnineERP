@@ -3,7 +3,17 @@
 import { useRouter } from 'next/navigation';
 import { UserPlus } from 'lucide-react';
 import { useState, type FormEvent } from 'react';
-import { Button, Card, Field, Input, PageHeader } from '@/components/ui';
+import {
+  Alert,
+  BackLink,
+  Button,
+  Card,
+  Field,
+  FormActions,
+  FormGrid,
+  Input,
+  PageHeader,
+} from '@/components/ui';
 import { api } from '@/lib/api';
 
 export default function NewCustomerPage() {
@@ -37,49 +47,49 @@ export default function NewCustomerPage() {
 
   return (
     <div>
-      <PageHeader title="New customer" />
-      <form onSubmit={submit} style={{ display: 'grid', gap: 16, maxWidth: 560 }}>
-        <Card>
-          <p style={{ color: 'var(--text-secondary)', fontSize: 12, margin: '0 0 12px' }}>
-            At least one of name, email, or phone is required.
-          </p>
-          <div style={{ display: 'grid', gap: 8 }}>
-            <div className="grid gap-2 sm:grid-cols-2">
-              <Field label="First name">
-                <Input name="firstName" style={{ width: '100%' }} />
-              </Field>
-              <Field label="Last name">
-                <Input name="lastName" style={{ width: '100%' }} />
-              </Field>
-            </div>
+      <PageHeader
+        eyebrow={<BackLink href="/customers">All customers</BackLink>}
+        title="New customer"
+      />
+      <Card
+        title="Details"
+        description="At least one of name, email, or phone is required."
+        className="form-narrow"
+      >
+        <form onSubmit={submit}>
+          <FormGrid cols={2}>
+            <Field label="First name">
+              <Input name="firstName" autoComplete="off" />
+            </Field>
+            <Field label="Last name">
+              <Input name="lastName" autoComplete="off" />
+            </Field>
             <Field label="Email">
-              <Input name="email" type="email" style={{ width: '100%' }} />
+              <Input name="email" type="email" autoComplete="off" />
             </Field>
             <Field label="Phone">
-              <Input name="phone" style={{ width: '100%' }} />
+              <Input name="phone" type="tel" autoComplete="off" />
             </Field>
-            <Field label="Notes">
-              <textarea
-                name="notes"
-                rows={3}
-                className="textarea"
-                style={{ width: '100%', resize: 'vertical' }}
-              />
+            <Field label="Notes" className="form-span">
+              <textarea name="notes" rows={3} className="textarea" />
             </Field>
-          </div>
-        </Card>
-
-        {error && <p style={{ color: 'var(--danger)', margin: 0 }}>{error}</p>}
-        <div className="flex flex-wrap gap-2">
-          <Button type="submit" variant="primary" disabled={saving}>
-            <UserPlus size={14} aria-hidden />
-            {saving ? 'Saving…' : 'Create customer'}
-          </Button>
-          <Button type="button" variant="secondary" onClick={() => router.back()}>
-            Cancel
-          </Button>
-        </div>
-      </form>
+            {error && (
+              <Alert tone="error" className="form-span">
+                {error}
+              </Alert>
+            )}
+          </FormGrid>
+          <FormActions>
+            <Button type="button" variant="secondary" onClick={() => router.back()}>
+              Cancel
+            </Button>
+            <Button type="submit" variant="primary" disabled={saving}>
+              <UserPlus size={14} aria-hidden />
+              {saving ? 'Saving…' : 'Create customer'}
+            </Button>
+          </FormActions>
+        </form>
+      </Card>
     </div>
   );
 }

@@ -3,7 +3,24 @@
 import { Download, RefreshCw } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { Button, Card, Field, Input, LoadingRows, PageHeader, Select } from '@/components/ui';
+import {
+  Alert,
+  Button,
+  Card,
+  Field,
+  Input,
+  LinkButton,
+  LoadingRows,
+  PageHeader,
+  SectionHeading,
+  Select,
+  Stack,
+  StatGrid,
+  StatTile,
+  TableEmpty,
+  TableWrap,
+  Toolbar,
+} from '@/components/ui';
 import { DateRangePicker, useUrlDateRange } from '@/components/date-range-picker';
 import { api } from '@/lib/api';
 import { formatRange } from '@/lib/date-range';
@@ -21,7 +38,6 @@ function CsvButton({ path, filename, size }: { path: string; filename: string; s
       variant="secondary"
       size={size}
       disabled={busy}
-      style={size === 'sm' ? { display: 'inline-flex', marginBottom: 12 } : undefined}
       onClick={async () => {
         setBusy(true);
         try {
@@ -383,881 +399,902 @@ export default function ReportsPage() {
     <div>
       <PageHeader
         title="Reports"
-        actions={<DateRangePicker value={range} onChange={setRange} testid="reports-range" />}
+        actions={
+          <>
+            <LinkButton size="sm" href="/reports/merchandising">
+              Merchandising activity
+            </LinkButton>
+            <LinkButton
+              size="sm"
+              href="/reports/cash-drawer-balancing"
+              data-testid="reports-cash-drawer-link"
+            >
+              Cash drawer balancing
+            </LinkButton>
+            <LinkButton
+              size="sm"
+              href="/reports/written-sales"
+              data-testid="reports-written-sales-link"
+            >
+              Written sales dollars
+            </LinkButton>
+            <DateRangePicker value={range} onChange={setRange} testid="reports-range" />
+          </>
+        }
       />
-      <p style={{ marginTop: -6, marginBottom: 14, fontSize: 13 }}>
-        <a href="/reports/merchandising">Merchandising activity (buyer&apos;s report) →</a>
-      </p>
-      {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
+      <Stack>
+        {error && <Alert tone="error">{error}</Alert>}
 
-      <Card title="Z-report (daily close-out)" data-testid="z-report">
-        <div className="mb-3 flex flex-wrap items-end gap-2">
-          <Field label="Day">
-            <Input
-              type="date"
-              value={zDate}
-              onChange={(e) => {
-                setZDate(e.target.value);
-                void loadZ(e.target.value);
-              }}
-            />
-          </Field>
-          <Button variant="secondary" onClick={() => window.print()}>
-            Print
-          </Button>
-        </div>
-        {z ? (
-          <>
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-              <Stat label="Sales" value={String(z.saleCount)} />
-              <Stat label="Gross" value={<Money cents={z.grossCents} />} />
-              <Stat label="Tax" value={<Money cents={z.taxCents} />} />
-              <Stat label="Refunds" value={<Money cents={z.refundsCents} />} tone="danger" />
-              <Stat label="Net" value={<Money cents={z.netCents} />} strong />
-              <Stat label="Order money" value={<Money cents={z.orderPaymentsCents} />} />
-            </div>
-
-            <h3 style={subhead}>Tenders</h3>
-            <div style={{ overflowX: 'auto' }}>
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>Method</th>
-                    <th className="num">Count</th>
-                    <th className="num">Amount</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {z.tenders.length === 0 && <Empty colSpan={3} />}
-                  {z.tenders.map((t) => (
-                    <tr key={t.method}>
-                      <td>{t.method}</td>
-                      <td className="num">{t.count}</td>
-                      <td className="num">
-                        <Money cents={t.amountCents} />
-                      </td>
-                    </tr>
-                  ))}
-                  {z.refundsCents > 0 && (
-                    <tr style={{ color: 'var(--danger)' }}>
-                      <td>refunds (all tenders)</td>
-                      <td className="num">{z.refundCount}</td>
-                      <td className="num">
-                        <Money cents={-z.refundsCents} />
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-            {z.refundsCents > 0 && (
-              <p className="muted" style={{ fontSize: 12, margin: '6px 0 0' }}>
-                Tender rows are money taken in; refunds aren&apos;t attributed to a specific tender,
-                so the drawer count should be reconciled against the refund line above.
-              </p>
-            )}
-
-            <h3 style={subhead}>Cash drawers</h3>
-            <div style={{ overflowX: 'auto' }}>
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>Opened</th>
-                    <th>Closed</th>
-                    <th className="num">Float</th>
-                    <th className="num">Expected</th>
-                    <th className="num">Counted</th>
-                    <th className="num">Variance</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {z.shifts.length === 0 && <Empty colSpan={6} />}
-                  {z.shifts.map((s) => (
-                    <tr key={s.id}>
-                      <td>{new Date(s.openedAt).toLocaleTimeString()}</td>
-                      <td>{s.closedAt ? new Date(s.closedAt).toLocaleTimeString() : 'open'}</td>
-                      <td className="num">
-                        <Money cents={s.openingFloatCents} />
-                      </td>
-                      <td className="num">
-                        {s.expectedCashCents != null ? <Money cents={s.expectedCashCents} /> : '—'}
-                      </td>
-                      <td className="num">
-                        {s.countedCashCents != null ? <Money cents={s.countedCashCents} /> : '—'}
-                      </td>
-                      <td
-                        className="num"
-                        style={{
-                          color:
-                            s.varianceCents != null && s.varianceCents !== 0
-                              ? 'var(--danger)'
-                              : undefined,
-                        }}
-                      >
-                        {s.varianceCents != null ? <Money cents={s.varianceCents} /> : '—'}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </>
-        ) : (
-          <LoadingRows />
-        )}
-      </Card>
-
-      <Card title="Sales summary — written vs delivered" data-testid="sales-summary">
-        <div className="mb-3 flex flex-wrap items-end gap-2">
-          <Field label="Basis">
-            <Select
-              value={summaryBasis}
-              onChange={(e) => {
-                const b = e.target.value as 'written' | 'delivered';
-                setSummaryBasis(b);
-                void loadSummary(b, summaryGroupBy);
-              }}
-            >
-              <option value="written">Written (as sold)</option>
-              <option value="delivered">Delivered (as fulfilled)</option>
-            </Select>
-          </Field>
-          <Field label="Group by">
-            <Select
-              value={summaryGroupBy}
-              onChange={(e) => {
-                const g = e.target.value as 'day' | 'location' | 'salesperson';
-                setSummaryGroupBy(g);
-                void loadSummary(summaryBasis, g);
-              }}
-            >
-              <option value="day">Day</option>
-              <option value="location">Location</option>
-              <option value="salesperson">Salesperson</option>
-            </Select>
-          </Field>
-          <Button variant="secondary" onClick={() => void loadSummary()}>
-            <RefreshCw size={14} aria-hidden />
-            Run
-          </Button>
-          <CsvButton
-            path={`/v1/reports/sales/summary?basis=${summaryBasis}&groupBy=${summaryGroupBy}&start=${range.start}&end=${range.end}&format=csv`}
-            filename={`sales-summary-${summaryBasis}-${range.start}-to-${range.end}.csv`}
-            size="sm"
-          />
-        </div>
-        {summary ? (
-          <>
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-              <Stat label="Documents" value={String(summary.totals.documentCount)} />
-              <Stat label="Merchandise" value={<Money cents={summary.totals.merchandiseCents} />} />
-              <Stat
-                label="Avg / document"
-                value={<Money cents={summary.totals.averageMerchandiseCents} />}
+        <Card title="Z-report (daily close-out)" data-testid="z-report">
+          <Toolbar className="items-end">
+            <Field label="Day">
+              <Input
+                type="date"
+                value={zDate}
+                onChange={(e) => {
+                  setZDate(e.target.value);
+                  void loadZ(e.target.value);
+                }}
               />
-              <Stat label="Total" value={<Money cents={summary.totals.totalCents} />} strong />
-            </div>
-            <div style={{ overflowX: 'auto', marginTop: 12 }}>
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>
-                      {summaryGroupBy === 'day'
-                        ? 'Day'
-                        : summaryGroupBy === 'location'
-                          ? 'Location'
-                          : 'Salesperson'}
-                    </th>
-                    <th className="num">Documents</th>
-                    <th className="num">Merchandise</th>
-                    <th className="num">Discounts</th>
-                    <th className="num">Tax</th>
-                    <th className="num">Total</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {summary.rows.length === 0 && <Empty colSpan={6} />}
-                  {summary.rows.map((r) => (
-                    <tr key={r.key || '(none)'}>
-                      <td>{r.label}</td>
-                      <td className="num">{r.documentCount}</td>
-                      <td className="num">
-                        <Money cents={r.merchandiseCents} />
-                      </td>
-                      <td className="num">
-                        <Money cents={r.discountCents} />
-                      </td>
-                      <td className="num">
-                        <Money cents={r.taxCents} />
-                      </td>
-                      <td className="num">
-                        <Money cents={r.totalCents} />
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </>
-        ) : (
-          <LoadingRows />
-        )}
-      </Card>
+            </Field>
+            <Button size="sm" variant="secondary" onClick={() => window.print()}>
+              Print
+            </Button>
+          </Toolbar>
+          {z ? (
+            <>
+              <StatGrid cols={6}>
+                <StatTile label="Sales" value={String(z.saleCount)} />
+                <StatTile label="Gross" value={<Money cents={z.grossCents} />} />
+                <StatTile label="Tax" value={<Money cents={z.taxCents} />} />
+                <StatTile label="Refunds" value={<Money cents={z.refundsCents} />} tone="danger" />
+                <StatTile label="Net" value={<Money cents={z.netCents} />} tone="brand" />
+                <StatTile label="Order money" value={<Money cents={z.orderPaymentsCents} />} />
+              </StatGrid>
 
-      <Card title="Daily sales">
-        <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
-          <span className="muted" style={{ fontSize: 13, alignSelf: 'flex-end' }}>
-            {formatRange(range)}
-          </span>
-          <Button
-            variant="primary"
-            onClick={() => {
-              void loadDaily();
-              void loadProducts();
-              void loadCategories();
-              void loadFinancial();
-            }}
-            style={{ alignSelf: 'flex-end' }}
+              <SectionHeading as="h3" title="Tenders" />
+              <TableWrap>
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Method</th>
+                      <th className="num">Count</th>
+                      <th className="num">Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {z.tenders.length === 0 && <TableEmpty colSpan={3}>No data.</TableEmpty>}
+                    {z.tenders.map((t) => (
+                      <tr key={t.method}>
+                        <td>{t.method}</td>
+                        <td className="num">{t.count}</td>
+                        <td className="num">
+                          <Money cents={t.amountCents} />
+                        </td>
+                      </tr>
+                    ))}
+                    {z.refundsCents > 0 && (
+                      <tr style={{ color: 'var(--danger)' }}>
+                        <td>refunds (all tenders)</td>
+                        <td className="num">{z.refundCount}</td>
+                        <td className="num">
+                          <Money cents={-z.refundsCents} />
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </TableWrap>
+              {z.refundsCents > 0 && (
+                <p className="field-hint">
+                  Tender rows are money taken in; refunds aren&apos;t attributed to a specific
+                  tender, so the drawer count should be reconciled against the refund line above.
+                </p>
+              )}
+
+              <SectionHeading as="h3" title="Cash drawers" />
+              <TableWrap>
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Opened</th>
+                      <th>Closed</th>
+                      <th className="num">Float</th>
+                      <th className="num">Expected</th>
+                      <th className="num">Counted</th>
+                      <th className="num">Variance</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {z.shifts.length === 0 && <TableEmpty colSpan={6}>No data.</TableEmpty>}
+                    {z.shifts.map((s) => (
+                      <tr key={s.id}>
+                        <td>{new Date(s.openedAt).toLocaleTimeString()}</td>
+                        <td>{s.closedAt ? new Date(s.closedAt).toLocaleTimeString() : 'open'}</td>
+                        <td className="num">
+                          <Money cents={s.openingFloatCents} />
+                        </td>
+                        <td className="num">
+                          {s.expectedCashCents != null ? (
+                            <Money cents={s.expectedCashCents} />
+                          ) : (
+                            '—'
+                          )}
+                        </td>
+                        <td className="num">
+                          {s.countedCashCents != null ? <Money cents={s.countedCashCents} /> : '—'}
+                        </td>
+                        <td
+                          className="num"
+                          style={{
+                            color:
+                              s.varianceCents != null && s.varianceCents !== 0
+                                ? 'var(--danger)'
+                                : undefined,
+                          }}
+                        >
+                          {s.varianceCents != null ? <Money cents={s.varianceCents} /> : '—'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </TableWrap>
+            </>
+          ) : (
+            <LoadingRows />
+          )}
+        </Card>
+
+        <Card title="Sales summary — written vs delivered" data-testid="sales-summary">
+          <Toolbar
+            className="items-end"
+            end={
+              <CsvButton
+                path={`/v1/reports/sales/summary?basis=${summaryBasis}&groupBy=${summaryGroupBy}&start=${range.start}&end=${range.end}&format=csv`}
+                filename={`sales-summary-${summaryBasis}-${range.start}-to-${range.end}.csv`}
+                size="sm"
+              />
+            }
           >
-            <RefreshCw size={14} aria-hidden />
-            Refresh
-          </Button>
-          <div style={{ alignSelf: 'flex-end' }}>
+            <Field label="Basis">
+              <Select
+                value={summaryBasis}
+                onChange={(e) => {
+                  const b = e.target.value as 'written' | 'delivered';
+                  setSummaryBasis(b);
+                  void loadSummary(b, summaryGroupBy);
+                }}
+              >
+                <option value="written">Written (as sold)</option>
+                <option value="delivered">Delivered (as fulfilled)</option>
+              </Select>
+            </Field>
+            <Field label="Group by">
+              <Select
+                value={summaryGroupBy}
+                onChange={(e) => {
+                  const g = e.target.value as 'day' | 'location' | 'salesperson';
+                  setSummaryGroupBy(g);
+                  void loadSummary(summaryBasis, g);
+                }}
+              >
+                <option value="day">Day</option>
+                <option value="location">Location</option>
+                <option value="salesperson">Salesperson</option>
+              </Select>
+            </Field>
+            <Button size="sm" variant="secondary" onClick={() => void loadSummary()}>
+              <RefreshCw size={13} aria-hidden />
+              Run
+            </Button>
+          </Toolbar>
+          {summary ? (
+            <Stack>
+              <StatGrid cols={4}>
+                <StatTile label="Documents" value={String(summary.totals.documentCount)} />
+                <StatTile
+                  label="Merchandise"
+                  value={<Money cents={summary.totals.merchandiseCents} />}
+                />
+                <StatTile
+                  label="Avg / document"
+                  value={<Money cents={summary.totals.averageMerchandiseCents} />}
+                />
+                <StatTile
+                  label="Total"
+                  value={<Money cents={summary.totals.totalCents} />}
+                  tone="brand"
+                />
+              </StatGrid>
+              <TableWrap>
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>
+                        {summaryGroupBy === 'day'
+                          ? 'Day'
+                          : summaryGroupBy === 'location'
+                            ? 'Location'
+                            : 'Salesperson'}
+                      </th>
+                      <th className="num">Documents</th>
+                      <th className="num">Merchandise</th>
+                      <th className="num">Discounts</th>
+                      <th className="num">Tax</th>
+                      <th className="num">Total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {summary.rows.length === 0 && <TableEmpty colSpan={6}>No data.</TableEmpty>}
+                    {summary.rows.map((r) => (
+                      <tr key={r.key || '(none)'}>
+                        <td>{r.label}</td>
+                        <td className="num">{r.documentCount}</td>
+                        <td className="num">
+                          <Money cents={r.merchandiseCents} />
+                        </td>
+                        <td className="num">
+                          <Money cents={r.discountCents} />
+                        </td>
+                        <td className="num">
+                          <Money cents={r.taxCents} />
+                        </td>
+                        <td className="num">
+                          <Money cents={r.totalCents} />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </TableWrap>
+            </Stack>
+          ) : (
+            <LoadingRows />
+          )}
+        </Card>
+
+        <Card title="Daily sales" description={formatRange(range)}>
+          <Toolbar
+            end={
+              <CsvButton
+                size="sm"
+                path={`/v1/reports/sales/daily?start=${range.start}&end=${range.end}&format=csv`}
+                filename={`daily-sales-${range.start}-to-${range.end}.csv`}
+              />
+            }
+          >
+            <Button
+              size="sm"
+              variant="primary"
+              onClick={() => {
+                void loadDaily();
+                void loadProducts();
+                void loadCategories();
+                void loadFinancial();
+              }}
+            >
+              <RefreshCw size={13} aria-hidden />
+              Refresh
+            </Button>
+          </Toolbar>
+
+          {daily ? (
+            <>
+              <SectionHeading as="h3" title="By day" />
+              <TableWrap>
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Day</th>
+                      <th className="num">Sales</th>
+                      <th className="num">Subtotal</th>
+                      <th className="num">Discount</th>
+                      <th className="num">Tax</th>
+                      <th className="num">Total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {daily.byDay.length === 0 && <TableEmpty colSpan={6}>No data.</TableEmpty>}
+                    {daily.byDay.map((d) => (
+                      <tr key={d.day}>
+                        <td>{d.day}</td>
+                        <td className="num">{d.saleCount}</td>
+                        <td className="num">
+                          <Money cents={d.subtotalCents} />
+                        </td>
+                        <td className="num">
+                          <Money cents={d.discountCents} />
+                        </td>
+                        <td className="num">
+                          <Money cents={d.taxCents} />
+                        </td>
+                        <td className="num">
+                          <strong>
+                            <Money cents={d.totalCents} />
+                          </strong>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </TableWrap>
+
+              <SectionHeading as="h3" title="By associate" />
+              <TableWrap>
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Associate</th>
+                      <th className="num">Sales</th>
+                      <th className="num">Total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {daily.byAssociate.length === 0 && (
+                      <TableEmpty colSpan={3}>No data.</TableEmpty>
+                    )}
+                    {daily.byAssociate.map((a) => (
+                      <tr key={a.associateUserId ?? 'none'}>
+                        <td>{a.associateEmail ?? '(deleted)'}</td>
+                        <td className="num">{a.saleCount}</td>
+                        <td className="num">
+                          <Money cents={a.totalCents} />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </TableWrap>
+
+              <SectionHeading as="h3" title="By payment method" />
+              <TableWrap>
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Method</th>
+                      <th className="num">Count</th>
+                      <th className="num">Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {daily.byPaymentMethod.length === 0 && (
+                      <TableEmpty colSpan={3}>No data.</TableEmpty>
+                    )}
+                    {daily.byPaymentMethod.map((p) => (
+                      <tr key={p.method}>
+                        <td>{p.method}</td>
+                        <td className="num">{p.count}</td>
+                        <td className="num">
+                          <Money cents={p.amountCents} />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </TableWrap>
+            </>
+          ) : (
+            <LoadingRows />
+          )}
+        </Card>
+
+        <Card
+          title="Sales by product"
+          actions={
             <CsvButton
-              path={`/v1/reports/sales/daily?start=${range.start}&end=${range.end}&format=csv`}
-              filename={`daily-sales-${range.start}-to-${range.end}.csv`}
+              size="sm"
+              path={`/v1/reports/sales/by-product?start=${range.start}&end=${range.end}&format=csv`}
+              filename={`sales-by-product-${range.start}-to-${range.end}.csv`}
             />
-          </div>
-        </div>
-
-        {daily ? (
-          <>
-            <h3 style={subhead}>By day</h3>
-            <div style={{ overflowX: 'auto' }}>
+          }
+        >
+          {products ? (
+            <TableWrap>
               <table className="table">
                 <thead>
                   <tr>
-                    <th>Day</th>
-                    <th className="num">Sales</th>
-                    <th className="num">Subtotal</th>
-                    <th className="num">Discount</th>
-                    <th className="num">Tax</th>
-                    <th className="num">Total</th>
+                    <th>Product</th>
+                    <th>Variant</th>
+                    <th>SKU</th>
+                    <th className="num">Qty</th>
+                    <th className="num">Revenue</th>
+                    {products[0]?.marginCents != null && <th className="num">Margin</th>}
                   </tr>
                 </thead>
                 <tbody>
-                  {daily.byDay.length === 0 && <Empty colSpan={6} />}
-                  {daily.byDay.map((d) => (
-                    <tr key={d.day}>
-                      <td>{d.day}</td>
-                      <td className="num">{d.saleCount}</td>
-                      <td className="num">
-                        <Money cents={d.subtotalCents} />
+                  {products.length === 0 && <TableEmpty colSpan={6}>No data.</TableEmpty>}
+                  {products.map((p) => (
+                    <tr key={p.variantId}>
+                      <td>{p.productName}</td>
+                      <td>{p.variantName ?? '—'}</td>
+                      <td>
+                        <code>{p.sku ?? '—'}</code>
                       </td>
+                      <td className="num">{p.quantity}</td>
                       <td className="num">
-                        <Money cents={d.discountCents} />
+                        <Money cents={p.revenueCents} />
                       </td>
-                      <td className="num">
-                        <Money cents={d.taxCents} />
+                      {p.marginCents != null && (
+                        <td className="num">
+                          <Money cents={p.marginCents ?? 0} />
+                        </td>
+                      )}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </TableWrap>
+          ) : (
+            <LoadingRows />
+          )}
+        </Card>
+
+        <Card title="Inventory on hand">
+          <Toolbar
+            className="items-end"
+            end={
+              <CsvButton
+                size="sm"
+                path={`/v1/reports/inventory/on-hand${lowStock ? `?lowStock=${encodeURIComponent(lowStock)}&format=csv` : '?format=csv'}`}
+                filename="inventory-on-hand.csv"
+              />
+            }
+          >
+            <Field label="Show items with available ≤">
+              <Input
+                type="number"
+                min={0}
+                value={lowStock}
+                onChange={(e) => setLowStock(e.target.value)}
+                placeholder="(blank = all)"
+              />
+            </Field>
+            <Button size="sm" variant="primary" onClick={loadInv}>
+              <RefreshCw size={13} aria-hidden />
+              Refresh
+            </Button>
+          </Toolbar>
+          {inv ? (
+            <TableWrap>
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Product</th>
+                    <th>SKU</th>
+                    <th className="num">On hand</th>
+                    <th className="num">Reserved</th>
+                    <th className="num">Available</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {inv.length === 0 && <TableEmpty colSpan={5}>No data.</TableEmpty>}
+                  {inv.map((r) => (
+                    <tr key={r.variantId}>
+                      <td>
+                        {r.productName}
+                        {r.variantName && <span className="muted"> — {r.variantName}</span>}
                       </td>
+                      <td>
+                        <code>{r.sku ?? '—'}</code>
+                      </td>
+                      <td className="num">{r.onHand}</td>
+                      <td className="num">{r.reserved}</td>
                       <td className="num">
-                        <strong>
-                          <Money cents={d.totalCents} />
-                        </strong>
+                        <strong>{r.available}</strong>
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
-            </div>
+            </TableWrap>
+          ) : (
+            <LoadingRows />
+          )}
+        </Card>
 
-            <h3 style={subhead}>By associate</h3>
-            <div style={{ overflowX: 'auto' }}>
+        <Card
+          title="Sales by category"
+          actions={
+            <CsvButton
+              size="sm"
+              path={`/v1/reports/sales/by-category?start=${range.start}&end=${range.end}&format=csv`}
+              filename={`sales-by-category-${range.start}-to-${range.end}.csv`}
+            />
+          }
+        >
+          {categories ? (
+            <TableWrap>
               <table className="table">
                 <thead>
                   <tr>
-                    <th>Associate</th>
-                    <th className="num">Sales</th>
-                    <th className="num">Total</th>
+                    <th>Category</th>
+                    <th className="num">Qty</th>
+                    <th className="num">Revenue</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {daily.byAssociate.length === 0 && <Empty colSpan={3} />}
-                  {daily.byAssociate.map((a) => (
-                    <tr key={a.associateUserId ?? 'none'}>
-                      <td>{a.associateEmail ?? '(deleted)'}</td>
-                      <td className="num">{a.saleCount}</td>
+                  {categories.length === 0 && <TableEmpty colSpan={3}>No data.</TableEmpty>}
+                  {categories.map((c) => (
+                    <tr key={c.categoryId ?? 'none'}>
+                      <td>{c.categoryName}</td>
+                      <td className="num">{c.quantity}</td>
                       <td className="num">
-                        <Money cents={a.totalCents} />
+                        <Money cents={c.revenueCents} />
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
-            </div>
+            </TableWrap>
+          ) : (
+            <LoadingRows />
+          )}
+        </Card>
 
-            <h3 style={subhead}>By payment method</h3>
-            <div style={{ overflowX: 'auto' }}>
+        {!financialDenied && giftLiability && (
+          <Card
+            title="Gift card liability"
+            data-testid="gift-card-liability"
+            actions={
+              <CsvButton
+                path="/v1/reports/gift-cards/liability?format=csv"
+                filename="gift-card-liability.csv"
+                size="sm"
+              />
+            }
+          >
+            <Stack>
+              <StatGrid cols={4}>
+                <StatTile label="Outstanding cards" value={String(giftLiability.cardCount)} />
+                <StatTile
+                  label="Total liability"
+                  value={<Money cents={giftLiability.outstandingCents} />}
+                  tone="brand"
+                />
+              </StatGrid>
+              <TableWrap>
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Code</th>
+                      <th>Customer</th>
+                      <th>Issued</th>
+                      <th>Expires</th>
+                      <th className="num">Initial</th>
+                      <th className="num">Remaining</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {giftLiability.rows.length === 0 && (
+                      <TableEmpty colSpan={6}>No data.</TableEmpty>
+                    )}
+                    {giftLiability.rows.map((r) => (
+                      <tr key={r.code}>
+                        <td>
+                          <code>{r.code}</code>
+                        </td>
+                        <td>{r.customerName ?? '—'}</td>
+                        <td>{r.issuedAt}</td>
+                        <td>{r.expiresAt ?? '—'}</td>
+                        <td className="num">
+                          <Money cents={r.initialCents} />
+                        </td>
+                        <td className="num">
+                          <Money cents={r.remainingCents} />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </TableWrap>
+            </Stack>
+          </Card>
+        )}
+
+        <Card title="Receipts by payment type" data-testid="receipts-report">
+          <Toolbar
+            end={
+              <CsvButton
+                path={`/v1/reports/receipts?start=${range.start}&end=${range.end}&format=csv`}
+                filename={`receipts-${range.start}-to-${range.end}.csv`}
+                size="sm"
+              />
+            }
+          >
+            <Button size="sm" variant="secondary" onClick={() => void loadReceipts()}>
+              <RefreshCw size={13} aria-hidden />
+              Run for {formatRange(range)}
+            </Button>
+          </Toolbar>
+          {!receipts ? (
+            <LoadingRows />
+          ) : (
+            <TableWrap>
               <table className="table">
                 <thead>
                   <tr>
                     <th>Method</th>
+                    <th>Location</th>
                     <th className="num">Count</th>
                     <th className="num">Amount</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {daily.byPaymentMethod.length === 0 && <Empty colSpan={3} />}
-                  {daily.byPaymentMethod.map((p) => (
-                    <tr key={p.method}>
-                      <td>{p.method}</td>
-                      <td className="num">{p.count}</td>
+                  {receipts.rows.length === 0 && <TableEmpty colSpan={4}>No data.</TableEmpty>}
+                  {receipts.rows.map((r, i) => (
+                    <tr key={`${r.method}-${r.locationId ?? 'x'}-${i}`}>
+                      <td>{r.method}</td>
+                      <td>{r.locationName ?? '—'}</td>
+                      <td className="num">{r.count}</td>
                       <td className="num">
-                        <Money cents={p.amountCents} />
+                        <Money cents={r.amountCents} />
                       </td>
                     </tr>
                   ))}
-                </tbody>
-              </table>
-            </div>
-          </>
-        ) : (
-          <LoadingRows />
-        )}
-      </Card>
-
-      <Card title="Sales by product">
-        <CsvButton
-          size="sm"
-          path={`/v1/reports/sales/by-product?start=${range.start}&end=${range.end}&format=csv`}
-          filename={`sales-by-product-${range.start}-to-${range.end}.csv`}
-        />
-        {products ? (
-          <div style={{ overflowX: 'auto' }}>
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Product</th>
-                  <th>Variant</th>
-                  <th>SKU</th>
-                  <th className="num">Qty</th>
-                  <th className="num">Revenue</th>
-                  {products[0]?.marginCents != null && <th className="num">Margin</th>}
-                </tr>
-              </thead>
-              <tbody>
-                {products.length === 0 && <Empty colSpan={6} />}
-                {products.map((p) => (
-                  <tr key={p.variantId}>
-                    <td>{p.productName}</td>
-                    <td>{p.variantName ?? '—'}</td>
-                    <td>
-                      <code>{p.sku ?? '—'}</code>
-                    </td>
-                    <td className="num">{p.quantity}</td>
-                    <td className="num">
-                      <Money cents={p.revenueCents} />
-                    </td>
-                    {p.marginCents != null && (
+                  {receipts.rows.length > 0 && (
+                    <tr className="font-semibold">
+                      <td>Total</td>
+                      <td />
+                      <td className="num">{receipts.totals.count}</td>
                       <td className="num">
-                        <Money cents={p.marginCents ?? 0} />
-                      </td>
-                    )}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ) : (
-          <LoadingRows />
-        )}
-      </Card>
-
-      <Card title="Inventory on hand">
-        <div className="mb-3 flex flex-wrap items-end gap-2">
-          <Field label="Show items with available ≤">
-            <Input
-              type="number"
-              min={0}
-              value={lowStock}
-              onChange={(e) => setLowStock(e.target.value)}
-              placeholder="(blank = all)"
-            />
-          </Field>
-          <Button variant="primary" onClick={loadInv}>
-            <RefreshCw size={14} aria-hidden />
-            Refresh
-          </Button>
-          <CsvButton
-            path={`/v1/reports/inventory/on-hand${lowStock ? `?lowStock=${encodeURIComponent(lowStock)}&format=csv` : '?format=csv'}`}
-            filename="inventory-on-hand.csv"
-          />
-        </div>
-        {inv ? (
-          <div style={{ overflowX: 'auto' }}>
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Product</th>
-                  <th>SKU</th>
-                  <th className="num">On hand</th>
-                  <th className="num">Reserved</th>
-                  <th className="num">Available</th>
-                </tr>
-              </thead>
-              <tbody>
-                {inv.length === 0 && <Empty colSpan={5} />}
-                {inv.map((r) => (
-                  <tr key={r.variantId}>
-                    <td>
-                      {r.productName}
-                      {r.variantName && (
-                        <span style={{ color: 'var(--text-secondary)' }}> — {r.variantName}</span>
-                      )}
-                    </td>
-                    <td>
-                      <code>{r.sku ?? '—'}</code>
-                    </td>
-                    <td className="num">{r.onHand}</td>
-                    <td className="num">{r.reserved}</td>
-                    <td className="num">
-                      <strong>{r.available}</strong>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ) : (
-          <LoadingRows />
-        )}
-      </Card>
-
-      <Card title="Sales by category">
-        <CsvButton
-          size="sm"
-          path={`/v1/reports/sales/by-category?start=${range.start}&end=${range.end}&format=csv`}
-          filename={`sales-by-category-${range.start}-to-${range.end}.csv`}
-        />
-        {categories ? (
-          <div style={{ overflowX: 'auto' }}>
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Category</th>
-                  <th className="num">Qty</th>
-                  <th className="num">Revenue</th>
-                </tr>
-              </thead>
-              <tbody>
-                {categories.length === 0 && <Empty colSpan={3} />}
-                {categories.map((c) => (
-                  <tr key={c.categoryId ?? 'none'}>
-                    <td>{c.categoryName}</td>
-                    <td className="num">{c.quantity}</td>
-                    <td className="num">
-                      <Money cents={c.revenueCents} />
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ) : (
-          <LoadingRows />
-        )}
-      </Card>
-
-      {!financialDenied && giftLiability && (
-        <Card title="Gift card liability" data-testid="gift-card-liability">
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-            <Stat label="Outstanding cards" value={String(giftLiability.cardCount)} />
-            <Stat
-              label="Total liability"
-              value={<Money cents={giftLiability.outstandingCents} />}
-              strong
-            />
-          </div>
-          <div style={{ overflowX: 'auto', marginTop: 12 }}>
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Code</th>
-                  <th>Customer</th>
-                  <th>Issued</th>
-                  <th>Expires</th>
-                  <th className="num">Initial</th>
-                  <th className="num">Remaining</th>
-                </tr>
-              </thead>
-              <tbody>
-                {giftLiability.rows.length === 0 && <Empty colSpan={6} />}
-                {giftLiability.rows.map((r) => (
-                  <tr key={r.code}>
-                    <td>
-                      <code>{r.code}</code>
-                    </td>
-                    <td>{r.customerName ?? '—'}</td>
-                    <td>{r.issuedAt}</td>
-                    <td>{r.expiresAt ?? '—'}</td>
-                    <td className="num">
-                      <Money cents={r.initialCents} />
-                    </td>
-                    <td className="num">
-                      <Money cents={r.remainingCents} />
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <CsvButton
-            path="/v1/reports/gift-cards/liability?format=csv"
-            filename="gift-card-liability.csv"
-            size="sm"
-          />
-        </Card>
-      )}
-
-      <Card title="Receipts by payment type" data-testid="receipts-report">
-        <div className="mb-3 flex flex-wrap items-end gap-2">
-          <Button variant="secondary" onClick={() => void loadReceipts()}>
-            <RefreshCw size={14} aria-hidden />
-            Run for {formatRange(range)}
-          </Button>
-          <CsvButton
-            path={`/v1/reports/receipts?start=${range.start}&end=${range.end}&format=csv`}
-            filename={`receipts-${range.start}-to-${range.end}.csv`}
-            size="sm"
-          />
-        </div>
-        {!receipts ? (
-          <LoadingRows />
-        ) : (
-          <div style={{ overflowX: 'auto' }}>
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Method</th>
-                  <th>Location</th>
-                  <th className="num">Count</th>
-                  <th className="num">Amount</th>
-                </tr>
-              </thead>
-              <tbody>
-                {receipts.rows.length === 0 && <Empty colSpan={4} />}
-                {receipts.rows.map((r, i) => (
-                  <tr key={`${r.method}-${r.locationId ?? 'x'}-${i}`}>
-                    <td>{r.method}</td>
-                    <td>{r.locationName ?? '—'}</td>
-                    <td className="num">{r.count}</td>
-                    <td className="num">
-                      <Money cents={r.amountCents} />
-                    </td>
-                  </tr>
-                ))}
-                {receipts.rows.length > 0 && (
-                  <tr style={{ fontWeight: 600 }}>
-                    <td>Total</td>
-                    <td />
-                    <td className="num">{receipts.totals.count}</td>
-                    <td className="num">
-                      <Money cents={receipts.totals.amountCents} />
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </Card>
-
-      <Card title="Inventory adjustments" data-testid="inventory-adjustments">
-        <div className="mb-3 flex flex-wrap items-end gap-2">
-          <Button variant="secondary" onClick={() => void loadAdjustments()}>
-            <RefreshCw size={14} aria-hidden />
-            Run for {formatRange(range)}
-          </Button>
-          <CsvButton
-            path={`/v1/reports/inventory-adjustments?start=${range.start}&end=${range.end}&format=csv`}
-            filename={`inventory-adjustments-${range.start}-to-${range.end}.csv`}
-            size="sm"
-          />
-          {adjustments?.truncated && (
-            <span style={{ fontSize: 12, color: 'var(--warning, #b45309)' }}>
-              Showing the most recent 1000 movements — narrow the window for full coverage.
-            </span>
-          )}
-        </div>
-        {!adjustments ? (
-          <LoadingRows />
-        ) : (
-          <>
-            <div style={{ overflowX: 'auto' }}>
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>Reason</th>
-                    <th className="num">Movements</th>
-                    <th className="num">Units in</th>
-                    <th className="num">Units out</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {adjustments.byReason.length === 0 && <Empty colSpan={4} />}
-                  {adjustments.byReason.map((r) => (
-                    <tr key={r.reason}>
-                      <td>{r.reason}</td>
-                      <td className="num">{r.movements}</td>
-                      <td className="num">{r.totalIn}</td>
-                      <td className="num">{r.totalOut}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </>
-        )}
-      </Card>
-
-      <Card title="Delivery date changes (30 days)" data-testid="delivery-date-changes">
-        {!dateChanges ? (
-          <LoadingRows />
-        ) : (
-          <div style={{ overflowX: 'auto' }}>
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>When</th>
-                  <th>Order</th>
-                  <th>Change</th>
-                  <th>By</th>
-                </tr>
-              </thead>
-              <tbody>
-                {dateChanges.length === 0 && <Empty colSpan={4} />}
-                {dateChanges.map((r, i) => (
-                  <tr key={`${r.deliveryId ?? 'x'}-${i}`}>
-                    <td>{new Date(r.at).toLocaleString()}</td>
-                    <td>{r.orderNumber ?? '—'}</td>
-                    <td>
-                      {r.action === 'delivery.cancel'
-                        ? 'Cancelled'
-                        : r.fromDate && r.toDate
-                          ? `${r.fromDate} → ${r.toDate}`
-                          : (r.toDate ?? r.fromDate ?? r.action)}
-                    </td>
-                    <td>{r.actorEmail ?? '—'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </Card>
-
-      {!financialDenied && (
-        <Card title="Tax summary">
-          <CsvButton
-            size="sm"
-            path={`/v1/reports/tax/summary?start=${range.start}&end=${range.end}&format=csv`}
-            filename={`tax-summary-${range.start}-to-${range.end}.csv`}
-          />
-          {taxSummary ? (
-            <div style={{ overflowX: 'auto' }}>
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>Tax class</th>
-                    <th className="num">Lines</th>
-                    <th className="num">Net sales</th>
-                    <th className="num">Tax collected</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {taxSummary.rows.length === 0 && <Empty colSpan={4} />}
-                  {taxSummary.rows.map((r) => (
-                    <tr key={r.taxClassId ?? 'default'}>
-                      <td>{r.taxClassName}</td>
-                      <td className="num">{r.lineCount}</td>
-                      <td className="num">
-                        <Money cents={r.netSalesCents} />
-                      </td>
-                      <td className="num">
-                        <Money cents={r.taxCents} />
-                      </td>
-                    </tr>
-                  ))}
-                  {taxSummary.rows.length > 0 && (
-                    <tr>
-                      <td colSpan={3}>
-                        <strong>Total tax</strong>
-                      </td>
-                      <td className="num">
-                        <strong>
-                          <Money cents={taxSummary.totalTaxCents} />
-                        </strong>
+                        <Money cents={receipts.totals.amountCents} />
                       </td>
                     </tr>
                   )}
                 </tbody>
               </table>
-              {taxSummary.byLocation && taxSummary.byLocation.length > 0 && (
-                <>
-                  <h3 style={{ fontSize: 13, margin: '14px 0 6px' }}>
-                    By location (completed documents)
-                  </h3>
+            </TableWrap>
+          )}
+        </Card>
+
+        <Card title="Inventory adjustments" data-testid="inventory-adjustments">
+          <Toolbar
+            end={
+              <CsvButton
+                path={`/v1/reports/inventory-adjustments?start=${range.start}&end=${range.end}&format=csv`}
+                filename={`inventory-adjustments-${range.start}-to-${range.end}.csv`}
+                size="sm"
+              />
+            }
+          >
+            <Button size="sm" variant="secondary" onClick={() => void loadAdjustments()}>
+              <RefreshCw size={13} aria-hidden />
+              Run for {formatRange(range)}
+            </Button>
+          </Toolbar>
+          {!adjustments ? (
+            <LoadingRows />
+          ) : (
+            <Stack>
+              {adjustments.truncated && (
+                <Alert tone="warning">
+                  Showing the most recent 1000 movements — narrow the window for full coverage.
+                </Alert>
+              )}
+              <TableWrap>
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Reason</th>
+                      <th className="num">Movements</th>
+                      <th className="num">Units in</th>
+                      <th className="num">Units out</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {adjustments.byReason.length === 0 && (
+                      <TableEmpty colSpan={4}>No data.</TableEmpty>
+                    )}
+                    {adjustments.byReason.map((r) => (
+                      <tr key={r.reason}>
+                        <td>{r.reason}</td>
+                        <td className="num">{r.movements}</td>
+                        <td className="num">{r.totalIn}</td>
+                        <td className="num">{r.totalOut}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </TableWrap>
+            </Stack>
+          )}
+        </Card>
+
+        <Card title="Delivery date changes (30 days)" data-testid="delivery-date-changes">
+          {!dateChanges ? (
+            <LoadingRows />
+          ) : (
+            <TableWrap>
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>When</th>
+                    <th>Order</th>
+                    <th>Change</th>
+                    <th>By</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {dateChanges.length === 0 && <TableEmpty colSpan={4}>No data.</TableEmpty>}
+                  {dateChanges.map((r, i) => (
+                    <tr key={`${r.deliveryId ?? 'x'}-${i}`}>
+                      <td>{new Date(r.at).toLocaleString()}</td>
+                      <td>{r.orderNumber ?? '—'}</td>
+                      <td>
+                        {r.action === 'delivery.cancel'
+                          ? 'Cancelled'
+                          : r.fromDate && r.toDate
+                            ? `${r.fromDate} → ${r.toDate}`
+                            : (r.toDate ?? r.fromDate ?? r.action)}
+                      </td>
+                      <td>{r.actorEmail ?? '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </TableWrap>
+          )}
+        </Card>
+
+        {!financialDenied && (
+          <Card
+            title="Tax summary"
+            actions={
+              <CsvButton
+                size="sm"
+                path={`/v1/reports/tax/summary?start=${range.start}&end=${range.end}&format=csv`}
+                filename={`tax-summary-${range.start}-to-${range.end}.csv`}
+              />
+            }
+          >
+            {taxSummary ? (
+              <>
+                <TableWrap>
                   <table className="table">
                     <thead>
                       <tr>
-                        <th>Location</th>
-                        <th className="num">Documents</th>
-                        <th className="num">Total sold</th>
+                        <th>Tax class</th>
+                        <th className="num">Lines</th>
+                        <th className="num">Net sales</th>
                         <th className="num">Tax collected</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {taxSummary.byLocation.map((r) => (
-                        <tr key={r.locationId}>
-                          <td>{r.locationName ?? r.locationId}</td>
-                          <td className="num">{r.documents}</td>
+                      {taxSummary.rows.length === 0 && (
+                        <TableEmpty colSpan={4}>No data.</TableEmpty>
+                      )}
+                      {taxSummary.rows.map((r) => (
+                        <tr key={r.taxClassId ?? 'default'}>
+                          <td>{r.taxClassName}</td>
+                          <td className="num">{r.lineCount}</td>
                           <td className="num">
-                            <Money cents={r.totalCents} />
+                            <Money cents={r.netSalesCents} />
                           </td>
                           <td className="num">
                             <Money cents={r.taxCents} />
                           </td>
                         </tr>
                       ))}
+                      {taxSummary.rows.length > 0 && (
+                        <tr className="font-semibold">
+                          <td colSpan={3}>Total tax</td>
+                          <td className="num">
+                            <Money cents={taxSummary.totalTaxCents} />
+                          </td>
+                        </tr>
+                      )}
                     </tbody>
                   </table>
-                </>
-              )}
-            </div>
-          ) : (
-            <LoadingRows />
-          )}
-        </Card>
-      )}
+                </TableWrap>
+                {taxSummary.byLocation && taxSummary.byLocation.length > 0 && (
+                  <>
+                    <SectionHeading as="h3" title="By location (completed documents)" />
+                    <TableWrap>
+                      <table className="table">
+                        <thead>
+                          <tr>
+                            <th>Location</th>
+                            <th className="num">Documents</th>
+                            <th className="num">Total sold</th>
+                            <th className="num">Tax collected</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {taxSummary.byLocation.map((r) => (
+                            <tr key={r.locationId}>
+                              <td>{r.locationName ?? r.locationId}</td>
+                              <td className="num">{r.documents}</td>
+                              <td className="num">
+                                <Money cents={r.totalCents} />
+                              </td>
+                              <td className="num">
+                                <Money cents={r.taxCents} />
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </TableWrap>
+                  </>
+                )}
+              </>
+            ) : (
+              <LoadingRows />
+            )}
+          </Card>
+        )}
 
-      {!financialDenied && (
-        <Card title="Inventory valuation">
-          <CsvButton
-            size="sm"
-            path="/v1/reports/inventory/valuation?format=csv"
-            filename="inventory-valuation.csv"
-          />
-          {valuation ? (
-            <>
-              <div className="mb-3 grid grid-cols-2 gap-3 sm:max-w-md">
-                <Stat label="At cost" value={<Money cents={valuation.totalCostValueCents} />} />
-                <Stat label="At retail" value={<Money cents={valuation.totalRetailValueCents} />} />
-              </div>
-              <div style={{ overflowX: 'auto' }}>
-                <table className="table">
-                  <thead>
-                    <tr>
-                      <th>Product</th>
-                      <th>SKU</th>
-                      <th>Location</th>
-                      <th className="num">On hand</th>
-                      <th className="num">Unit cost</th>
-                      <th className="num">Cost value</th>
-                      <th className="num">Retail value</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {valuation.rows.length === 0 && <Empty colSpan={7} />}
-                    {valuation.rows.map((r) => (
-                      <tr key={`${r.variantId}-${r.locationId}`}>
-                        <td>
-                          {r.productName}
-                          {r.variantName && (
-                            <span style={{ color: 'var(--text-secondary)' }}>
-                              {' '}
-                              — {r.variantName}
-                            </span>
-                          )}
-                        </td>
-                        <td>
-                          <code>{r.sku ?? '—'}</code>
-                        </td>
-                        <td>{r.locationName ?? '—'}</td>
-                        <td className="num">{r.onHand}</td>
-                        <td className="num">
-                          {r.costCents != null ? <Money cents={r.costCents} /> : '—'}
-                        </td>
-                        <td className="num">
-                          {r.costValueCents != null ? <Money cents={r.costValueCents} /> : '—'}
-                        </td>
-                        <td className="num">
-                          <Money cents={r.retailValueCents} />
-                        </td>
+        {!financialDenied && (
+          <Card
+            title="Inventory valuation"
+            actions={
+              <CsvButton
+                size="sm"
+                path="/v1/reports/inventory/valuation?format=csv"
+                filename="inventory-valuation.csv"
+              />
+            }
+          >
+            {valuation ? (
+              <Stack>
+                <StatGrid cols={4}>
+                  <StatTile
+                    label="At cost"
+                    value={<Money cents={valuation.totalCostValueCents} />}
+                  />
+                  <StatTile
+                    label="At retail"
+                    value={<Money cents={valuation.totalRetailValueCents} />}
+                  />
+                </StatGrid>
+                <TableWrap>
+                  <table className="table">
+                    <thead>
+                      <tr>
+                        <th>Product</th>
+                        <th>SKU</th>
+                        <th>Location</th>
+                        <th className="num">On hand</th>
+                        <th className="num">Unit cost</th>
+                        <th className="num">Cost value</th>
+                        <th className="num">Retail value</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </>
-          ) : (
-            <LoadingRows />
-          )}
-        </Card>
-      )}
+                    </thead>
+                    <tbody>
+                      {valuation.rows.length === 0 && <TableEmpty colSpan={7}>No data.</TableEmpty>}
+                      {valuation.rows.map((r) => (
+                        <tr key={`${r.variantId}-${r.locationId}`}>
+                          <td>
+                            {r.productName}
+                            {r.variantName && <span className="muted"> — {r.variantName}</span>}
+                          </td>
+                          <td>
+                            <code>{r.sku ?? '—'}</code>
+                          </td>
+                          <td>{r.locationName ?? '—'}</td>
+                          <td className="num">{r.onHand}</td>
+                          <td className="num">
+                            {r.costCents != null ? <Money cents={r.costCents} /> : '—'}
+                          </td>
+                          <td className="num">
+                            {r.costValueCents != null ? <Money cents={r.costValueCents} /> : '—'}
+                          </td>
+                          <td className="num">
+                            <Money cents={r.retailValueCents} />
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </TableWrap>
+              </Stack>
+            ) : (
+              <LoadingRows />
+            )}
+          </Card>
+        )}
+      </Stack>
     </div>
-  );
-}
-
-function Stat({
-  label,
-  value,
-  strong,
-  tone,
-}: {
-  label: string;
-  value: React.ReactNode;
-  strong?: boolean;
-  tone?: 'danger';
-}) {
-  return (
-    <div
-      style={{
-        background: 'var(--surface-muted)',
-        border: '1px solid var(--border)',
-        borderRadius: 'var(--radius-sm)',
-        padding: '10px 12px',
-      }}
-    >
-      <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)' }}>{label}</div>
-      <div
-        style={{
-          fontSize: 16,
-          fontWeight: strong ? 700 : 600,
-          color: tone === 'danger' ? 'var(--danger)' : 'var(--text)',
-        }}
-      >
-        {value}
-      </div>
-    </div>
-  );
-}
-
-const subhead = {
-  fontSize: 13,
-  fontWeight: 600,
-  color: 'var(--text-secondary)',
-  marginTop: 16,
-  marginBottom: 6,
-} as const;
-
-function Empty({ colSpan }: { colSpan: number }) {
-  return (
-    <tr>
-      <td colSpan={colSpan}>
-        <div className="empty-state" style={{ padding: '16px' }}>
-          No data.
-        </div>
-      </td>
-    </tr>
   );
 }

@@ -1,12 +1,24 @@
 'use client';
 
-import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState, type FormEvent } from 'react';
 import { parseMoneyToCents } from '@jetnine/shared';
 import { api } from '@/lib/api';
 import { Money } from '@/components/money';
-import { Button, Field, Input, PageHeader } from '@/components/ui';
+import {
+  Alert,
+  BackLink,
+  Button,
+  Card,
+  Field,
+  FormActions,
+  FormGrid,
+  Input,
+  PageHeader,
+  Stack,
+  StatGrid,
+  StatTile,
+} from '@/components/ui';
 
 export default function NewGiftCardPage() {
   const router = useRouter();
@@ -50,82 +62,72 @@ export default function NewGiftCardPage() {
 
   if (created) {
     return (
-      <div style={{ maxWidth: 480 }}>
-        <p style={{ marginBottom: 12 }}>
-          <Link href="/gift-cards">← Gift cards</Link>
-        </p>
-        <PageHeader title="Card issued" />
-        <div
-          style={{
-            background: 'var(--warning-soft)',
-            border: '1px solid var(--warning)',
-            color: 'var(--warning-soft-text)',
-            padding: 16,
-            borderRadius: 'var(--radius)',
-            marginBottom: 16,
-          }}
-        >
-          <p style={{ marginTop: 0 }}>
-            <strong>Save this code — print it on the card before handing it out.</strong>
-          </p>
-          <p
-            style={{
-              fontFamily: 'var(--font-mono)',
-              fontSize: 22,
-              letterSpacing: 1,
-              margin: '12px 0',
-            }}
-          >
-            {created.code.match(/.{1,4}/g)?.join(' ')}
-          </p>
-          <p style={{ fontSize: 13, marginBottom: 0 }}>
-            Initial balance: <Money cents={created.initial} />
-          </p>
-        </div>
-        <Button variant="primary" onClick={() => router.push(`/gift-cards/${created.id}`)}>
-          Open card detail
-        </Button>
+      <div>
+        <PageHeader
+          eyebrow={<BackLink href="/gift-cards">Gift cards</BackLink>}
+          title="Card issued"
+          actions={
+            <Button variant="primary" onClick={() => router.push(`/gift-cards/${created.id}`)}>
+              Open card detail
+            </Button>
+          }
+        />
+        <Stack className="form-narrow">
+          <Alert
+            tone="warning"
+            title="Save this code — print it on the card before handing it out."
+          />
+          <StatGrid cols={2}>
+            <StatTile
+              label="Code"
+              value={
+                <code className="tracking-wider">{created.code.match(/.{1,4}/g)?.join(' ')}</code>
+              }
+            />
+            <StatTile label="Initial balance" value={<Money cents={created.initial} />} />
+          </StatGrid>
+        </Stack>
       </div>
     );
   }
 
   return (
-    <div style={{ maxWidth: 480 }}>
-      <p style={{ marginBottom: 12 }}>
-        <Link href="/gift-cards">← Gift cards</Link>
-      </p>
-      <PageHeader title="Issue a gift card" />
-      <form onSubmit={submit} className="card" style={{ display: 'grid', gap: 12 }}>
-        <Field label="Initial balance ($)">
-          <Input
-            type="text"
-            inputMode="decimal"
-            required
-            value={amount}
-            onChange={(e) => setAmount(e.target.value)}
-            style={{ width: '100%' }}
-          />
-        </Field>
-        <Field label="Expires (optional)">
-          <Input
-            type="date"
-            value={expires}
-            onChange={(e) => setExpires(e.target.value)}
-            style={{ width: '100%' }}
-          />
-        </Field>
-        <Field label="Notes (optional)">
-          <Input
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-            style={{ width: '100%' }}
-          />
-        </Field>
-        {error && <p style={{ color: 'var(--danger)', fontSize: 13, margin: 0 }}>{error}</p>}
-        <Button type="submit" variant="primary" disabled={busy} style={{ width: 'fit-content' }}>
-          {busy ? 'Issuing…' : 'Issue card'}
-        </Button>
-      </form>
+    <div>
+      <PageHeader
+        eyebrow={<BackLink href="/gift-cards">Gift cards</BackLink>}
+        title="Issue a gift card"
+      />
+      <Card title="Card details" className="form-narrow">
+        <form onSubmit={submit}>
+          <FormGrid cols={2}>
+            <Field label="Initial balance ($)" required>
+              <Input
+                type="text"
+                inputMode="decimal"
+                required
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+              />
+            </Field>
+            <Field label="Expires" hint="Optional">
+              <Input type="date" value={expires} onChange={(e) => setExpires(e.target.value)} />
+            </Field>
+            <Field label="Notes" hint="Optional" className="form-span">
+              <Input value={notes} onChange={(e) => setNotes(e.target.value)} />
+            </Field>
+          </FormGrid>
+          {error && (
+            <Alert tone="error" className="mt-3">
+              {error}
+            </Alert>
+          )}
+          <FormActions>
+            <Button type="submit" variant="primary" disabled={busy}>
+              {busy ? 'Issuing…' : 'Issue card'}
+            </Button>
+          </FormActions>
+        </form>
+      </Card>
     </div>
   );
 }

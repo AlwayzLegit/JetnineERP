@@ -199,7 +199,7 @@ test.describe('Day 2 — order writer', () => {
     await expect(page.getByTestId('delivery-status')).toHaveText(/delivered/i);
 
     // Back on the order: fulfilled, balance still due.
-    await page.getByRole('link', { name: 'open the order' }).click();
+    await page.getByRole('link', { name: 'Open order' }).click();
     await page.waitForURL(/\/orders\/[0-9a-f-]{36}$/);
     await expect(page.getByTestId('order-status')).toHaveText(/delivered/i);
 

@@ -1,10 +1,24 @@
 'use client';
 
-import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { PackageCheck, Search } from 'lucide-react';
 import { api } from '@/lib/api';
-import { Button, Card, EmptyState, Field, Input, PageHeader, Select } from '@/components/ui';
+import {
+  Alert,
+  BackLink,
+  Button,
+  Card,
+  EmptyState,
+  Field,
+  FormActions,
+  FormGrid,
+  Input,
+  PageHeader,
+  Select,
+  Stack,
+  TableWrap,
+  Toolbar,
+} from '@/components/ui';
 
 interface Location {
   id: string;
@@ -42,6 +56,7 @@ export default function ReceivePage() {
   const [searchMore, setSearchMore] = useState(false);
   const [lines, setLines] = useState<Line[]>([]);
   const [notes, setNotes] = useState('');
+  const [committing, setCommitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
@@ -101,6 +116,7 @@ export default function ReceivePage() {
   }
 
   async function commit() {
+    if (committing) return;
     setError(null);
     setSuccess(null);
     if (!locationId) {
@@ -112,10 +128,9 @@ export default function ReceivePage() {
       setError('At least one line must have a positive quantity');
       return;
     }
+    setCommitting(true);
     try {
-      const result = await api<{
-        lines: { onHand: number }[];
-      }>('/v1/inventory/receive', {
+      await api<{ lines: { onHand: number }[] }>('/v1/inventory/receive', {
         method: 'POST',
         body: JSON.stringify({
           locationId,
@@ -131,145 +146,153 @@ export default function ReceivePage() {
       );
       setLines([]);
       setNotes('');
-      void result;
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setCommitting(false);
     }
   }
 
   return (
     <div>
-      <p style={{ marginBottom: 12 }}>
-        <Link href="/inventory">← Inventory</Link>
-      </p>
-      <PageHeader title="Receive inventory" />
+      <PageHeader
+        eyebrow={<BackLink href="/inventory">Inventory</BackLink>}
+        title="Receive inventory"
+      />
 
-      <Card style={{ marginBottom: 16 }}>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Location">
-            <Select
-              value={locationId}
-              onChange={(e) => setLocationId(e.target.value)}
-              style={{ width: '100%' }}
-            >
-              <option value="">— Pick —</option>
-              {locations.map((l) => (
-                <option key={l.id} value={l.id}>
-                  {l.name}
-                </option>
-              ))}
-            </Select>
-          </Field>
-          <Field label="Notes">
-            <Input
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              style={{ width: '100%' }}
-            />
-          </Field>
-        </div>
-      </Card>
-
-      <Card title="Add products" style={{ marginBottom: 16 }}>
-        <div className="flex flex-wrap gap-2">
-          <Input
-            placeholder="Search by name, SKU, or barcode"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault();
-                void searchProducts();
-              }
-            }}
-            className="min-w-[200px] flex-1"
-          />
-          <Button variant="primary" onClick={searchProducts}>
-            <Search size={14} />
-            Search
-          </Button>
-        </div>
-        {searchResults.length > 0 && (
-          <ul
-            style={{
-              background: 'var(--surface-muted)',
-              border: '1px solid var(--border)',
-              borderRadius: 'var(--radius-sm)',
-              padding: 8,
-              marginTop: 8,
-              marginBottom: 0,
-              listStyle: 'none',
-            }}
-          >
-            {searchResults.map((p) => (
-              <li key={p.id} style={{ padding: '4px 0', display: 'flex', alignItems: 'center' }}>
-                <span style={{ flex: 1 }}>
-                  <strong>{p.name}</strong>{' '}
-                  <code style={{ color: 'var(--text-secondary)' }}>{p.sku ?? '—'}</code>
-                </span>
-                <Button size="sm" variant="secondary" onClick={() => addProduct(p.id)}>
-                  Add variants
-                </Button>
-              </li>
-            ))}
-            {searchMore && (
-              <li style={{ padding: '4px 0', color: 'var(--text-secondary)', fontSize: 12 }}>
-                More matches — refine your search.
-              </li>
-            )}
-          </ul>
-        )}
-      </Card>
-
-      <Card title="Lines" style={{ marginBottom: 16 }}>
-        {lines.length === 0 ? (
-          <EmptyState>No lines yet. Search and add a product.</EmptyState>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Variant</th>
-                  <th>Quantity</th>
-                  <th>&nbsp;</th>
-                </tr>
-              </thead>
-              <tbody>
-                {lines.map((l, i) => (
-                  <tr key={l.variantId}>
-                    <td>{l.label}</td>
-                    <td>
-                      <Input
-                        type="number"
-                        min={0}
-                        value={l.quantity}
-                        onChange={(e) => setQty(i, Number(e.target.value))}
-                        style={{ width: 100 }}
-                      />
-                    </td>
-                    <td style={{ textAlign: 'right' }}>
-                      <Button size="sm" variant="danger" onClick={() => removeLine(i)}>
-                        Remove
-                      </Button>
-                    </td>
-                  </tr>
+      <Stack>
+        <Card title="Receipt">
+          <FormGrid cols={2}>
+            <Field label="Location" required>
+              <Select value={locationId} onChange={(e) => setLocationId(e.target.value)}>
+                <option value="">— Pick —</option>
+                {locations.map((l) => (
+                  <option key={l.id} value={l.id}>
+                    {l.name}
+                  </option>
                 ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </Card>
+              </Select>
+            </Field>
+            <Field label="Notes">
+              <Input value={notes} onChange={(e) => setNotes(e.target.value)} />
+            </Field>
+          </FormGrid>
+        </Card>
 
-      {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
-      {success && (
-        <p data-testid="receive-success" style={{ color: 'var(--success)' }}>
-          {success}
-        </p>
-      )}
-      <Button variant="primary" onClick={commit} disabled={lines.length === 0}>
-        <PackageCheck size={14} />
-        Commit
-      </Button>
+        <Card title="Add products">
+          <Toolbar>
+            <Input
+              placeholder="Search by name, SKU, or barcode"
+              aria-label="Search products"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  void searchProducts();
+                }
+              }}
+            />
+            <Button variant="secondary" size="sm" onClick={searchProducts}>
+              <Search size={14} />
+              Search
+            </Button>
+          </Toolbar>
+          {searchResults.length > 0 && (
+            <TableWrap>
+              <table className="table table-dense">
+                <thead>
+                  <tr>
+                    <th>Product</th>
+                    <th>SKU</th>
+                    <th className="actions" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {searchResults.map((p) => (
+                    <tr key={p.id}>
+                      <td>
+                        <strong>{p.name}</strong>
+                      </td>
+                      <td>
+                        <code>{p.sku ?? '—'}</code>
+                      </td>
+                      <td className="actions">
+                        <Button size="sm" variant="secondary" onClick={() => addProduct(p.id)}>
+                          Add variants
+                        </Button>
+                      </td>
+                    </tr>
+                  ))}
+                  {searchMore && (
+                    <tr>
+                      <td colSpan={3} className="muted">
+                        More matches — refine your search.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </TableWrap>
+          )}
+        </Card>
+
+        <Card title="Lines">
+          {lines.length === 0 ? (
+            <EmptyState title="No lines yet">Search and add a product.</EmptyState>
+          ) : (
+            <TableWrap>
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Variant</th>
+                    <th className="num">Quantity</th>
+                    <th className="actions" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {lines.map((l, i) => (
+                    <tr key={l.variantId}>
+                      <td>{l.label}</td>
+                      <td className="num">
+                        <Input
+                          type="number"
+                          min={0}
+                          value={l.quantity}
+                          onChange={(e) => setQty(i, Number(e.target.value))}
+                          aria-label={`Quantity for ${l.label}`}
+                          className="w-24 text-right"
+                        />
+                      </td>
+                      <td className="actions">
+                        <Button size="sm" variant="danger" onClick={() => removeLine(i)}>
+                          Remove
+                        </Button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </TableWrap>
+          )}
+          {error && (
+            <Alert tone="error" className="mt-3">
+              {error}
+            </Alert>
+          )}
+          {success && (
+            <Alert tone="success" className="mt-3" data-testid="receive-success">
+              {success}
+            </Alert>
+          )}
+          <FormActions>
+            <Button variant="primary" onClick={commit} disabled={lines.length === 0 || committing}>
+              <PackageCheck size={14} />
+              {committing ? 'Committing…' : 'Commit'}
+            </Button>
+          </FormActions>
+        </Card>
+      </Stack>
     </div>
   );
 }

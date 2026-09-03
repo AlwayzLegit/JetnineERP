@@ -77,9 +77,7 @@ export function AuthOutcome({
       <span className="auth-outcome-icon" aria-hidden>
         <Icon size={28} />
       </span>
-      <h2 className="auth-title" style={{ marginBottom: 6 }}>
-        {title}
-      </h2>
+      <h2 className="auth-title">{title}</h2>
       {children && <div className="auth-subtitle">{children}</div>}
       {actions && <div className="auth-actions">{actions}</div>}
     </div>

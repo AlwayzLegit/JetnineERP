@@ -6,7 +6,19 @@ import { toast } from 'sonner';
 import { api, ApiError } from '@/lib/api';
 import { LoadMore } from '@/components/load-more';
 import { useCursorList } from '@/lib/use-cursor-list';
-import { Button, EmptyState, LoadingRows, PageHeader, Select, StatusBadge } from '@/components/ui';
+import {
+  Alert,
+  Button,
+  Card,
+  LoadingRows,
+  PageHeader,
+  Select,
+  Stack,
+  StatusBadge,
+  TableEmpty,
+  TableWrap,
+  Toolbar,
+} from '@/components/ui';
 import { SecurityOverrideDialog } from '@/components/security-override-dialog';
 
 /**
@@ -48,6 +60,13 @@ interface AsIsRow {
   } | null;
 }
 
+const STATUS_LABELS: Record<string, string> = {
+  pending_review: 'pending review',
+  restocked: 'restocked',
+  vendor_return: 'vendor return',
+  scrapped: 'scrapped',
+};
+
 /** Where the piece came from, with the invoice / document clickable. */
 function Origin({ r }: { r: AsIsRow }) {
   const o = r.origin;
@@ -56,7 +75,7 @@ function Origin({ r }: { r: AsIsRow }) {
     return (
       <span data-testid="as-is-origin">
         {label}
-        <span style={{ color: 'var(--text-muted)' }}> · manual intake</span>
+        <span className="muted"> · manual intake</span>
       </span>
     );
   }
@@ -77,36 +96,31 @@ function Origin({ r }: { r: AsIsRow }) {
           ? 'PO'
           : 'order';
   return (
-    <span data-testid="as-is-origin" style={{ fontSize: 12.5 }}>
-      <span style={{ textTransform: 'capitalize' }}>{label}</span>
+    <span data-testid="as-is-origin">
+      <span className="capitalize">{label}</span>
       {o.rmaNumber && (
         <>
           {' '}
           <code>{o.rmaNumber}</code>
         </>
       )}
-      <span style={{ color: 'var(--text-muted)' }}> · {docWord} </span>
+      <span className="muted"> · {docWord} </span>
       <Link href={href} data-testid="as-is-origin-link">
         <strong>{o.documentNumber}</strong>
       </Link>
       {o.documentDate && (
-        <span style={{ color: 'var(--text-muted)' }}>
-          {' '}
-          ({new Date(o.documentDate).toLocaleDateString()})
-        </span>
+        <span className="muted"> ({new Date(o.documentDate).toLocaleDateString()})</span>
       )}
       {o.customerName && (
-        <div style={{ fontSize: 12 }}>
+        <span className="field-hint">
           {o.customerId ? (
             <Link href={`/customers/${o.customerId}`}>{o.customerName}</Link>
           ) : (
             o.customerName
           )}
-        </div>
+        </span>
       )}
-      {o.fromName && (
-        <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>from {o.fromName}</div>
-      )}
+      {o.fromName && <span className="field-hint">from {o.fromName}</span>}
     </span>
   );
 }
@@ -176,157 +190,169 @@ export default function AsIsPage() {
       <PageHeader
         title="As-Is review"
         sub="Returned, warranty, and defect units. Nothing here is sellable until a review restocks it."
-        actions={
-          <Select value={status} onChange={(e) => setStatus(e.target.value)} style={{ width: 180 }}>
-            <option value="pending_review">Pending review</option>
-            <option value="restocked">Restocked</option>
-            <option value="vendor_return">Vendor returns</option>
-            <option value="scrapped">Scrapped</option>
-            <option value="">All</option>
-          </Select>
-        }
       />
 
-      {error && <p style={{ color: 'var(--danger)', fontSize: 13 }}>{error}</p>}
-      {!rows && !error && <LoadingRows rows={4} />}
-      {rows && rows.length === 0 && <EmptyState>Nothing here.</EmptyState>}
+      <Toolbar>
+        <Select
+          value={status}
+          onChange={(e) => setStatus(e.target.value)}
+          aria-label="Filter by status"
+        >
+          <option value="pending_review">Pending review</option>
+          <option value="restocked">Restocked</option>
+          <option value="vendor_return">Vendor returns</option>
+          <option value="scrapped">Scrapped</option>
+          <option value="">All</option>
+        </Select>
+      </Toolbar>
 
-      {rows && rows.length > 0 && (
-        <div className="card" style={{ padding: 0 }}>
-          <div style={{ overflowX: 'auto' }}>
-            <table className="table" data-testid="as-is-table">
-              <thead>
-                <tr>
-                  <th>Item</th>
-                  <th className="num">Qty</th>
-                  <th>Location</th>
-                  <th>Came from</th>
-                  <th>Received</th>
-                  <th>Status</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((r) => (
-                  <tr key={r.id} data-testid="as-is-row">
-                    <td>
-                      {r.productName ?? '(deleted)'}
-                      {r.variantName && (
-                        <span style={{ color: 'var(--text-secondary)' }}> — {r.variantName}</span>
-                      )}
-                      {r.sku && (
-                        <span style={{ color: 'var(--text-muted)', fontSize: 11, marginLeft: 6 }}>
-                          <code>{r.sku}</code>
-                        </span>
-                      )}
-                      {r.notes && (
-                        <div style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>{r.notes}</div>
-                      )}
-                      <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                        {r.pieceNumber && <code>{r.pieceNumber}</code>}
-                        {r.condition && <> · {r.condition.replace(/_/g, ' ')}</>}
-                        {r.storageLocation && <> · {r.storageLocation}</>}
-                        {r.asIsPriceCents != null && (
-                          <> · as-is ${(r.asIsPriceCents / 100).toFixed(2)}</>
-                        )}
-                        {r.status === 'pending_review' && (
+      <Stack>
+        {error && <Alert tone="error">{error}</Alert>}
+        {!rows && !error && <LoadingRows rows={4} />}
+
+        {rows && (
+          <Card
+            flush
+            description={
+              <>
+                Restock puts units back into the same SKU at the same location. To sell a unit as
+                As-Is at a discount, restock it and adjust it onto the matching <code>-AS</code> SKU
+                from <Link href="/inventory">Inventory</Link>. Scrapping is a write-off: it needs
+                its own permission (or a manager&apos;s approval), a coded reason, and lands on the
+                write-off register at cost.
+              </>
+            }
+          >
+            <TableWrap>
+              <table className="table" data-testid="as-is-table">
+                <thead>
+                  <tr>
+                    <th>Item</th>
+                    <th className="num">Qty</th>
+                    <th>Location</th>
+                    <th>Came from</th>
+                    <th>Received</th>
+                    <th>Status</th>
+                    <th className="actions" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.length === 0 && (
+                    <TableEmpty colSpan={7}>
+                      {status
+                        ? `No pieces ${STATUS_LABELS[status] ?? status.replace(/_/g, ' ')}.`
+                        : 'No as-is pieces yet.'}
+                    </TableEmpty>
+                  )}
+                  {rows.map((r) => (
+                    <tr key={r.id} data-testid="as-is-row">
+                      <td>
+                        {r.productName ?? '(deleted)'}
+                        {r.variantName && <span className="muted"> — {r.variantName}</span>}
+                        {r.sku && (
                           <>
                             {' '}
-                            <button
-                              className="btn btn-ghost btn-sm"
-                              style={{ padding: '0 4px', fontSize: 11 }}
-                              disabled={busy}
-                              onClick={() => setPricingId(r.id)}
-                            >
-                              price…
-                            </button>
+                            <code className="muted">{r.sku}</code>
                           </>
                         )}
-                      </div>
-                    </td>
-                    <td className="num">{r.quantity}</td>
-                    <td>{r.locationName ?? '—'}</td>
-                    <td>
-                      <Origin r={r} />
-                    </td>
-                    <td style={{ whiteSpace: 'nowrap' }}>
-                      {new Date(r.createdAt).toLocaleDateString()}
-                    </td>
-                    <td>
-                      <StatusBadge status={r.status} />
-                    </td>
-                    <td style={{ whiteSpace: 'nowrap' }}>
-                      {r.status === 'pending_review' && (
-                        <span style={{ display: 'inline-flex', gap: 4 }}>
-                          <Button
-                            size="sm"
-                            variant="primary"
-                            disabled={busy}
-                            onClick={() => void review(r.id, 'restock')}
-                            data-testid="review-restock"
-                          >
-                            Restock
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="secondary"
-                            disabled={busy}
-                            onClick={() => setVendorReturnId(r.id)}
-                          >
-                            Vendor
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="danger"
-                            disabled={busy}
-                            data-testid="review-scrap"
-                            onClick={() => setScrapId(r.id)}
-                          >
-                            Scrap
-                          </Button>
-                        </span>
-                      )}
-                      {r.status === 'vendor_return' && r.vendorCreditStatus === 'open' && (
-                        <span style={{ display: 'inline-flex', gap: 4, alignItems: 'center' }}>
-                          <span style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>
-                            R/A {r.vendorRaNumber}
-                            {r.vendorCreditCents != null &&
-                              ` · $${(r.vendorCreditCents / 100).toFixed(2)} open`}
-                          </span>
-                          <Button
-                            size="sm"
-                            variant="secondary"
-                            disabled={busy}
-                            onClick={() => void vendorCredit(r.id, 'received')}
-                          >
-                            Credit received
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            disabled={busy}
-                            onClick={() => void vendorCredit(r.id, 'write_off')}
-                          >
-                            Give up
-                          </Button>
-                        </span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <LoadMore state={list} noun="pieces" />
-        </div>
-      )}
-      <p className="muted" style={{ fontSize: 12, marginTop: 10 }}>
-        Restock puts units back into the same SKU at the same location. To sell a unit as As-Is at a
-        discount, restock it and adjust it onto the matching <code>-AS</code> SKU from{' '}
-        <Link href="/inventory">Inventory</Link>. Scrapping is a write-off: it needs its own
-        permission (or a manager&apos;s approval), a coded reason, and lands on the write-off
-        register at cost.
-      </p>
+                        {r.notes && <div className="field-hint">{r.notes}</div>}
+                        <div className="field-hint">
+                          {r.pieceNumber && <code>{r.pieceNumber}</code>}
+                          {r.condition && <> · {r.condition.replace(/_/g, ' ')}</>}
+                          {r.storageLocation && <> · {r.storageLocation}</>}
+                          {r.asIsPriceCents != null && (
+                            <> · as-is ${(r.asIsPriceCents / 100).toFixed(2)}</>
+                          )}
+                          {r.status === 'pending_review' && (
+                            <>
+                              {' '}
+                              <button
+                                type="button"
+                                className="btn-link"
+                                disabled={busy}
+                                onClick={() => setPricingId(r.id)}
+                              >
+                                price…
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </td>
+                      <td className="num">{r.quantity}</td>
+                      <td>{r.locationName ?? '—'}</td>
+                      <td>
+                        <Origin r={r} />
+                      </td>
+                      <td className="nowrap">{new Date(r.createdAt).toLocaleDateString()}</td>
+                      <td>
+                        <StatusBadge status={r.status} />
+                      </td>
+                      <td className="actions">
+                        {r.status === 'pending_review' && (
+                          <>
+                            <Button
+                              size="sm"
+                              variant="primary"
+                              disabled={busy}
+                              onClick={() => void review(r.id, 'restock')}
+                              data-testid="review-restock"
+                            >
+                              Restock
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="secondary"
+                              disabled={busy}
+                              onClick={() => setVendorReturnId(r.id)}
+                            >
+                              Vendor
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="danger"
+                              disabled={busy}
+                              data-testid="review-scrap"
+                              onClick={() => setScrapId(r.id)}
+                            >
+                              Scrap
+                            </Button>
+                          </>
+                        )}
+                        {r.status === 'vendor_return' && r.vendorCreditStatus === 'open' && (
+                          <>
+                            <span className="muted">
+                              R/A {r.vendorRaNumber}
+                              {r.vendorCreditCents != null &&
+                                ` · $${(r.vendorCreditCents / 100).toFixed(2)} open`}
+                            </span>{' '}
+                            <Button
+                              size="sm"
+                              variant="secondary"
+                              disabled={busy}
+                              onClick={() => void vendorCredit(r.id, 'received')}
+                            >
+                              Credit received
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              disabled={busy}
+                              onClick={() => void vendorCredit(r.id, 'write_off')}
+                            >
+                              Give up
+                            </Button>
+                          </>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </TableWrap>
+            <LoadMore state={list} noun="pieces" />
+          </Card>
+        )}
+      </Stack>
 
       <SecurityOverrideDialog
         open={pricingId != null}

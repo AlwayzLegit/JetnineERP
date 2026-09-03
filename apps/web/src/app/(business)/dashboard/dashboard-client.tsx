@@ -5,13 +5,20 @@ import { LogOut } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import {
+  Alert,
   Button,
   Card,
   EmptyState,
   LinkButton,
   LoadingRows,
+  PageHeader,
+  SectionHeading,
   Skeleton,
+  Stack,
+  StatGrid,
+  StatTile,
   StatusBadge,
+  TableWrap,
 } from '@/components/ui';
 import { DateRangePicker, useUrlDateRange } from '@/components/date-range-picker';
 import { api } from '@/lib/api';
@@ -20,6 +27,7 @@ import { addDays } from '@/lib/date-range';
 import { Money } from '@/components/money';
 import { readActiveBusinessId } from '@/lib/offline';
 import { RevenueTrend, type TrendPoint } from './revenue-trend';
+import { StatLink, TableCard, usd } from './dashboard-kit';
 import ManagerDashboardView from './manager-dashboard';
 import OperationsDashboardView from './operations-dashboard';
 import WarehouseDashboardView from './warehouse-dashboard';
@@ -154,6 +162,7 @@ export default function DashboardClient() {
   const [warehouseMode, setWarehouseMode] = useState<boolean | null>(null);
   // Cashier role (owner 2026-09-01): the My Day home.
   const [cashierMode, setCashierMode] = useState<boolean | null>(null);
+  const [signingOut, setSigningOut] = useState(false);
 
   useEffect(() => {
     if (!session.data) return;
@@ -253,20 +262,29 @@ export default function DashboardClient() {
 
   if (session.isPending) {
     return (
-      <div style={{ display: 'grid', gap: 10 }}>
+      <Stack gap="sm">
         <Skeleton style={{ height: 28, width: 260 }} />
         <Skeleton style={{ height: 16, width: 200 }} />
         <Skeleton style={{ height: 120 }} />
-      </div>
+      </Stack>
     );
   }
 
   if (!session.data) {
     return (
-      <div>
-        <p style={{ color: 'var(--text-secondary)' }}>You are not signed in.</p>
-        <Link href="/login">Sign in</Link>
-      </div>
+      <>
+        <PageHeader title="Dashboard" />
+        <Alert
+          tone="info"
+          action={
+            <LinkButton size="sm" variant="primary" href="/login">
+              Sign in
+            </LinkButton>
+          }
+        >
+          You are not signed in.
+        </Alert>
+      </>
     );
   }
 
@@ -287,175 +305,218 @@ export default function DashboardClient() {
   }
 
   return (
-    <div>
-      <div className="page-header">
-        <div>
-          <h1 className="page-title">
-            Welcome, {session.data.user.name ?? session.data.user.email}
-          </h1>
-          <p
-            data-testid="dashboard-email"
-            style={{ margin: '2px 0 0', color: 'var(--text-secondary)', fontSize: 13 }}
-          >
+    <>
+      <PageHeader
+        title={`Welcome, ${session.data.user.name ?? session.data.user.email}`}
+        sub={
+          <span data-testid="dashboard-email">
             Signed in as <strong>{session.data.user.email}</strong>
-          </p>
-        </div>
-        <div style={{ marginLeft: 'auto' }}>
+          </span>
+        }
+        actions={
           <Button
             variant="secondary"
             size="sm"
+            disabled={signingOut}
             onClick={async () => {
-              await signOut();
-              window.location.href = '/login';
+              setSigningOut(true);
+              try {
+                await signOut();
+                window.location.href = '/login';
+              } finally {
+                setSigningOut(false);
+              }
             }}
           >
             <LogOut size={14} aria-hidden />
             Sign out
           </Button>
-        </div>
-      </div>
+        }
+      />
 
-      {error && <p style={{ color: 'var(--danger)', fontSize: 13 }}>{error}</p>}
+      <Stack>
+        {error && <Alert tone="error">{error}</Alert>}
 
-      {businessActive && !salesDenied && (
-        <div
-          className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6"
-          style={{ marginBottom: 16 }}
-          data-testid="kpi-row"
-        >
-          <Kpi label="Sales today" value={z ? String(z.saleCount) : '…'} />
-          <Kpi label="Gross today" value={z ? <Money cents={z.grossCents} /> : '…'} />
-          <Kpi
-            label="Refunds today"
-            value={z ? <Money cents={z.refundsCents} /> : '…'}
-            tone={z && z.refundsCents > 0 ? 'danger' : undefined}
-          />
-          <Kpi label="Net today" value={z ? <Money cents={z.netCents} /> : '…'} strong />
-          <Kpi
-            label="Open orders"
-            value={openOrders != null ? String(openOrders) : '—'}
-            href="/orders"
-          />
-          <Kpi
-            label="Receivables"
-            value={arTotal != null ? <Money cents={arTotal} /> : '—'}
-            href="/reports"
-          />
-        </div>
-      )}
-
-      {businessActive && myOrders != null && <MyOrdersCard orders={myOrders} />}
-
-      {businessActive && morning != null && <MorningBriefCard brief={morning} />}
-
-      {businessActive && !salesDenied && (
-        <Card
-          title="Revenue"
-          actions={
-            <DateRangePicker
-              value={trendRange}
-              onChange={setTrendRange}
-              compact
-              align="right"
-              testid="trend-range"
+        {businessActive && !salesDenied && (
+          <StatGrid cols={6} data-testid="kpi-row">
+            <StatTile label="Sales today" value={z ? String(z.saleCount) : '…'} />
+            <StatTile label="Gross today" value={z ? <Money cents={z.grossCents} /> : '…'} />
+            <StatTile
+              label="Refunds today"
+              value={z ? <Money cents={z.refundsCents} /> : '…'}
+              tone={z && z.refundsCents > 0 ? 'danger' : undefined}
             />
-          }
-        >
-          {trend ? <RevenueTrend points={trend} /> : <LoadingRows />}
-        </Card>
-      )}
+            <StatTile label="Net today" value={z ? <Money cents={z.netCents} /> : '…'} />
+            <StatLink
+              label="Open orders"
+              value={openOrders != null ? String(openOrders) : '—'}
+              href="/orders"
+            />
+            <StatLink
+              label="Receivables"
+              value={arTotal != null ? <Money cents={arTotal} /> : '—'}
+              href="/reports"
+            />
+          </StatGrid>
+        )}
 
-      {businessActive && notifications != null && (
-        <Card
-          title="Notifications — order changes"
-          actions={
-            <Link href="/orders" style={{ fontSize: 12.5 }}>
-              Orders →
-            </Link>
-          }
-        >
-          {notifications.length === 0 ? (
-            <EmptyState>No order changes recorded yet.</EmptyState>
-          ) : (
-            <ul
-              data-testid="notifications-feed"
-              style={{ margin: 0, padding: 0, listStyle: 'none', fontSize: 13 }}
-            >
-              {notifications.map((n) => (
-                <li
-                  key={n.id}
-                  style={{
-                    display: 'flex',
-                    gap: 8,
-                    padding: '6px 0',
-                    borderBottom: '1px solid var(--border)',
-                    flexWrap: 'wrap',
-                  }}
-                >
-                  <span style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
-                    {new Date(n.createdAt).toLocaleString()}
-                  </span>
-                  <span style={{ fontWeight: 600 }}>{n.label}</span>
-                  {n.orderId && (
-                    <Link href={`/orders/${n.orderId}`}>{n.orderNumber ?? 'order'}</Link>
-                  )}
-                  <span style={{ color: 'var(--text-secondary)', marginLeft: 'auto' }}>
-                    {n.actorName ?? n.actorEmail ?? 'system'}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </Card>
-      )}
+        {businessActive && myOrders != null && <MyOrdersCard orders={myOrders} />}
 
-      {businessActive && lowStock != null && (
-        <Card
-          title="Low stock"
-          actions={
-            <Link href="/inventory" style={{ fontSize: 12.5 }}>
-              Inventory →
-            </Link>
-          }
-        >
-          {lowStock.length === 0 ? (
-            <EmptyState>Nothing at or below 5 available. Shelves look healthy.</EmptyState>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>Product</th>
-                    <th>SKU</th>
-                    <th className="num">Available</th>
+        {businessActive && morning != null && <MorningBriefCard brief={morning} />}
+
+        {businessActive && !salesDenied && (
+          <Card
+            title="Revenue"
+            actions={
+              <DateRangePicker
+                value={trendRange}
+                onChange={setTrendRange}
+                compact
+                align="right"
+                testid="trend-range"
+              />
+            }
+          >
+            {trend ? <RevenueTrend points={trend} /> : <LoadingRows />}
+          </Card>
+        )}
+
+        {businessActive && notifications != null && (
+          <TableCard
+            title="Notifications — order changes"
+            actions={
+              <Link href="/orders" className="btn-link">
+                Orders →
+              </Link>
+            }
+            isEmpty={notifications.length === 0}
+            empty="No order changes recorded yet."
+          >
+            <table className="table table-dense" data-testid="notifications-feed">
+              <thead>
+                <tr>
+                  <th>When</th>
+                  <th>Change</th>
+                  <th>Order</th>
+                  <th>By</th>
+                </tr>
+              </thead>
+              <tbody>
+                {notifications.map((n) => (
+                  <tr key={n.id}>
+                    <td className="muted nowrap">{new Date(n.createdAt).toLocaleString()}</td>
+                    <td>
+                      <strong>{n.label}</strong>
+                    </td>
+                    <td>
+                      {n.orderId ? (
+                        <Link href={`/orders/${n.orderId}`}>{n.orderNumber ?? 'order'}</Link>
+                      ) : (
+                        '—'
+                      )}
+                    </td>
+                    <td className="muted">{n.actorName ?? n.actorEmail ?? 'system'}</td>
                   </tr>
-                </thead>
-                <tbody>
-                  {lowStock.map((r) => (
-                    <tr key={r.variantId}>
-                      <td>
-                        {r.productName}
-                        {r.variantName && (
-                          <span style={{ color: 'var(--text-secondary)' }}> — {r.variantName}</span>
-                        )}
-                      </td>
-                      <td>
-                        <code>{r.sku ?? '—'}</code>
-                      </td>
-                      <td className="num">
-                        <strong style={{ color: r.available === 0 ? 'var(--danger)' : undefined }}>
-                          {r.available}
-                        </strong>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </Card>
-      )}
-    </div>
+                ))}
+              </tbody>
+            </table>
+          </TableCard>
+        )}
+
+        {businessActive && lowStock != null && (
+          <TableCard
+            title="Low stock"
+            actions={
+              <Link href="/inventory" className="btn-link">
+                Inventory →
+              </Link>
+            }
+            isEmpty={lowStock.length === 0}
+            empty="Nothing at or below 5 available. Shelves look healthy."
+          >
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Product</th>
+                  <th>SKU</th>
+                  <th className="num">Available</th>
+                </tr>
+              </thead>
+              <tbody>
+                {lowStock.map((r) => (
+                  <tr key={r.variantId}>
+                    <td>
+                      {r.productName}
+                      {r.variantName && <span className="muted"> — {r.variantName}</span>}
+                    </td>
+                    <td>
+                      <code>{r.sku ?? '—'}</code>
+                    </td>
+                    <td className="num">
+                      <strong style={{ color: r.available === 0 ? 'var(--danger)' : undefined }}>
+                        {r.available}
+                      </strong>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </TableCard>
+        )}
+      </Stack>
+    </>
+  );
+}
+
+function MyOrdersCard({ orders }: { orders: MyOrderRow[] }) {
+  return (
+    <TableCard
+      title="My orders"
+      actions={
+        <>
+          <LinkButton size="sm" variant="primary" href="/orders/new">
+            New Sale
+          </LinkButton>
+          <Link href="/orders?mine=1" className="btn-link">
+            View all →
+          </Link>
+        </>
+      }
+      isEmpty={orders.length === 0}
+      empty="Orders you write (or are credited on) appear here for quick follow-up."
+      data-testid="my-orders-card"
+    >
+      <table className="table">
+        <thead>
+          <tr>
+            <th>Order</th>
+            <th>Status</th>
+            <th>Fulfillment</th>
+            <th>Promised</th>
+            <th className="num">Total</th>
+          </tr>
+        </thead>
+        <tbody>
+          {orders.map((o) => (
+            <tr key={o.id}>
+              <td>
+                <Link href={`/orders/${o.id}`}>
+                  <strong>{o.number}</strong>
+                </Link>
+              </td>
+              <td>
+                <StatusBadge status={o.status} />
+              </td>
+              <td>{o.fulfillmentType?.replace(/_/g, ' ') ?? '—'}</td>
+              <td>{o.requestedDate ?? '—'}</td>
+              <td className="num">
+                <Money cents={o.totalCents} />
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </TableCard>
   );
 }
 
@@ -464,74 +525,13 @@ export default function DashboardClient() {
  * and associate, today's truck load, refunds/cancellations with names,
  * the modification log, and the open exception count.
  */
-function MyOrdersCard({ orders }: { orders: MyOrderRow[] }) {
-  return (
-    <Card
-      title="My orders"
-      actions={
-        <span style={{ display: 'inline-flex', gap: 8, alignItems: 'center' }}>
-          <LinkButton size="sm" variant="primary" href="/orders/new">
-            New Sale
-          </LinkButton>
-          <Link href="/orders?mine=1" style={{ fontSize: 12.5 }}>
-            View all →
-          </Link>
-        </span>
-      }
-      style={{ marginBottom: 16, padding: orders.length > 0 ? 0 : undefined }}
-      data-testid="my-orders-card"
-    >
-      {orders.length === 0 ? (
-        <EmptyState>
-          Orders you write (or are credited on) appear here for quick follow-up.
-        </EmptyState>
-      ) : (
-        <div style={{ overflowX: 'auto' }}>
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Order</th>
-                <th>Status</th>
-                <th>Fulfillment</th>
-                <th>Promised</th>
-                <th className="num">Total</th>
-              </tr>
-            </thead>
-            <tbody>
-              {orders.map((o) => (
-                <tr key={o.id}>
-                  <td>
-                    <Link href={`/orders/${o.id}`}>
-                      <strong>{o.number}</strong>
-                    </Link>
-                  </td>
-                  <td>
-                    <StatusBadge status={o.status} />
-                  </td>
-                  <td style={{ fontSize: 13 }}>{o.fulfillmentType?.replace(/_/g, ' ') ?? '—'}</td>
-                  <td style={{ fontSize: 13 }}>{o.requestedDate ?? '—'}</td>
-                  <td className="num">
-                    <Money cents={o.totalCents} />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </Card>
-  );
-}
-
 function MorningBriefCard({ brief }: { brief: MorningBrief }) {
-  const usd = (c: number) =>
-    `$${(c / 100).toLocaleString(undefined, { minimumFractionDigits: 2 })}`;
   const over = brief.deliveriesToday.booked > brief.deliveriesToday.cap;
   return (
     <Card
       title={`Morning brief — ${brief.date}`}
       actions={
-        <Link href="/exceptions" style={{ fontSize: 12.5 }}>
+        <Link href="/exceptions" className="btn-link">
           {brief.openExceptions.count > 0
             ? `${brief.openExceptions.count} open exception${brief.openExceptions.count === 1 ? '' : 's'} →`
             : 'Exception register →'}
@@ -539,56 +539,70 @@ function MorningBriefCard({ brief }: { brief: MorningBrief }) {
       }
       data-testid="morning-brief"
     >
-      <div className="grid gap-4 lg:grid-cols-2" style={{ fontSize: 13 }}>
+      <div className="grid gap-4 lg:grid-cols-2">
         <div className="min-w-0">
-          <h4 style={{ margin: '0 0 6px', fontSize: 12.5 }}>Yesterday by store</h4>
+          <SectionHeading as="h3" title="Yesterday by store" />
           {brief.salesByStore.length === 0 ? (
-            <p className="muted" style={{ margin: 0 }}>
-              No business written.
-            </p>
+            <p className="muted">No business written.</p>
           ) : (
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Store</th>
-                  <th className="num">Orders</th>
-                  <th className="num">Written</th>
-                  <th className="num">Register</th>
-                </tr>
-              </thead>
-              <tbody>
-                {brief.salesByStore.map((s) => (
-                  <tr key={s.locationId}>
-                    <td>{s.locationName ?? '—'}</td>
-                    <td className="num">{s.orderCount}</td>
-                    <td className="num">{usd(s.orderTotalCents)}</td>
-                    <td className="num">{usd(s.saleTotalCents)}</td>
+            <TableWrap>
+              <table className="table table-dense">
+                <thead>
+                  <tr>
+                    <th>Store</th>
+                    <th className="num">Orders</th>
+                    <th className="num">Written</th>
+                    <th className="num">Register</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {brief.salesByStore.map((s) => (
+                    <tr key={s.locationId}>
+                      <td>{s.locationName ?? '—'}</td>
+                      <td className="num">{s.orderCount}</td>
+                      <td className="num">{usd(s.orderTotalCents)}</td>
+                      <td className="num">{usd(s.saleTotalCents)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </TableWrap>
           )}
-          <h4 style={{ margin: '12px 0 6px', fontSize: 12.5 }}>By associate</h4>
+          <SectionHeading as="h3" title="By associate" />
           {brief.salesByAssociate.length === 0 ? (
-            <p className="muted" style={{ margin: 0 }}>
-              Nothing attributed.
-            </p>
+            <p className="muted">Nothing attributed.</p>
           ) : (
-            <table className="table">
-              <tbody>
-                {brief.salesByAssociate.map((a) => (
-                  <tr key={a.userId ?? 'none'}>
-                    <td>{a.name ?? a.email ?? '—'}</td>
-                    <td className="num">{usd(a.totalCents)}</td>
+            <TableWrap>
+              <table className="table table-dense">
+                <thead>
+                  <tr>
+                    <th>Associate</th>
+                    <th className="num">Total</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {brief.salesByAssociate.map((a) => (
+                    <tr key={a.userId ?? 'none'}>
+                      <td>{a.name ?? a.email ?? '—'}</td>
+                      <td className="num">{usd(a.totalCents)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </TableWrap>
           )}
         </div>
         <div className="min-w-0">
-          <p style={{ margin: '0 0 8px' }}>
-            <strong>Today&apos;s deliveries:</strong>{' '}
+          <SectionHeading
+            as="h3"
+            title="Today's deliveries"
+            actions={
+              <Link href="/deliveries/dispatch" className="btn-link">
+                Dispatch →
+              </Link>
+            }
+          />
+          <p>
             <span style={{ color: over ? 'var(--danger)' : undefined }}>
               {brief.deliveriesToday.booked} of {brief.deliveriesToday.cap} booked
             </span>
@@ -597,98 +611,64 @@ function MorningBriefCard({ brief }: { brief: MorningBrief }) {
                 {' '}
                 · {v} {k.replace(/_/g, ' ')}
               </span>
-            ))}{' '}
-            <Link href="/deliveries/dispatch">Dispatch →</Link>
+            ))}
           </p>
-          <h4 style={{ margin: '0 0 6px', fontSize: 12.5 }}>Refunds & cancellations</h4>
+          <SectionHeading as="h3" title="Refunds & cancellations" />
           {brief.refundsCancellations.length === 0 ? (
-            <p className="muted" style={{ margin: '0 0 10px' }}>
-              None yesterday.
-            </p>
+            <p className="muted">None yesterday.</p>
           ) : (
-            <ul style={{ margin: '0 0 10px', padding: 0, listStyle: 'none' }}>
-              {brief.refundsCancellations.slice(0, 8).map((r) => (
-                <li
-                  key={r.id}
-                  style={{ padding: '3px 0', borderBottom: '1px solid var(--border)' }}
-                >
-                  <strong>{r.action.replace(/[._]/g, ' ')}</strong>
-                  {r.orderNumber ? ` — ${r.orderNumber}` : ''}
-                  <span className="muted"> · {r.actorEmail ?? 'system'}</span>
-                </li>
-              ))}
-            </ul>
+            <TableWrap>
+              <table className="table table-dense">
+                <thead>
+                  <tr>
+                    <th>Action</th>
+                    <th>Order</th>
+                    <th>By</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {brief.refundsCancellations.slice(0, 8).map((r) => (
+                    <tr key={r.id}>
+                      <td>
+                        <strong>{r.action.replace(/[._]/g, ' ')}</strong>
+                      </td>
+                      <td>{r.orderNumber ?? '—'}</td>
+                      <td className="muted">{r.actorEmail ?? 'system'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </TableWrap>
           )}
-          <h4 style={{ margin: '0 0 6px', fontSize: 12.5 }}>Modified orders</h4>
+          <SectionHeading as="h3" title="Modified orders" />
           {brief.modifiedOrders.length === 0 ? (
-            <p className="muted" style={{ margin: 0 }}>
-              No post-creation edits yesterday.
-            </p>
+            <p className="muted">No post-creation edits yesterday.</p>
           ) : (
-            <ul style={{ margin: 0, padding: 0, listStyle: 'none' }}>
-              {brief.modifiedOrders.slice(0, 8).map((m) => (
-                <li
-                  key={m.orderId}
-                  style={{ padding: '3px 0', borderBottom: '1px solid var(--border)' }}
-                >
-                  <Link href={`/orders/${m.orderId}`}>{m.orderNumber ?? 'order'}</Link>{' '}
-                  <span className="muted">
-                    {m.changeCount} change{m.changeCount === 1 ? '' : 's'} ·{' '}
-                    {m.actorEmails.join(', ') || 'system'}
-                  </span>
-                </li>
-              ))}
-            </ul>
+            <TableWrap>
+              <table className="table table-dense">
+                <thead>
+                  <tr>
+                    <th>Order</th>
+                    <th className="num">Changes</th>
+                    <th>By</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {brief.modifiedOrders.slice(0, 8).map((m) => (
+                    <tr key={m.orderId}>
+                      <td>
+                        <Link href={`/orders/${m.orderId}`}>{m.orderNumber ?? 'order'}</Link>
+                      </td>
+                      <td className="num">{m.changeCount}</td>
+                      <td className="muted">{m.actorEmails.join(', ') || 'system'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </TableWrap>
           )}
         </div>
       </div>
     </Card>
-  );
-}
-
-function Kpi({
-  label,
-  value,
-  strong,
-  tone,
-  href,
-}: {
-  label: string;
-  value: React.ReactNode;
-  strong?: boolean;
-  tone?: 'danger';
-  href?: string;
-}) {
-  const inner = (
-    <div
-      className={href ? 'card-hover' : undefined}
-      style={{
-        background: 'var(--surface)',
-        border: '1px solid var(--border)',
-        borderRadius: 'var(--radius)',
-        boxShadow: 'var(--shadow-sm)',
-        padding: '12px 14px',
-        height: '100%',
-      }}
-    >
-      <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)' }}>{label}</div>
-      <div
-        style={{
-          fontSize: 18,
-          fontWeight: strong ? 700 : 600,
-          color: tone === 'danger' ? 'var(--danger)' : 'var(--text)',
-          marginTop: 2,
-        }}
-      >
-        {value}
-      </div>
-    </div>
-  );
-  return href ? (
-    <Link href={href} style={{ textDecoration: 'none' }}>
-      {inner}
-    </Link>
-  ) : (
-    inner
   );
 }

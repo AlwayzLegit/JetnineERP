@@ -6,14 +6,22 @@ import { Repeat, Search } from 'lucide-react';
 import { api } from '@/lib/api';
 import { Money } from '@/components/money';
 import {
+  Alert,
+  BackLink,
   Button,
   Card,
   EmptyState,
   Field,
+  FormActions,
+  FormGrid,
   Input,
+  KeyValue,
   LoadingRows,
   PageHeader,
   Select,
+  Stack,
+  TableWrap,
+  Toolbar,
 } from '@/components/ui';
 
 interface OrderLine {
@@ -311,16 +319,22 @@ function NewExchangeInner() {
     }
   }
 
+  const returnableLines = original ? original.lines.filter((l) => returnable(l) > 0) : [];
+
   return (
     <div>
       <PageHeader
+        eyebrow={<BackLink href="/exchanges">All exchanges</BackLink>}
         title="New exchange"
         sub="The return credits the replacement in one settlement — the customer pays (or keeps as store credit) only the difference."
       />
 
       {!original && (
-        <Card title="Original order">
-          <div className="flex flex-wrap gap-2">
+        <Card
+          title="Original order"
+          description="Pre-cutover sale with no order on file? Write the no-original return on the Returns page first, then bind it to a new order from the exchange detail — or ask a manager."
+        >
+          <Toolbar>
             <Input
               value={orderNumberQuery}
               onChange={(e) => setOrderNumberQuery(e.target.value)}
@@ -331,43 +345,39 @@ function NewExchangeInner() {
                 }
               }}
               placeholder="Order number (SO-…)"
-              className="min-w-[220px] flex-1"
+              aria-label="Order number"
               data-testid="exchange-original-query"
             />
-            <Button type="button" variant="primary" onClick={() => void findByNumber()}>
+            <Button type="button" variant="primary" size="sm" onClick={() => void findByNumber()}>
               <Search size={14} />
               Find
             </Button>
-          </div>
-          <p style={{ color: 'var(--text-secondary)', fontSize: 12.5, margin: '8px 0 0' }}>
-            Pre-cutover sale with no order on file? Write the no-original return on the Returns page
-            first, then bind it to a new order from the exchange detail — or ask a manager.
-          </p>
+          </Toolbar>
+          {error && <Alert tone="error">{error}</Alert>}
         </Card>
       )}
 
       {original && (
-        <div style={{ display: 'grid', gap: 16 }}>
+        <Stack>
           <Card title={`Return — from ${original.number}`}>
-            {original.lines.filter((l) => returnable(l) > 0).length === 0 ? (
-              <EmptyState>
-                Nothing on this order is returnable (only delivered units can come back).
-              </EmptyState>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="table">
-                  <thead>
-                    <tr>
-                      <th>Item</th>
-                      <th className="num">Delivered</th>
-                      <th className="num">Return qty</th>
-                      <th className="num">Unit credit</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {original.lines
-                      .filter((l) => returnable(l) > 0)
-                      .map((l) => (
+            <Stack>
+              {returnableLines.length === 0 ? (
+                <EmptyState title="Nothing returnable">
+                  Nothing on this order is returnable (only delivered units can come back).
+                </EmptyState>
+              ) : (
+                <TableWrap>
+                  <table className="table">
+                    <thead>
+                      <tr>
+                        <th>Item</th>
+                        <th className="num">Delivered</th>
+                        <th className="num">Return qty</th>
+                        <th className="num">Unit credit</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {returnableLines.map((l) => (
                         <tr key={l.id}>
                           <td>{l.description}</td>
                           <td className="num">{returnable(l)}</td>
@@ -386,7 +396,7 @@ function NewExchangeInner() {
                                   ),
                                 }))
                               }
-                              style={{ width: 70 }}
+                              className="w-[70px]"
                               aria-label={`Return quantity for ${l.description}`}
                             />
                           </td>
@@ -395,43 +405,42 @@ function NewExchangeInner() {
                           </td>
                         </tr>
                       ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-            <div className="mt-3 grid gap-3 sm:grid-cols-2">
-              <Field label="Return reason">
-                <Input
-                  value={reasonText}
-                  onChange={(e) => setReasonText(e.target.value)}
-                  placeholder="Why is it coming back?"
-                  style={{ width: '100%' }}
-                  data-testid="return-reason-text"
-                />
-              </Field>
-              <Field label="Return goods to">
-                <Select
-                  value={returnToId}
-                  onChange={(e) => setReturnToId(e.target.value)}
-                  style={{ width: '100%' }}
-                  data-testid="return-to-location"
-                >
-                  <option value="">{locationName(original.locationId)} — this store</option>
-                  {locations
-                    .filter((l) => l.id !== original.locationId)
-                    .map((l) => (
-                      <option key={l.id} value={l.id}>
-                        {l.name}
-                        {l.locationType === 'warehouse' ? ' (warehouse)' : ''}
-                      </option>
-                    ))}
-                </Select>
-              </Field>
-            </div>
+                    </tbody>
+                  </table>
+                </TableWrap>
+              )}
+              <FormGrid cols={2}>
+                <Field label="Return reason">
+                  <Input
+                    value={reasonText}
+                    onChange={(e) => setReasonText(e.target.value)}
+                    placeholder="Why is it coming back?"
+                    data-testid="return-reason-text"
+                  />
+                </Field>
+                <Field label="Return goods to">
+                  <Select
+                    value={returnToId}
+                    onChange={(e) => setReturnToId(e.target.value)}
+                    data-testid="return-to-location"
+                  >
+                    <option value="">{locationName(original.locationId)} — this store</option>
+                    {locations
+                      .filter((l) => l.id !== original.locationId)
+                      .map((l) => (
+                        <option key={l.id} value={l.id}>
+                          {l.name}
+                          {l.locationType === 'warehouse' ? ' (warehouse)' : ''}
+                        </option>
+                      ))}
+                  </Select>
+                </Field>
+              </FormGrid>
+            </Stack>
           </Card>
 
           <Card title="Replacement">
-            <div className="mb-2 flex flex-wrap items-center gap-2">
+            <Toolbar>
               <Button
                 type="button"
                 variant="secondary"
@@ -443,7 +452,7 @@ function NewExchangeInner() {
                 <Repeat size={14} />
                 Same items (even exchange)
               </Button>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
+              <label className="flex items-center gap-2">
                 <input
                   type="checkbox"
                   checked={evenExchange}
@@ -451,8 +460,8 @@ function NewExchangeInner() {
                 />
                 Mark as even exchange (required when the original was financed)
               </label>
-            </div>
-            <div className="flex flex-wrap gap-2">
+            </Toolbar>
+            <Toolbar>
               <Input
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
@@ -463,228 +472,244 @@ function NewExchangeInner() {
                   }
                 }}
                 placeholder="Search replacement by name, SKU, or barcode"
-                className="min-w-[200px] flex-1"
+                aria-label="Search replacement by name, SKU, or barcode"
               />
-              <Button type="button" variant="secondary" onClick={() => void searchVariants()}>
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={() => void searchVariants()}
+              >
                 <Search size={14} />
                 Search
               </Button>
-            </div>
-            {results.length > 0 && (
-              <div style={{ marginTop: 8 }}>
-                {results.map((r) => (
-                  <button
-                    key={r.variantId}
-                    type="button"
-                    onClick={() => {
-                      setSaleLines((prev) =>
-                        prev.some((l) => l.variantId === r.variantId)
-                          ? prev
-                          : [
-                              ...prev,
-                              {
-                                variantId: r.variantId,
-                                description: [r.productName, r.variantName]
-                                  .filter(Boolean)
-                                  .join(' — '),
-                                quantity: 1,
-                                priceCents: r.priceCents,
-                                sourceLocationId: '',
-                              },
-                            ],
-                      );
-                      setSearch('');
-                      setResults([]);
-                    }}
-                    style={{
-                      display: 'block',
-                      width: '100%',
-                      textAlign: 'left',
-                      padding: '6px 8px',
-                      background: 'var(--surface)',
-                      border: '1px solid var(--border)',
-                      borderRadius: 'var(--radius-sm)',
-                      marginBottom: 4,
-                      cursor: 'pointer',
-                      fontSize: 13,
-                      fontFamily: 'var(--font)',
-                      color: 'var(--text)',
-                    }}
-                  >
-                    <strong>{r.productName}</strong> {r.variantName && <>— {r.variantName}</>}{' '}
-                    <span style={{ color: 'var(--text-secondary)' }}>{r.sku ?? '—'}</span>
-                  </button>
-                ))}
-              </div>
+            </Toolbar>
+            {results.length === 200 && (
+              <Alert tone="info">
+                Many items match — refine your search to find the right one.
+              </Alert>
             )}
-            {saleLines.length > 0 && (
-              <table className="table" style={{ marginTop: 8 }}>
-                <thead>
-                  <tr>
-                    <th>Item</th>
-                    <th className="num">Qty</th>
-                    <th className="num">Unit price</th>
-                    <th>Inventory from</th>
-                    <th>&nbsp;</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {saleLines.map((l, i) => (
-                    <tr key={l.variantId}>
-                      <td>{l.description}</td>
-                      <td className="num">
-                        <Input
-                          type="number"
-                          min={1}
-                          value={l.quantity}
-                          onChange={(e) =>
-                            setSaleLines((prev) =>
-                              prev.map((x, j) =>
-                                j === i
-                                  ? { ...x, quantity: Math.max(1, Number(e.target.value)) }
-                                  : x,
-                              ),
-                            )
-                          }
-                          style={{ width: 70 }}
-                          aria-label={`Quantity for ${l.description}`}
-                        />
-                      </td>
-                      <td className="num">
-                        {/* Editable — this is what the replacement bills at,
-                            so a wrong or $0 list price is fixed right here. */}
-                        <Input
-                          type="number"
-                          step="0.01"
-                          min={0}
-                          key={`${l.variantId}-price`}
-                          defaultValue={(l.priceCents / 100).toFixed(2)}
-                          onBlur={(e) => {
-                            const n = Number(String(e.target.value).replace(/[$,\s]/g, ''));
-                            const cents = Number.isFinite(n) && n > 0 ? Math.round(n * 100) : 0;
-                            setSaleLines((prev) =>
-                              prev.map((x, j) => (j === i ? { ...x, priceCents: cents } : x)),
-                            );
-                          }}
-                          style={{ width: 90, padding: '4px 8px' }}
-                          data-testid="exchange-line-price"
-                          aria-label={`Unit price for ${l.description}`}
-                        />
-                      </td>
-                      <td>
-                        <Select
-                          value={l.sourceLocationId}
-                          onChange={(e) =>
-                            setSaleLines((prev) =>
-                              prev.map((x, j) =>
-                                j === i ? { ...x, sourceLocationId: e.target.value } : x,
-                              ),
-                            )
-                          }
-                          data-testid="exchange-line-source"
-                          aria-label={`Inventory source for ${l.description}`}
-                        >
-                          <option value="">
-                            {original ? locationName(original.locationId) : 'This store'} — this
-                            store
-                          </option>
-                          {locations
-                            .filter((loc) => loc.id !== original?.locationId)
-                            .map((loc) => (
-                              <option key={loc.id} value={loc.id}>
-                                {loc.name}
-                                {loc.locationType === 'warehouse' ? ' (warehouse)' : ''}
-                              </option>
-                            ))}
-                        </Select>
-                      </td>
-                      <td style={{ textAlign: 'right' }}>
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="danger"
-                          onClick={() => setSaleLines((prev) => prev.filter((_, j) => j !== i))}
-                        >
-                          Remove
-                        </Button>
-                      </td>
-                    </tr>
+            <Stack>
+              {results.length > 0 && (
+                <div className="flex flex-wrap gap-2">
+                  {results.map((r) => (
+                    <Button
+                      key={r.variantId}
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      disabled={saleLines.some((l) => l.variantId === r.variantId)}
+                      onClick={() => {
+                        setSaleLines((prev) =>
+                          prev.some((l) => l.variantId === r.variantId)
+                            ? prev
+                            : [
+                                ...prev,
+                                {
+                                  variantId: r.variantId,
+                                  description: [r.productName, r.variantName]
+                                    .filter(Boolean)
+                                    .join(' — '),
+                                  quantity: 1,
+                                  priceCents: r.priceCents,
+                                  sourceLocationId: '',
+                                },
+                              ],
+                        );
+                        setSearch('');
+                        setResults([]);
+                      }}
+                    >
+                      + {r.productName}
+                      {r.variantName ? ` — ${r.variantName}` : ''}
+                      {r.sku ? ` (${r.sku})` : ''}
+                    </Button>
                   ))}
-                </tbody>
-              </table>
-            )}
+                </div>
+              )}
+              {saleLines.length > 0 && (
+                <TableWrap>
+                  <table className="table">
+                    <thead>
+                      <tr>
+                        <th>Item</th>
+                        <th className="num">Qty</th>
+                        <th className="num">Unit price</th>
+                        <th>Inventory from</th>
+                        <th className="actions" />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {saleLines.map((l, i) => (
+                        <tr key={l.variantId}>
+                          <td>{l.description}</td>
+                          <td className="num">
+                            <Input
+                              type="number"
+                              min={1}
+                              value={l.quantity}
+                              onChange={(e) =>
+                                setSaleLines((prev) =>
+                                  prev.map((x, j) =>
+                                    j === i
+                                      ? { ...x, quantity: Math.max(1, Number(e.target.value)) }
+                                      : x,
+                                  ),
+                                )
+                              }
+                              className="w-[70px]"
+                              aria-label={`Quantity for ${l.description}`}
+                            />
+                          </td>
+                          <td className="num">
+                            {/* Editable — this is what the replacement bills at,
+                                so a wrong or $0 list price is fixed right here. */}
+                            <Input
+                              type="number"
+                              step="0.01"
+                              min={0}
+                              key={`${l.variantId}-price`}
+                              defaultValue={(l.priceCents / 100).toFixed(2)}
+                              onBlur={(e) => {
+                                const n = Number(String(e.target.value).replace(/[$,\s]/g, ''));
+                                const cents = Number.isFinite(n) && n > 0 ? Math.round(n * 100) : 0;
+                                setSaleLines((prev) =>
+                                  prev.map((x, j) => (j === i ? { ...x, priceCents: cents } : x)),
+                                );
+                              }}
+                              className="w-[90px]"
+                              data-testid="exchange-line-price"
+                              aria-label={`Unit price for ${l.description}`}
+                            />
+                          </td>
+                          <td>
+                            <Select
+                              value={l.sourceLocationId}
+                              onChange={(e) =>
+                                setSaleLines((prev) =>
+                                  prev.map((x, j) =>
+                                    j === i ? { ...x, sourceLocationId: e.target.value } : x,
+                                  ),
+                                )
+                              }
+                              data-testid="exchange-line-source"
+                              aria-label={`Inventory source for ${l.description}`}
+                            >
+                              <option value="">
+                                {original ? locationName(original.locationId) : 'This store'} — this
+                                store
+                              </option>
+                              {locations
+                                .filter((loc) => loc.id !== original?.locationId)
+                                .map((loc) => (
+                                  <option key={loc.id} value={loc.id}>
+                                    {loc.name}
+                                    {loc.locationType === 'warehouse' ? ' (warehouse)' : ''}
+                                  </option>
+                                ))}
+                            </Select>
+                          </td>
+                          <td className="actions">
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="danger"
+                              onClick={() => setSaleLines((prev) => prev.filter((_, j) => j !== i))}
+                            >
+                              Remove
+                            </Button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </TableWrap>
+              )}
+            </Stack>
           </Card>
 
-          <Card title="Settlement">
-            <div style={{ fontSize: 13, margin: '0 0 10px', display: 'grid', gap: 2 }}>
-              <div>
-                Replacement (before tax): <Money cents={replacementEstCents} />
-              </div>
-              <div>
-                Return credit: <Money cents={returnCreditCents} />
-                {feeEstCents > 0 && (
-                  <>
-                    {' '}
-                    − restocking fee <Money cents={feeEstCents} />
-                  </>
-                )}
-              </div>
-              <div style={{ fontWeight: 600 }} data-testid="exchange-est-due">
-                {estNetCents > 0 ? (
-                  <>
-                    Estimated balance the customer owes: <Money cents={estNetCents} />
-                  </>
-                ) : (
-                  <>
-                    Estimated store credit the customer keeps: <Money cents={-estNetCents} />
-                  </>
-                )}
-              </div>
-              <p style={{ color: 'var(--text-secondary)', margin: '4px 0 0' }}>
-                Estimates exclude tax and any configured restocking percent — the exact numbers come
-                from the written orders, and the collected payment uses the exact balance.
-              </p>
-            </div>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <Field label="Restocking fee override ($; blank = calculated from settings)">
-                <Input
-                  type="number"
-                  step="0.01"
-                  min={0}
-                  value={feeOverride}
-                  onChange={(e) => setFeeOverride(e.target.value)}
-                  style={{ width: '100%' }}
-                />
-              </Field>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
-                <input
-                  type="checkbox"
-                  checked={goodsInHand}
-                  onChange={(e) => setGoodsInHand(e.target.checked)}
-                />
-                Goods are in hand — settle immediately (uncheck if the truck picks the return up)
-              </label>
-            </div>
-            {goodsInHand && (
-              <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
-                  <input
-                    type="checkbox"
-                    checked={collectNow}
-                    onChange={(e) => setCollectNow(e.target.checked)}
-                    data-testid="collect-balance-now"
+          <Card
+            title="Settlement"
+            description="Estimates exclude tax and any configured restocking percent — the exact numbers come from the written orders, and the collected payment uses the exact balance."
+          >
+            <Stack>
+              <KeyValue
+                rows={[
+                  {
+                    label: 'Replacement (before tax)',
+                    value: <Money cents={replacementEstCents} />,
+                  },
+                  {
+                    label: 'Return credit',
+                    value: (
+                      <>
+                        <Money cents={returnCreditCents} />
+                        {feeEstCents > 0 && (
+                          <>
+                            {' '}
+                            − restocking fee <Money cents={feeEstCents} />
+                          </>
+                        )}
+                      </>
+                    ),
+                  },
+                  {
+                    label:
+                      estNetCents > 0
+                        ? 'Estimated balance the customer owes'
+                        : 'Estimated store credit the customer keeps',
+                    value: (
+                      <strong data-testid="exchange-est-due">
+                        <Money cents={estNetCents > 0 ? estNetCents : -estNetCents} />
+                      </strong>
+                    ),
+                  },
+                ]}
+              />
+              <FormGrid cols={2}>
+                <Field label="Restocking fee override ($)" hint="Blank = calculated from settings">
+                  <Input
+                    type="number"
+                    step="0.01"
+                    min={0}
+                    value={feeOverride}
+                    onChange={(e) => setFeeOverride(e.target.value)}
                   />
-                  Collect the remaining balance now (charged for the exact amount due after the
-                  credit applies)
-                </label>
-                {collectNow && (
+                </Field>
+                <div className="field">
+                  <span className="field-label">When to settle</span>
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={goodsInHand}
+                      onChange={(e) => setGoodsInHand(e.target.checked)}
+                    />
+                    Goods are in hand — settle immediately (uncheck if the truck picks the return
+                    up)
+                  </label>
+                </div>
+                {goodsInHand && (
+                  <div className="field">
+                    <span className="field-label">Balance</span>
+                    <label className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={collectNow}
+                        onChange={(e) => setCollectNow(e.target.checked)}
+                        data-testid="collect-balance-now"
+                      />
+                      Collect the remaining balance now (charged for the exact amount due after the
+                      credit applies)
+                    </label>
+                  </div>
+                )}
+                {goodsInHand && collectNow && (
                   <Field label="Payment method">
                     <Select
                       value={payMethod}
                       onChange={(e) =>
                         setPayMethod(e.target.value as (typeof TENDERS)[number]['value'])
                       }
-                      style={{ width: '100%' }}
                       data-testid="exchange-pay-method"
                     >
                       {TENDERS.map((t) => (
@@ -695,26 +720,24 @@ function NewExchangeInner() {
                     </Select>
                   </Field>
                 )}
-              </div>
-            )}
+              </FormGrid>
+              {error && <Alert tone="error">{error}</Alert>}
+            </Stack>
+            <FormActions>
+              <Button
+                type="button"
+                variant="primary"
+                disabled={saving}
+                onClick={() => void submit()}
+                data-testid="create-exchange"
+              >
+                <Repeat size={14} />
+                {saving ? 'Writing…' : 'Write exchange'}
+              </Button>
+            </FormActions>
           </Card>
-
-          {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
-          <div>
-            <Button
-              type="button"
-              variant="primary"
-              disabled={saving}
-              onClick={() => void submit()}
-              data-testid="create-exchange"
-            >
-              <Repeat size={14} />
-              {saving ? 'Writing…' : 'Write exchange'}
-            </Button>
-          </div>
-        </div>
+        </Stack>
       )}
-      {!original && error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
     </div>
   );
 }

@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { X } from 'lucide-react';
 import { api } from '@/lib/api';
 import { Money } from '@/components/money';
-import { Button, Card, Input, Select } from '@/components/ui';
+import { Button, Card, Input, Select, TableEmpty, TableWrap, Toolbar } from '@/components/ui';
 
 /**
  * The Add Product popup shared by New Sale and the order page's line
@@ -161,17 +161,10 @@ export function ProductSearchDialog({
   }, [q, vendorId, stockFilter, size, firmness, locationId]);
 
   return (
+    // Modal chrome: no shared overlay primitive exists yet, so the
+    // backdrop/panel positioning is structural utility classes.
     <div
-      style={{
-        position: 'fixed',
-        inset: 0,
-        background: 'rgb(0 0 0 / 0.4)',
-        zIndex: 50,
-        display: 'flex',
-        alignItems: 'flex-start',
-        justifyContent: 'center',
-        paddingTop: '8vh',
-      }}
+      className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 pt-[8vh]"
       onClick={onClose}
     >
       <div
@@ -179,27 +172,33 @@ export function ProductSearchDialog({
         role="dialog"
         aria-modal="true"
         aria-label="Add Product"
-        style={{ width: 'min(760px, 94vw)' }}
+        className="w-[min(760px,94vw)]"
         onClick={(e) => e.stopPropagation()}
         onKeyDown={onKeyDown}
         data-testid="product-search-dialog"
       >
         <Card
           title="Add Product"
+          description="Availability and the added line’s inventory source follow the “From” location — each line can still be changed on the order afterwards."
           actions={
             <Button size="sm" variant="ghost" onClick={onClose} aria-label="Close Add Product">
               <X size={14} aria-hidden />
             </Button>
           }
         >
-          <div className="mb-2 flex flex-wrap gap-2">
+          <Toolbar
+            end={
+              rows.length >= 100 ? (
+                <span className="muted">Showing first 100 — refine your search.</span>
+              ) : undefined
+            }
+          >
             <Input
               autoFocus
               value={q}
               onChange={(e) => setQ(e.target.value)}
               placeholder="Search model, brand, size…"
               aria-label="Search products"
-              style={{ flex: 1, minWidth: 200 }}
               data-testid="product-query"
             />
             <Select
@@ -273,13 +272,9 @@ export function ProductSearchDialog({
                   </option>
                 ))}
             </Select>
-          </div>
-          <p className="muted" style={{ margin: '0 0 6px', fontSize: 12 }}>
-            Availability and the added line&apos;s inventory source follow the &ldquo;From&rdquo;
-            location — each line can still be changed on the order afterwards.
-          </p>
-          <div style={{ maxHeight: '52vh', overflowY: 'auto' }}>
-            <table className="table" style={{ fontSize: 13 }}>
+          </Toolbar>
+          <TableWrap maxHeight="52vh">
+            <table className="table table-sticky">
               <thead>
                 <tr>
                   <th>Product</th>
@@ -312,7 +307,7 @@ export function ProductSearchDialog({
                       {r.variantName ? ` — ${r.variantName}` : ''}
                     </td>
                     <td>
-                      <code style={{ fontSize: 11.5 }}>{r.sku ?? '—'}</code>
+                      <code>{r.sku ?? '—'}</code>
                     </td>
                     <td>{r.vendorName ?? '—'}</td>
                     <td className="num">
@@ -321,14 +316,12 @@ export function ProductSearchDialog({
                       ) : (
                         // D12: an unpriced catalog item is priced at the
                         // register — say so instead of showing "$0.00".
-                        <span className="muted" style={{ fontSize: 12 }}>
-                          price at register
-                        </span>
+                        <span className="muted">price at register</span>
                       )}
                     </td>
                     <td className="num">{r.availableHere}</td>
                     <td className="num">{r.availableTotal}</td>
-                    <td style={{ fontSize: 12 }}>
+                    <td className="muted">
                       {r.availableTotal > 0
                         ? ''
                         : r.atpDate
@@ -340,21 +333,10 @@ export function ProductSearchDialog({
                     </td>
                   </tr>
                 ))}
-                {rows.length === 0 && (
-                  <tr>
-                    <td colSpan={7} className="muted" style={{ fontSize: 13 }}>
-                      No matches.
-                    </td>
-                  </tr>
-                )}
+                {rows.length === 0 && <TableEmpty colSpan={7}>No matches.</TableEmpty>}
               </tbody>
             </table>
-          </div>
-          {rows.length >= 100 && (
-            <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
-              Showing first 100 — refine your search.
-            </div>
-          )}
+          </TableWrap>
         </Card>
       </div>
     </div>

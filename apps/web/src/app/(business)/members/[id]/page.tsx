@@ -6,14 +6,19 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import type { Permission } from '@jetnine/shared';
 import {
+  Alert,
+  BackLink,
   Button,
   Card,
   Field,
+  FormGrid,
+  Input,
   LoadingRows,
   PageHeader,
+  SectionHeading,
   Select,
+  Stack,
   StatusBadge,
-  Input,
 } from '@/components/ui';
 import { NAV } from '@/components/app-shell';
 import { PermissionGroupsEditor } from '@/components/permission-groups';
@@ -211,22 +216,24 @@ export default function MemberDetailPage() {
   if (error) {
     return (
       <div>
-        <p style={{ marginBottom: 12 }}>
-          <Link href="/members">← Members</Link>
-        </p>
-        <p style={{ color: 'var(--danger)' }}>{error}</p>
+        <PageHeader
+          eyebrow={<BackLink href="/members">Members</BackLink>}
+          title={error === 'Member not found' ? 'Member not found' : 'Member'}
+        />
+        <Alert tone="error">{error}</Alert>
       </div>
     );
   }
   if (!member || !access) return <LoadingRows rows={6} />;
 
+  const needsStorePick = member.sellingScope === 'approved' || member.dataScope === 'store';
+
   return (
     <div>
-      <p style={{ marginBottom: 12 }}>
-        <Link href="/members">← Members</Link>
-      </p>
       <PageHeader
+        eyebrow={<BackLink href="/members">Members</BackLink>}
         title={member.name || member.email}
+        meta={<StatusBadge status={member.status} />}
         sub={
           <>
             {member.email}
@@ -236,8 +243,7 @@ export default function MemberDetailPage() {
           </>
         }
         actions={
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-            <StatusBadge status={member.status} />
+          <>
             {member.status === 'invited' && (
               <Button size="sm" variant="secondary" onClick={() => void resend()}>
                 Resend invite
@@ -275,297 +281,297 @@ export default function MemberDetailPage() {
               </Button>
             ) : (
               <Button
-                size="sm"
                 variant="primary"
                 onClick={() => void patchMember({ status: 'active' }, 'Member reactivated.')}
               >
                 Reactivate
               </Button>
             )}
-          </span>
+          </>
         }
       />
 
-      <div className="grid gap-4 lg:grid-cols-2" style={{ marginBottom: 16 }}>
-        <Card title="Role">
-          <Field label="Assigned role">
-            <Select
-              value={member.roleId}
-              onChange={(e) => void patchMember({ roleId: e.target.value }, 'Role updated.')}
-              style={{ width: '100%' }}
+      <Stack>
+        <div className="grid gap-4 lg:grid-cols-2">
+          <Card title="Role">
+            <Field
+              label="Assigned role"
+              hint={
+                <>
+                  The role sets this member’s default access. Changing it keeps any individual
+                  overrides below, re-applied on top of the new role.{' '}
+                  <Link href={`/roles/${member.roleId}`}>View role →</Link>
+                </>
+              }
             >
-              {roles.map((r) => (
-                <option key={r.id} value={r.id}>
-                  {r.name}
-                  {r.isSystem ? '' : ' (custom)'}
-                </option>
-              ))}
-            </Select>
-          </Field>
-          <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 0 }}>
-            The role sets this member’s default access. Changing it keeps any individual overrides
-            below, re-applied on top of the new role.{' '}
-            <Link href={`/roles/${member.roleId}`}>View role →</Link>
-          </p>
-        </Card>
+              <Select
+                value={member.roleId}
+                onChange={(e) => void patchMember({ roleId: e.target.value }, 'Role updated.')}
+              >
+                {roles.map((r) => (
+                  <option key={r.id} value={r.id}>
+                    {r.name}
+                    {r.isSystem ? '' : ' (custom)'}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+          </Card>
 
-        <Card title="Store access">
-          <label
-            data-testid={`manager-dashboard-${member.membershipId}`}
-            style={{
-              display: 'flex',
-              gap: 8,
-              alignItems: 'flex-start',
-              fontSize: 13,
-              marginBottom: 12,
-              cursor: 'pointer',
-            }}
-          >
-            <input
-              type="checkbox"
-              checked={member.managerDashboard}
-              onChange={(e) =>
-                void patchMember(
-                  { managerDashboard: e.target.checked },
-                  e.target.checked ? 'Manager dashboard enabled.' : 'Manager dashboard turned off.',
-                )
-              }
-              style={{ marginTop: 2 }}
-            />
-            <span>
-              <strong>Store manager dashboard</strong>
-              <br />
-              <span style={{ color: 'var(--text-secondary)', fontSize: 12.5 }}>
-                Their home page becomes the store view: store sales today, the associate board,
-                open-sales queues, and today&apos;s deliveries — scoped to a store they pick from
-                their approved list.
-              </span>
-            </span>
-          </label>
-          <Field label="Monthly sales goal (written $, drives their dashboard pace bar)">
-            <Input
-              type="number"
-              min={0}
-              step={100}
-              placeholder="e.g. 60000 — blank for no goal"
-              defaultValue={
-                member.monthlyGoalCents != null ? String(member.monthlyGoalCents / 100) : ''
-              }
-              data-testid={`monthly-goal-${member.membershipId}`}
-              onBlur={(e) => {
-                const raw = e.target.value.trim();
-                const cents = raw === '' ? null : Math.round(Number(raw) * 100);
-                if (cents !== null && (!Number.isFinite(cents) || cents < 0)) return;
-                if (cents === member.monthlyGoalCents) return;
-                void patchMember(
-                  { monthlyGoalCents: cents },
-                  cents === null ? 'Goal cleared.' : 'Monthly goal saved.',
-                );
-              }}
-              style={{ width: '100%' }}
-            />
-          </Field>
-          <Field label="Where can they sell?">
-            <Select
-              value={member.sellingScope}
-              data-testid={`selling-scope-${member.membershipId}`}
-              onChange={(e) =>
-                void patchMember({ sellingScope: e.target.value }, 'Selling access updated.')
-              }
-              style={{ width: '100%' }}
-            >
-              <option value="all">Any store</option>
-              <option value="approved">Approved stores only (picked at login)</option>
-            </Select>
-          </Field>
-          <Field label="Whose sales data can they see?">
-            <Select
-              value={member.dataScope}
-              data-testid={`data-scope-${member.membershipId}`}
-              onChange={(e) =>
-                void patchMember({ dataScope: e.target.value }, 'Sales data scope updated.')
-              }
-              style={{ width: '100%' }}
-            >
-              <option value="all">All stores</option>
-              <option value="store">Approved stores only</option>
-            </Select>
-          </Field>
-          {(member.sellingScope === 'approved' || member.dataScope === 'store') && (
-            <div style={{ display: 'grid', gap: 4 }}>
-              <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-secondary)' }}>
-                Approved stores
-              </div>
-              {locations.map((loc) => (
-                <label
-                  key={loc.id}
-                  style={{
-                    display: 'flex',
-                    gap: 8,
-                    alignItems: 'center',
-                    fontSize: 13,
-                    color: 'var(--text-secondary)',
-                  }}
-                >
-                  <input
-                    type="checkbox"
-                    checked={member.scopeLocationIds.includes(loc.id)}
-                    style={{ accentColor: 'var(--brand)' }}
-                    onChange={(e) => {
-                      const next = e.target.checked
-                        ? [...member.scopeLocationIds, loc.id]
-                        : member.scopeLocationIds.filter((x) => x !== loc.id);
-                      void patchMember({ scopeLocationIds: next }, 'Store scope updated.');
-                    }}
-                  />
-                  {loc.name}
-                </label>
-              ))}
-              {member.scopeLocationIds.length === 0 && (
-                <span style={{ fontSize: 12, color: 'var(--danger)' }}>
-                  No store approved —{' '}
-                  {member.sellingScope === 'approved' ? 'this member cannot sell anywhere' : ''}
-                  {member.sellingScope === 'approved' && member.dataScope === 'store'
-                    ? ' and '
-                    : ''}
-                  {member.dataScope === 'store' ? 'they see no sales data' : ''}.
+          <Card title="Store access">
+            <FormGrid cols={1}>
+              <label
+                data-testid={`manager-dashboard-${member.membershipId}`}
+                className="flex cursor-pointer items-start gap-2 text-[13px]"
+              >
+                <input
+                  type="checkbox"
+                  className="mt-0.5 accent-[var(--brand)]"
+                  checked={member.managerDashboard}
+                  onChange={(e) =>
+                    void patchMember(
+                      { managerDashboard: e.target.checked },
+                      e.target.checked
+                        ? 'Manager dashboard enabled.'
+                        : 'Manager dashboard turned off.',
+                    )
+                  }
+                />
+                <span>
+                  <strong>Store manager dashboard</strong>
+                  <span className="field-hint">
+                    Their home page becomes the store view: store sales today, the associate board,
+                    open-sales queues, and today&apos;s deliveries — scoped to a store they pick
+                    from their approved list.
+                  </span>
                 </span>
+              </label>
+              <Field
+                label="Monthly sales goal"
+                hint="Written dollars; drives their dashboard pace bar. Leave blank for no goal."
+              >
+                <Input
+                  type="number"
+                  min={0}
+                  step={100}
+                  placeholder="e.g. 60000"
+                  defaultValue={
+                    member.monthlyGoalCents != null ? String(member.monthlyGoalCents / 100) : ''
+                  }
+                  data-testid={`monthly-goal-${member.membershipId}`}
+                  onBlur={(e) => {
+                    const raw = e.target.value.trim();
+                    const cents = raw === '' ? null : Math.round(Number(raw) * 100);
+                    if (cents !== null && (!Number.isFinite(cents) || cents < 0)) return;
+                    if (cents === member.monthlyGoalCents) return;
+                    void patchMember(
+                      { monthlyGoalCents: cents },
+                      cents === null ? 'Goal cleared.' : 'Monthly goal saved.',
+                    );
+                  }}
+                />
+              </Field>
+              <Field label="Where can they sell?">
+                <Select
+                  value={member.sellingScope}
+                  data-testid={`selling-scope-${member.membershipId}`}
+                  onChange={(e) =>
+                    void patchMember({ sellingScope: e.target.value }, 'Selling access updated.')
+                  }
+                >
+                  <option value="all">Any store</option>
+                  <option value="approved">Approved stores only (picked at login)</option>
+                </Select>
+              </Field>
+              <Field label="Whose sales data can they see?">
+                <Select
+                  value={member.dataScope}
+                  data-testid={`data-scope-${member.membershipId}`}
+                  onChange={(e) =>
+                    void patchMember({ dataScope: e.target.value }, 'Sales data scope updated.')
+                  }
+                >
+                  <option value="all">All stores</option>
+                  <option value="store">Approved stores only</option>
+                </Select>
+              </Field>
+              {needsStorePick && (
+                <div>
+                  <SectionHeading as="h3" title="Approved stores" />
+                  <Stack gap="sm">
+                    <div className="grid gap-1">
+                      {locations.map((loc) => (
+                        <label
+                          key={loc.id}
+                          className="flex cursor-pointer items-center gap-2 text-[13px] text-[var(--text-secondary)]"
+                        >
+                          <input
+                            type="checkbox"
+                            className="accent-[var(--brand)]"
+                            checked={member.scopeLocationIds.includes(loc.id)}
+                            onChange={(e) => {
+                              const next = e.target.checked
+                                ? [...member.scopeLocationIds, loc.id]
+                                : member.scopeLocationIds.filter((x) => x !== loc.id);
+                              void patchMember({ scopeLocationIds: next }, 'Store scope updated.');
+                            }}
+                          />
+                          {loc.name}
+                        </label>
+                      ))}
+                      {locations.length === 0 && (
+                        <span className="field-hint">
+                          No locations yet — add one under Locations first.
+                        </span>
+                      )}
+                    </div>
+                    {member.scopeLocationIds.length === 0 && (
+                      <Alert tone="warning">
+                        No store approved —{' '}
+                        {member.sellingScope === 'approved'
+                          ? 'this member cannot sell anywhere'
+                          : ''}
+                        {member.sellingScope === 'approved' && member.dataScope === 'store'
+                          ? ' and '
+                          : ''}
+                        {member.dataScope === 'store' ? 'they see no sales data' : ''}.
+                      </Alert>
+                    )}
+                    <span className="field-hint">
+                      With approved-only selling, the member picks one of these stores at login and
+                      everything they ring — including the money tendered — counts toward that
+                      store.
+                    </span>
+                  </Stack>
+                </div>
               )}
-              <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-                With approved-only selling, the member picks one of these stores at login and
-                everything they ring — including the money tendered — counts toward that store.
-              </span>
-            </div>
-          )}
-        </Card>
-      </div>
-
-      <Card title="Navigation" style={{ marginTop: 16 }}>
-        <p style={{ fontSize: 13, marginTop: 0, color: 'var(--text-secondary)' }}>
-          Untick a tab to remove it from this member&apos;s sidebar entirely. This is visibility
-          only — what they can actually do is still governed by their permissions below.
-        </p>
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {NAV.map((group) => (
-            <div key={group.label}>
-              <div
-                style={{
-                  fontSize: 11.5,
-                  fontWeight: 700,
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.06em',
-                  color: 'var(--text-muted)',
-                  marginBottom: 4,
-                }}
-              >
-                {group.label}
-              </div>
-              <div style={{ display: 'grid', gap: 3 }}>
-                {group.items.map((item) => {
-                  const hidden = member.hiddenNav.includes(item.href);
-                  return (
-                    <label
-                      key={item.href}
-                      style={{
-                        display: 'flex',
-                        gap: 8,
-                        alignItems: 'center',
-                        fontSize: 13,
-                        color: hidden ? 'var(--text-muted)' : 'var(--text-secondary)',
-                      }}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={!hidden}
-                        style={{ accentColor: 'var(--brand)' }}
-                        data-testid={`nav-visible-${item.href.replace(/\//g, '_')}`}
-                        onChange={(e) => {
-                          const next = e.target.checked
-                            ? member.hiddenNav.filter((h) => h !== item.href)
-                            : [...member.hiddenNav, item.href];
-                          void patchMember({ hiddenNav: next }, 'Navigation updated.');
-                        }}
-                      />
-                      {item.label}
-                    </label>
-                  );
-                })}
-              </div>
-            </div>
-          ))}
+            </FormGrid>
+          </Card>
         </div>
-        {member.hiddenNav.length > 0 && (
-          <p style={{ fontSize: 12.5, color: 'var(--text-secondary)', margin: '10px 0 0' }}>
-            {member.hiddenNav.length} tab{member.hiddenNav.length === 1 ? '' : 's'} hidden.{' '}
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => void patchMember({ hiddenNav: [] }, 'All tabs restored.')}
-            >
-              Show all
-            </Button>
-          </p>
-        )}
-      </Card>
 
-      <Card
-        title={
-          <>
-            Permissions
-            {overrideCount > 0 && (
-              <span className="badge badge-warning" style={{ marginLeft: 10 }}>
-                {overrideCount} override{overrideCount === 1 ? '' : 's'}
-              </span>
-            )}
-          </>
-        }
-        actions={
-          <span style={{ display: 'inline-flex', gap: 8, alignItems: 'center' }}>
-            {access.overrides.length > 0 && !dirty && (
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => void resetToRole()}
-                disabled={savingAccess}
-              >
-                Reset to role defaults
-              </Button>
-            )}
-            {dirty && (
+        <Card
+          title="Navigation"
+          description={
+            <>
+              Untick a tab to remove it from this member&apos;s sidebar entirely. This is visibility
+              only — what they can actually do is still governed by their permissions below.
+            </>
+          }
+          actions={
+            member.hiddenNav.length > 0 ? (
               <>
+                <span className="muted">
+                  {member.hiddenNav.length} tab{member.hiddenNav.length === 1 ? '' : 's'} hidden.
+                </span>
                 <Button
                   size="sm"
                   variant="ghost"
-                  onClick={() => setStaged(null)}
-                  disabled={savingAccess}
+                  onClick={() => void patchMember({ hiddenNav: [] }, 'All tabs restored.')}
                 >
-                  Discard
-                </Button>
-                <Button
-                  size="sm"
-                  variant="primary"
-                  onClick={() => void saveAccess()}
-                  disabled={savingAccess}
-                >
-                  {savingAccess ? 'Saving…' : 'Save access'}
+                  Show all
                 </Button>
               </>
-            )}
-          </span>
-        }
-      >
-        <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 0 }}>
-          Checked = what {member.name || member.email} can do, starting from the{' '}
-          <strong>{access.roleName}</strong> role. Tick or untick anything to override just for this
-          member
-          {member.status === 'invited' ? ' — it applies as soon as they accept the invite' : ''}.
-        </p>
-        <PermissionGroupsEditor
-          value={value}
-          onChange={(next) => setStaged(next)}
-          baseline={roleSet}
-        />
-      </Card>
+            ) : undefined
+          }
+        >
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {NAV.map((group) => (
+              <div key={group.label}>
+                <SectionHeading as="h3" title={group.label} />
+                <div className="grid gap-1">
+                  {group.items.map((item) => {
+                    const hidden = member.hiddenNav.includes(item.href);
+                    return (
+                      <label
+                        key={item.href}
+                        className={`flex cursor-pointer items-center gap-2 text-[13px] ${
+                          hidden ? 'muted' : 'text-[var(--text-secondary)]'
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          className="accent-[var(--brand)]"
+                          checked={!hidden}
+                          data-testid={`nav-visible-${item.href.replace(/\//g, '_')}`}
+                          onChange={(e) => {
+                            const next = e.target.checked
+                              ? member.hiddenNav.filter((h) => h !== item.href)
+                              : [...member.hiddenNav, item.href];
+                            void patchMember({ hiddenNav: next }, 'Navigation updated.');
+                          }}
+                        />
+                        {item.label}
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
+
+        <Card
+          title={
+            <>
+              Permissions
+              {overrideCount > 0 && (
+                <span className="badge badge-warning ml-2">
+                  {overrideCount} override{overrideCount === 1 ? '' : 's'}
+                </span>
+              )}
+            </>
+          }
+          description={
+            <>
+              Checked = what {member.name || member.email} can do, starting from the{' '}
+              <strong>{access.roleName}</strong> role. Tick or untick anything to override just for
+              this member
+              {member.status === 'invited' ? ' — it applies as soon as they accept the invite' : ''}
+              .
+            </>
+          }
+          actions={
+            <>
+              {access.overrides.length > 0 && !dirty && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => void resetToRole()}
+                  disabled={savingAccess}
+                >
+                  Reset to role defaults
+                </Button>
+              )}
+              {dirty && (
+                <>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => setStaged(null)}
+                    disabled={savingAccess}
+                  >
+                    Discard
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="primary"
+                    onClick={() => void saveAccess()}
+                    disabled={savingAccess}
+                  >
+                    {savingAccess ? 'Saving…' : 'Save access'}
+                  </Button>
+                </>
+              )}
+            </>
+          }
+        >
+          <PermissionGroupsEditor
+            value={value}
+            onChange={(next) => setStaged(next)}
+            baseline={roleSet}
+          />
+        </Card>
+      </Stack>
     </div>
   );
 }

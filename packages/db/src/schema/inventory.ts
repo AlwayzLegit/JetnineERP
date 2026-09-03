@@ -65,6 +65,13 @@ export const inventoryLevels = pgTable(
      * `on_hand - reserved - floor_sample` everywhere.
      */
     floorSample: integer('floor_sample').notNull().default(0),
+    /**
+     * STORIS "Min Stock" per store (owner 2026-09-03 catalog load): the
+     * minimum on hand this location wants. The variant's reorderPoint is
+     * kept as the sum across locations so REPL-040 suggestions still
+     * work; this keeps the per-store number for per-store replenishment.
+     */
+    reorderPoint: integer('reorder_point'),
     // Where the stock physically sits inside the location (nullable — most
     // catalogs start unbinned). Set-null so deleting a bin never blocks.
     storageBinId: uuid('storage_bin_id').references(() => storageBins.id, { onDelete: 'set null' }),

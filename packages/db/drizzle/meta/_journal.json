@@ -596,6 +596,20 @@
       "when": 1788307914139,
       "tag": "0084_order_notes",
       "breakpoints": true
+    },
+    {
+      "idx": 85,
+      "version": "7",
+      "when": 1788388301532,
+      "tag": "0085_advanced_vendor_settings",
+      "breakpoints": true
+    },
+    {
+      "idx": 86,
+      "version": "7",
+      "when": 1788403205471,
+      "tag": "0086_inventory_level_reorder_point",
+      "breakpoints": true
     }
   ]
 }

@@ -8,6 +8,8 @@
  * into paper.
  */
 
+import { TableWrap } from './ui';
+
 export interface OrderDocumentPayload {
   business: {
     name: string;
@@ -280,6 +282,8 @@ const cell: React.CSSProperties = {
   fontSize: 11,
   verticalAlign: 'top',
 };
+/** Print sheet: the cells draw their own black rules, so the wrap drops its chrome. */
+const sheet: React.CSSProperties = { border: 'none', borderRadius: 0, background: 'transparent' };
 
 /** Billing street block for SOLD TO (BA-0014: ZIP included). */
 function BillingAddress({ doc }: { doc: OrderDocumentPayload }) {
@@ -426,33 +430,35 @@ export function InvoiceDoc({ doc, printedAt }: { doc: OrderDocumentPayload; prin
       </div>
 
       {/* Info strip */}
-      <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: 10 }}>
-        <thead>
-          <tr>
-            {/* BA-0030: no "Customer #" — we have no human-facing customer
-                number, and a fragment of the internal id helps nobody. */}
-            {['Customer Ph.', 'Terms', 'Salesperson', 'Store'].map((h) => (
-              <th key={h} style={{ ...cell, ...label, textAlign: 'left' }}>
-                {h}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td style={cell}>{doc.customer?.phone ?? '—'}</td>
-            <td style={cell}>{money.balanceDueCents > 0 ? 'Balance due' : 'Paid in full'}</td>
-            <td style={cell}>
-              {/* BA-0013: full names, not initials. */}
-              {doc.salespersonName ?? '—'}
-              {doc.secondSalespersonName ? ` / ${doc.secondSalespersonName}` : ''}
-            </td>
-            <td style={cell}>
-              {doc.location?.orderPrefix ?? ''} {doc.location?.name ?? '—'}
-            </td>
-          </tr>
-        </tbody>
-      </table>
+      <TableWrap style={{ ...sheet, marginTop: 10 }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <thead>
+            <tr>
+              {/* BA-0030: no "Customer #" — we have no human-facing customer
+                  number, and a fragment of the internal id helps nobody. */}
+              {['Customer Ph.', 'Terms', 'Salesperson', 'Store'].map((h) => (
+                <th key={h} style={{ ...cell, ...label, textAlign: 'left' }}>
+                  {h}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td style={cell}>{doc.customer?.phone ?? '—'}</td>
+              <td style={cell}>{money.balanceDueCents > 0 ? 'Balance due' : 'Paid in full'}</td>
+              <td style={cell}>
+                {/* BA-0013: full names, not initials. */}
+                {doc.salespersonName ?? '—'}
+                {doc.secondSalespersonName ? ` / ${doc.secondSalespersonName}` : ''}
+              </td>
+              <td style={cell}>
+                {doc.location?.orderPrefix ?? ''} {doc.location?.name ?? '—'}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </TableWrap>
 
       <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 6, fontSize: 10 }}>
         <div>
@@ -468,102 +474,115 @@ export function InvoiceDoc({ doc, printedAt }: { doc: OrderDocumentPayload; prin
       )}
 
       {/* Line grid — $0.00 lines print too (§11) */}
-      <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: 10 }}>
-        <thead>
-          <tr>
-            {['Ln#', 'F', 'Model', 'Brand', 'Description', 'Qty', 'Price', 'Amount'].map((h) => (
-              <th key={h} style={{ ...cell, ...label, textAlign: 'left' }}>
-                {h}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {gridLines.map((l, i) => (
-            <tr key={l.id}>
-              <td style={cell}>{i + 1}</td>
-              <td style={cell}>
-                {l.takenWith
-                  ? 'T'
-                  : (FULFILLMENT_CODES[l.fulfillmentMethod ?? o.fulfillmentType] ?? '')}
-              </td>
-              <td style={cell}>{l.model ?? '—'}</td>
-              <td style={cell}>{l.brand ?? '—'}</td>
-              <td style={cell}>
-                {l.description}
-                {l.takenWith && (
-                  <span style={{ fontSize: 9 }}> — TAKEN WITH ({l.pieceNumber})</span>
-                )}
-              </td>
-              <td style={{ ...cell, textAlign: 'right' }}>{l.quantity}</td>
-              <td style={{ ...cell, textAlign: 'right' }}>{usd(l.unitPriceCents)}</td>
-              <td style={{ ...cell, textAlign: 'right' }}>{usd(l.totalCents)}</td>
+      <TableWrap style={{ ...sheet, marginTop: 10 }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <thead>
+            <tr>
+              {['Ln#', 'F', 'Model', 'Brand', 'Description', 'Qty', 'Price', 'Amount'].map((h) => (
+                <th key={h} style={{ ...cell, ...label, textAlign: 'left' }}>
+                  {h}
+                </th>
+              ))}
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {gridLines.map((l, i) => (
+              <tr key={l.id}>
+                <td style={cell}>{i + 1}</td>
+                <td style={cell}>
+                  {l.takenWith
+                    ? 'T'
+                    : (FULFILLMENT_CODES[l.fulfillmentMethod ?? o.fulfillmentType] ?? '')}
+                </td>
+                <td style={cell}>{l.model ?? '—'}</td>
+                <td style={cell}>{l.brand ?? '—'}</td>
+                <td style={cell}>
+                  {l.description}
+                  {l.takenWith && (
+                    <span style={{ fontSize: 9 }}> — TAKEN WITH ({l.pieceNumber})</span>
+                  )}
+                </td>
+                <td style={{ ...cell, textAlign: 'right' }}>{l.quantity}</td>
+                <td style={{ ...cell, textAlign: 'right' }}>{usd(l.unitPriceCents)}</td>
+                <td style={{ ...cell, textAlign: 'right' }}>{usd(l.totalCents)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </TableWrap>
 
       {/* Totals + payments */}
       <div style={{ display: 'flex', gap: 16, marginTop: 12 }}>
         <div style={{ flex: 1 }}>
           {o.payments.length > 0 && (
-            <table style={{ borderCollapse: 'collapse' }}>
-              <thead>
-                <tr>
-                  {['Payment', 'Date', 'Amount'].map((h) => (
-                    <th key={h} style={{ ...cell, ...label, textAlign: 'left' }}>
-                      {h}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {o.payments
-                  .filter((p) => p.status === 'succeeded')
-                  .map((p) => (
-                    <tr key={p.id}>
-                      <td style={cell}>{tenderLabel(p.method)}</td>
-                      <td style={cell}>{new Date(p.createdAt).toLocaleDateString()}</td>
-                      <td style={{ ...cell, textAlign: 'right' }}>{usd(p.amountCents)}</td>
-                    </tr>
-                  ))}
-              </tbody>
-            </table>
+            <TableWrap style={sheet}>
+              <table style={{ borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr>
+                    {['Payment', 'Date', 'Amount'].map((h) => (
+                      <th key={h} style={{ ...cell, ...label, textAlign: 'left' }}>
+                        {h}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {o.payments
+                    .filter((p) => p.status === 'succeeded')
+                    .map((p) => (
+                      <tr key={p.id}>
+                        <td style={cell}>{tenderLabel(p.method)}</td>
+                        <td style={cell}>{new Date(p.createdAt).toLocaleDateString()}</td>
+                        <td style={{ ...cell, textAlign: 'right' }}>{usd(p.amountCents)}</td>
+                      </tr>
+                    ))}
+                </tbody>
+              </table>
+            </TableWrap>
           )}
         </div>
-        <table style={{ width: 260, borderCollapse: 'collapse', fontSize: 12 }}>
-          <tbody>
-            <TotalRow label="Merchandise" value={usd(money.subtotalCents - recyclingCents)} />
-            {recyclingCents > 0 && <TotalRow label="Recycling" value={usd(recyclingCents)} />}
-            {(fam ? fam.discountCents : totalDiscount) > 0 && (
-              <TotalRow
-                label="Discounts"
-                value={`-${usd(fam ? fam.discountCents : totalDiscount)}`}
-              />
-            )}
-            {money.installFeeCents > 0 && (
-              <TotalRow label="Installation" value={usd(money.installFeeCents)} />
-            )}
-            {money.deliveryFeeCents > 0 && (
-              <TotalRow label="Delivery" value={usd(money.deliveryFeeCents)} />
-            )}
-            {money.otherFeeCents > 0 && (
-              <TotalRow label={o.otherFeeLabel ?? 'Other'} value={usd(money.otherFeeCents)} />
-            )}
-            <TotalRow label="Tax" value={usd(money.taxCents)} />
-            <TotalRow label={`Total ${title}`} value={usd(money.totalCents)} bold />
-            <TotalRow label="Amount Paid" value={usd(money.paidCents)} />
-            {!fam && o.creditDueCents > 0 ? (
-              <TotalRow label="Credit Due" value={usd(o.creditDueCents)} bold boxed />
-            ) : (
-              <TotalRow label="Amount Due" value={usd(money.balanceDueCents)} bold boxed />
-            )}
-          </tbody>
-        </table>
+        <TableWrap style={{ ...sheet, width: 260, flex: 'none' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+            <tbody>
+              <TotalRow label="Merchandise" value={usd(money.subtotalCents - recyclingCents)} />
+              {recyclingCents > 0 && <TotalRow label="Recycling" value={usd(recyclingCents)} />}
+              {(fam ? fam.discountCents : totalDiscount) > 0 && (
+                <TotalRow
+                  label="Discounts"
+                  value={`-${usd(fam ? fam.discountCents : totalDiscount)}`}
+                />
+              )}
+              {money.installFeeCents > 0 && (
+                <TotalRow label="Installation" value={usd(money.installFeeCents)} />
+              )}
+              {money.deliveryFeeCents > 0 && (
+                <TotalRow label="Delivery" value={usd(money.deliveryFeeCents)} />
+              )}
+              {money.otherFeeCents > 0 && (
+                <TotalRow label={o.otherFeeLabel ?? 'Other'} value={usd(money.otherFeeCents)} />
+              )}
+              <TotalRow label="Tax" value={usd(money.taxCents)} />
+              <TotalRow label={`Total ${title}`} value={usd(money.totalCents)} bold />
+              <TotalRow label="Amount Paid" value={usd(money.paidCents)} />
+              {!fam && o.creditDueCents > 0 ? (
+                <TotalRow label="Credit Due" value={usd(o.creditDueCents)} bold boxed />
+              ) : (
+                <TotalRow label="Amount Due" value={usd(money.balanceDueCents)} bold boxed />
+              )}
+            </tbody>
+          </table>
+        </TableWrap>
       </div>
 
       {doc.business.invoiceFooterNote && (
-        <div style={{ marginTop: 16, fontSize: 10, borderTop: '1px solid #000', paddingTop: 8 }}>
+        <div
+          style={{
+            marginTop: 'var(--space-4)',
+            fontSize: 10,
+            borderTop: '1px solid #000',
+            paddingTop: 8,
+          }}
+        >
           {doc.business.invoiceFooterNote}
         </div>
       )}
@@ -673,35 +692,37 @@ export function DeliveryTicketDoc({
         <ShipTo doc={doc} />
       </div>
 
-      <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: 10 }}>
-        <thead>
-          <tr>
-            {['Qty', 'Model', 'Description'].map((h) => (
-              <th key={h} style={{ ...cell, ...label, textAlign: 'left' }}>
-                {h}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {doc.lines
-            // BA-0028: fee lines (recycling, declined-foundation markers)
-            // are not goods to load — same rule as the pick list. Take-with
-            // lines already left with the customer.
-            .filter(
-              (l) =>
-                l.lineType !== 'custom' &&
-                (l.fulfillmentMethod ?? o.fulfillmentType) !== 'take_with',
-            )
-            .map((l) => (
-              <tr key={l.id}>
-                <td style={{ ...cell, width: 40, textAlign: 'right' }}>{l.quantity}</td>
-                <td style={{ ...cell, width: 140 }}>{l.model ?? '—'}</td>
-                <td style={cell}>{l.description}</td>
-              </tr>
-            ))}
-        </tbody>
-      </table>
+      <TableWrap style={{ ...sheet, marginTop: 10 }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <thead>
+            <tr>
+              {['Qty', 'Model', 'Description'].map((h) => (
+                <th key={h} style={{ ...cell, ...label, textAlign: 'left' }}>
+                  {h}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {doc.lines
+              // BA-0028: fee lines (recycling, declined-foundation markers)
+              // are not goods to load — same rule as the pick list. Take-with
+              // lines already left with the customer.
+              .filter(
+                (l) =>
+                  l.lineType !== 'custom' &&
+                  (l.fulfillmentMethod ?? o.fulfillmentType) !== 'take_with',
+              )
+              .map((l) => (
+                <tr key={l.id}>
+                  <td style={{ ...cell, width: 40, textAlign: 'right' }}>{l.quantity}</td>
+                  <td style={{ ...cell, width: 140 }}>{l.model ?? '—'}</td>
+                  <td style={cell}>{l.description}</td>
+                </tr>
+              ))}
+          </tbody>
+        </table>
+      </TableWrap>
 
       {(o.deliveryInstructions ?? o.notes) && (
         <div style={{ ...box, marginTop: 10, minHeight: 36 }}>

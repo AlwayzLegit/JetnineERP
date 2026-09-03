@@ -1,7 +1,7 @@
 'use client';
 
 import { useSession } from '@/lib/auth-client';
-import { Card, LoadingRows } from '@/components/ui';
+import { Alert, LinkButton, LoadingRows, PageHeader } from '@/components/ui';
 import OperationsDashboardView from '../dashboard/operations-dashboard';
 
 export default function OperationsPageClient() {
@@ -9,9 +9,19 @@ export default function OperationsPageClient() {
   if (session.isPending) return <LoadingRows />;
   if (!session.data) {
     return (
-      <Card title="Operations">
-        <p style={{ margin: 0, fontSize: 13 }}>You are not signed in.</p>
-      </Card>
+      <>
+        <PageHeader title="Operations" />
+        <Alert
+          tone="info"
+          action={
+            <LinkButton size="sm" variant="primary" href="/login">
+              Sign in
+            </LinkButton>
+          }
+        >
+          You are not signed in.
+        </Alert>
+      </>
     );
   }
   return <OperationsDashboardView userName={session.data.user.name ?? session.data.user.email} />;

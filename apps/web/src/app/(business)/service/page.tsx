@@ -8,7 +8,21 @@ import { formatMoney } from '@jetnine/shared';
 import { api } from '@/lib/api';
 import { LoadMore } from '@/components/load-more';
 import { useCursorList } from '@/lib/use-cursor-list';
-import { Button, Card, Field, Input, LoadingRows, PageHeader, Select } from '@/components/ui';
+import {
+  Alert,
+  Button,
+  Card,
+  Field,
+  FormActions,
+  FormGrid,
+  Input,
+  LoadingRows,
+  PageHeader,
+  SectionHeading,
+  Select,
+  Stack,
+  TableWrap,
+} from '@/components/ui';
 
 /**
  * Service board (STORIS cutover G6): every open ticket by status, plus
@@ -136,264 +150,191 @@ export default function ServiceBoardPage() {
           </Button>
         }
       />
-      {(error ?? list.error) && (
-        <p style={{ color: 'var(--danger)', fontSize: 13 }}>{error ?? list.error}</p>
-      )}
+      <Stack>
+        {(error ?? list.error) && <Alert tone="error">{error ?? list.error}</Alert>}
 
-      {showIntake && (
-        <Card title="Intake" style={{ marginBottom: 16 }} data-testid="intake-form">
-          <div className="grid gap-2 sm:grid-cols-2">
-            <Field label="Location">
-              <Select
-                value={locationId}
-                onChange={(e) => setLocationId(e.target.value)}
-                style={{ width: '100%' }}
-              >
-                {locations.map((l) => (
-                  <option key={l.id} value={l.id}>
-                    {l.name}
-                  </option>
-                ))}
-              </Select>
-            </Field>
-            {/* A <div>, not a <label>: label activation would forward the
-                click on a result row to whatever control renders next
-                (the "change" button), instantly un-picking the customer. */}
-            <div>
-              <span className="field-label">Customer</span>
-              {customer ? (
-                <div
-                  className="input"
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    width: '100%',
-                  }}
-                >
-                  <span data-testid="intake-customer">
-                    {customer.firstName} {customer.lastName}
-                  </span>
-                  <button
-                    onClick={() => setCustomer(null)}
-                    style={{
-                      border: 'none',
-                      background: 'none',
-                      color: 'var(--brand)',
-                      cursor: 'pointer',
-                      fontSize: 12,
-                      padding: 0,
-                    }}
-                  >
-                    change
-                  </button>
-                </div>
-              ) : (
-                <>
-                  <Input
-                    value={customerQ}
-                    onChange={(e) => void searchCustomers(e.target.value)}
-                    placeholder="Search name / email / phone…"
-                    style={{ width: '100%' }}
-                    data-testid="intake-customer-search"
-                  />
-                  {customerHits.length > 0 && (
-                    <div
-                      style={{
-                        border: '1px solid var(--border)',
-                        borderRadius: 'var(--radius-sm)',
-                        marginTop: 4,
-                        background: 'var(--surface)',
-                        boxShadow: 'var(--shadow-md)',
-                        overflow: 'hidden',
-                      }}
-                    >
-                      {customerHits.map((c) => (
-                        <button
-                          key={c.id}
-                          type="button"
-                          data-testid="intake-customer-hit"
-                          onClick={() => {
-                            setCustomer(c);
-                            setCustomerHits([]);
-                            setCustomerHasMore(false);
-                          }}
-                          style={hitBtn}
-                        >
-                          {c.firstName} {c.lastName} {c.email ? `· ${c.email}` : ''}
-                        </button>
-                      ))}
-                      {customerHasMore && (
-                        <p
-                          className="muted"
-                          style={{ fontSize: 12, padding: '6px 10px', margin: 0 }}
-                          data-testid="intake-customer-more"
-                        >
-                          more matches — keep typing to narrow
-                        </p>
-                      )}
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
-            <Field label="Item">
-              <Input
-                value={itemDescription}
-                onChange={(e) => setItemDescription(e.target.value)}
-                placeholder="e.g. Queen adjustable base"
-                style={{ width: '100%' }}
-                data-testid="intake-item"
-              />
-            </Field>
-            <Field label="Issue *">
-              <Input
-                value={issue}
-                onChange={(e) => setIssue(e.target.value)}
-                placeholder="What's wrong?"
-                style={{ width: '100%' }}
-                data-testid="intake-issue"
-              />
-            </Field>
-          </div>
-          <div
-            style={{
-              display: 'flex',
-              gap: 12,
-              alignItems: 'center',
-              marginTop: 12,
-              flexWrap: 'wrap',
-            }}
-          >
-            <label style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
-              <input
-                type="checkbox"
-                checked={warranty}
-                onChange={(e) => setWarranty(e.target.checked)}
-                data-testid="intake-warranty"
-              />{' '}
-              Warranty work (parts & labor price at $0)
-            </label>
-            <Button
-              variant="primary"
-              onClick={() => void createTicket()}
-              disabled={busy || !customer || !issue.trim()}
-              data-testid="create-ticket"
-            >
-              Create ticket
-            </Button>
-          </div>
-        </Card>
-      )}
-
-      {!tickets && !error && !list.error && <LoadingRows rows={4} />}
-
-      {tickets && (
-        <div className="overflow-x-auto pb-2">
-          <div className="flex gap-3 lg:grid lg:grid-cols-4">
-            {COLUMNS.map((col) => {
-              const rows = tickets.filter((t) => t.status === col.key);
-              return (
-                <div
-                  key={col.key}
-                  className="min-w-[240px] flex-1 lg:min-w-0"
-                  style={{
-                    background: 'var(--neutral-soft)',
-                    borderRadius: 'var(--radius)',
-                    padding: 8,
-                  }}
-                >
-                  <p
-                    style={{
-                      fontSize: 11,
-                      fontWeight: 600,
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.05em',
-                      color: 'var(--text-secondary)',
-                      margin: '0 0 8px',
-                      padding: '2px 4px',
-                    }}
-                  >
-                    {col.label} ({rows.length})
-                  </p>
-                  {rows.map((t) => (
-                    <Link
-                      key={t.id}
-                      href={`/service/${t.id}`}
-                      className="card card-hover"
-                      style={{
-                        display: 'block',
-                        padding: 10,
-                        margin: '0 0 8px',
-                        textDecoration: 'none',
-                        color: 'inherit',
-                      }}
-                      data-testid={`ticket-${t.number}`}
-                    >
-                      <div
-                        style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}
-                      >
-                        <strong>{t.number}</strong>
-                        {t.warranty && <span className="badge badge-warning">WARRANTY</span>}
-                      </div>
-                      <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-                        {t.customerName}
-                      </div>
-                      <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
-                        {t.itemDescription ?? t.issue}
-                      </div>
-                      {t.balanceDueCents > 0 && (
-                        <div style={{ fontSize: 12, color: 'var(--danger)', marginTop: 2 }}>
-                          due {formatMoney(t.balanceDueCents)}
-                        </div>
-                      )}
-                    </Link>
+        {showIntake && (
+          <Card title="Intake" data-testid="intake-form">
+            <FormGrid cols={2}>
+              <Field label="Location">
+                <Select value={locationId} onChange={(e) => setLocationId(e.target.value)}>
+                  {locations.map((l) => (
+                    <option key={l.id} value={l.id}>
+                      {l.name}
+                    </option>
                   ))}
-                  {rows.length === 0 && (
-                    <p className="muted" style={{ fontSize: 12, padding: '2px 4px', margin: 0 }}>
-                      —
-                    </p>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-          <LoadMore state={list} noun="tickets" />
-        </div>
-      )}
+                </Select>
+              </Field>
+              {/* `as="div"`, not a <label>: label activation would forward the
+                  click on a result row to whatever control renders next
+                  (the "change" button), instantly un-picking the customer. */}
+              <Field label="Customer" as="div">
+                {customer ? (
+                  // Wrapped so `.field > .input` (block, for real inputs)
+                  // does not flatten this flex row.
+                  <div>
+                    <div className="input flex items-center justify-between gap-2">
+                      <span data-testid="intake-customer">
+                        {customer.firstName} {customer.lastName}
+                      </span>
+                      <button type="button" className="btn-link" onClick={() => setCustomer(null)}>
+                        change
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <Input
+                      value={customerQ}
+                      onChange={(e) => void searchCustomers(e.target.value)}
+                      placeholder="Search name / email / phone…"
+                      data-testid="intake-customer-search"
+                    />
+                    {customerHits.length > 0 && (
+                      <div className="mt-1 overflow-hidden rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--surface)] shadow-[var(--shadow-md)]">
+                        {customerHits.map((c) => (
+                          <button
+                            key={c.id}
+                            type="button"
+                            className="popover-option"
+                            data-testid="intake-customer-hit"
+                            onClick={() => {
+                              setCustomer(c);
+                              setCustomerHits([]);
+                              setCustomerHasMore(false);
+                            }}
+                          >
+                            {c.firstName} {c.lastName} {c.email ? `· ${c.email}` : ''}
+                          </button>
+                        ))}
+                        {customerHasMore && (
+                          <p
+                            className="muted m-0 px-2.5 py-1.5 text-xs"
+                            data-testid="intake-customer-more"
+                          >
+                            more matches — keep typing to narrow
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </>
+                )}
+              </Field>
+              <Field label="Item">
+                <Input
+                  value={itemDescription}
+                  onChange={(e) => setItemDescription(e.target.value)}
+                  placeholder="e.g. Queen adjustable base"
+                  data-testid="intake-item"
+                />
+              </Field>
+              <Field label="Issue" required>
+                <Input
+                  value={issue}
+                  onChange={(e) => setIssue(e.target.value)}
+                  placeholder="What's wrong?"
+                  data-testid="intake-issue"
+                />
+              </Field>
+            </FormGrid>
+            <FormActions
+              start={
+                <label className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={warranty}
+                    onChange={(e) => setWarranty(e.target.checked)}
+                    data-testid="intake-warranty"
+                  />
+                  Warranty work (parts &amp; labor price at $0)
+                </label>
+              }
+            >
+              <Button
+                variant="primary"
+                onClick={() => void createTicket()}
+                disabled={busy || !customer || !issue.trim()}
+                data-testid="create-ticket"
+              >
+                {busy ? 'Creating…' : 'Create ticket'}
+              </Button>
+            </FormActions>
+          </Card>
+        )}
 
-      {completed.length > 0 && (
-        <Card title="Recently completed" style={{ marginTop: 20 }}>
-          <div className="overflow-x-auto">
-            <table className="table">
-              <tbody>
-                {completed.map((t) => (
-                  <tr key={t.id}>
-                    <td>
-                      <Link href={`/service/${t.id}`}>{t.number}</Link>
-                    </td>
-                    <td>{t.customerName}</td>
-                    <td>{t.itemDescription ?? t.issue}</td>
-                    <td className="num">{formatMoney(t.totalCents)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+        {!tickets && !error && !list.error && <LoadingRows rows={4} />}
+
+        {tickets && (
+          <div className="overflow-x-auto pb-2">
+            <div className="flex gap-3 lg:grid lg:grid-cols-4">
+              {COLUMNS.map((col) => {
+                const rows = tickets.filter((t) => t.status === col.key);
+                return (
+                  <div
+                    key={col.key}
+                    className="min-w-[240px] flex-1 rounded-[var(--radius)] bg-[var(--neutral-soft)] p-2 lg:min-w-0"
+                  >
+                    <SectionHeading as="h3" title={`${col.label} (${rows.length})`} />
+                    <Stack gap="sm">
+                      {rows.map((t) => (
+                        <Link
+                          key={t.id}
+                          href={`/service/${t.id}`}
+                          className="card card-hover block text-inherit no-underline"
+                          data-testid={`ticket-${t.number}`}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <strong>{t.number}</strong>
+                            {t.warranty && <span className="badge badge-warning">WARRANTY</span>}
+                          </div>
+                          <p className="card-desc">{t.customerName}</p>
+                          <p className="card-desc muted">{t.itemDescription ?? t.issue}</p>
+                          {t.balanceDueCents > 0 && (
+                            <p className="card-desc text-[var(--danger)]">
+                              due {formatMoney(t.balanceDueCents)}
+                            </p>
+                          )}
+                        </Link>
+                      ))}
+                      {rows.length === 0 && <p className="field-hint">No tickets</p>}
+                    </Stack>
+                  </div>
+                );
+              })}
+            </div>
+            <LoadMore state={list} noun="tickets" />
           </div>
-        </Card>
-      )}
+        )}
+
+        {completed.length > 0 && (
+          <Card title="Recently completed" flush>
+            <TableWrap>
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Ticket</th>
+                    <th>Customer</th>
+                    <th>Item</th>
+                    <th className="num">Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {completed.map((t) => (
+                    <tr key={t.id}>
+                      <td>
+                        <Link href={`/service/${t.id}`}>{t.number}</Link>
+                      </td>
+                      <td>{t.customerName}</td>
+                      <td>{t.itemDescription ?? t.issue}</td>
+                      <td className="num">{formatMoney(t.totalCents)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </TableWrap>
+          </Card>
+        )}
+      </Stack>
     </div>
   );
 }
-
-const hitBtn: React.CSSProperties = {
-  display: 'block',
-  width: '100%',
-  textAlign: 'left',
-  padding: '7px 10px',
-  border: 'none',
-  background: 'none',
-  cursor: 'pointer',
-  fontSize: 13,
-  color: 'var(--text)',
-};

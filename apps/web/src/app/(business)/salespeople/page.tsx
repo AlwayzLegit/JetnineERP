@@ -2,7 +2,19 @@
 
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
-import { Button, Card, EmptyState, LinkButton, LoadingRows, PageHeader } from '@/components/ui';
+import {
+  Alert,
+  Button,
+  Card,
+  LinkButton,
+  LoadingRows,
+  PageHeader,
+  SectionHeading,
+  Stack,
+  StatusBadge,
+  TableEmpty,
+  TableWrap,
+} from '@/components/ui';
 import { api } from '@/lib/api';
 import { Money } from '@/components/money';
 import { DateRangePicker, useUrlDateRange } from '@/components/date-range-picker';
@@ -119,124 +131,152 @@ export default function SalespeoplePage() {
     <div>
       <PageHeader
         title="Salespeople"
+        sub="Written activity per salesperson over the window."
         actions={
           <>
-            <DateRangePicker value={range} onChange={setRange} testid="salespeople-range" />
-            <LinkButton href="/salespeople/activity" data-testid="salespeople-activity-link">
+            <LinkButton
+              size="sm"
+              href="/salespeople/activity"
+              data-testid="salespeople-activity-link"
+            >
               View salesperson activity
             </LinkButton>
+            <DateRangePicker value={range} onChange={setRange} testid="salespeople-range" />
           </>
         }
       />
-      {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
-      <Card>
-        {!summary ? (
-          <LoadingRows />
-        ) : (
-          <div style={{ overflowX: 'auto' }}>
-            <table className="table" data-testid="salespeople-table">
-              <thead>
-                <tr>
-                  <th>Salesperson</th>
-                  <th className="num">Documents</th>
-                  <th className="num">Merchandise</th>
-                  <th className="num">Total written</th>
-                  <th />
-                </tr>
-              </thead>
-              <tbody>
-                {summary.rows.length === 0 && <Empty colSpan={5} />}
-                {summary.rows.map((r) => (
-                  <tr key={r.key || '(none)'}>
-                    <td>{r.label}</td>
-                    <td className="num">{r.documentCount}</td>
-                    <td className="num">
-                      <Money cents={r.merchandiseCents} />
-                    </td>
-                    <td className="num">
-                      <Money cents={r.totalCents} />
-                    </td>
-                    <td style={{ whiteSpace: 'nowrap' }}>
-                      <Button size="sm" variant="ghost" onClick={() => void drill(r)}>
-                        Documents
-                      </Button>
-                      {(() => {
-                        const member = members.find((m) => m.userId === r.key);
-                        return member ? (
-                          <Link
-                            href={`/salespeople/${member.membershipId}/activity`}
-                            style={{ marginLeft: 8, fontSize: 13 }}
-                            data-testid="salesperson-activity"
-                          >
-                            View activity
-                          </Link>
-                        ) : null;
-                      })()}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </Card>
-
-      {picked && (
-        <Card title={`Documents — ${picked.label}`} style={{ marginTop: 16 }}>
-          {!orders || !sales ? (
-            <LoadingRows />
-          ) : (
-            <div className="grid gap-4 lg:grid-cols-2">
-              <div>
-                <h3 style={{ fontSize: 13, margin: '0 0 6px' }}>Orders</h3>
-                <table className="table">
-                  <tbody>
-                    {orders.length === 0 && <Empty colSpan={3} />}
-                    {orders.map((o) => (
-                      <tr key={o.id}>
-                        <td>
-                          <Link href={`/orders/${o.id}`}>{o.number}</Link>
-                        </td>
-                        <td>{o.status}</td>
-                        <td className="num">
-                          <Money cents={o.totalCents} />
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              <div>
-                <h3 style={{ fontSize: 13, margin: '0 0 6px' }}>POS sales</h3>
-                <table className="table">
-                  <tbody>
-                    {sales.length === 0 && <Empty colSpan={3} />}
-                    {sales.map((sl) => (
-                      <tr key={sl.id}>
-                        <td>{sl.number}</td>
-                        <td>{sl.status}</td>
-                        <td className="num">
-                          <Money cents={sl.totalCents} />
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+      <Stack>
+        {error && <Alert tone="error">{error}</Alert>}
+        <Card title="Written activity" flush>
+          {!summary ? (
+            <div className="p-4">
+              <LoadingRows />
             </div>
+          ) : (
+            <TableWrap>
+              <table className="table" data-testid="salespeople-table">
+                <thead>
+                  <tr>
+                    <th>Salesperson</th>
+                    <th className="num">Documents</th>
+                    <th className="num">Merchandise</th>
+                    <th className="num">Total written</th>
+                    <th className="actions" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {summary.rows.length === 0 && (
+                    <TableEmpty colSpan={5}>Nothing in this window.</TableEmpty>
+                  )}
+                  {summary.rows.map((r) => {
+                    const member = members.find((m) => m.userId === r.key);
+                    return (
+                      <tr key={r.key || '(none)'}>
+                        <td>{r.label}</td>
+                        <td className="num">{r.documentCount}</td>
+                        <td className="num">
+                          <Money cents={r.merchandiseCents} />
+                        </td>
+                        <td className="num">
+                          <Money cents={r.totalCents} />
+                        </td>
+                        <td className="actions">
+                          <Button size="sm" variant="ghost" onClick={() => void drill(r)}>
+                            Documents
+                          </Button>
+                          {member ? (
+                            <LinkButton
+                              size="sm"
+                              variant="ghost"
+                              href={`/salespeople/${member.membershipId}/activity`}
+                              data-testid="salesperson-activity"
+                            >
+                              View activity
+                            </LinkButton>
+                          ) : null}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </TableWrap>
           )}
         </Card>
-      )}
-    </div>
-  );
-}
 
-function Empty({ colSpan }: { colSpan: number }) {
-  return (
-    <tr>
-      <td colSpan={colSpan}>
-        <EmptyState>Nothing in this window.</EmptyState>
-      </td>
-    </tr>
+        {picked && (
+          <Card title={`Documents — ${picked.label}`}>
+            {!orders || !sales ? (
+              <LoadingRows />
+            ) : (
+              <div className="grid gap-4 lg:grid-cols-2">
+                <div>
+                  <SectionHeading as="h3" title="Orders" />
+                  <TableWrap>
+                    <table className="table">
+                      <thead>
+                        <tr>
+                          <th>Order</th>
+                          <th>Status</th>
+                          <th className="num">Total</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {orders.length === 0 && (
+                          <TableEmpty colSpan={3}>Nothing in this window.</TableEmpty>
+                        )}
+                        {orders.map((o) => (
+                          <tr key={o.id}>
+                            <td>
+                              <Link href={`/orders/${o.id}`}>{o.number}</Link>
+                            </td>
+                            <td>
+                              <StatusBadge status={o.status} />
+                            </td>
+                            <td className="num">
+                              <Money cents={o.totalCents} />
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </TableWrap>
+                </div>
+                <div>
+                  <SectionHeading as="h3" title="POS sales" />
+                  <TableWrap>
+                    <table className="table">
+                      <thead>
+                        <tr>
+                          <th>Sale</th>
+                          <th>Status</th>
+                          <th className="num">Total</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {sales.length === 0 && (
+                          <TableEmpty colSpan={3}>Nothing in this window.</TableEmpty>
+                        )}
+                        {sales.map((sl) => (
+                          <tr key={sl.id}>
+                            <td>{sl.number}</td>
+                            <td>
+                              <StatusBadge status={sl.status} />
+                            </td>
+                            <td className="num">
+                              <Money cents={sl.totalCents} />
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </TableWrap>
+                </div>
+              </div>
+            )}
+          </Card>
+        )}
+      </Stack>
+    </div>
   );
 }

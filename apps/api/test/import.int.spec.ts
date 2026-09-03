@@ -9,7 +9,7 @@
 import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { hashPassword } from 'better-auth/crypto';
-import { and, eq, isNotNull } from 'drizzle-orm';
+import { and, eq, inArray, isNotNull } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 import request from 'supertest';
@@ -482,5 +482,224 @@ describe('reconciliation gates (§7)', () => {
     expect(recon.gate3_depositsHeldCents).toEqual({ source: 149_999, db: 149_999, match: true });
     // AR: (2398.99 - 500.00) + (999.99 - 999.99) = 1898.99
     expect(recon.gate4_openArCents).toEqual({ source: 189_899, db: 189_899, match: true });
+  });
+});
+
+/**
+ * Catalog replacement (owner 2026-09-03): the STORIS Active Inventory
+ * export becomes the catalog — brand, category, group, vendor code and
+ * replacement cost per SKU; per-store on-hand, as-is pieces and minimum
+ * stock; and everything the file does not name is deleted (no history)
+ * or deactivated (history). Order lines keep their product links.
+ */
+describe('catalog replacement (owner 2026-09-03)', () => {
+  async function commitBatch(
+    entity: string,
+    csv: string,
+    body: Record<string, unknown> = {},
+    expectInvalid = 0,
+  ) {
+    const staged = await api()
+      .post('/v1/import/batches')
+      .send({ entity, filename: `${entity}.csv`, csv });
+    expect(staged.status).toBe(201);
+    expect(staged.body.unmappedRequired).toEqual([]);
+    const validated = await api().post(`/v1/import/batches/${staged.body.id}/validate`).send({});
+    expect(validated.body.invalidRowCount).toBe(expectInvalid);
+    const committed = await api().post(`/v1/import/batches/${staged.body.id}/commit`).send(body);
+    expect(committed.status).toBe(201);
+    expect(committed.body.failed).toBe(0);
+    return committed.body as {
+      committed: number;
+      replaced: { kept: number; deleted: number; deactivated: number } | null;
+    };
+  }
+
+  it('loads brand, category, group, vendor code and cost from the STORIS columns', async () => {
+    const csv = `SKU,DESCRIPTION,BRAND,CATG,GROUP,VENDOR,REPLACE_COST
+KEEP-1,QUEEN AURORA HYBRID,HELIX,MATT,QUEEN,DIAMO,640.00
+TMP-DEL-1,TEMP FRAME,KNICK,FURN,FRAMES,KNICK,45.50`;
+    const result = await commitBatch('product', csv);
+    expect(result.committed).toBe(2);
+    expect(result.replaced).toBeNull();
+
+    const [keep] = await verifyDb
+      .select({
+        productId: schema.products.id,
+        brandId: schema.products.brandId,
+        categoryId: schema.products.categoryId,
+        attributes: schema.productVariants.attributesJson,
+        costCents: schema.productVariants.costCents,
+        vendorId: schema.productVariants.preferredVendorId,
+      })
+      .from(schema.productVariants)
+      .innerJoin(schema.products, eq(schema.products.id, schema.productVariants.productId))
+      .where(eq(schema.productVariants.sku, 'KEEP-1'));
+    expect(keep?.costCents).toBe(64_000);
+    expect((keep?.attributes as { group?: string })?.group).toBe('QUEEN');
+    const [brand] = await verifyDb
+      .select({ name: schema.brands.name })
+      .from(schema.brands)
+      .where(eq(schema.brands.id, keep!.brandId!));
+    expect(brand?.name).toBe('HELIX');
+    const [cat] = await verifyDb
+      .select({ name: schema.categories.name })
+      .from(schema.categories)
+      .where(eq(schema.categories.id, keep!.categoryId!));
+    expect(cat?.name).toBe('MATT');
+    const [vendor] = await verifyDb
+      .select({ name: schema.vendors.name })
+      .from(schema.vendors)
+      .where(eq(schema.vendors.id, keep!.vendorId!));
+    expect(vendor?.name).toBe('DIAMO');
+  });
+
+  it('inventory: tolerant store names, as-is pieces and per-store minimum stock', async () => {
+    const csv = `SKU,LOCATION,ON_HAND,AS_IS,MIN_STOCK,UNIT_COST
+KEEP-1,MAIN WAREHOUSE,5,2,3,640.00
+KEEP-1,Showroom,1,0,1,640.00
+TMP-DEL-1,Warehouse,4,0,0,45.50
+TMP-DEL-1,Nowhere,1,0,0,45.50`;
+    await commitBatch('inventory', csv, {}, 1);
+
+    const [variant] = await verifyDb
+      .select({ id: schema.productVariants.id, reorderPoint: schema.productVariants.reorderPoint })
+      .from(schema.productVariants)
+      .where(eq(schema.productVariants.sku, 'KEEP-1'));
+    expect(variant?.reorderPoint).toBe(4);
+    const levels = await verifyDb
+      .select({
+        onHand: schema.inventoryLevels.onHand,
+        reorderPoint: schema.inventoryLevels.reorderPoint,
+        location: schema.locations.name,
+      })
+      .from(schema.inventoryLevels)
+      .innerJoin(schema.locations, eq(schema.locations.id, schema.inventoryLevels.locationId))
+      .where(eq(schema.inventoryLevels.variantId, variant!.id));
+    expect(
+      levels
+        .map((l) => [l.location, l.onHand, l.reorderPoint])
+        .sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
+    ).toEqual([
+      ['Main Warehouse', 5, 3],
+      ['Showroom', 1, 1],
+    ]);
+    const asIs = await verifyDb
+      .select({ id: schema.asIsItems.id, source: schema.asIsItems.source })
+      .from(schema.asIsItems)
+      .where(eq(schema.asIsItems.variantId, variant!.id));
+    expect(asIs).toHaveLength(2);
+    expect(asIs[0]!.source).toBe('import');
+
+    // "Warehouse" alone still finds Main Warehouse; a store nobody has
+    // stays invalid instead of landing somewhere.
+    const [temp] = await verifyDb
+      .select({ id: schema.productVariants.id })
+      .from(schema.productVariants)
+      .where(eq(schema.productVariants.sku, 'TMP-DEL-1'));
+    const tempLevels = await verifyDb
+      .select({ onHand: schema.inventoryLevels.onHand })
+      .from(schema.inventoryLevels)
+      .where(eq(schema.inventoryLevels.variantId, temp!.id));
+    expect(tempLevels.map((l) => l.onHand)).toEqual([4]);
+
+    // Re-import with fewer as-is pieces trims the import-sourced rows.
+    await commitBatch(
+      'inventory',
+      `SKU,LOCATION,ON_HAND,AS_IS,MIN_STOCK
+KEEP-1,Main Warehouse,5,1,3`,
+    );
+    const trimmed = await verifyDb
+      .select({ id: schema.asIsItems.id })
+      .from(schema.asIsItems)
+      .where(eq(schema.asIsItems.variantId, variant!.id));
+    expect(trimmed).toHaveLength(1);
+  });
+
+  it('replace catalog: deletes what has no history, deactivates what does, keeps order links', async () => {
+    // MAT-Q-FIRM sits on imported order lines; TMP-DEL-1 does not.
+    const [matVariant] = await verifyDb
+      .select({ id: schema.productVariants.id, productId: schema.productVariants.productId })
+      .from(schema.productVariants)
+      .where(eq(schema.productVariants.sku, 'MAT-Q-FIRM'));
+    const linesBefore = await verifyDb
+      .select({ id: schema.orderLines.id })
+      .from(schema.orderLines)
+      .where(eq(schema.orderLines.variantId, matVariant!.id));
+    expect(linesBefore.length).toBeGreaterThan(0);
+
+    const before = await verifyDb
+      .select({ id: schema.products.id })
+      .from(schema.products)
+      .where(eq(schema.products.businessId, businessId));
+
+    const result = await commitBatch(
+      'product',
+      `SKU,DESCRIPTION,BRAND,CATG,GROUP,VENDOR,REPLACE_COST
+KEEP-1,QUEEN AURORA HYBRID,HELIX,MATT,QUEEN,DIAMO,650.00
+NEW-2,KING AURORA HYBRID,HELIX,MATT,KING,DIAMO,900.00`,
+      { replaceCatalog: true },
+    );
+    expect(result.replaced).not.toBeNull();
+    expect(result.replaced!.kept).toBe(2);
+    expect(result.replaced!.deleted + result.replaced!.deactivated).toBe(before.length - 1);
+    expect(result.replaced!.deleted).toBeGreaterThanOrEqual(1);
+    expect(result.replaced!.deactivated).toBeGreaterThanOrEqual(1);
+
+    // TMP-DEL-1 (no history) is gone, levels and refs with it.
+    const gone = await verifyDb
+      .select({ id: schema.productVariants.id })
+      .from(schema.productVariants)
+      .where(eq(schema.productVariants.sku, 'TMP-DEL-1'));
+    expect(gone).toHaveLength(0);
+    const refs = await verifyDb
+      .select({ id: schema.legacyRefs.id })
+      .from(schema.legacyRefs)
+      .where(
+        and(eq(schema.legacyRefs.entity, 'product'), eq(schema.legacyRefs.legacyId, 'TMP-DEL-1')),
+      );
+    expect(refs).toHaveLength(0);
+
+    // MAT-Q-FIRM (on order lines) is deactivated, still linked.
+    const [mat] = await verifyDb
+      .select({ isActive: schema.products.isActive })
+      .from(schema.products)
+      .where(eq(schema.products.id, matVariant!.productId));
+    expect(mat?.isActive).toBe(false);
+    const [matV] = await verifyDb
+      .select({ isActive: schema.productVariants.isActive })
+      .from(schema.productVariants)
+      .where(eq(schema.productVariants.id, matVariant!.id));
+    expect(matV?.isActive).toBe(false);
+    const linesAfter = await verifyDb
+      .select({ id: schema.orderLines.id })
+      .from(schema.orderLines)
+      .where(eq(schema.orderLines.variantId, matVariant!.id));
+    expect(linesAfter).toHaveLength(linesBefore.length);
+
+    // The kept SKU stays active with the refreshed cost; the new one exists.
+    const kept = await verifyDb
+      .select({
+        sku: schema.productVariants.sku,
+        costCents: schema.productVariants.costCents,
+        isActive: schema.products.isActive,
+      })
+      .from(schema.productVariants)
+      .innerJoin(schema.products, eq(schema.products.id, schema.productVariants.productId))
+      .where(inArray(schema.productVariants.sku, ['KEEP-1', 'NEW-2']));
+    expect(kept.map((k) => [k.sku, k.costCents, k.isActive]).sort()).toEqual([
+      ['KEEP-1', 65_000, true],
+      ['NEW-2', 90_000, true],
+    ]);
+
+    // A second replace with the same file is a no-op.
+    const again = await commitBatch(
+      'product',
+      `SKU,DESCRIPTION,BRAND,CATG,GROUP,VENDOR,REPLACE_COST
+KEEP-1,QUEEN AURORA HYBRID,HELIX,MATT,QUEEN,DIAMO,650.00
+NEW-2,KING AURORA HYBRID,HELIX,MATT,KING,DIAMO,900.00`,
+      { replaceCatalog: true },
+    );
+    expect(again.replaced).toEqual({ kept: 2, deleted: 0, deactivated: 0 });
   });
 });

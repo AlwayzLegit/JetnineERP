@@ -1,17 +1,22 @@
 'use client';
 
-import Link from 'next/link';
 import { toast } from 'sonner';
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import {
+  Alert,
+  BackLink,
   Button,
   Card,
   EmptyState,
   Field,
+  FormActions,
+  FormGrid,
   Input,
   LoadingRows,
   PageHeader,
   Select,
+  Stack,
+  TableWrap,
 } from '@/components/ui';
 import { api } from '@/lib/api';
 
@@ -32,6 +37,7 @@ export default function ApiKeysPage() {
   const [allScopes, setAllScopes] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const [newKey, setNewKey] = useState<{ id: string; key: string } | null>(null);
   const [filter, setFilter] = useState('');
 
@@ -55,8 +61,10 @@ export default function ApiKeysPage() {
   async function create(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setError(null);
+    setSubmitting(true);
+    const form = e.currentTarget;
     try {
-      const data = new FormData(e.currentTarget);
+      const data = new FormData(form);
       const scopes = data.getAll('scopes').map(String);
       if (scopes.length === 0) throw new Error('Pick at least one scope.');
       const created = await api<KeyRow & { key: string }>('/v1/business/api-keys', {
@@ -69,11 +77,13 @@ export default function ApiKeysPage() {
         }),
       });
       setNewKey({ id: created.id, key: created.key });
-      e.currentTarget.reset();
+      form.reset();
       setCreating(false);
       void load();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSubmitting(false);
     }
   }
 
@@ -99,10 +109,8 @@ export default function ApiKeysPage() {
 
   return (
     <div>
-      <p style={{ margin: '0 0 12px' }}>
-        <Link href="/settings">← Settings</Link>
-      </p>
       <PageHeader
+        eyebrow={<BackLink href="/settings">Settings</BackLink>}
         title="API keys"
         sub={
           <>
@@ -129,175 +137,126 @@ export default function ApiKeysPage() {
         }
       />
 
-      {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
+      <Stack>
+        {error && <Alert tone="error">{error}</Alert>}
 
-      {newKey && (
-        <div
-          style={{
-            background: 'var(--warning-soft)',
-            border: '1px solid var(--warning)',
-            color: 'var(--warning-soft-text)',
-            padding: 12,
-            borderRadius: 'var(--radius)',
-            marginBottom: 16,
-            fontSize: 13,
-          }}
-        >
-          <strong>Save this key — it won&apos;t be shown again:</strong>
-          <pre
-            style={{
-              margin: '6px 0',
-              whiteSpace: 'pre-wrap',
-              wordBreak: 'break-all',
-              fontSize: 12,
-              fontFamily: 'var(--font-mono)',
-            }}
+        {newKey && (
+          <Alert
+            tone="warning"
+            title="Save this key — it won't be shown again:"
+            action={
+              <Button size="sm" variant="secondary" onClick={() => setNewKey(null)}>
+                Got it
+              </Button>
+            }
           >
-            {newKey.key}
-          </pre>
-          <Button size="sm" variant="secondary" onClick={() => setNewKey(null)}>
-            Got it
-          </Button>
-        </div>
-      )}
+            <code className="block break-all whitespace-pre-wrap">{newKey.key}</code>
+          </Alert>
+        )}
 
-      {creating && (
-        <Card style={{ maxWidth: 720, marginBottom: 16 }}>
-          <form onSubmit={create} style={{ display: 'grid', gap: 8 }}>
-            <div className="grid gap-2 sm:grid-cols-[2fr_1fr]">
-              <Field label="Name *">
-                <Input
-                  name="name"
-                  required
-                  placeholder="Read-only integration"
-                  style={{ width: '100%' }}
-                />
-              </Field>
-              <Field label="Mode">
-                <Select name="livemode" defaultValue="test" style={{ width: '100%' }}>
-                  <option value="test">Test (recommended)</option>
-                  <option value="live">Live</option>
-                </Select>
-              </Field>
-            </div>
-            <Field label="Notes (optional)">
-              <Input name="notes" style={{ width: '100%' }} />
-            </Field>
-            <Field label="Scopes *">
-              <Input
-                type="search"
-                placeholder="Filter… e.g. sales, inventory"
-                value={filter}
-                onChange={(e) => setFilter(e.target.value)}
-                style={{ width: '100%' }}
-              />
-            </Field>
-            <div
-              className="grid gap-1 sm:grid-cols-2"
-              style={{
-                maxHeight: 240,
-                overflow: 'auto',
-                border: '1px solid var(--border)',
-                padding: 8,
-                borderRadius: 'var(--radius-sm)',
-              }}
-            >
-              {visibleScopes.map((s) => (
-                <label
-                  key={s}
-                  style={{ display: 'flex', gap: 6, fontSize: 13, alignItems: 'center' }}
-                >
-                  <input
-                    type="checkbox"
-                    name="scopes"
-                    value={s}
-                    style={{ accentColor: 'var(--brand)' }}
+        {creating && (
+          <Card title="New API key" className="form-narrow">
+            <form onSubmit={create}>
+              <FormGrid cols={2}>
+                <Field label="Name" required>
+                  <Input name="name" required placeholder="Read-only integration" />
+                </Field>
+                <Field label="Mode">
+                  <Select name="livemode" defaultValue="test">
+                    <option value="test">Test (recommended)</option>
+                    <option value="live">Live</option>
+                  </Select>
+                </Field>
+                <Field label="Notes (optional)" className="form-span">
+                  <Input name="notes" />
+                </Field>
+                <Field label="Scopes" required className="form-span">
+                  <Input
+                    type="search"
+                    placeholder="Filter… e.g. sales, inventory"
+                    value={filter}
+                    onChange={(e) => setFilter(e.target.value)}
                   />
-                  <code>{s}</code>
-                </label>
-              ))}
-            </div>
-            <Button type="submit" variant="primary" style={{ width: 'fit-content' }}>
-              Create key
-            </Button>
-          </form>
-        </Card>
-      )}
+                </Field>
+                <div className="form-span grid max-h-60 gap-1 overflow-auto rounded-[var(--radius-sm)] border border-[var(--border)] p-2 sm:grid-cols-2">
+                  {visibleScopes.length === 0 && (
+                    <span className="muted">No scopes match “{filter}”.</span>
+                  )}
+                  {visibleScopes.map((s) => (
+                    <label key={s} className="flex items-center gap-1.5">
+                      <input type="checkbox" name="scopes" value={s} />
+                      <code>{s}</code>
+                    </label>
+                  ))}
+                </div>
+              </FormGrid>
+              <FormActions>
+                <Button type="submit" variant="primary" disabled={submitting}>
+                  {submitting ? 'Creating…' : 'Create key'}
+                </Button>
+              </FormActions>
+            </form>
+          </Card>
+        )}
 
-      <Card>
         {rows == null ? (
           <LoadingRows />
         ) : rows.length === 0 ? (
-          <EmptyState>No API keys yet.</EmptyState>
+          <EmptyState title="No API keys yet">
+            Create one to let an integration call the API on this business&apos;s behalf.
+          </EmptyState>
         ) : (
-          <div style={{ overflowX: 'auto' }}>
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Name</th>
-                  <th>Prefix</th>
-                  <th>Scopes</th>
-                  <th>Last used</th>
-                  <th>&nbsp;</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((r) => (
-                  <tr key={r.id} style={{ verticalAlign: 'top' }}>
-                    <td>
-                      <strong>{r.name}</strong>
-                      {r.revokedAt && (
-                        <span className="badge badge-danger" style={{ marginLeft: 6 }}>
-                          revoked
-                        </span>
-                      )}
-                      {r.notes && (
-                        <div style={{ color: 'var(--text-secondary)', fontSize: 12 }}>
-                          {r.notes}
-                        </div>
-                      )}
-                    </td>
-                    <td>
-                      <code style={{ fontSize: 11 }}>{r.keyPrefix}…</code>
-                      <div style={{ color: 'var(--text-muted)', fontSize: 11 }}>{r.livemode}</div>
-                    </td>
-                    <td>
-                      {r.scopes.map((s) => (
-                        <code
-                          key={s}
-                          style={{
-                            fontSize: 11,
-                            background: 'var(--neutral-soft)',
-                            padding: '1px 4px',
-                            borderRadius: 3,
-                            marginRight: 3,
-                          }}
-                        >
-                          {s}
-                        </code>
-                      ))}
-                    </td>
-                    <td>
-                      {r.lastUsedAt ? (
-                        new Date(r.lastUsedAt).toLocaleString()
-                      ) : (
-                        <span style={{ color: 'var(--text-muted)' }}>never</span>
-                      )}
-                    </td>
-                    <td>
-                      {!r.revokedAt && (
-                        <Button size="sm" variant="danger" onClick={() => revoke(r)}>
-                          Revoke
-                        </Button>
-                      )}
-                    </td>
+          <Card flush>
+            <TableWrap>
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>Prefix</th>
+                    <th>Scopes</th>
+                    <th>Last used</th>
+                    <th className="actions">
+                      <span className="sr-only">Actions</span>
+                    </th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {rows.map((r) => (
+                    <tr key={r.id}>
+                      <td>
+                        <strong>{r.name}</strong>
+                        {r.revokedAt && <span className="badge badge-danger ml-1.5">revoked</span>}
+                        {r.notes && <div className="muted">{r.notes}</div>}
+                      </td>
+                      <td>
+                        <code>{r.keyPrefix}…</code>
+                        <div className="muted">{r.livemode}</div>
+                      </td>
+                      <td>
+                        <code className="break-words">{r.scopes.join(', ')}</code>
+                      </td>
+                      <td>
+                        {r.lastUsedAt ? (
+                          new Date(r.lastUsedAt).toLocaleString()
+                        ) : (
+                          <span className="muted">never</span>
+                        )}
+                      </td>
+                      <td className="actions">
+                        {!r.revokedAt && (
+                          <Button size="sm" variant="danger" onClick={() => revoke(r)}>
+                            Revoke
+                          </Button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </TableWrap>
+          </Card>
         )}
-      </Card>
+      </Stack>
     </div>
   );
 }

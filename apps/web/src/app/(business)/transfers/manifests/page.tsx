@@ -6,15 +6,23 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { api } from '@/lib/api';
 import {
+  Alert,
+  BackLink,
   Button,
   Card,
   EmptyState,
   Field,
+  FormActions,
+  FormGrid,
   Input,
   LoadingRows,
   PageHeader,
+  SectionHeading,
   Select,
+  Stack,
   StatusBadge,
+  TableEmpty,
+  TableWrap,
 } from '@/components/ui';
 
 /**
@@ -118,158 +126,176 @@ export default function ManifestsPage() {
 
   return (
     <div>
-      <p style={{ marginBottom: 12 }}>
-        <Link href="/transfers">← All transfers</Link>
-      </p>
       <PageHeader
+        eyebrow={<BackLink href="/transfers">All transfers</BackLink>}
         title="Transfer manifests"
         sub="One truck run on one lane — build, print, complete"
       />
 
-      <Card title="Build a manifest" style={{ marginBottom: 16 }}>
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <Field label="From">
-            <Select value={fromId} onChange={(e) => setFromId(e.target.value)}>
-              <option value="">Select…</option>
-              {locations.map((l) => (
-                <option key={l.id} value={l.id}>
-                  {l.name}
-                  {l.locationType === 'warehouse' ? ' (warehouse)' : ''}
-                </option>
-              ))}
-            </Select>
-          </Field>
-          <Field label="To">
-            <Select value={toId} onChange={(e) => setToId(e.target.value)}>
-              <option value="">Select…</option>
-              {locations
-                .filter((l) => l.id !== fromId)
-                .map((l) => (
-                  <option key={l.id} value={l.id}>
-                    {l.name}
-                    {l.locationType === 'warehouse' ? ' (warehouse)' : ''}
-                  </option>
-                ))}
-            </Select>
-          </Field>
-          <Field label="Truck date">
-            <Input
-              type="date"
-              value={manifestDate}
-              onChange={(e) => setManifestDate(e.target.value)}
-            />
-          </Field>
-          <Field label="Route / truck (optional)">
-            <Input
-              value={routeName}
-              onChange={(e) => setRouteName(e.target.value)}
-              placeholder="e.g. Truck 2 AM"
-            />
-          </Field>
-        </div>
+      <Stack>
+        <Card title="Build a manifest">
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              void build();
+            }}
+          >
+            <FormGrid cols={2}>
+              <Field label="From" required>
+                <Select value={fromId} onChange={(e) => setFromId(e.target.value)}>
+                  <option value="">Select…</option>
+                  {locations.map((l) => (
+                    <option key={l.id} value={l.id}>
+                      {l.name}
+                      {l.locationType === 'warehouse' ? ' (warehouse)' : ''}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <Field label="To" required>
+                <Select value={toId} onChange={(e) => setToId(e.target.value)}>
+                  <option value="">Select…</option>
+                  {locations
+                    .filter((l) => l.id !== fromId)
+                    .map((l) => (
+                      <option key={l.id} value={l.id}>
+                        {l.name}
+                        {l.locationType === 'warehouse' ? ' (warehouse)' : ''}
+                      </option>
+                    ))}
+                </Select>
+              </Field>
+              <Field label="Truck date" required>
+                <Input
+                  type="date"
+                  value={manifestDate}
+                  onChange={(e) => setManifestDate(e.target.value)}
+                />
+              </Field>
+              <Field label="Route / truck (optional)">
+                <Input
+                  value={routeName}
+                  onChange={(e) => setRouteName(e.target.value)}
+                  placeholder="e.g. Truck 2 AM"
+                />
+              </Field>
+            </FormGrid>
 
-        {drafts && (
-          <div style={{ marginTop: 12 }}>
-            {drafts.length === 0 ? (
-              <EmptyState>No unmanifested draft transfers on this lane.</EmptyState>
+            {drafts ? (
+              <>
+                <SectionHeading
+                  as="h3"
+                  title="Draft transfers on this lane"
+                  description="Tick the transfers riding this truck."
+                />
+                {drafts.length === 0 ? (
+                  <EmptyState>No unmanifested draft transfers on this lane.</EmptyState>
+                ) : (
+                  <TableWrap>
+                    <table className="table">
+                      <thead>
+                        <tr>
+                          <th className="w-8">
+                            <span className="sr-only">Select</span>
+                          </th>
+                          <th>Transfer</th>
+                          <th>Type</th>
+                          <th>Created</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {drafts.map((t) => (
+                          <tr key={t.id}>
+                            <td>
+                              <input
+                                type="checkbox"
+                                aria-label={`Select ${t.number}`}
+                                checked={selected.has(t.id)}
+                                onChange={(e) => {
+                                  const next = new Set(selected);
+                                  if (e.target.checked) next.add(t.id);
+                                  else next.delete(t.id);
+                                  setSelected(next);
+                                }}
+                              />
+                            </td>
+                            <td>
+                              <code>{t.number}</code>
+                            </td>
+                            <td>{t.transferType.replace('_', ' ')}</td>
+                            <td>{new Date(t.createdAt).toLocaleDateString()}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </TableWrap>
+                )}
+                <FormActions>
+                  <Button
+                    type="submit"
+                    variant="primary"
+                    disabled={building || selected.size === 0 || !manifestDate}
+                  >
+                    {building
+                      ? 'Building…'
+                      : `Build manifest (${selected.size} transfer${selected.size === 1 ? '' : 's'})`}
+                  </Button>
+                </FormActions>
+              </>
             ) : (
+              <p className="field-hint">
+                Pick a From and To location to list the draft transfers on that lane.
+              </p>
+            )}
+          </form>
+        </Card>
+
+        {error && <Alert tone="error">{error}</Alert>}
+        {!rows && !error && (
+          <Card title="Manifests">
+            <LoadingRows />
+          </Card>
+        )}
+        {rows && (
+          <Card title="Manifests" flush>
+            <TableWrap>
               <table className="table">
                 <thead>
                   <tr>
-                    <th style={{ width: 32 }} />
-                    <th>Transfer</th>
-                    <th>Type</th>
-                    <th>Created</th>
+                    <th>Manifest</th>
+                    <th>Date</th>
+                    <th>Route</th>
+                    <th>Lane</th>
+                    <th className="num">Transfers</th>
+                    <th>Status</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {drafts.map((t) => (
-                    <tr key={t.id}>
+                  {rows.length === 0 && <TableEmpty colSpan={6}>No manifests yet.</TableEmpty>}
+                  {rows.map((m) => (
+                    <tr key={m.id}>
                       <td>
-                        <input
-                          type="checkbox"
-                          checked={selected.has(t.id)}
-                          onChange={(e) => {
-                            const next = new Set(selected);
-                            if (e.target.checked) next.add(t.id);
-                            else next.delete(t.id);
-                            setSelected(next);
-                          }}
-                        />
+                        <Link href={`/transfers/manifests/${m.id}`}>
+                          <code>{m.number}</code>
+                        </Link>
                       </td>
+                      <td>{m.manifestDate}</td>
+                      <td>{m.routeName ?? '—'}</td>
                       <td>
-                        <code>{t.number}</code>
+                        {m.fromLocationName ?? '—'} → {m.toLocationName ?? '—'}
                       </td>
-                      <td>{t.transferType}</td>
-                      <td>{new Date(t.createdAt).toLocaleDateString()}</td>
+                      <td className="num">{m.transferCount}</td>
+                      <td>
+                        <StatusBadge status={m.status} />
+                      </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
-            )}
-            <Button
-              variant="primary"
-              onClick={build}
-              disabled={building || selected.size === 0 || !manifestDate}
-              style={{ marginTop: 12 }}
-            >
-              {building
-                ? 'Building…'
-                : `Build manifest (${selected.size} transfer${selected.size === 1 ? '' : 's'})`}
-            </Button>
-          </div>
+            </TableWrap>
+          </Card>
         )}
-      </Card>
-
-      {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
-      {!rows && !error && (
-        <Card>
-          <LoadingRows />
-        </Card>
-      )}
-      {rows && (
-        <Card title="Manifests" style={{ padding: 0, overflowX: 'auto' }}>
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Manifest</th>
-                <th>Date</th>
-                <th>Route</th>
-                <th>Lane</th>
-                <th>Transfers</th>
-                <th>Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.length === 0 && (
-                <tr>
-                  <td colSpan={6}>
-                    <EmptyState>No manifests yet.</EmptyState>
-                  </td>
-                </tr>
-              )}
-              {rows.map((m) => (
-                <tr key={m.id}>
-                  <td>
-                    <Link href={`/transfers/manifests/${m.id}`}>
-                      <code>{m.number}</code>
-                    </Link>
-                  </td>
-                  <td>{m.manifestDate}</td>
-                  <td>{m.routeName ?? '—'}</td>
-                  <td>
-                    {m.fromLocationName ?? '—'} → {m.toLocationName ?? '—'}
-                  </td>
-                  <td>{m.transferCount}</td>
-                  <td>
-                    <StatusBadge status={m.status} />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </Card>
-      )}
+      </Stack>
     </div>
   );
 }

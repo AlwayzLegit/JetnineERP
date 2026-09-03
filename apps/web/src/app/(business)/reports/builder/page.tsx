@@ -4,7 +4,23 @@ import { useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import { downloadFile } from '@/lib/download';
-import { Button, Card, EmptyState, Field, Input, PageHeader, Select } from '@/components/ui';
+import {
+  Alert,
+  BackLink,
+  Button,
+  Card,
+  EmptyState,
+  Field,
+  FormActions,
+  FormGrid,
+  Input,
+  LoadingRows,
+  PageHeader,
+  Select,
+  Stack,
+  TableEmpty,
+  TableWrap,
+} from '@/components/ui';
 
 interface DictionaryMeta {
   name: string;
@@ -304,9 +320,17 @@ export default function ReportBuilderPage() {
     return String(v);
   }
 
+  const dictOptions = selectableDicts.map((d) => (
+    <option key={d.name} value={d.name}>
+      {d.name}
+    </option>
+  ));
+  const isNumeric = (type: string) => type === 'money' || type === 'number';
+
   return (
-    <div className="space-y-6">
+    <div>
       <PageHeader
+        eyebrow={<BackLink href="/reports">Reports</BackLink>}
         title="Report builder"
         sub="Author reports over the live data — dictionaries, filters, prompts, breaks and totals"
         actions={
@@ -315,557 +339,646 @@ export default function ReportBuilderPage() {
               New report
             </Button>
           ) : (
-            <Button onClick={() => setMode('list')}>Back to reports</Button>
+            <Button size="sm" variant="secondary" onClick={() => setMode('list')}>
+              Back to reports
+            </Button>
           )
         }
       />
-      {error ? (
-        <Card>
-          <p className="text-sm text-red-600">{error}</p>
-        </Card>
-      ) : null}
+      <Stack>
+        {error ? <Alert tone="error">{error}</Alert> : null}
 
-      {mode === 'list' ? (
-        reports === null ? null : reports.length === 0 ? (
-          <EmptyState>No reports yet — build the first one.</EmptyState>
-        ) : (
-          <Card title="Reports">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b text-left text-xs uppercase text-neutral-500">
-                  <th className="py-2 pr-3">Name</th>
-                  <th className="py-2 pr-3">Source</th>
-                  <th className="py-2 pr-3">Access</th>
-                  <th className="py-2 pr-3" />
-                </tr>
-              </thead>
-              <tbody>
-                {reports.map((r) => (
-                  <tr key={r.id} className="border-b last:border-0">
-                    <td className="py-2 pr-3">
-                      {r.name}
-                      {r.systemOwned ? (
-                        <span className="ml-2 text-xs text-neutral-500">system</span>
-                      ) : null}
-                      {r.description ? (
-                        <div className="text-xs text-neutral-500">{r.description}</div>
-                      ) : null}
-                    </td>
-                    <td className="py-2 pr-3">{r.sourceId}</td>
-                    <td className="py-2 pr-3">{r.access}</td>
-                    <td className="py-2 pr-3 text-right">
-                      <Button size="sm" variant="primary" onClick={() => void openRunner(r)}>
-                        Run
-                      </Button>{' '}
-                      {r.canEdit && !r.systemOwned ? (
-                        <Button size="sm" onClick={() => void startEdit(r)}>
-                          Edit
-                        </Button>
-                      ) : null}{' '}
-                      <Button size="sm" onClick={() => void clone(r)}>
-                        Clone
-                      </Button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </Card>
-        )
-      ) : null}
-
-      {mode === 'list' && archives.length > 0 ? (
-        <Card title="Archived runs">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b text-left text-xs uppercase text-neutral-500">
-                <th className="py-2 pr-3">Report</th>
-                <th className="py-2 pr-3">Source</th>
-                <th className="py-2 pr-3 text-right">Rows</th>
-                <th className="py-2 pr-3">Archived</th>
-                <th className="py-2 pr-3" />
-              </tr>
-            </thead>
-            <tbody>
-              {archives.map((a) => (
-                <tr key={a.id} className="border-b last:border-0">
-                  <td className="py-2 pr-3">{a.reportName}</td>
-                  <td className="py-2 pr-3">{a.runSource === 'eod' ? 'Scheduled' : 'On demand'}</td>
-                  <td className="py-2 pr-3 text-right">{a.rowCount}</td>
-                  <td className="py-2 pr-3">{new Date(a.createdAt).toLocaleString()}</td>
-                  <td className="py-2 pr-3 text-right">
-                    <Button
-                      size="sm"
-                      onClick={() =>
-                        void downloadFile(
-                          `/v1/report-builder/archives/${a.id}?format=csv`,
-                          `${a.reportName.replace(/[^A-Za-z0-9_-]+/g, '-')}-archive.csv`,
-                        ).catch((err: unknown) =>
-                          toast.error(err instanceof Error ? err.message : String(err)),
-                        )
-                      }
-                    >
-                      CSV
-                    </Button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </Card>
-      ) : null}
-
-      {mode === 'edit' ? (
-        <>
-          <Card title="Headings">
-            <div className="grid gap-4 md:grid-cols-4">
-              <Field label="Report name">
-                <Input
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  disabled={Boolean(editingId)}
-                />
-              </Field>
-              <Field label="Description">
-                <Input value={description} onChange={(e) => setDescription(e.target.value)} />
-              </Field>
-              <Field label="Source">
-                <Select
-                  value={sourceId}
-                  disabled={Boolean(editingId) || columns.length > 0}
-                  onChange={(e) => {
-                    setSourceId(e.target.value);
-                    setColumns([]);
-                    setFilters([]);
-                    setSorts([]);
-                    setPrompts([]);
-                  }}
-                >
-                  <option value="">Select…</option>
-                  {(sources ?? []).map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.name}
-                    </option>
-                  ))}
-                </Select>
-              </Field>
-              <Field label="Access">
-                <Select value={access} onChange={(e) => setAccess(e.target.value)}>
-                  <option value="anyone">Anyone can run</option>
-                  <option value="same_role">Within my role</option>
-                  <option value="owner_only">Only me</option>
-                </Select>
-              </Field>
-              <Field label="Title (tokens: {PROMPT_DICT})">
-                <Input value={title} onChange={(e) => setTitle(e.target.value)} />
-              </Field>
-            </div>
-          </Card>
-
-          {source ? (
-            <>
-              <Card title="Output columns">
-                {columns.map((c, i) => (
-                  <div key={i} className="mb-2 flex flex-wrap items-center gap-3 text-sm">
-                    <Select
-                      value={c.dictionary}
-                      onChange={(e) =>
-                        setColumns((cs) =>
-                          cs.map((x, j) => (j === i ? { ...x, dictionary: e.target.value } : x)),
-                        )
-                      }
-                    >
-                      {selectableDicts.map((d) => (
-                        <option key={d.name} value={d.name}>
-                          {d.name}
-                        </option>
-                      ))}
-                    </Select>
-                    <label className="flex items-center gap-1">
-                      <input
-                        type="checkbox"
-                        checked={c.break ?? false}
-                        onChange={(e) => {
-                          const on = e.target.checked;
-                          setColumns((cs) => cs.map((x, j) => (j === i ? { ...x, break: on } : x)));
-                          if (on && !sorts.includes(c.dictionary)) {
-                            setSorts((ss) => [...ss, c.dictionary]); // break ⇒ sort (#14)
-                          }
-                        }}
-                      />
-                      Break
-                    </label>
-                    <label className="flex items-center gap-1">
-                      <input
-                        type="checkbox"
-                        checked={c.total ?? false}
-                        onChange={(e) =>
-                          setColumns((cs) =>
-                            cs.map((x, j) => (j === i ? { ...x, total: e.target.checked } : x)),
-                          )
-                        }
-                      />
-                      Total
-                    </label>
-                    <Button
-                      size="sm"
-                      onClick={() => setColumns((cs) => cs.filter((_, j) => j !== i))}
-                    >
-                      Remove
-                    </Button>
-                  </div>
-                ))}
-                <Button
-                  size="sm"
-                  onClick={() =>
-                    selectableDicts[0] &&
-                    setColumns((cs) => [...cs, { dictionary: selectableDicts[0]!.name }])
-                  }
-                >
-                  Add column
-                </Button>
-              </Card>
-
-              <Card title="Selection filters (fixed, AND)">
-                {filters.map((f, i) => (
-                  <div key={i} className="mb-2 flex flex-wrap items-center gap-3 text-sm">
-                    <Select
-                      value={f.dictionary}
-                      onChange={(e) =>
-                        setFilters((fs) =>
-                          fs.map((x, j) => (j === i ? { ...x, dictionary: e.target.value } : x)),
-                        )
-                      }
-                    >
-                      {selectableDicts.map((d) => (
-                        <option key={d.name} value={d.name}>
-                          {d.name}
-                        </option>
-                      ))}
-                    </Select>
-                    <Select
-                      value={f.operator}
-                      onChange={(e) =>
-                        setFilters((fs) =>
-                          fs.map((x, j) => (j === i ? { ...x, operator: e.target.value } : x)),
-                        )
-                      }
-                    >
-                      {OPERATORS.map((o) => (
-                        <option key={o}>{o}</option>
-                      ))}
-                    </Select>
-                    {f.operator !== 'TR' && f.operator !== 'FL' ? (
-                      <Input
-                        placeholder={'value ("" = blank)'}
-                        value={f.value ?? ''}
-                        onChange={(e) =>
-                          setFilters((fs) =>
-                            fs.map((x, j) => (j === i ? { ...x, value: e.target.value } : x)),
-                          )
-                        }
-                        style={{ width: 160 }}
-                      />
-                    ) : null}
-                    <Button
-                      size="sm"
-                      onClick={() => setFilters((fs) => fs.filter((_, j) => j !== i))}
-                    >
-                      Remove
-                    </Button>
-                  </div>
-                ))}
-                <Button
-                  size="sm"
-                  onClick={() =>
-                    selectableDicts[0] &&
-                    setFilters((fs) => [
-                      ...fs,
-                      { dictionary: selectableDicts[0]!.name, operator: 'EQ', value: '' },
-                    ])
-                  }
-                >
-                  Add filter
-                </Button>
-              </Card>
-
-              <Card title="Prompts (asked at run time)">
-                {prompts.map((p, i) => (
-                  <div key={i} className="mb-2 flex flex-wrap items-center gap-3 text-sm">
-                    <Select
-                      value={p.dictionary}
-                      onChange={(e) =>
-                        setPrompts((ps) =>
-                          ps.map((x, j) => (j === i ? { ...x, dictionary: e.target.value } : x)),
-                        )
-                      }
-                    >
-                      {selectableDicts
-                        .filter((d) => !d.name.includes('.'))
-                        .map((d) => (
-                          <option key={d.name} value={d.name}>
-                            {d.name}
-                          </option>
-                        ))}
-                    </Select>
-                    <Input
-                      placeholder="Label"
-                      value={p.label}
-                      onChange={(e) =>
-                        setPrompts((ps) =>
-                          ps.map((x, j) => (j === i ? { ...x, label: e.target.value } : x)),
-                        )
-                      }
-                      style={{ width: 140 }}
-                    />
-                    <Select
-                      value={p.promptType}
-                      onChange={(e) =>
-                        setPrompts((ps) =>
-                          ps.map((x, j) =>
-                            j === i
-                              ? {
-                                  ...x,
-                                  promptType: e.target.value as PromptDef['promptType'],
-                                  includeExclude:
-                                    e.target.value === 'multi_select'
-                                      ? (x.includeExclude ?? 'include')
-                                      : null,
-                                }
-                              : x,
-                          ),
-                        )
-                      }
-                    >
-                      <option value="simple">Simple</option>
-                      <option value="range">Range</option>
-                      <option value="multi_select">Multi-select</option>
-                    </Select>
-                    {p.promptType === 'multi_select' ? (
-                      <Select
-                        value={p.includeExclude ?? 'include'}
-                        onChange={(e) =>
-                          setPrompts((ps) =>
-                            ps.map((x, j) =>
-                              j === i
-                                ? { ...x, includeExclude: e.target.value as 'include' | 'exclude' }
-                                : x,
-                            ),
-                          )
-                        }
-                      >
-                        <option value="include">Include</option>
-                        <option value="exclude">Exclude</option>
-                      </Select>
-                    ) : null}
-                    <label className="flex items-center gap-1">
-                      <input
-                        type="checkbox"
-                        checked={p.required ?? false}
-                        onChange={(e) =>
-                          setPrompts((ps) =>
-                            ps.map((x, j) => (j === i ? { ...x, required: e.target.checked } : x)),
-                          )
-                        }
-                      />
-                      Required
-                    </label>
-                    <label className="flex items-center gap-1">
-                      <input
-                        type="checkbox"
-                        checked={p.dateCode ?? false}
-                        onChange={(e) =>
-                          setPrompts((ps) =>
-                            ps.map((x, j) => (j === i ? { ...x, dateCode: e.target.checked } : x)),
-                          )
-                        }
-                      />
-                      Date codes
-                    </label>
-                    <Button
-                      size="sm"
-                      onClick={() => setPrompts((ps) => ps.filter((_, j) => j !== i))}
-                    >
-                      Remove
-                    </Button>
-                  </div>
-                ))}
-                <Button
-                  size="sm"
-                  onClick={() =>
-                    selectableDicts[0] &&
-                    setPrompts((ps) => [
-                      ...ps,
-                      {
-                        dictionary: selectableDicts[0]!.name,
-                        label: 'Value',
-                        promptType: 'simple',
-                      },
-                    ])
-                  }
-                >
-                  Add prompt
-                </Button>
-              </Card>
-
-              <Card title="Sorting">
-                {sorts.map((s, i) => (
-                  <div key={i} className="mb-2 flex items-center gap-3 text-sm">
-                    <Select
-                      value={s}
-                      onChange={(e) =>
-                        setSorts((ss) => ss.map((x, j) => (j === i ? e.target.value : x)))
-                      }
-                    >
-                      {selectableDicts.map((d) => (
-                        <option key={d.name} value={d.name}>
-                          {d.name}
-                        </option>
-                      ))}
-                    </Select>
-                    <Button
-                      size="sm"
-                      onClick={() => setSorts((ss) => ss.filter((_, j) => j !== i))}
-                    >
-                      Remove
-                    </Button>
-                  </div>
-                ))}
-                <Button
-                  size="sm"
-                  onClick={() =>
-                    selectableDicts[0] && setSorts((ss) => [...ss, selectableDicts[0]!.name])
-                  }
-                >
-                  Add sort
-                </Button>
-              </Card>
-
-              <Button
-                variant="primary"
-                onClick={() => void save()}
-                disabled={!name || columns.length === 0}
-              >
-                Save report
-              </Button>
-            </>
-          ) : null}
-        </>
-      ) : null}
-
-      {mode === 'run' && runReport && runInfo ? (
-        <>
-          <Card title={`Run: ${runReport.name}`}>
-            {runInfo.runTimeInformation ? (
-              <p className="mb-3 whitespace-pre-wrap text-sm">{runInfo.runTimeInformation}</p>
-            ) : null}
-            <div className="grid gap-4 md:grid-cols-3">
-              {runInfo.prompts.map((p) => (
-                <Field
-                  key={p.dictionary}
-                  label={`${p.label}${p.required ? ' *' : ''}${p.dateCode ? ' (TDAY/YDAY/CPTD/LPTD ok)' : ''}${
-                    p.promptType === 'multi_select' ? ' (comma-separated)' : ''
-                  }`}
-                >
-                  <Input
-                    value={answers[p.dictionary] ?? ''}
-                    onChange={(e) => setAnswers((a) => ({ ...a, [p.dictionary]: e.target.value }))}
-                  />
-                </Field>
-              ))}
-              {runInfo.summaryOnlyAvailable ? (
-                <Field label="Summary only">
-                  <label className="flex h-9 items-center gap-2 text-sm">
-                    <input
-                      type="checkbox"
-                      checked={summaryOnly}
-                      onChange={(e) => setSummaryOnly(e.target.checked)}
-                    />
-                    Totals only, no detail rows
-                  </label>
-                </Field>
-              ) : null}
-            </div>
-            <div className="mt-4 flex gap-2">
-              <Button variant="primary" onClick={() => void execute()} disabled={running}>
-                {running ? 'Running…' : 'Run'}
-              </Button>
-              <Button
-                onClick={() => void archiveRun()}
-                disabled={running}
-                title="Run now and store the result in the archive instead of rendering it"
-              >
-                Send to archive
-              </Button>
-            </div>
-          </Card>
-
-          {result ? (
-            <Card title={result.title ?? runReport.name}>
-              {result.subTitle ? <p className="mb-2 text-sm">{result.subTitle}</p> : null}
-              {result.truncated ? (
-                <p className="mb-2 text-sm text-amber-600">
-                  Output truncated at the row cap — narrow the criteria.
-                </p>
-              ) : null}
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
+        {mode === 'list' ? (
+          reports === null ? (
+            <LoadingRows />
+          ) : reports.length === 0 ? (
+            <EmptyState title="No reports yet">Build the first one with New report.</EmptyState>
+          ) : (
+            <Card title="Reports" flush>
+              <TableWrap>
+                <table className="table">
                   <thead>
-                    <tr className="border-b text-left text-xs uppercase text-neutral-500">
-                      {result.columns.map((c) => (
-                        <th key={c.name} className="py-2 pr-3">
-                          {c.heading}
-                          {c.masked ? ' 🔒' : ''}
-                        </th>
-                      ))}
+                    <tr>
+                      <th>Name</th>
+                      <th>Source</th>
+                      <th>Access</th>
+                      <th className="actions" />
                     </tr>
                   </thead>
                   <tbody>
-                    {result.rows.map((r, i) => (
-                      <tr key={i} className="border-b last:border-0">
-                        {result.columns.map((c) => (
-                          <td key={c.name} className="py-1 pr-3">
-                            {fmt(r[c.name] ?? null, c.type)}
-                          </td>
-                        ))}
+                    {reports.map((r) => (
+                      <tr key={r.id}>
+                        <td>
+                          {r.name}
+                          {r.systemOwned ? <span className="muted"> · system</span> : null}
+                          {r.description ? <div className="muted">{r.description}</div> : null}
+                        </td>
+                        <td>{r.sourceId}</td>
+                        <td>{r.access}</td>
+                        <td className="actions">
+                          <Button size="sm" variant="primary" onClick={() => void openRunner(r)}>
+                            Run
+                          </Button>
+                          {r.canEdit && !r.systemOwned ? (
+                            <Button size="sm" onClick={() => void startEdit(r)}>
+                              Edit
+                            </Button>
+                          ) : null}
+                          <Button size="sm" onClick={() => void clone(r)}>
+                            Clone
+                          </Button>
+                        </td>
                       </tr>
                     ))}
-                    {result.groups.map((g, i) => (
-                      <tr
-                        key={`g${i}`}
-                        className="border-b bg-neutral-50 font-medium dark:bg-neutral-900"
-                      >
-                        {result.columns.map((c, j) => (
-                          <td key={c.name} className="py-1 pr-3">
-                            {j === 0
-                              ? `TOTAL ${String(g.key ?? '')}`
-                              : c.name in g.totals
-                                ? fmt(g.totals[c.name]!, c.type)
-                                : ''}
-                          </td>
-                        ))}
-                      </tr>
-                    ))}
-                    {Object.keys(result.grandTotals).length > 0 ? (
-                      <tr className="font-semibold">
-                        {result.columns.map((c, j) => (
-                          <td key={c.name} className="py-1 pr-3">
-                            {j === 0
-                              ? 'GRAND TOTAL'
-                              : c.name in result.grandTotals
-                                ? fmt(result.grandTotals[c.name]!, c.type)
-                                : ''}
-                          </td>
-                        ))}
-                      </tr>
-                    ) : null}
                   </tbody>
                 </table>
-              </div>
+              </TableWrap>
             </Card>
-          ) : null}
-        </>
-      ) : null}
+          )
+        ) : null}
+
+        {mode === 'list' && archives.length > 0 ? (
+          <Card title="Archived runs" flush>
+            <TableWrap>
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Report</th>
+                    <th>Source</th>
+                    <th className="num">Rows</th>
+                    <th>Archived</th>
+                    <th className="actions" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {archives.map((a) => (
+                    <tr key={a.id}>
+                      <td>{a.reportName}</td>
+                      <td>{a.runSource === 'eod' ? 'Scheduled' : 'On demand'}</td>
+                      <td className="num">{a.rowCount}</td>
+                      <td>{new Date(a.createdAt).toLocaleString()}</td>
+                      <td className="actions">
+                        <Button
+                          size="sm"
+                          onClick={() =>
+                            void downloadFile(
+                              `/v1/report-builder/archives/${a.id}?format=csv`,
+                              `${a.reportName.replace(/[^A-Za-z0-9_-]+/g, '-')}-archive.csv`,
+                            ).catch((err: unknown) =>
+                              toast.error(err instanceof Error ? err.message : String(err)),
+                            )
+                          }
+                        >
+                          CSV
+                        </Button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </TableWrap>
+          </Card>
+        ) : null}
+
+        {mode === 'edit' ? (
+          <>
+            <Card title="Headings">
+              <FormGrid cols={3}>
+                <Field label="Report name" required>
+                  <Input
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    disabled={Boolean(editingId)}
+                  />
+                </Field>
+                <Field label="Description">
+                  <Input value={description} onChange={(e) => setDescription(e.target.value)} />
+                </Field>
+                <Field label="Source" required>
+                  <Select
+                    value={sourceId}
+                    disabled={Boolean(editingId) || columns.length > 0}
+                    onChange={(e) => {
+                      setSourceId(e.target.value);
+                      setColumns([]);
+                      setFilters([]);
+                      setSorts([]);
+                      setPrompts([]);
+                    }}
+                  >
+                    <option value="">Select…</option>
+                    {(sources ?? []).map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.name}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+                <Field label="Access">
+                  <Select value={access} onChange={(e) => setAccess(e.target.value)}>
+                    <option value="anyone">Anyone can run</option>
+                    <option value="same_role">Within my role</option>
+                    <option value="owner_only">Only me</option>
+                  </Select>
+                </Field>
+                <Field label="Title" hint="Tokens: {PROMPT_DICT}" className="form-span">
+                  <Input value={title} onChange={(e) => setTitle(e.target.value)} />
+                </Field>
+              </FormGrid>
+            </Card>
+
+            {source ? (
+              <>
+                <Card
+                  title="Output columns"
+                  actions={
+                    <Button
+                      size="sm"
+                      onClick={() =>
+                        selectableDicts[0] &&
+                        setColumns((cs) => [...cs, { dictionary: selectableDicts[0]!.name }])
+                      }
+                    >
+                      Add column
+                    </Button>
+                  }
+                >
+                  {columns.length === 0 ? (
+                    <p className="muted">No columns yet — add at least one.</p>
+                  ) : (
+                    <Stack gap="sm">
+                      {columns.map((c, i) => (
+                        <div key={i} className="flex flex-wrap items-center gap-2">
+                          <Select
+                            value={c.dictionary}
+                            aria-label="Dictionary"
+                            onChange={(e) =>
+                              setColumns((cs) =>
+                                cs.map((x, j) =>
+                                  j === i ? { ...x, dictionary: e.target.value } : x,
+                                ),
+                              )
+                            }
+                          >
+                            {dictOptions}
+                          </Select>
+                          <label className="flex items-center gap-1">
+                            <input
+                              type="checkbox"
+                              checked={c.break ?? false}
+                              onChange={(e) => {
+                                const on = e.target.checked;
+                                setColumns((cs) =>
+                                  cs.map((x, j) => (j === i ? { ...x, break: on } : x)),
+                                );
+                                if (on && !sorts.includes(c.dictionary)) {
+                                  setSorts((ss) => [...ss, c.dictionary]); // break ⇒ sort (#14)
+                                }
+                              }}
+                            />
+                            Break
+                          </label>
+                          <label className="flex items-center gap-1">
+                            <input
+                              type="checkbox"
+                              checked={c.total ?? false}
+                              onChange={(e) =>
+                                setColumns((cs) =>
+                                  cs.map((x, j) =>
+                                    j === i ? { ...x, total: e.target.checked } : x,
+                                  ),
+                                )
+                              }
+                            />
+                            Total
+                          </label>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => setColumns((cs) => cs.filter((_, j) => j !== i))}
+                          >
+                            Remove
+                          </Button>
+                        </div>
+                      ))}
+                    </Stack>
+                  )}
+                </Card>
+
+                <Card
+                  title="Selection filters (fixed, AND)"
+                  actions={
+                    <Button
+                      size="sm"
+                      onClick={() =>
+                        selectableDicts[0] &&
+                        setFilters((fs) => [
+                          ...fs,
+                          { dictionary: selectableDicts[0]!.name, operator: 'EQ', value: '' },
+                        ])
+                      }
+                    >
+                      Add filter
+                    </Button>
+                  }
+                >
+                  {filters.length === 0 ? (
+                    <p className="muted">No fixed filters — every row of the source qualifies.</p>
+                  ) : (
+                    <Stack gap="sm">
+                      {filters.map((f, i) => (
+                        <div key={i} className="flex flex-wrap items-center gap-2">
+                          <Select
+                            value={f.dictionary}
+                            aria-label="Dictionary"
+                            onChange={(e) =>
+                              setFilters((fs) =>
+                                fs.map((x, j) =>
+                                  j === i ? { ...x, dictionary: e.target.value } : x,
+                                ),
+                              )
+                            }
+                          >
+                            {dictOptions}
+                          </Select>
+                          <Select
+                            value={f.operator}
+                            aria-label="Operator"
+                            onChange={(e) =>
+                              setFilters((fs) =>
+                                fs.map((x, j) =>
+                                  j === i ? { ...x, operator: e.target.value } : x,
+                                ),
+                              )
+                            }
+                          >
+                            {OPERATORS.map((o) => (
+                              <option key={o}>{o}</option>
+                            ))}
+                          </Select>
+                          {f.operator !== 'TR' && f.operator !== 'FL' ? (
+                            <Input
+                              placeholder={'value ("" = blank)'}
+                              aria-label="Value"
+                              value={f.value ?? ''}
+                              onChange={(e) =>
+                                setFilters((fs) =>
+                                  fs.map((x, j) => (j === i ? { ...x, value: e.target.value } : x)),
+                                )
+                              }
+                            />
+                          ) : null}
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => setFilters((fs) => fs.filter((_, j) => j !== i))}
+                          >
+                            Remove
+                          </Button>
+                        </div>
+                      ))}
+                    </Stack>
+                  )}
+                </Card>
+
+                <Card
+                  title="Prompts (asked at run time)"
+                  actions={
+                    <Button
+                      size="sm"
+                      onClick={() =>
+                        selectableDicts[0] &&
+                        setPrompts((ps) => [
+                          ...ps,
+                          {
+                            dictionary: selectableDicts[0]!.name,
+                            label: 'Value',
+                            promptType: 'simple',
+                          },
+                        ])
+                      }
+                    >
+                      Add prompt
+                    </Button>
+                  }
+                >
+                  {prompts.length === 0 ? (
+                    <p className="muted">No prompts — the report runs without asking anything.</p>
+                  ) : (
+                    <Stack gap="sm">
+                      {prompts.map((p, i) => (
+                        <div key={i} className="flex flex-wrap items-center gap-2">
+                          <Select
+                            value={p.dictionary}
+                            aria-label="Dictionary"
+                            onChange={(e) =>
+                              setPrompts((ps) =>
+                                ps.map((x, j) =>
+                                  j === i ? { ...x, dictionary: e.target.value } : x,
+                                ),
+                              )
+                            }
+                          >
+                            {selectableDicts
+                              .filter((d) => !d.name.includes('.'))
+                              .map((d) => (
+                                <option key={d.name} value={d.name}>
+                                  {d.name}
+                                </option>
+                              ))}
+                          </Select>
+                          <Input
+                            placeholder="Label"
+                            aria-label="Label"
+                            value={p.label}
+                            onChange={(e) =>
+                              setPrompts((ps) =>
+                                ps.map((x, j) => (j === i ? { ...x, label: e.target.value } : x)),
+                              )
+                            }
+                          />
+                          <Select
+                            value={p.promptType}
+                            aria-label="Prompt type"
+                            onChange={(e) =>
+                              setPrompts((ps) =>
+                                ps.map((x, j) =>
+                                  j === i
+                                    ? {
+                                        ...x,
+                                        promptType: e.target.value as PromptDef['promptType'],
+                                        includeExclude:
+                                          e.target.value === 'multi_select'
+                                            ? (x.includeExclude ?? 'include')
+                                            : null,
+                                      }
+                                    : x,
+                                ),
+                              )
+                            }
+                          >
+                            <option value="simple">Simple</option>
+                            <option value="range">Range</option>
+                            <option value="multi_select">Multi-select</option>
+                          </Select>
+                          {p.promptType === 'multi_select' ? (
+                            <Select
+                              value={p.includeExclude ?? 'include'}
+                              aria-label="Include or exclude"
+                              onChange={(e) =>
+                                setPrompts((ps) =>
+                                  ps.map((x, j) =>
+                                    j === i
+                                      ? {
+                                          ...x,
+                                          includeExclude: e.target.value as 'include' | 'exclude',
+                                        }
+                                      : x,
+                                  ),
+                                )
+                              }
+                            >
+                              <option value="include">Include</option>
+                              <option value="exclude">Exclude</option>
+                            </Select>
+                          ) : null}
+                          <label className="flex items-center gap-1">
+                            <input
+                              type="checkbox"
+                              checked={p.required ?? false}
+                              onChange={(e) =>
+                                setPrompts((ps) =>
+                                  ps.map((x, j) =>
+                                    j === i ? { ...x, required: e.target.checked } : x,
+                                  ),
+                                )
+                              }
+                            />
+                            Required
+                          </label>
+                          <label className="flex items-center gap-1">
+                            <input
+                              type="checkbox"
+                              checked={p.dateCode ?? false}
+                              onChange={(e) =>
+                                setPrompts((ps) =>
+                                  ps.map((x, j) =>
+                                    j === i ? { ...x, dateCode: e.target.checked } : x,
+                                  ),
+                                )
+                              }
+                            />
+                            Date codes
+                          </label>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => setPrompts((ps) => ps.filter((_, j) => j !== i))}
+                          >
+                            Remove
+                          </Button>
+                        </div>
+                      ))}
+                    </Stack>
+                  )}
+                </Card>
+
+                <Card
+                  title="Sorting"
+                  actions={
+                    <Button
+                      size="sm"
+                      onClick={() =>
+                        selectableDicts[0] && setSorts((ss) => [...ss, selectableDicts[0]!.name])
+                      }
+                    >
+                      Add sort
+                    </Button>
+                  }
+                >
+                  {sorts.length === 0 ? (
+                    <p className="muted">No sort — rows come back in source order.</p>
+                  ) : (
+                    <Stack gap="sm">
+                      {sorts.map((s, i) => (
+                        <div key={i} className="flex flex-wrap items-center gap-2">
+                          <Select
+                            value={s}
+                            aria-label="Sort dictionary"
+                            onChange={(e) =>
+                              setSorts((ss) => ss.map((x, j) => (j === i ? e.target.value : x)))
+                            }
+                          >
+                            {dictOptions}
+                          </Select>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => setSorts((ss) => ss.filter((_, j) => j !== i))}
+                          >
+                            Remove
+                          </Button>
+                        </div>
+                      ))}
+                    </Stack>
+                  )}
+                </Card>
+
+                <FormActions
+                  start={
+                    !name || columns.length === 0 ? (
+                      <span>A report name and at least one output column are required.</span>
+                    ) : undefined
+                  }
+                >
+                  <Button variant="secondary" onClick={() => setMode('list')}>
+                    Cancel
+                  </Button>
+                  <Button
+                    variant="primary"
+                    onClick={() => void save()}
+                    disabled={!name || columns.length === 0}
+                  >
+                    Save report
+                  </Button>
+                </FormActions>
+              </>
+            ) : null}
+          </>
+        ) : null}
+
+        {mode === 'run' && runReport && runInfo ? (
+          <>
+            <Card title={`Run: ${runReport.name}`}>
+              <Stack>
+                {runInfo.runTimeInformation ? (
+                  <Alert tone="info">
+                    <span className="whitespace-pre-wrap">{runInfo.runTimeInformation}</span>
+                  </Alert>
+                ) : null}
+                <FormGrid cols={3}>
+                  {runInfo.prompts.map((p) => (
+                    <Field
+                      key={p.dictionary}
+                      label={p.label}
+                      required={p.required}
+                      hint={
+                        [
+                          p.dateCode ? 'TDAY / YDAY / CPTD / LPTD accepted' : null,
+                          p.promptType === 'multi_select' ? 'Comma-separated values' : null,
+                        ]
+                          .filter(Boolean)
+                          .join(' · ') || undefined
+                      }
+                    >
+                      <Input
+                        value={answers[p.dictionary] ?? ''}
+                        onChange={(e) =>
+                          setAnswers((a) => ({ ...a, [p.dictionary]: e.target.value }))
+                        }
+                      />
+                    </Field>
+                  ))}
+                  {runInfo.summaryOnlyAvailable ? (
+                    <label className="flex items-center gap-2 self-end">
+                      <input
+                        type="checkbox"
+                        checked={summaryOnly}
+                        onChange={(e) => setSummaryOnly(e.target.checked)}
+                      />
+                      Summary only — totals, no detail rows
+                    </label>
+                  ) : null}
+                </FormGrid>
+              </Stack>
+              <FormActions>
+                <Button
+                  variant="secondary"
+                  onClick={() => void archiveRun()}
+                  disabled={running}
+                  title="Run now and store the result in the archive instead of rendering it"
+                >
+                  Send to archive
+                </Button>
+                <Button variant="primary" onClick={() => void execute()} disabled={running}>
+                  {running ? 'Running…' : 'Run'}
+                </Button>
+              </FormActions>
+            </Card>
+
+            {result ? (
+              <Card
+                title={result.title ?? runReport.name}
+                description={result.subTitle ?? undefined}
+              >
+                <Stack>
+                  {result.truncated ? (
+                    <Alert tone="warning">
+                      Output truncated at the row cap — narrow the criteria.
+                    </Alert>
+                  ) : null}
+                  <TableWrap>
+                    <table className="table">
+                      <thead>
+                        <tr>
+                          {result.columns.map((c) => (
+                            <th key={c.name} className={isNumeric(c.type) ? 'num' : undefined}>
+                              {c.heading}
+                              {c.masked ? ' 🔒' : ''}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {result.rows.length === 0 && result.groups.length === 0 && (
+                          <TableEmpty colSpan={Math.max(1, result.columns.length)}>
+                            No rows matched.
+                          </TableEmpty>
+                        )}
+                        {result.rows.map((r, i) => (
+                          <tr key={i}>
+                            {result.columns.map((c) => (
+                              <td key={c.name} className={isNumeric(c.type) ? 'num' : undefined}>
+                                {fmt(r[c.name] ?? null, c.type)}
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
+                        {result.groups.map((g, i) => (
+                          <tr key={`g${i}`} className="font-medium">
+                            {result.columns.map((c, j) => (
+                              <td key={c.name} className={isNumeric(c.type) ? 'num' : undefined}>
+                                {j === 0
+                                  ? `TOTAL ${String(g.key ?? '')}`
+                                  : c.name in g.totals
+                                    ? fmt(g.totals[c.name]!, c.type)
+                                    : ''}
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
+                        {Object.keys(result.grandTotals).length > 0 ? (
+                          <tr className="font-semibold">
+                            {result.columns.map((c, j) => (
+                              <td key={c.name} className={isNumeric(c.type) ? 'num' : undefined}>
+                                {j === 0
+                                  ? 'GRAND TOTAL'
+                                  : c.name in result.grandTotals
+                                    ? fmt(result.grandTotals[c.name]!, c.type)
+                                    : ''}
+                              </td>
+                            ))}
+                          </tr>
+                        ) : null}
+                      </tbody>
+                    </table>
+                  </TableWrap>
+                </Stack>
+              </Card>
+            ) : null}
+          </>
+        ) : null}
+      </Stack>
     </div>
   );
 }

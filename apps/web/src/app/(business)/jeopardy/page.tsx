@@ -3,7 +3,19 @@
 import { RefreshCw } from 'lucide-react';
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
-import { Button, Card, EmptyState, Field, Input, LoadingRows, PageHeader } from '@/components/ui';
+import {
+  Alert,
+  Button,
+  Card,
+  Field,
+  Input,
+  LoadingRows,
+  PageHeader,
+  Stack,
+  TableEmpty,
+  TableWrap,
+  Toolbar,
+} from '@/components/ui';
 import { api } from '@/lib/api';
 
 interface JeopardyRow {
@@ -41,16 +53,21 @@ export default function JeopardyPage() {
   const [report, setReport] = useState<JeopardyReport | null>(null);
   const [horizon, setHorizon] = useState('30');
   const [error, setError] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
 
   async function load(days: string = horizon) {
+    setRefreshing(true);
     try {
       setReport(
         await api<JeopardyReport>(
           `/v1/reports/delivery-jeopardy?horizonDays=${encodeURIComponent(days || '30')}`,
         ),
       );
+      setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setRefreshing(false);
     }
   }
 
@@ -61,66 +78,83 @@ export default function JeopardyPage() {
 
   return (
     <div>
-      <PageHeader title="Delivery dates in jeopardy" />
-      {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
-      <Card>
-        <div className="mb-3 flex flex-wrap items-end gap-2">
-          <Field label="Horizon (days)">
-            <Input
-              type="number"
-              min={1}
-              max={365}
-              value={horizon}
-              onChange={(e) => setHorizon(e.target.value)}
-              style={{ width: 110 }}
-            />
-          </Field>
-          <Button variant="secondary" onClick={() => void load()}>
-            <RefreshCw size={14} aria-hidden />
-            Refresh
-          </Button>
-          {report && (
-            <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-              {report.rows.length} at-risk line{report.rows.length === 1 ? '' : 's'} in the next{' '}
-              {report.horizonDays} days
-            </span>
-          )}
-        </div>
-        {!report ? (
-          <LoadingRows />
-        ) : (
-          <div style={{ overflowX: 'auto' }}>
-            <table className="table" data-testid="jeopardy-table">
-              <thead>
-                <tr>
-                  <th>Promised</th>
-                  <th>Order</th>
-                  <th>Customer</th>
-                  <th>Location</th>
-                  <th>Product</th>
-                  <th className="num">Short</th>
-                  <th>Risk</th>
-                  <th>Inbound supply</th>
-                </tr>
-              </thead>
-              <tbody>
-                {report.rows.length === 0 && (
+      <PageHeader
+        title="Delivery dates in jeopardy"
+        sub="Open order lines with no inbound supply, or supply that lands after the promised date — grouped by salesperson for callbacks."
+      />
+      <Stack>
+        {error && <Alert tone="error">{error}</Alert>}
+        <Card>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              void load();
+            }}
+          >
+            <Toolbar
+              end={
+                report && (
+                  <span className="muted">
+                    {report.rows.length} at-risk line{report.rows.length === 1 ? '' : 's'} in the
+                    next {report.horizonDays} days
+                  </span>
+                )
+              }
+            >
+              <Field label="Horizon (days)" className="w-28">
+                <Input
+                  type="number"
+                  min={1}
+                  max={365}
+                  value={horizon}
+                  onChange={(e) => setHorizon(e.target.value)}
+                />
+              </Field>
+              <Button
+                type="submit"
+                size="sm"
+                variant="secondary"
+                className="self-end"
+                disabled={refreshing}
+                aria-busy={refreshing}
+              >
+                <RefreshCw size={14} aria-hidden />
+                Refresh
+              </Button>
+            </Toolbar>
+          </form>
+          {!report ? (
+            <LoadingRows />
+          ) : (
+            <TableWrap>
+              <table className="table" data-testid="jeopardy-table">
+                <thead>
                   <tr>
-                    <td colSpan={8}>
-                      <EmptyState>
-                        Nothing at risk — every short line has supply arriving in time.
-                      </EmptyState>
-                    </td>
+                    <th>Promised</th>
+                    <th>Order</th>
+                    <th>Customer</th>
+                    <th>Location</th>
+                    <th>Product</th>
+                    <th className="num">Short</th>
+                    <th>Risk</th>
+                    <th>Inbound supply</th>
                   </tr>
-                )}
-                {groupBySalesperson(report.rows).map((group) => (
-                  <SalespersonGroup key={group.key} group={group} />
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </Card>
+                </thead>
+                <tbody>
+                  {report.rows.length === 0 && (
+                    <TableEmpty colSpan={8}>
+                      Nothing at risk — every short line has supply arriving in time.
+                    </TableEmpty>
+                  )}
+                  {groupBySalesperson(report.rows).map((group) => (
+                    <SalespersonGroup key={group.key} group={group} />
+                  ))}
+                </tbody>
+              </table>
+            </TableWrap>
+          )}
+        </Card>
+      </Stack>
     </div>
   );
 }
@@ -158,24 +192,16 @@ function groupBySalesperson(rows: JeopardyRow[]): SpGroup[] {
 function SalespersonGroup({ group }: { group: SpGroup }) {
   return (
     <>
+      {/* A row-group header: `th` inside tbody picks up the table's own
+          uppercase muted header styling, so no inline colours are needed. */}
       <tr data-testid="jeopardy-salesperson">
-        <td
-          colSpan={8}
-          style={{
-            background: 'var(--surface-muted, var(--surface))',
-            fontWeight: 700,
-            fontSize: 12.5,
-            textTransform: 'uppercase',
-            letterSpacing: '0.04em',
-            color: 'var(--text-secondary)',
-          }}
-        >
+        <th scope="rowgroup" colSpan={8}>
           {group.name} · {group.rows.length} at-risk line{group.rows.length === 1 ? '' : 's'}
-        </td>
+        </th>
       </tr>
       {group.rows.map((r) => (
         <tr key={r.lineId}>
-          <td>{r.deliveryDate}</td>
+          <td className="nowrap">{r.deliveryDate}</td>
           <td>
             <Link href={`/orders/${r.orderId}`}>{r.orderNumber}</Link>
           </td>
@@ -183,16 +209,14 @@ function SalespersonGroup({ group }: { group: SpGroup }) {
           <td>{r.locationName ?? '—'}</td>
           <td>
             {r.productName}
-            {r.sku && <span style={{ color: 'var(--text-muted)', fontSize: 12 }}> {r.sku}</span>}
+            {r.sku && <span className="muted"> {r.sku}</span>}
           </td>
           <td className="num">{r.shortfall}</td>
           <td>
             {r.risk === 'no_supply' ? (
-              <span style={{ color: 'var(--danger)', fontWeight: 600 }}>No supply</span>
+              <span className="badge badge-danger">No supply</span>
             ) : (
-              <span style={{ color: 'var(--warning, #b45309)', fontWeight: 600 }}>
-                {r.daysLate}d late
-              </span>
+              <span className="badge badge-warning">{r.daysLate}d late</span>
             )}
           </td>
           <td>
@@ -200,7 +224,7 @@ function SalespersonGroup({ group }: { group: SpGroup }) {
               <>
                 {r.supplySource === 'po' ? 'PO ' : 'Transfer '}
                 {r.supplyReference}
-                <span style={{ color: 'var(--text-muted)', fontSize: 12 }}> → {r.supplyDate}</span>
+                <span className="muted"> → {r.supplyDate}</span>
               </>
             ) : (
               '—'

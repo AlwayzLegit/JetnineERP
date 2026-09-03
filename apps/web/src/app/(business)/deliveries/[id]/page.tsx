@@ -1,12 +1,22 @@
 'use client';
 
-import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { PackageCheck } from 'lucide-react';
 import { api } from '@/lib/api';
 import { Money } from '@/components/money';
-import { Button, Card, LinkButton, LoadingRows, StatusBadge } from '@/components/ui';
+import {
+  Alert,
+  BackLink,
+  Button,
+  Card,
+  KeyValue,
+  LinkButton,
+  LoadingRows,
+  PageHeader,
+  Stack,
+  StatusBadge,
+} from '@/components/ui';
 
 /**
  * One truck stop (Day 3). The driver-facing verbs live here: loaded,
@@ -71,132 +81,154 @@ export default function DeliveryDetailPage() {
     }
   }
 
-  if (error && !d) return <p style={{ color: 'var(--danger)' }}>{error}</p>;
-  if (!d) return <LoadingRows rows={4} />;
+  if (error && !d) {
+    return (
+      <div>
+        <PageHeader
+          eyebrow={<BackLink href="/deliveries">Calendar</BackLink>}
+          title="Delivery not found"
+        />
+        <Alert tone="error">{error}</Alert>
+      </div>
+    );
+  }
+  if (!d) {
+    return (
+      <div>
+        <PageHeader eyebrow={<BackLink href="/deliveries">Calendar</BackLink>} title="Delivery" />
+        <LoadingRows rows={4} />
+      </div>
+    );
+  }
 
   const live = !['delivered', 'failed', 'cancelled'].includes(d.status);
+  const address = d.addressLine1
+    ? [
+        `${d.addressLine1}${d.addressLine2 ? `, ${d.addressLine2}` : ''}`,
+        [d.addressCity, d.addressRegion, d.addressPostalCode].filter(Boolean).join(', '),
+      ]
+        .filter(Boolean)
+        .join(' — ')
+    : '—';
 
   return (
-    <div style={{ maxWidth: 640 }}>
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 12,
-          marginBottom: 4,
-          flexWrap: 'wrap',
-        }}
-      >
-        <h1 className="page-title" style={{ margin: 0 }}>
-          Delivery — {d.orderNumber}
-        </h1>
-        <span data-testid="delivery-status" style={{ display: 'inline-flex' }}>
-          <StatusBadge status={d.status} />
-        </span>
-        <LinkButton href="/deliveries" variant="ghost" size="sm" style={{ marginLeft: 'auto' }}>
-          ← Calendar
-        </LinkButton>
-      </div>
-      <p style={{ fontSize: 13, color: 'var(--text-secondary)', margin: '0 0 16px' }}>
-        {d.scheduledDate}
-        {d.windowStart ? ` · ${d.windowStart.slice(0, 5)}–${d.windowEnd?.slice(0, 5) ?? ''}` : ''}
-        {' · '}
-        <Link href={`/orders/${d.orderId}`}>open the order</Link>
-      </p>
+    <div className="max-w-[640px]">
+      <PageHeader
+        eyebrow={<BackLink href="/deliveries">Calendar</BackLink>}
+        title={`Delivery — ${d.orderNumber}`}
+        meta={
+          <span data-testid="delivery-status">
+            <StatusBadge status={d.status} />
+          </span>
+        }
+        sub={
+          <>
+            {d.scheduledDate}
+            {d.windowStart
+              ? ` · ${d.windowStart.slice(0, 5)}–${d.windowEnd?.slice(0, 5) ?? ''}`
+              : ''}
+          </>
+        }
+        actions={
+          <LinkButton href={`/orders/${d.orderId}`} variant="secondary" size="sm">
+            Open order
+          </LinkButton>
+        }
+      />
+      <Stack>
+        <Card title="Drop-off">
+          <Stack gap="sm">
+            <KeyValue
+              rows={[
+                { label: 'Customer', value: <strong>{d.customerName ?? '—'}</strong> },
+                { label: 'Address', value: address },
+                { label: 'Phone', value: d.addressPhone ?? '—' },
+              ]}
+            />
+            {d.balanceDueCents > 0 && (
+              <Alert tone="warning">
+                Collect on delivery: <Money cents={d.balanceDueCents} /> (record it on the order
+                page)
+              </Alert>
+            )}
+          </Stack>
+        </Card>
 
-      <Card title="Drop-off" style={{ marginBottom: 16 }}>
-        <p style={{ fontSize: 13, margin: 0 }}>
-          <strong>{d.customerName ?? '—'}</strong>
-          {d.addressLine1 && (
-            <>
-              <br />
-              {d.addressLine1}
-              {d.addressLine2 ? `, ${d.addressLine2}` : ''}
-              <br />
-              {[d.addressCity, d.addressRegion, d.addressPostalCode].filter(Boolean).join(', ')}
-            </>
-          )}
-          {d.addressPhone && (
-            <>
-              <br />
-              {d.addressPhone}
-            </>
-          )}
-        </p>
-        {d.balanceDueCents > 0 && (
-          <p style={{ fontSize: 13, color: 'var(--warning)', marginBottom: 0 }}>
-            Collect on delivery: <Money cents={d.balanceDueCents} /> (record it on the order page)
-          </p>
-        )}
-      </Card>
+        <Card title="On the truck">
+          <Stack gap="sm">
+            <ul className="m-0 list-disc pl-[18px] text-[13px]">
+              {d.lines.map((l) => (
+                <li key={l.id}>
+                  {l.quantity} × {l.description}
+                  {l.lineType === 'special_order' && (
+                    <span className="muted"> (special order)</span>
+                  )}
+                </li>
+              ))}
+            </ul>
+            {d.notes && <p className="muted m-0 text-[12.5px]">{d.notes}</p>}
+          </Stack>
+        </Card>
 
-      <Card title="On the truck" style={{ marginBottom: 16 }}>
-        <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13 }}>
-          {d.lines.map((l) => (
-            <li key={l.id}>
-              {l.quantity} × {l.description}
-              {l.lineType === 'special_order' && (
-                <span style={{ color: 'var(--warning)' }}> (special order)</span>
+        {live && (
+          <Card title="Driver actions">
+            <Stack gap="sm" className="max-w-[360px]">
+              {error && <Alert tone="error">{error}</Alert>}
+              {d.status === 'scheduled' && (
+                <Button
+                  variant="secondary"
+                  onClick={() => void act('/status', { status: 'loaded' })}
+                  disabled={busy}
+                >
+                  Mark loaded
+                </Button>
               )}
-            </li>
-          ))}
-        </ul>
-        {d.notes && (
-          <p style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 0 }}>{d.notes}</p>
+              {(d.status === 'scheduled' || d.status === 'loaded') && (
+                <Button
+                  variant="secondary"
+                  onClick={() => void act('/status', { status: 'out_for_delivery' })}
+                  disabled={busy}
+                >
+                  Out for delivery
+                </Button>
+              )}
+              <Button
+                variant="primary"
+                onClick={() => void act('/complete', {})}
+                disabled={busy}
+                aria-busy={busy}
+                data-testid="mark-delivered"
+              >
+                <PackageCheck size={16} aria-hidden />
+                Delivered — hand over the goods
+              </Button>
+              <Button
+                variant="danger"
+                onClick={() => {
+                  const notes = prompt('What happened? (optional)');
+                  if (notes === null) return;
+                  void act('/complete', { failed: true, notes: notes || null });
+                }}
+                disabled={busy}
+              >
+                Failed — bring it back
+              </Button>
+              {(d.status === 'scheduled' || d.status === 'loaded') && (
+                <Button
+                  variant="ghost"
+                  onClick={async () => {
+                    await act('/cancel');
+                    router.push('/deliveries');
+                  }}
+                  disabled={busy}
+                >
+                  Cancel this delivery
+                </Button>
+              )}
+            </Stack>
+          </Card>
         )}
-      </Card>
-
-      {live && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxWidth: 360 }}>
-          {error && <p style={{ color: 'var(--danger)', margin: 0, fontSize: 13 }}>{error}</p>}
-          {d.status === 'scheduled' && (
-            <Button onClick={() => void act('/status', { status: 'loaded' })} disabled={busy}>
-              Mark loaded
-            </Button>
-          )}
-          {(d.status === 'scheduled' || d.status === 'loaded') && (
-            <Button
-              onClick={() => void act('/status', { status: 'out_for_delivery' })}
-              disabled={busy}
-            >
-              Out for delivery
-            </Button>
-          )}
-          <Button
-            variant="primary"
-            onClick={() => void act('/complete', {})}
-            disabled={busy}
-            style={{ padding: '10px 14px' }}
-            data-testid="mark-delivered"
-          >
-            <PackageCheck size={16} aria-hidden />
-            Delivered — hand over the goods
-          </Button>
-          <Button
-            variant="danger"
-            onClick={() => {
-              const notes = prompt('What happened? (optional)');
-              if (notes === null) return;
-              void act('/complete', { failed: true, notes: notes || null });
-            }}
-            disabled={busy}
-          >
-            Failed — bring it back
-          </Button>
-          {(d.status === 'scheduled' || d.status === 'loaded') && (
-            <Button
-              variant="ghost"
-              onClick={async () => {
-                await act('/cancel');
-                router.push('/deliveries');
-              }}
-              disabled={busy}
-            >
-              Cancel this delivery
-            </Button>
-          )}
-        </div>
-      )}
+      </Stack>
     </div>
   );
 }

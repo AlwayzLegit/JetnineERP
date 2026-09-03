@@ -4,15 +4,21 @@ import { Megaphone, Plus, Send, Trash2, Users } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import {
+  Alert,
   Button,
   Card,
-  EmptyState,
   Field,
+  FormActions,
+  FormGrid,
   Input,
   LoadingRows,
   PageHeader,
+  SectionHeading,
   Select,
+  Stack,
   StatusBadge,
+  TableEmpty,
+  TableWrap,
 } from '@/components/ui';
 import { api } from '@/lib/api';
 
@@ -188,244 +194,264 @@ export default function MarketingPage() {
         title="Marketing"
         sub="Build audience segments from customer tags, then send one-shot email campaigns. Only customers with an email address receive anything."
       />
-      {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
+      <Stack gap="lg">
+        {error && <Alert tone="error">{error}</Alert>}
 
-      <Card title="Segments">
-        <div className="mb-3 flex flex-wrap items-end gap-2">
-          <Field label="Segment name" className="min-w-52">
-            <Input
-              value={segName}
-              onChange={(e) => setSegName(e.target.value)}
-              placeholder="e.g. Mattress buyers"
-              data-testid="segment-name"
-            />
-          </Field>
-          <Field label="Created in last N days (optional)">
-            <Input
-              type="number"
-              min={1}
-              value={segSinceDays}
-              onChange={(e) => setSegSinceDays(e.target.value)}
-              style={{ width: 90 }}
-            />
-          </Field>
-          <Button variant="primary" onClick={() => void createSegment()} disabled={busy}>
-            <Plus size={14} aria-hidden /> Create segment
-          </Button>
-        </div>
-        {tags.length > 0 && (
-          <div className="mb-3 flex flex-wrap gap-2">
-            <span className="muted" style={{ fontSize: 12, alignSelf: 'center' }}>
-              Tags (any of):
-            </span>
-            {tags.map((t) => (
-              <button
-                key={t.id}
-                type="button"
-                className={`pill ${segTagIds.includes(t.id) ? 'pill-active' : ''}`}
-                onClick={() => toggleTag(t.id)}
-                data-testid={`segment-tag-${t.name}`}
+        <Stack>
+          <SectionHeading
+            title="Segments"
+            description="An audience: every customer, or only those carrying certain tags or created recently."
+          />
+          <Card title="New segment">
+            <FormGrid cols={2}>
+              <Field label="Segment name" required>
+                <Input
+                  value={segName}
+                  onChange={(e) => setSegName(e.target.value)}
+                  placeholder="e.g. Mattress buyers"
+                  data-testid="segment-name"
+                />
+              </Field>
+              <Field label="Created in last N days (optional)">
+                <Input
+                  type="number"
+                  min={1}
+                  value={segSinceDays}
+                  onChange={(e) => setSegSinceDays(e.target.value)}
+                />
+              </Field>
+              {tags.length > 0 && (
+                <>
+                  <SectionHeading as="h3" title="Tags (any of)" />
+                  <div className="form-span flex flex-wrap gap-2">
+                    {tags.map((t) => (
+                      <button
+                        key={t.id}
+                        type="button"
+                        className={`pill ${segTagIds.includes(t.id) ? 'pill-active' : ''}`}
+                        aria-pressed={segTagIds.includes(t.id)}
+                        onClick={() => toggleTag(t.id)}
+                        data-testid={`segment-tag-${t.name}`}
+                      >
+                        {t.name}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+            </FormGrid>
+            <FormActions>
+              <Button
+                variant="primary"
+                onClick={() => void createSegment()}
+                disabled={busy || !segName.trim()}
               >
-                {t.name}
-              </button>
-            ))}
-          </div>
-        )}
+                <Plus size={14} aria-hidden /> Create segment
+              </Button>
+            </FormActions>
+          </Card>
 
-        {segments == null ? (
-          <LoadingRows />
-        ) : segments.length === 0 ? (
-          <EmptyState>No segments yet — create one above.</EmptyState>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Name</th>
-                  <th>Filter</th>
-                  <th className="num">Members</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {segments.map((s) => {
-                  const p = previews[s.id];
-                  const tagNames = (s.filterJson.tagIds ?? [])
-                    .map((id) => tags.find((t) => t.id === id)?.name ?? '?')
-                    .join(', ');
-                  return (
-                    <tr key={s.id} data-testid={`segment-row-${s.name}`}>
-                      <td>{s.name}</td>
-                      <td className="muted" style={{ fontSize: 12 }}>
-                        {tagNames || 'All customers'}
-                        {s.filterJson.sinceDays ? ` · last ${s.filterJson.sinceDays}d` : ''}
-                      </td>
-                      <td className="num">
-                        {p ? (
-                          <strong>{p.count}</strong>
-                        ) : (
-                          <Button size="sm" onClick={() => void previewSegment(s.id)}>
-                            <Users size={13} aria-hidden /> Count
-                          </Button>
-                        )}
-                      </td>
-                      <td style={{ textAlign: 'right' }}>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => void deleteSegment(s.id)}
-                          aria-label="Delete segment"
-                        >
-                          <Trash2 size={14} aria-hidden />
-                        </Button>
-                      </td>
+          <Card title="Segments" flush>
+            {segments == null ? (
+              <div className="p-4">
+                <LoadingRows />
+              </div>
+            ) : (
+              <TableWrap>
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Name</th>
+                      <th>Filter</th>
+                      <th className="num">Members</th>
+                      <th className="actions" />
                     </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </Card>
-
-      <Card title="Campaigns">
-        <div className="mb-3 grid gap-2 sm:grid-cols-2">
-          <Field label="Campaign name">
-            <Input
-              value={campName}
-              onChange={(e) => setCampName(e.target.value)}
-              placeholder="e.g. Labor Day sale"
-              data-testid="campaign-name"
-              style={{ width: '100%' }}
-            />
-          </Field>
-          <Field label="Segment">
-            <Select
-              value={campSegmentId}
-              onChange={(e) => setCampSegmentId(e.target.value)}
-              data-testid="campaign-segment"
-              style={{ width: '100%' }}
-            >
-              <option value="">Choose a segment…</option>
-              {(segments ?? []).map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name}
-                </option>
-              ))}
-            </Select>
-          </Field>
-          <Field label="Subject" className="sm:col-span-2">
-            <Input
-              value={campSubject}
-              onChange={(e) => setCampSubject(e.target.value)}
-              data-testid="campaign-subject"
-              style={{ width: '100%' }}
-            />
-          </Field>
-          <Field label="Body (plain text)" className="sm:col-span-2">
-            <textarea
-              className="textarea"
-              rows={5}
-              value={campBody}
-              onChange={(e) => setCampBody(e.target.value)}
-              data-testid="campaign-body"
-              style={{ width: '100%', resize: 'vertical' }}
-            />
-          </Field>
-          <div>
-            <Button variant="primary" onClick={() => void createCampaign()} disabled={busy}>
-              <Megaphone size={14} aria-hidden /> Save draft
-            </Button>
-          </div>
-        </div>
-
-        {campaigns == null ? (
-          <LoadingRows />
-        ) : campaigns.length === 0 ? (
-          <EmptyState>No campaigns yet.</EmptyState>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Name</th>
-                  <th>Segment</th>
-                  <th>Status</th>
-                  <th className="num">Recipients</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {campaigns.map((c) => (
-                  <tr key={c.id} data-testid={`campaign-row-${c.name}`}>
-                    <td>
-                      {c.name}
-                      <span className="muted" style={{ display: 'block', fontSize: 11.5 }}>
-                        {c.subject}
-                      </span>
-                    </td>
-                    <td>{c.segmentName}</td>
-                    <td>
-                      <StatusBadge status={c.status} />
-                      {c.sentAt && (
-                        <span className="muted" style={{ display: 'block', fontSize: 11 }}>
-                          {new Date(c.sentAt).toLocaleString()}
-                        </span>
-                      )}
-                    </td>
-                    <td className="num">{c.recipientCount ?? '—'}</td>
-                    <td style={{ textAlign: 'right' }}>
-                      {c.status === 'draft' &&
-                        (armedSendId === c.id ? (
-                          <span
-                            style={{
-                              display: 'inline-flex',
-                              gap: 6,
-                              alignItems: 'center',
-                              flexWrap: 'wrap',
-                              justifyContent: 'flex-end',
-                            }}
-                          >
-                            <span style={{ fontSize: 12, color: 'var(--danger)', fontWeight: 600 }}>
-                              Emails everyone in “{c.segmentName}” — can’t be undone.
-                            </span>
-                            <Button
-                              variant="danger"
-                              size="sm"
-                              disabled={busy}
-                              onClick={() => void sendCampaign(c)}
-                              data-testid={`send-${c.name}`}
-                            >
-                              <Send size={13} aria-hidden /> Really send
-                            </Button>
+                  </thead>
+                  <tbody>
+                    {segments.length === 0 && (
+                      <TableEmpty colSpan={4}>No segments yet — create one above.</TableEmpty>
+                    )}
+                    {segments.map((s) => {
+                      const p = previews[s.id];
+                      const tagNames = (s.filterJson.tagIds ?? [])
+                        .map((id) => tags.find((t) => t.id === id)?.name ?? '?')
+                        .join(', ');
+                      return (
+                        <tr key={s.id} data-testid={`segment-row-${s.name}`}>
+                          <td>{s.name}</td>
+                          <td className="muted">
+                            {tagNames || 'All customers'}
+                            {s.filterJson.sinceDays ? ` · last ${s.filterJson.sinceDays}d` : ''}
+                          </td>
+                          <td className="num">
+                            {p ? (
+                              <strong>{p.count}</strong>
+                            ) : (
+                              <Button
+                                size="sm"
+                                variant="secondary"
+                                onClick={() => void previewSegment(s.id)}
+                              >
+                                <Users size={13} aria-hidden /> Count
+                              </Button>
+                            )}
+                          </td>
+                          <td className="actions">
                             <Button
                               variant="ghost"
                               size="sm"
-                              disabled={busy}
-                              onClick={() => setArmedSendId(null)}
+                              onClick={() => void deleteSegment(s.id)}
+                              aria-label="Delete segment"
                             >
-                              Cancel
+                              <Trash2 size={14} aria-hidden />
                             </Button>
-                          </span>
-                        ) : (
-                          <Button
-                            variant="primary"
-                            size="sm"
-                            disabled={busy}
-                            onClick={() => void sendCampaign(c)}
-                            data-testid={`send-${c.name}`}
-                          >
-                            <Send size={13} aria-hidden /> Send
-                          </Button>
-                        ))}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </Card>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </TableWrap>
+            )}
+          </Card>
+        </Stack>
+
+        <Stack>
+          <SectionHeading
+            title="Campaigns"
+            description="One-shot plain-text emails to a segment. Drafts can be edited until they are sent."
+          />
+          <Card title="New campaign">
+            <FormGrid cols={2}>
+              <Field label="Campaign name" required>
+                <Input
+                  value={campName}
+                  onChange={(e) => setCampName(e.target.value)}
+                  placeholder="e.g. Labor Day sale"
+                  data-testid="campaign-name"
+                />
+              </Field>
+              <Field label="Segment" required>
+                <Select
+                  value={campSegmentId}
+                  onChange={(e) => setCampSegmentId(e.target.value)}
+                  data-testid="campaign-segment"
+                >
+                  <option value="">Choose a segment…</option>
+                  {(segments ?? []).map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <Field label="Subject" required className="form-span">
+                <Input
+                  value={campSubject}
+                  onChange={(e) => setCampSubject(e.target.value)}
+                  data-testid="campaign-subject"
+                />
+              </Field>
+              <Field label="Body (plain text)" required className="form-span">
+                <textarea
+                  className="textarea"
+                  rows={5}
+                  value={campBody}
+                  onChange={(e) => setCampBody(e.target.value)}
+                  data-testid="campaign-body"
+                />
+              </Field>
+            </FormGrid>
+            <FormActions>
+              <Button variant="primary" onClick={() => void createCampaign()} disabled={busy}>
+                <Megaphone size={14} aria-hidden /> Save draft
+              </Button>
+            </FormActions>
+          </Card>
+
+          <Card title="Campaigns" flush>
+            {campaigns == null ? (
+              <div className="p-4">
+                <LoadingRows />
+              </div>
+            ) : (
+              <TableWrap>
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Name</th>
+                      <th>Segment</th>
+                      <th>Status</th>
+                      <th className="num">Recipients</th>
+                      <th className="actions" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {campaigns.length === 0 && (
+                      <TableEmpty colSpan={5}>No campaigns yet — save a draft above.</TableEmpty>
+                    )}
+                    {campaigns.map((c) => (
+                      <tr key={c.id} data-testid={`campaign-row-${c.name}`}>
+                        <td>
+                          {c.name}
+                          <span className="muted block text-xs">{c.subject}</span>
+                        </td>
+                        <td>{c.segmentName}</td>
+                        <td>
+                          <StatusBadge status={c.status} />
+                          {c.sentAt && (
+                            <span className="muted block text-xs">
+                              {new Date(c.sentAt).toLocaleString()}
+                            </span>
+                          )}
+                        </td>
+                        <td className="num">{c.recipientCount ?? '—'}</td>
+                        <td className="actions">
+                          {c.status === 'draft' &&
+                            (armedSendId === c.id ? (
+                              <span className="inline-flex flex-wrap items-center justify-end gap-2 whitespace-normal">
+                                <span className="text-xs font-semibold text-[var(--danger)]">
+                                  Emails everyone in “{c.segmentName}” — can’t be undone.
+                                </span>
+                                <Button
+                                  variant="danger"
+                                  size="sm"
+                                  disabled={busy}
+                                  onClick={() => void sendCampaign(c)}
+                                  data-testid={`send-${c.name}`}
+                                >
+                                  <Send size={13} aria-hidden /> Really send
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  disabled={busy}
+                                  onClick={() => setArmedSendId(null)}
+                                >
+                                  Cancel
+                                </Button>
+                              </span>
+                            ) : (
+                              <Button
+                                variant="primary"
+                                size="sm"
+                                disabled={busy}
+                                onClick={() => void sendCampaign(c)}
+                                data-testid={`send-${c.name}`}
+                              >
+                                <Send size={13} aria-hidden /> Send
+                              </Button>
+                            ))}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </TableWrap>
+            )}
+          </Card>
+        </Stack>
+      </Stack>
     </div>
   );
 }

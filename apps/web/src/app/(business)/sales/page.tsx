@@ -1,13 +1,26 @@
 'use client';
 
-import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { api } from '@/lib/api';
 import { type DateRange } from '@/lib/date-range';
 import { DateRangePicker, useUrlDateRange } from '@/components/date-range-picker';
 import { Money } from '@/components/money';
-import { Button, EmptyState, Input, LoadingRows, PageHeader, StatusBadge } from '@/components/ui';
+import {
+  Alert,
+  Button,
+  Card,
+  EmptyState,
+  Input,
+  LinkButton,
+  LoadingRows,
+  PageHeader,
+  Stack,
+  StatusBadge,
+  TableEmpty,
+  TableWrap,
+  Toolbar,
+} from '@/components/ui';
 
 interface SaleRow {
   id: string;
@@ -96,14 +109,27 @@ export default function SalesPage() {
     void load(q, range);
   }
 
+  const filtered = q.trim() !== '' || range.preset !== 'all';
+
   return (
     <div>
-      {/* P-018: no duplicate "Open register" — the global top bar has it. */}
-      <PageHeader title="Sales" />
+      {/* P-018: no duplicate "Open register" — the global top bar has it.
+          The picker lives in the header, outside the search form, so none
+          of its buttons (calendar navigation included) can submit it. */}
+      <PageHeader
+        title="Sales"
+        actions={
+          <DateRangePicker
+            allowAllTime
+            align="right"
+            value={range}
+            onChange={setRange}
+            testid="sales-range"
+          />
+        }
+      />
 
-      <div className="mb-4 flex flex-wrap items-center gap-2">
-        {/* The picker sits beside the form, not inside it, so none of its
-            buttons (calendar navigation included) can submit the search. */}
+      <Toolbar>
         <form onSubmit={search} className="flex min-w-0 flex-1 flex-wrap gap-2">
           {/* autoFocus is scanner-friendly: a scanned receipt barcode types
               the number + Enter and finds the sale without the mouse. */}
@@ -113,14 +139,15 @@ export default function SalesPage() {
             placeholder="Invoice # (scan a receipt) or customer name"
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            className="min-w-[240px] flex-1"
+            className="min-w-[200px] flex-1 sm:max-w-[340px]"
           />
-          <Button type="submit" variant="primary">
+          <Button type="submit" variant="primary" size="sm">
             Search
           </Button>
           <Button
             type="button"
             variant="secondary"
+            size="sm"
             onClick={() => {
               setQ('');
               void load('', range);
@@ -129,33 +156,24 @@ export default function SalesPage() {
             Clear
           </Button>
         </form>
-        <DateRangePicker
-          allowAllTime
-          align="right"
-          value={range}
-          onChange={setRange}
-          testid="sales-range"
-        />
-      </div>
+      </Toolbar>
 
-      {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
-      {!rows && !error && (
-        <div className="card">
-          <LoadingRows rows={5} />
-        </div>
-      )}
-      {rows && (
-        <div className="card">
-          {rows.length === 0 ? (
-            <EmptyState>
-              {q.trim()
-                ? `No sales match "${q.trim()}".`
-                : range.preset !== 'all'
-                  ? 'No sales in this window.'
-                  : 'No sales yet. Ring one up at the register to see it here.'}
+      <Stack>
+        {error && <Alert tone="error">{error}</Alert>}
+        {!rows && !error && (
+          <Card>
+            <LoadingRows rows={5} />
+          </Card>
+        )}
+        {rows && rows.length === 0 && !filtered ? (
+          <Card>
+            <EmptyState title="No sales yet">
+              Ring one up at the register to see it here.
             </EmptyState>
-          ) : (
-            <div style={{ overflow: 'auto', maxHeight: 'calc(100vh - 240px)' }}>
+          </Card>
+        ) : rows ? (
+          <Card flush>
+            <TableWrap maxHeight="calc(100vh - 240px)">
               <table className="table table-dense table-sticky">
                 <thead>
                   <tr>
@@ -164,26 +182,27 @@ export default function SalesPage() {
                     <th>Status</th>
                     <th className="num">Total</th>
                     <th>Date</th>
-                    <th>&nbsp;</th>
+                    <th className="actions" />
                   </tr>
                 </thead>
                 <tbody>
+                  {rows.length === 0 && (
+                    <TableEmpty colSpan={6}>
+                      {q.trim() ? `No sales match "${q.trim()}".` : 'No sales in this window.'}
+                    </TableEmpty>
+                  )}
                   {rows.map((s) => (
                     <tr
                       key={s.id}
                       onClick={() => router.push(`/sales/${s.id}`)}
-                      style={{ cursor: 'pointer' }}
+                      className="cursor-pointer"
                     >
                       <td>
                         <code>{s.number}</code>
                       </td>
                       <td>
                         {s.customerName ??
-                          (s.customerId ? (
-                            '—'
-                          ) : (
-                            <span style={{ color: 'var(--text-muted)' }}>Walk-in</span>
-                          ))}
+                          (s.customerId ? '—' : <span className="muted">Walk-in</span>)}
                       </td>
                       <td>
                         <StatusBadge status={s.status} />
@@ -191,7 +210,7 @@ export default function SalesPage() {
                       <td className="num">
                         <Money cents={s.totalCents} />
                       </td>
-                      <td style={{ whiteSpace: 'nowrap' }}>
+                      <td className="nowrap">
                         {new Date(s.completedAt ?? s.createdAt).toLocaleDateString('en-US', {
                           month: 'short',
                           day: 'numeric',
@@ -202,30 +221,32 @@ export default function SalesPage() {
                           minute: '2-digit',
                         })}
                       </td>
-                      <td>
-                        <Link href={`/sales/${s.id}`}>Open</Link>
+                      <td className="actions">
+                        <LinkButton size="sm" href={`/sales/${s.id}`}>
+                          Open
+                        </LinkButton>
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
-            </div>
-          )}
-        </div>
-      )}
+            </TableWrap>
+          </Card>
+        ) : null}
 
-      {nextCursor && (
-        <div style={{ marginTop: 12, textAlign: 'center' }}>
-          <Button
-            type="button"
-            variant="secondary"
-            onClick={() => void loadMore()}
-            disabled={loadingMore}
-          >
-            {loadingMore ? 'Loading…' : 'Load more'}
-          </Button>
-        </div>
-      )}
+        {nextCursor && (
+          <div className="flex justify-center">
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => void loadMore()}
+              disabled={loadingMore}
+            >
+              {loadingMore ? 'Loading…' : 'Load more'}
+            </Button>
+          </div>
+        )}
+      </Stack>
     </div>
   );
 }

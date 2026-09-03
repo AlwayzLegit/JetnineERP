@@ -2,6 +2,18 @@
 
 import { useEffect, useState, type FormEvent } from 'react';
 import { api } from '@/lib/api';
+import {
+  Alert,
+  Button,
+  Card,
+  Field,
+  FormActions,
+  FormGrid,
+  Input,
+  TableEmpty,
+  TableWrap,
+  Toolbar,
+} from '@/components/ui';
 
 /**
  * Customer search-or-create modal, shared by the POS register and the
@@ -30,10 +42,13 @@ export function CustomerPicker({
 }) {
   const [q, setQ] = useState('');
   const [rows, setRows] = useState<CustomerRow[]>([]);
+  const [searching, setSearching] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function search() {
+    setSearching(true);
     try {
       const res = await api<{ data: CustomerRow[]; nextCursor: string | null }>(
         `/v1/customers?q=${encodeURIComponent(q)}`,
@@ -41,6 +56,8 @@ export function CustomerPicker({
       setRows(res.data);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSearching(false);
     }
   }
   useEffect(() => {
@@ -51,6 +68,7 @@ export function CustomerPicker({
   async function createNew(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setError(null);
+    setSaving(true);
     try {
       const data = new FormData(e.currentTarget);
       const created = await api<CustomerRow>('/v1/customers', {
@@ -65,126 +83,129 @@ export function CustomerPicker({
       onPick(created);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
     }
   }
 
   return (
-    <div style={modalBackdrop}>
-      <div style={{ ...modal, maxWidth: 480 }}>
-        <h2 style={{ fontSize: 18, marginBottom: 12 }}>Attach customer</h2>
-        {creating ? (
-          <form onSubmit={createNew} style={{ display: 'grid', gap: 8 }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-              <input name="firstName" placeholder="First name" style={fieldStyle} />
-              <input name="lastName" placeholder="Last name" style={fieldStyle} />
-            </div>
-            <input name="email" type="email" placeholder="Email" style={fieldStyle} />
-            <input name="phone" placeholder="Phone" style={fieldStyle} />
-            {error && <p style={{ color: '#b00', fontSize: 12, margin: 0 }}>{error}</p>}
-            <div style={{ display: 'flex', gap: 8 }}>
-              <button type="submit" style={primaryBtn}>
-                Create & attach
-              </button>
-              <button type="button" onClick={() => setCreating(false)} style={linkBtn}>
-                Back
-              </button>
-            </div>
-          </form>
-        ) : (
-          <>
-            <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-              <input
-                value={q}
-                onChange={(e) => setQ(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') void search();
-                }}
-                placeholder="Search by name, email, or phone"
-                style={{ ...fieldStyle, flex: 1 }}
-              />
-              <button onClick={search} style={linkBtn}>
-                Search
-              </button>
-            </div>
-            <div style={{ maxHeight: 240, overflow: 'auto' }}>
-              {rows.length === 0 && (
-                <p style={{ color: '#888', fontSize: 13, margin: 0 }}>No matches.</p>
-              )}
-              {rows.map((c) => (
-                <button
-                  key={c.id}
-                  onClick={() => onPick(c)}
-                  style={{
-                    display: 'block',
-                    width: '100%',
-                    textAlign: 'left',
-                    padding: 8,
-                    background: '#fff',
-                    border: '1px solid #eee',
-                    borderRadius: 4,
-                    marginBottom: 4,
-                    cursor: 'pointer',
-                    fontSize: 13,
+    // Modal chrome: no shared overlay primitive exists yet, so the
+    // backdrop/panel positioning stays inline (structural, not styling).
+    <div
+      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40"
+      onClick={onCancel}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Attach customer"
+        className="w-[min(480px,92vw)]"
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') {
+            e.stopPropagation();
+            onCancel();
+          }
+        }}
+      >
+        <Card
+          title="Attach customer"
+          actions={
+            <Button size="sm" variant="ghost" onClick={onCancel} aria-label="Close">
+              ✕
+            </Button>
+          }
+        >
+          {creating ? (
+            <form onSubmit={createNew}>
+              <FormGrid cols={2}>
+                <Field label="First name">
+                  <Input name="firstName" autoFocus />
+                </Field>
+                <Field label="Last name">
+                  <Input name="lastName" />
+                </Field>
+                <Field label="Email">
+                  <Input name="email" type="email" />
+                </Field>
+                <Field label="Phone">
+                  <Input name="phone" type="tel" />
+                </Field>
+              </FormGrid>
+              {error && <Alert tone="error">{error}</Alert>}
+              <FormActions>
+                <Button variant="secondary" onClick={() => setCreating(false)} disabled={saving}>
+                  Back
+                </Button>
+                <Button type="submit" variant="primary" disabled={saving}>
+                  {saving ? 'Creating…' : 'Create & attach'}
+                </Button>
+              </FormActions>
+            </form>
+          ) : (
+            <>
+              <Toolbar>
+                <Input
+                  autoFocus
+                  value={q}
+                  onChange={(e) => setQ(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') void search();
                   }}
-                >
-                  <strong>{customerDisplayName(c)}</strong>{' '}
-                  <span style={{ color: '#666' }}>{c.email ?? c.phone ?? ''}</span>
-                </button>
-              ))}
-            </div>
-            <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
-              <button onClick={() => setCreating(true)} style={linkBtn}>
-                + New customer
-              </button>
-              <button onClick={onCancel} style={linkBtn}>
-                Cancel
-              </button>
-            </div>
-          </>
-        )}
+                  placeholder="Search by name, email, or phone"
+                  aria-label="Search customers"
+                />
+                <Button size="sm" variant="secondary" onClick={search} disabled={searching}>
+                  {searching ? 'Searching…' : 'Search'}
+                </Button>
+              </Toolbar>
+              {error && <Alert tone="error">{error}</Alert>}
+              <TableWrap maxHeight={240}>
+                <table className="table table-dense table-sticky">
+                  <thead>
+                    <tr>
+                      <th>Customer</th>
+                      <th>Contact</th>
+                      <th className="actions" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.length === 0 && (
+                      <TableEmpty colSpan={3}>
+                        {searching ? 'Searching…' : 'No matches.'}
+                      </TableEmpty>
+                    )}
+                    {rows.map((c) => (
+                      <tr key={c.id} onClick={() => onPick(c)} className="cursor-pointer">
+                        <td>
+                          <strong>{customerDisplayName(c)}</strong>
+                        </td>
+                        <td className="muted">{c.email ?? c.phone ?? '—'}</td>
+                        <td className="actions">
+                          <Button size="sm" variant="secondary" onClick={() => onPick(c)}>
+                            Attach
+                          </Button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </TableWrap>
+              <FormActions
+                start={
+                  <Button size="sm" variant="ghost" onClick={() => setCreating(true)}>
+                    + New customer
+                  </Button>
+                }
+              >
+                <Button variant="secondary" onClick={onCancel}>
+                  Cancel
+                </Button>
+              </FormActions>
+            </>
+          )}
+        </Card>
       </div>
     </div>
   );
 }
-
-const fieldStyle = {
-  width: '100%',
-  padding: '6px 8px',
-  border: '1px solid #ccc',
-  borderRadius: 4,
-  fontSize: 13,
-} as const;
-const primaryBtn = {
-  padding: '8px 14px',
-  background: '#111',
-  color: '#fff',
-  border: 'none',
-  borderRadius: 4,
-  cursor: 'pointer',
-  fontSize: 13,
-} as const;
-const linkBtn = {
-  padding: '8px 14px',
-  background: 'transparent',
-  color: '#444',
-  border: '1px solid #ccc',
-  borderRadius: 4,
-  cursor: 'pointer',
-  fontSize: 13,
-} as const;
-const modalBackdrop = {
-  position: 'fixed',
-  inset: 0,
-  background: 'rgba(0,0,0,0.4)',
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  zIndex: 100,
-} as const;
-const modal = {
-  background: '#fff',
-  padding: 20,
-  borderRadius: 6,
-  boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
-  width: '90%',
-} as const;

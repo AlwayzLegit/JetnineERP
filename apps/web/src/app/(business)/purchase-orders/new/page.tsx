@@ -6,7 +6,23 @@ import { Suspense, useEffect, useRef, useState, type FormEvent } from 'react';
 import { Plus, Search } from 'lucide-react';
 import { api } from '@/lib/api';
 import { Money } from '@/components/money';
-import { Button, Card, EmptyState, Field, Input, PageHeader, Select } from '@/components/ui';
+import {
+  Alert,
+  BackLink,
+  Button,
+  Card,
+  EmptyState,
+  Field,
+  FormActions,
+  FormGrid,
+  Input,
+  PageHeader,
+  SectionHeading,
+  Select,
+  Stack,
+  TableWrap,
+  Toolbar,
+} from '@/components/ui';
 
 interface Vendor {
   id: string;
@@ -265,330 +281,336 @@ function NewPurchaseOrderInner() {
 
   return (
     <div>
-      <PageHeader title="New purchase order" />
-      <form onSubmit={submit} style={{ display: 'grid', gap: 16 }}>
-        <Card>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <Field label="Vendor">
-              <Select
-                value={vendorId}
-                onChange={(e) => setVendorId(e.target.value)}
-                style={{ width: '100%' }}
+      <PageHeader
+        eyebrow={<BackLink href="/purchase-orders">All purchase orders</BackLink>}
+        title="New purchase order"
+        sub="Nothing is written until you save as draft or place the order."
+      />
+      <form onSubmit={submit}>
+        <Stack>
+          <Card title="Details">
+            <FormGrid cols={2}>
+              <Field
+                label="Vendor"
+                hint={
+                  vendors.length === 0 ? (
+                    <>
+                      No vendors yet — <Link href="/vendors">create one first</Link>.
+                    </>
+                  ) : undefined
+                }
               >
-                {vendors.map((v) => (
-                  <option key={v.id} value={v.id}>
-                    {v.name}
-                  </option>
-                ))}
-              </Select>
-              {vendors.length === 0 && (
-                <span className="muted" style={{ display: 'block', fontSize: 12, marginTop: 4 }}>
-                  No vendors yet —{' '}
-                  <Link href="/vendors" style={{ color: 'inherit' }}>
-                    create one first
-                  </Link>
-                  .
-                </span>
-              )}
-            </Field>
-            <Field label="Location">
-              <Select
-                value={locationId}
-                onChange={(e) => setLocationId(e.target.value)}
-                style={{ width: '100%' }}
-              >
-                {locations.map((l) => (
-                  <option key={l.id} value={l.id}>
-                    {l.name}
-                  </option>
-                ))}
-              </Select>
-            </Field>
-          </div>
-          <div style={{ marginTop: 8 }} className="grid gap-3 sm:grid-cols-2">
-            <Field label="Expected delivery">
-              <Input
-                type="date"
-                value={expectedAt}
-                onChange={(e) => setExpectedAt(e.target.value)}
-                style={{ width: '100%' }}
-              />
-            </Field>
-            <Field label="Freight ($, spread into unit cost at receipt)">
-              <Input
-                type="number"
-                min={0}
-                step="0.01"
-                value={freightStr}
-                onChange={(e) => setFreightStr(e.target.value)}
-                style={{ width: '100%' }}
-              />
-            </Field>
-          </div>
-          <Field label="Notes" style={{ marginTop: 8 }}>
-            <textarea
-              className="textarea"
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              rows={2}
-              style={{ width: '100%', resize: 'vertical' }}
-            />
-          </Field>
-        </Card>
+                <Select value={vendorId} onChange={(e) => setVendorId(e.target.value)}>
+                  {vendors.map((v) => (
+                    <option key={v.id} value={v.id}>
+                      {v.name}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <Field label="Location">
+                <Select value={locationId} onChange={(e) => setLocationId(e.target.value)}>
+                  {locations.map((l) => (
+                    <option key={l.id} value={l.id}>
+                      {l.name}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <Field label="Expected delivery">
+                <Input
+                  type="date"
+                  value={expectedAt}
+                  onChange={(e) => setExpectedAt(e.target.value)}
+                />
+              </Field>
+              <Field label="Freight ($)" hint="Spread into unit cost at receipt">
+                <Input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={freightStr}
+                  onChange={(e) => setFreightStr(e.target.value)}
+                />
+              </Field>
+              <Field label="Notes" className="form-span">
+                <textarea
+                  className="textarea"
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                  rows={2}
+                />
+              </Field>
+            </FormGrid>
+          </Card>
 
-        {(reorder.length > 0 || queue.length > 0) && (
-          <Card title="Suggested for this vendor" data-testid="builder-suggestions">
-            {reorder.length > 0 && (
-              <>
-                <p className="muted" style={{ fontSize: 12.5, margin: '0 0 6px' }}>
-                  At or below reorder point:
-                </p>
-                {reorder.map((s) => (
-                  <div
-                    key={s.variantId}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 8,
-                      fontSize: 13,
-                      padding: '4px 0',
-                    }}
-                  >
-                    <span style={{ flex: 1 }}>
-                      {s.productName}
-                      {s.variantName ? ` — ${s.variantName}` : ''}{' '}
-                      <span style={{ color: 'var(--text-muted)' }}>
-                        ({s.available} avail, point {s.reorderPoint})
-                      </span>
-                    </span>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="secondary"
-                      disabled={lines.some((l) => l.variantId === s.variantId && !l.orderLineId)}
-                      onClick={() =>
-                        setLines((prev) => [
-                          ...prev,
-                          {
-                            variantId: s.variantId,
-                            description: [s.productName, s.variantName].filter(Boolean).join(' — '),
-                            quantity: s.suggestedQty,
-                            unitCostStr:
-                              s.unitCostCents != null ? (s.unitCostCents / 100).toFixed(2) : '',
-                          },
-                        ])
-                      }
-                    >
-                      Add {s.suggestedQty}
-                    </Button>
-                  </div>
-                ))}
-              </>
-            )}
-            {queue.length > 0 && (
-              <>
-                <p className="muted" style={{ fontSize: 12.5, margin: '8px 0 6px' }}>
-                  Sold, not in stock (order carries the sales order #):
-                </p>
-                {queue.map((q) => (
-                  <div
-                    key={q.orderLineId}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 8,
-                      fontSize: 13,
-                      padding: '4px 0',
-                    }}
-                  >
-                    <span style={{ flex: 1 }}>
-                      {q.description}{' '}
-                      <span style={{ color: 'var(--text-muted)' }}>
-                        for {q.orderNumber}
-                        {q.customerName ? ` (${q.customerName})` : ''}
-                      </span>
-                    </span>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="secondary"
-                      disabled={lines.some((l) => l.orderLineId === q.orderLineId)}
-                      onClick={() =>
-                        setLines((prev) => [
-                          ...prev,
-                          {
-                            variantId: q.variantId!,
-                            description: q.description,
-                            quantity: q.toOrder,
-                            unitCostStr:
-                              q.unitCostCents != null ? (q.unitCostCents / 100).toFixed(2) : '',
-                            orderLineId: q.orderLineId,
-                            orderNumber: q.orderNumber,
-                          },
-                        ])
-                      }
-                    >
-                      Add {q.toOrder}
-                    </Button>
-                  </div>
-                ))}
-              </>
+          {(reorder.length > 0 || queue.length > 0) && (
+            // Deliberately a list, not a table: the lines table below is
+            // the only place a staged item should read as a row.
+            <Card title="Suggested for this vendor" data-testid="builder-suggestions">
+              {reorder.length > 0 && (
+                <>
+                  <SectionHeading as="h3" title="At or below reorder point" />
+                  <Stack gap="sm">
+                    {reorder.map((s) => (
+                      <div key={s.variantId} className="flex items-center gap-2">
+                        <span className="min-w-0 flex-1">
+                          {s.productName}
+                          {s.variantName ? ` — ${s.variantName}` : ''}{' '}
+                          <span className="muted">
+                            ({s.available} avail, point {s.reorderPoint})
+                          </span>
+                        </span>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="secondary"
+                          disabled={lines.some(
+                            (l) => l.variantId === s.variantId && !l.orderLineId,
+                          )}
+                          onClick={() =>
+                            setLines((prev) => [
+                              ...prev,
+                              {
+                                variantId: s.variantId,
+                                description: [s.productName, s.variantName]
+                                  .filter(Boolean)
+                                  .join(' — '),
+                                quantity: s.suggestedQty,
+                                unitCostStr:
+                                  s.unitCostCents != null ? (s.unitCostCents / 100).toFixed(2) : '',
+                              },
+                            ])
+                          }
+                        >
+                          Add {s.suggestedQty}
+                        </Button>
+                      </div>
+                    ))}
+                  </Stack>
+                </>
+              )}
+              {queue.length > 0 && (
+                <>
+                  <SectionHeading
+                    as="h3"
+                    title="Sold, not in stock"
+                    description="The order carries the sales order #."
+                  />
+                  <Stack gap="sm">
+                    {queue.map((q) => (
+                      <div key={q.orderLineId} className="flex items-center gap-2">
+                        <span className="min-w-0 flex-1">
+                          {q.description}{' '}
+                          <span className="muted">
+                            for {q.orderNumber}
+                            {q.customerName ? ` (${q.customerName})` : ''}
+                          </span>
+                        </span>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="secondary"
+                          disabled={lines.some((l) => l.orderLineId === q.orderLineId)}
+                          onClick={() =>
+                            setLines((prev) => [
+                              ...prev,
+                              {
+                                variantId: q.variantId!,
+                                description: q.description,
+                                quantity: q.toOrder,
+                                unitCostStr:
+                                  q.unitCostCents != null ? (q.unitCostCents / 100).toFixed(2) : '',
+                                orderLineId: q.orderLineId,
+                                orderNumber: q.orderNumber,
+                              },
+                            ])
+                          }
+                        >
+                          Add {q.toOrder}
+                        </Button>
+                      </div>
+                    ))}
+                  </Stack>
+                </>
+              )}
+            </Card>
+          )}
+
+          <Card title="Add items">
+            <Toolbar>
+              <Input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    void searchVariants();
+                  }
+                }}
+                placeholder="Search by name, SKU, or barcode"
+                aria-label="Search by name, SKU, or barcode"
+              />
+              <Button type="button" variant="secondary" size="sm" onClick={searchVariants}>
+                <Search size={14} aria-hidden />
+                Search
+              </Button>
+            </Toolbar>
+            {results.length > 0 && (
+              <TableWrap>
+                <table className="table table-dense">
+                  <thead>
+                    <tr>
+                      <th>Product</th>
+                      <th>SKU</th>
+                      <th className="actions" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {results.map((r) => {
+                      const staged = lines.some((l) => l.variantId === r.variantId);
+                      return (
+                        <tr key={r.variantId}>
+                          <td>
+                            <strong>{r.productName}</strong>
+                            {r.variantName && <span className="muted"> — {r.variantName}</span>}
+                          </td>
+                          <td>
+                            <code>{r.sku ?? '—'}</code>
+                          </td>
+                          <td className="actions">
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="secondary"
+                              disabled={staged}
+                              onClick={() => addLine(r)}
+                            >
+                              {staged ? 'Added' : 'Add'}
+                            </Button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </TableWrap>
             )}
           </Card>
-        )}
 
-        <Card title="Add items">
-          <div className="flex flex-wrap gap-2">
-            <Input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault();
-                  void searchVariants();
-                }
-              }}
-              placeholder="Search by name, SKU, or barcode"
-              className="min-w-[200px] flex-1"
-            />
-            <Button type="button" variant="primary" onClick={searchVariants}>
-              <Search size={14} />
-              Search
-            </Button>
-          </div>
-          {results.length > 0 && (
-            <div style={{ marginTop: 8 }}>
-              {results.map((r) => (
-                <button
-                  key={r.variantId}
-                  type="button"
-                  onClick={() => addLine(r)}
-                  style={{
-                    display: 'block',
-                    width: '100%',
-                    textAlign: 'left',
-                    padding: '6px 8px',
-                    background: 'var(--surface)',
-                    border: '1px solid var(--border)',
-                    borderRadius: 'var(--radius-sm)',
-                    marginBottom: 4,
-                    cursor: 'pointer',
-                    fontSize: 13,
-                    fontFamily: 'var(--font)',
-                    color: 'var(--text)',
-                  }}
-                >
-                  <strong>{r.productName}</strong> {r.variantName && <>— {r.variantName}</>}{' '}
-                  <span style={{ color: 'var(--text-secondary)' }}>{r.sku ?? '—'}</span>
-                </button>
-              ))}
-            </div>
-          )}
-        </Card>
-
-        <Card title="Lines">
-          {lines.length === 0 ? (
-            <EmptyState>No lines yet. Search for an item above to add it to the order.</EmptyState>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>Item</th>
-                    <th>Qty</th>
-                    <th>Unit cost ($)</th>
-                    <th className="num">Line total</th>
-                    <th>&nbsp;</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {lines.map((l, i) => {
-                    const lineTotal =
-                      Math.round(Number(l.unitCostStr) * 100) * Number(l.quantity || 0);
-                    return (
-                      <tr key={`${l.variantId}-${l.orderLineId ?? i}`}>
-                        <td>
-                          {l.description}
-                          {l.orderNumber && (
-                            <span
-                              className="badge badge-info"
-                              style={{ marginLeft: 6, fontSize: 11 }}
+          <Card title="Lines" flush={lines.length > 0}>
+            {lines.length === 0 ? (
+              <EmptyState title="No lines yet">
+                Search for an item above to add it to the order.
+              </EmptyState>
+            ) : (
+              <TableWrap>
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Item</th>
+                      <th>Qty</th>
+                      <th>Unit cost ($)</th>
+                      <th className="num">Line total</th>
+                      <th className="actions" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {lines.map((l, i) => {
+                      const lineTotal =
+                        Math.round(Number(l.unitCostStr) * 100) * Number(l.quantity || 0);
+                      return (
+                        <tr key={`${l.variantId}-${l.orderLineId ?? i}`}>
+                          <td>
+                            {l.description}
+                            {l.orderNumber && (
+                              <>
+                                {' '}
+                                <span className="badge badge-info">for {l.orderNumber}</span>
+                              </>
+                            )}
+                          </td>
+                          <td>
+                            <Input
+                              type="number"
+                              min={1}
+                              aria-label="Quantity"
+                              value={l.quantity}
+                              onChange={(e) => setLine(i, { quantity: Number(e.target.value) })}
+                              className="w-20"
+                            />
+                          </td>
+                          <td>
+                            <Input
+                              type="number"
+                              step="0.01"
+                              min={0}
+                              aria-label="Unit cost"
+                              value={l.unitCostStr}
+                              onChange={(e) => setLine(i, { unitCostStr: e.target.value })}
+                              className="w-28"
+                            />
+                          </td>
+                          <td className="num">
+                            <Money cents={lineTotal} />
+                          </td>
+                          <td className="actions">
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="danger"
+                              onClick={() => removeLine(i)}
                             >
-                              for {l.orderNumber}
-                            </span>
-                          )}
-                        </td>
-                        <td>
-                          <Input
-                            type="number"
-                            min={1}
-                            value={l.quantity}
-                            onChange={(e) => setLine(i, { quantity: Number(e.target.value) })}
-                            style={{ width: 70 }}
-                          />
-                        </td>
-                        <td>
-                          <Input
-                            type="number"
-                            step="0.01"
-                            min={0}
-                            value={l.unitCostStr}
-                            onChange={(e) => setLine(i, { unitCostStr: e.target.value })}
-                            style={{ width: 100 }}
-                          />
-                        </td>
-                        <td className="num">
-                          <Money cents={lineTotal} />
-                        </td>
-                        <td style={{ textAlign: 'right' }}>
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="danger"
-                            onClick={() => removeLine(i)}
-                          >
-                            Remove
-                          </Button>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-                <tfoot>
-                  <tr>
-                    <td colSpan={3} style={{ padding: 8, fontWeight: 600, textAlign: 'right' }}>
-                      Subtotal
-                    </td>
-                    <td className="num" style={{ padding: 8, fontWeight: 600 }}>
-                      <Money cents={subtotalCents} />
-                    </td>
-                    <td />
-                  </tr>
-                </tfoot>
-              </table>
-            </div>
-          )}
-        </Card>
+                              Remove
+                            </Button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                  <tfoot>
+                    <tr>
+                      <td colSpan={3} className="num">
+                        <strong>Subtotal</strong>
+                      </td>
+                      <td className="num">
+                        <strong>
+                          <Money cents={subtotalCents} />
+                        </strong>
+                      </td>
+                      <td />
+                    </tr>
+                  </tfoot>
+                </table>
+              </TableWrap>
+            )}
+          </Card>
 
-        {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-          <Button type="submit" variant="primary" disabled={saving} data-testid="place-order">
-            <Plus size={14} />
-            {saving ? 'Saving…' : 'Place order'}
-          </Button>
-          <Button
-            type="button"
-            variant="secondary"
-            disabled={saving}
-            onClick={() => void save(false)}
-            data-testid="save-draft"
-          >
-            Save as draft
-          </Button>
-          <span className="muted" style={{ fontSize: 12 }}>
-            Nothing is saved until you press one of these — leave and this basket is gone.
-          </span>
-        </div>
+          <div>
+            {error && <Alert tone="error">{error}</Alert>}
+            <FormActions
+              start={
+                <span className="muted">
+                  Nothing is saved until you press one of these — leave and this basket is gone.
+                </span>
+              }
+            >
+              <Button
+                type="button"
+                variant="secondary"
+                disabled={saving}
+                onClick={() => void save(false)}
+                data-testid="save-draft"
+              >
+                Save as draft
+              </Button>
+              <Button type="submit" variant="primary" disabled={saving} data-testid="place-order">
+                <Plus size={14} aria-hidden />
+                {saving ? 'Saving…' : 'Place order'}
+              </Button>
+            </FormActions>
+          </div>
+        </Stack>
       </form>
     </div>
   );

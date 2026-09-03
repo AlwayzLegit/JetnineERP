@@ -1,12 +1,26 @@
 'use client';
 
-import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { api, ApiError } from '@/lib/api';
 import { Money } from '@/components/money';
 import { SecurityOverrideDialog } from '@/components/security-override-dialog';
-import { Button, Field, Input, LoadingRows, PageHeader } from '@/components/ui';
+import {
+  Alert,
+  BackLink,
+  Button,
+  Card,
+  Field,
+  FormActions,
+  FormGrid,
+  Input,
+  LoadingRows,
+  PageHeader,
+  Stack,
+  StatGrid,
+  StatTile,
+  StatusBadge,
+} from '@/components/ui';
 
 interface Shift {
   id: string;
@@ -76,16 +90,29 @@ export default function ShiftDetailPage() {
     }
   }
 
-  if (error && !shift) return <p style={{ color: 'var(--danger)' }}>{error}</p>;
+  if (error && !shift) {
+    return (
+      <div>
+        <PageHeader
+          title="Shift not found"
+          eyebrow={<BackLink href="/shifts">All shifts</BackLink>}
+        />
+        <Alert tone="error">{error}</Alert>
+      </div>
+    );
+  }
   if (!shift) return <LoadingRows rows={4} />;
 
+  const variance = shift.varianceCents ?? 0;
+  const varianceTone = variance === 0 ? 'success' : variance < 0 ? 'danger' : 'warning';
+  const status = shift.closedAt ? 'closed' : shift.suspendedAt ? 'suspended' : 'open';
+
   return (
-    <div style={{ maxWidth: 560 }}>
-      <p style={{ marginBottom: 12 }}>
-        <Link href="/shifts">← All shifts</Link>
-      </p>
+    <div>
       <PageHeader
+        eyebrow={<BackLink href="/shifts">All shifts</BackLink>}
         title={`Shift at ${shift.locationName ?? '(unknown location)'}`}
+        meta={<StatusBadge status={status} />}
         sub={
           <>
             Opened {new Date(shift.openedAt).toLocaleString()}
@@ -94,70 +121,81 @@ export default function ShiftDetailPage() {
         }
       />
 
-      <div className="card" style={{ display: 'grid', gap: 8 }}>
-        <Row label="Opening float" cents={shift.openingFloatCents} />
-        {shift.closedAt ? (
-          <>
-            <Row label="Expected cash" cents={shift.expectedCashCents ?? 0} />
-            <Row label="Counted cash" cents={shift.countedCashCents ?? 0} />
-            <Row
-              label="Variance"
-              cents={shift.varianceCents ?? 0}
-              bold
-              color={
-                (shift.varianceCents ?? 0) === 0
-                  ? 'var(--success)'
-                  : (shift.varianceCents ?? 0) < 0
-                    ? 'var(--danger)'
-                    : 'var(--warning)'
-              }
-            />
-            <p style={{ color: 'var(--text-secondary)', fontSize: 13, marginTop: 12 }}>
-              Closed {new Date(shift.closedAt).toLocaleString()}
-              {shift.closedByEmail && <> by {shift.closedByEmail}</>}.
-            </p>
-          </>
-        ) : (
-          <>
+      <Stack className="form-narrow">
+        <Card
+          title="Drawer"
+          description={
+            shift.closedAt ? (
+              <>
+                Closed {new Date(shift.closedAt).toLocaleString()}
+                {shift.closedByEmail && <> by {shift.closedByEmail}</>}.
+              </>
+            ) : undefined
+          }
+        >
+          {shift.closedAt ? (
+            <StatGrid cols={4}>
+              <StatTile label="Opening float" value={<Money cents={shift.openingFloatCents} />} />
+              <StatTile
+                label="Expected cash"
+                value={<Money cents={shift.expectedCashCents ?? 0} />}
+              />
+              <StatTile
+                label="Counted cash"
+                value={<Money cents={shift.countedCashCents ?? 0} />}
+              />
+              <StatTile label="Variance" value={<Money cents={variance} />} tone={varianceTone} />
+            </StatGrid>
+          ) : (
+            <StatGrid cols={2}>
+              <StatTile label="Opening float" value={<Money cents={shift.openingFloatCents} />} />
+              <StatTile
+                label="Close attempts"
+                value={shift.closeAttempts}
+                tone={shift.closeAttempts > 0 ? 'warning' : undefined}
+              />
+            </StatGrid>
+          )}
+        </Card>
+
+        {!shift.closedAt && (
+          <Card title="Count and close">
             {shift.suspendedAt && (
-              <p style={{ color: 'var(--danger)', fontSize: 13, margin: 0 }}>
+              <Alert tone="error">
                 Drawer suspended after {shift.closeAttempts} out-of-tolerance count
                 {shift.closeAttempts === 1 ? '' : 's'} — a manager must approve the close.
-              </p>
+              </Alert>
             )}
             {!shift.suspendedAt && shift.closeAttempts > 0 && (
-              <p style={{ color: 'var(--warning)', fontSize: 13, margin: 0 }}>
+              <Alert tone="warning">
                 {shift.closeAttempts} out-of-balance count
                 {shift.closeAttempts === 1 ? '' : 's'} so far — recount the drawer.
-              </p>
+              </Alert>
             )}
-            <Field label="Counted cash ($)">
-              <Input
-                type="number"
-                step="0.01"
-                min={0}
-                value={countedStr}
-                onChange={(e) => setCountedStr(e.target.value)}
-                style={{ width: '100%' }}
-              />
-            </Field>
-            <Field label="Notes">
-              <Input
-                value={closeNotes}
-                onChange={(e) => setCloseNotes(e.target.value)}
-                style={{ width: '100%' }}
-              />
-            </Field>
-            {error && <p style={{ color: 'var(--danger)', fontSize: 13, margin: 0 }}>{error}</p>}
-            <Button
-              variant="primary"
-              onClick={closeShift}
-              disabled={busy || !countedStr}
-              className="min-h-11"
-              style={{ marginTop: 8, width: 'fit-content' }}
-            >
-              {busy ? 'Closing…' : 'Close shift'}
-            </Button>
+            <FormGrid cols={2}>
+              <Field label="Counted cash ($)" required>
+                <Input
+                  type="number"
+                  step="0.01"
+                  min={0}
+                  value={countedStr}
+                  onChange={(e) => setCountedStr(e.target.value)}
+                />
+              </Field>
+              <Field label="Notes">
+                <Input value={closeNotes} onChange={(e) => setCloseNotes(e.target.value)} />
+              </Field>
+            </FormGrid>
+            {error && (
+              <Alert tone="error" className="mt-3">
+                {error}
+              </Alert>
+            )}
+            <FormActions>
+              <Button variant="primary" onClick={closeShift} disabled={busy || !countedStr}>
+                {busy ? 'Closing…' : 'Close shift'}
+              </Button>
+            </FormActions>
             <SecurityOverrideDialog
               open={overrideOpen}
               title="Suspended drawer — manager approval needed"
@@ -172,39 +210,9 @@ export default function ShiftDetailPage() {
               onClose={() => setOverrideOpen(false)}
               onSuccess={() => void load()}
             />
-          </>
+          </Card>
         )}
-      </div>
-    </div>
-  );
-}
-
-function Row({
-  label,
-  cents,
-  bold,
-  color,
-}: {
-  label: string;
-  cents: number;
-  bold?: boolean;
-  color?: string;
-}) {
-  return (
-    <div
-      style={{
-        display: 'flex',
-        justifyContent: 'space-between',
-        fontSize: 13,
-        fontWeight: bold ? 700 : 400,
-        fontVariantNumeric: 'tabular-nums',
-        color: color ?? 'inherit',
-      }}
-    >
-      <span>{label}</span>
-      <span>
-        <Money cents={cents} />
-      </span>
+      </Stack>
     </div>
   );
 }
