@@ -1,6 +1,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { toast } from 'sonner';
+import { Button } from '@/components/ui';
 import { api } from '@/lib/api';
 
 interface MeResponse {
@@ -14,6 +16,7 @@ interface MeResponse {
  */
 export function ImpersonationBanner() {
   const [me, setMe] = useState<MeResponse | null>(null);
+  const [stopping, setStopping] = useState(false);
 
   useEffect(() => {
     api<MeResponse>('/v1/auth/me')
@@ -24,49 +27,29 @@ export function ImpersonationBanner() {
   if (!me?.impersonating) return null;
 
   async function stop() {
+    setStopping(true);
     try {
       await api('/v1/admin/impersonate', { method: 'DELETE' });
       window.location.href = '/admin/businesses';
     } catch (err) {
-      alert(err instanceof Error ? err.message : String(err));
+      setStopping(false);
+      toast.error(err instanceof Error ? err.message : String(err));
     }
   }
 
   return (
     <div
       data-testid="impersonation-banner"
-      style={{
-        position: 'sticky',
-        top: 0,
-        zIndex: 50,
-        padding: '8px 16px',
-        background: '#b00020',
-        color: '#fff',
-        fontFamily: 'system-ui, sans-serif',
-        fontSize: 13,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-      }}
+      role="status"
+      className="sticky top-0 z-50 flex flex-wrap items-center justify-between gap-2 bg-danger px-4 py-2 text-[13px] text-white"
     >
       <span>
         Impersonating <strong>{me.user.email}</strong>
         {me.impersonating.impersonatorEmail ? ` (as ${me.impersonating.impersonatorEmail})` : ''}
       </span>
-      <button
-        onClick={stop}
-        style={{
-          background: '#fff',
-          color: '#b00020',
-          border: 'none',
-          padding: '4px 10px',
-          borderRadius: 4,
-          fontSize: 12,
-          cursor: 'pointer',
-        }}
-      >
-        Stop impersonating
-      </button>
+      <Button variant="secondary" size="sm" disabled={stopping} onClick={() => void stop()}>
+        {stopping ? 'Stopping…' : 'Stop impersonating'}
+      </Button>
     </div>
   );
 }

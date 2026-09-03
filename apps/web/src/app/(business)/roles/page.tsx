@@ -6,7 +6,17 @@ import { toast } from 'sonner';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { BUSINESS_PERMISSIONS } from '@jetnine/shared';
-import { Button, Card, EmptyState, LinkButton, LoadingRows, PageHeader } from '@/components/ui';
+import {
+  Alert,
+  Button,
+  Card,
+  LinkButton,
+  LoadingRows,
+  PageHeader,
+  Stack,
+  TableEmpty,
+  TableWrap,
+} from '@/components/ui';
 import { api } from '@/lib/api';
 
 interface Role {
@@ -62,6 +72,7 @@ export default function RolesPage() {
   }
 
   const total = BUSINESS_PERMISSIONS.length;
+  const colSpan = memberCounts ? 4 : 3;
 
   return (
     <div>
@@ -75,76 +86,68 @@ export default function RolesPage() {
           </LinkButton>
         }
       />
-      {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
-      {!roles && !error && (
-        <Card>
-          <LoadingRows />
-        </Card>
-      )}
-      {roles && (
-        <Card style={{ padding: 0, overflowX: 'auto' }}>
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Role</th>
-                <th>Permissions</th>
-                {memberCounts && <th className="num">Members</th>}
-                <th style={{ width: 1 }}>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {roles.length === 0 && (
-                <tr>
-                  <td colSpan={4}>
-                    <EmptyState>No roles yet.</EmptyState>
-                  </td>
-                </tr>
-              )}
-              {roles.map((r) => (
-                <tr
-                  key={r.id}
-                  style={{ cursor: 'pointer' }}
-                  onClick={() => router.push(`/roles/${r.id}`)}
-                >
-                  <td>
-                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-                      <Link href={`/roles/${r.id}`} onClick={(e) => e.stopPropagation()}>
-                        <strong>{r.name}</strong>
-                      </Link>
-                      {r.isSystem ? (
-                        <span className="badge badge-neutral">System</span>
-                      ) : (
-                        <span className="badge badge-success">Custom</span>
-                      )}
-                    </span>
-                    {r.description && (
-                      <div style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 2 }}>
-                        {r.description}
-                      </div>
-                    )}
-                  </td>
-                  <td>
-                    <PermissionMeter granted={r.permissions.length} total={total} />
-                  </td>
-                  {memberCounts && <td className="num">{memberCounts.get(r.id) ?? 0}</td>}
-                  <td onClick={(e) => e.stopPropagation()}>
-                    <span style={{ display: 'inline-flex', gap: 6 }}>
-                      <LinkButton size="sm" variant="ghost" href={`/roles/new?basedOn=${r.id}`}>
-                        Duplicate
-                      </LinkButton>
-                      {!r.isSystem && (
-                        <Button size="sm" variant="danger" onClick={() => remove(r)}>
-                          Delete
-                        </Button>
-                      )}
-                    </span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </Card>
-      )}
+      <Stack>
+        {error && <Alert tone="error">{error}</Alert>}
+        {!roles && !error && (
+          <Card>
+            <LoadingRows />
+          </Card>
+        )}
+        {roles && (
+          <Card flush>
+            <TableWrap>
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Role</th>
+                    <th>Permissions</th>
+                    {memberCounts && <th className="num">Members</th>}
+                    <th className="actions">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {roles.length === 0 && <TableEmpty colSpan={colSpan}>No roles yet.</TableEmpty>}
+                  {roles.map((r) => (
+                    <tr
+                      key={r.id}
+                      className="cursor-pointer"
+                      onClick={() => router.push(`/roles/${r.id}`)}
+                    >
+                      <td>
+                        <span className="inline-flex items-center gap-2">
+                          <Link href={`/roles/${r.id}`} onClick={(e) => e.stopPropagation()}>
+                            <strong>{r.name}</strong>
+                          </Link>
+                          {r.isSystem ? (
+                            <span className="badge badge-neutral">System</span>
+                          ) : (
+                            <span className="badge badge-success">Custom</span>
+                          )}
+                        </span>
+                        {r.description && <div className="muted text-xs">{r.description}</div>}
+                      </td>
+                      <td>
+                        <PermissionMeter granted={r.permissions.length} total={total} />
+                      </td>
+                      {memberCounts && <td className="num">{memberCounts.get(r.id) ?? 0}</td>}
+                      <td className="actions" onClick={(e) => e.stopPropagation()}>
+                        <LinkButton size="sm" variant="ghost" href={`/roles/new?basedOn=${r.id}`}>
+                          Duplicate
+                        </LinkButton>
+                        {!r.isSystem && (
+                          <Button size="sm" variant="danger" onClick={() => remove(r)}>
+                            Delete
+                          </Button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </TableWrap>
+          </Card>
+        )}
+      </Stack>
     </div>
   );
 }
@@ -152,28 +155,14 @@ export default function RolesPage() {
 function PermissionMeter({ granted, total }: { granted: number; total: number }) {
   const pct = total === 0 ? 0 : Math.round((granted / total) * 100);
   return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+    <span className="inline-flex items-center gap-2">
       <span
         aria-hidden
-        style={{
-          width: 90,
-          height: 6,
-          borderRadius: 3,
-          background: 'var(--surface-muted)',
-          overflow: 'hidden',
-          display: 'inline-block',
-        }}
+        className="inline-block h-1.5 w-[90px] overflow-hidden rounded-full bg-[var(--surface-muted)]"
       >
-        <span
-          style={{
-            display: 'block',
-            height: '100%',
-            width: `${pct}%`,
-            background: 'var(--brand)',
-          }}
-        />
+        <span className="block h-full bg-[var(--brand)]" style={{ width: `${pct}%` }} />
       </span>
-      <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+      <span className="muted text-xs">
         {granted} of {total}
       </span>
     </span>

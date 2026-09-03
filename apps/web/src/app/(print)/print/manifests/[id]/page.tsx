@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { api } from '@/lib/api';
+import { TableWrap } from '@/components/ui';
 import { PrintToolbar } from '../../print-toolbar';
 
 /**
@@ -132,39 +133,49 @@ export default function ManifestPrintPage() {
             </div>
           </div>
 
-          <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: 12 }}>
-            <thead>
-              <tr>
-                {['Load', 'Transfer #', 'Type', 'Lines', 'Units', 'Loaded ✓'].map((h) => (
-                  <th key={h} style={{ ...cell, ...label, textAlign: 'left' }}>
-                    {h}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {m.transfers.map((t) => (
-                <tr key={t.id}>
-                  <td style={{ ...cell, width: 48, textAlign: 'right' }}>{t.loadNumber ?? ''}</td>
-                  <td style={{ ...cell, width: 140 }}>
-                    <code>{t.number}</code>
-                  </td>
-                  <td style={cell}>{t.transferType}</td>
-                  <td style={{ ...cell, width: 56, textAlign: 'right' }}>{t.lineCount}</td>
-                  <td style={{ ...cell, width: 56, textAlign: 'right' }}>{t.unitCount}</td>
-                  {/* Blank tally box the loader ticks by hand. */}
-                  <td style={{ ...cell, width: 70 }}>&nbsp;</td>
+          {/* Print sheet: the cells draw their own black rules, so the wrap drops its chrome. */}
+          <TableWrap
+            style={{
+              marginTop: 'var(--space-3)',
+              border: 'none',
+              borderRadius: 0,
+              background: 'transparent',
+            }}
+          >
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr>
+                  {['Load', 'Transfer #', 'Type', 'Lines', 'Units', 'Loaded ✓'].map((h) => (
+                    <th key={h} style={{ ...cell, ...label, textAlign: 'left' }}>
+                      {h}
+                    </th>
+                  ))}
                 </tr>
-              ))}
-              <tr>
-                <td style={{ ...cell, fontWeight: 700 }} colSpan={4}>
-                  Total units
-                </td>
-                <td style={{ ...cell, textAlign: 'right', fontWeight: 700 }}>{totalUnits}</td>
-                <td style={cell}>&nbsp;</td>
-              </tr>
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {m.transfers.map((t) => (
+                  <tr key={t.id}>
+                    <td style={{ ...cell, width: 48, textAlign: 'right' }}>{t.loadNumber ?? ''}</td>
+                    <td style={{ ...cell, width: 140 }}>
+                      <code>{t.number}</code>
+                    </td>
+                    <td style={cell}>{t.transferType}</td>
+                    <td style={{ ...cell, width: 56, textAlign: 'right' }}>{t.lineCount}</td>
+                    <td style={{ ...cell, width: 56, textAlign: 'right' }}>{t.unitCount}</td>
+                    {/* Blank tally box the loader ticks by hand. */}
+                    <td style={{ ...cell, width: 70 }}>&nbsp;</td>
+                  </tr>
+                ))}
+                <tr>
+                  <td style={{ ...cell, fontWeight: 700 }} colSpan={4}>
+                    Total units
+                  </td>
+                  <td style={{ ...cell, textAlign: 'right', fontWeight: 700 }}>{totalUnits}</td>
+                  <td style={cell}>&nbsp;</td>
+                </tr>
+              </tbody>
+            </table>
+          </TableWrap>
 
           {m.notes && (
             <div style={{ ...box, marginTop: 10, minHeight: 30 }}>
@@ -188,7 +199,7 @@ export default function ManifestPrintPage() {
               <div style={{ borderTop: '1px solid #000', paddingTop: 4, fontSize: 10 }}>Date</div>
             </div>
           </div>
-          <p style={{ fontSize: 10, color: '#333', marginTop: 16 }}>
+          <p style={{ fontSize: 10, color: '#333', marginTop: 'var(--space-4)' }}>
             Each transfer on this manifest has its own ticket for the receiving side. Complete the
             manifest in the system when the truck leaves.
           </p>

@@ -4,7 +4,18 @@ import { useRouter } from 'next/navigation';
 import { useState, type FormEvent } from 'react';
 import { Plus } from 'lucide-react';
 import { api } from '@/lib/api';
-import { Button, Card, Field, Input, PageHeader } from '@/components/ui';
+import {
+  Alert,
+  BackLink,
+  Button,
+  Card,
+  Field,
+  FormActions,
+  FormGrid,
+  Input,
+  PageHeader,
+  Stack,
+} from '@/components/ui';
 
 interface VariantInput {
   sku: string;
@@ -65,101 +76,100 @@ export default function NewProductPage() {
 
   return (
     <div>
-      <PageHeader title="New product" />
-      <form onSubmit={submit} style={{ display: 'grid', gap: 16 }}>
-        <Card title="Basics">
-          <div style={{ display: 'grid', gap: 10 }}>
-            <Field label="Name">
-              <Input name="name" required style={{ width: '100%' }} />
-            </Field>
-            <Field label="SKU (product-level, optional)">
-              <Input name="sku" style={{ width: '100%' }} />
-            </Field>
-            <Field label="Description">
-              <textarea
-                className="textarea"
-                name="description"
-                rows={3}
-                style={{ width: '100%', resize: 'vertical' }}
-              />
-            </Field>
-          </div>
-        </Card>
+      <PageHeader
+        eyebrow={<BackLink href="/products">All products</BackLink>}
+        title="New product"
+      />
+      <form onSubmit={submit}>
+        <Stack>
+          <Card title="Basics">
+            <FormGrid cols={2}>
+              <Field label="Name" required>
+                <Input name="name" required />
+              </Field>
+              <Field label="SKU (product-level, optional)">
+                <Input name="sku" />
+              </Field>
+              <Field label="Description" className="form-span">
+                <textarea className="textarea" name="description" rows={3} />
+              </Field>
+            </FormGrid>
+          </Card>
 
-        <Card title="Variants">
-          {variants.map((v, i) => (
-            <div
-              key={i}
-              className="mb-2 grid grid-cols-1 items-end gap-2 sm:grid-cols-2 lg:grid-cols-[repeat(5,minmax(0,1fr))_auto]"
-            >
-              <Field label="SKU">
-                <Input
-                  value={v.sku}
-                  onChange={(e) => setVariant(i, { sku: e.target.value })}
-                  style={{ width: '100%' }}
-                />
-              </Field>
-              <Field label="Name">
-                <Input
-                  value={v.name}
-                  onChange={(e) => setVariant(i, { name: e.target.value })}
-                  style={{ width: '100%' }}
-                />
-              </Field>
-              <Field label="Price">
-                <Input
-                  type="number"
-                  step="0.01"
-                  min={0}
-                  value={v.priceDollars}
-                  onChange={(e) => setVariant(i, { priceDollars: e.target.value })}
-                  style={{ width: '100%' }}
-                />
-              </Field>
-              <Field label="Cost">
-                <Input
-                  type="number"
-                  step="0.01"
-                  min={0}
-                  value={v.costDollars}
-                  onChange={(e) => setVariant(i, { costDollars: e.target.value })}
-                  style={{ width: '100%' }}
-                />
-              </Field>
-              <Field label="Barcode">
-                <Input
-                  value={v.barcode}
-                  onChange={(e) => setVariant(i, { barcode: e.target.value })}
-                  style={{ width: '100%' }}
-                />
-              </Field>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                style={{ color: 'var(--danger)', marginBottom: 4 }}
-                onClick={() => setVariants((prev) => prev.filter((_, idx) => idx !== i))}
-              >
-                Remove
-              </Button>
-            </div>
-          ))}
-          <Button
-            type="button"
-            variant="secondary"
-            onClick={() => setVariants((prev) => [...prev, { ...blankVariant }])}
+          <Card
+            title="Variants"
+            description="Only variants with a price above $0 are created; leave the rest blank."
           >
-            + Add variant
-          </Button>
-        </Card>
+            <Stack gap="sm">
+              {variants.map((v, i) => (
+                <div
+                  key={i}
+                  className="grid grid-cols-1 items-end gap-3 sm:grid-cols-2 lg:grid-cols-[repeat(5,minmax(0,1fr))_auto]"
+                >
+                  <Field label="SKU">
+                    <Input value={v.sku} onChange={(e) => setVariant(i, { sku: e.target.value })} />
+                  </Field>
+                  <Field label="Name">
+                    <Input
+                      value={v.name}
+                      onChange={(e) => setVariant(i, { name: e.target.value })}
+                    />
+                  </Field>
+                  <Field label="Price">
+                    <Input
+                      type="number"
+                      step="0.01"
+                      min={0}
+                      value={v.priceDollars}
+                      onChange={(e) => setVariant(i, { priceDollars: e.target.value })}
+                    />
+                  </Field>
+                  <Field label="Cost">
+                    <Input
+                      type="number"
+                      step="0.01"
+                      min={0}
+                      value={v.costDollars}
+                      onChange={(e) => setVariant(i, { costDollars: e.target.value })}
+                    />
+                  </Field>
+                  <Field label="Barcode">
+                    <Input
+                      value={v.barcode}
+                      onChange={(e) => setVariant(i, { barcode: e.target.value })}
+                    />
+                  </Field>
+                  <Button
+                    type="button"
+                    variant="danger"
+                    size="sm"
+                    onClick={() => setVariants((prev) => prev.filter((_, idx) => idx !== i))}
+                  >
+                    Remove
+                  </Button>
+                </div>
+              ))}
+              <div>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => setVariants((prev) => [...prev, { ...blankVariant }])}
+                >
+                  + Add variant
+                </Button>
+              </div>
+            </Stack>
+          </Card>
 
-        {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
-        <div>
-          <Button type="submit" variant="primary" disabled={saving}>
-            <Plus size={14} />
-            {saving ? 'Saving…' : 'Create product'}
-          </Button>
-        </div>
+          {error && <Alert tone="error">{error}</Alert>}
+          <FormActions>
+            <Button type="submit" variant="primary" disabled={saving}>
+              <Plus size={14} />
+              {saving ? 'Saving…' : 'Create product'}
+            </Button>
+          </FormActions>
+        </Stack>
       </form>
     </div>
   );

@@ -1,17 +1,23 @@
 'use client';
 
-import Link from 'next/link';
 import { toast } from 'sonner';
 import { useEffect, useState, type FormEvent } from 'react';
 import {
+  Alert,
+  BackLink,
   Button,
   Card,
   EmptyState,
   Field,
+  FormActions,
+  FormGrid,
   Input,
   LoadingRows,
   PageHeader,
+  Stack,
   StatusBadge,
+  TableEmpty,
+  TableWrap,
 } from '@/components/ui';
 import { api } from '@/lib/api';
 
@@ -42,9 +48,11 @@ export default function WebhooksPage() {
   const [eventTypes, setEventTypes] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const [newSecret, setNewSecret] = useState<{ id: string; secret: string } | null>(null);
   const [openEndpointId, setOpenEndpointId] = useState<string | null>(null);
   const [deliveries, setDeliveries] = useState<Delivery[]>([]);
+  const [testing, setTesting] = useState<string | null>(null);
 
   async function load() {
     setError(null);
@@ -66,8 +74,10 @@ export default function WebhooksPage() {
   async function create(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setError(null);
+    setSubmitting(true);
+    const form = e.currentTarget;
     try {
-      const data = new FormData(e.currentTarget);
+      const data = new FormData(form);
       const events = data.getAll('events').map(String);
       if (events.length === 0) throw new Error('Pick at least one event type.');
       const created = await api<Endpoint & { secret: string }>('/v1/business/webhooks', {
@@ -79,11 +89,13 @@ export default function WebhooksPage() {
         }),
       });
       setNewSecret({ id: created.id, secret: created.secret });
-      e.currentTarget.reset();
+      form.reset();
       setCreating(false);
       void load();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSubmitting(false);
     }
   }
 
@@ -110,6 +122,7 @@ export default function WebhooksPage() {
   }
 
   async function testFire(row: Endpoint) {
+    setTesting(row.id);
     try {
       const res = await api<{ status: string }>(`/v1/business/webhooks/${row.id}/test`, {
         method: 'POST',
@@ -123,6 +136,8 @@ export default function WebhooksPage() {
       void load();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err));
+    } finally {
+      setTesting(null);
     }
   }
 
@@ -137,10 +152,8 @@ export default function WebhooksPage() {
 
   return (
     <div>
-      <p style={{ margin: '0 0 12px' }}>
-        <Link href="/settings">← Settings</Link>
-      </p>
       <PageHeader
+        eyebrow={<BackLink href="/settings">Settings</BackLink>}
         title="Outbound webhooks"
         sub={
           <>
@@ -160,160 +173,117 @@ export default function WebhooksPage() {
         }
       />
 
-      {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
+      <Stack>
+        {error && <Alert tone="error">{error}</Alert>}
 
-      {newSecret && (
-        <div
-          style={{
-            background: 'var(--warning-soft)',
-            border: '1px solid var(--warning)',
-            color: 'var(--warning-soft-text)',
-            padding: 12,
-            borderRadius: 'var(--radius)',
-            marginBottom: 16,
-            fontSize: 13,
-          }}
-        >
-          <strong>Save this signing secret — it won&apos;t be shown again:</strong>
-          <pre
-            style={{
-              margin: '6px 0',
-              whiteSpace: 'pre-wrap',
-              wordBreak: 'break-all',
-              fontSize: 12,
-              fontFamily: 'var(--font-mono)',
-            }}
+        {newSecret && (
+          <Alert
+            tone="warning"
+            title="Save this signing secret — it won't be shown again:"
+            action={
+              <Button size="sm" variant="secondary" onClick={() => setNewSecret(null)}>
+                Got it
+              </Button>
+            }
           >
-            {newSecret.secret}
-          </pre>
-          <Button size="sm" variant="secondary" onClick={() => setNewSecret(null)}>
-            Got it
-          </Button>
-        </div>
-      )}
+            <code className="block break-all whitespace-pre-wrap">{newSecret.secret}</code>
+          </Alert>
+        )}
 
-      {creating && (
-        <Card style={{ maxWidth: 720, marginBottom: 16 }}>
-          <form onSubmit={create} style={{ display: 'grid', gap: 8 }}>
-            <Field label="URL *">
-              <Input
-                name="url"
-                type="url"
-                placeholder="https://example.com/webhooks/la-mattress-erp"
-                required
-                style={{ width: '100%' }}
-              />
-            </Field>
-            <Field label="Description (optional)">
-              <Input name="description" style={{ width: '100%' }} />
-            </Field>
-            <fieldset style={{ border: 'none', padding: 0, margin: 0 }}>
-              <legend className="field-label">Subscribe to events *</legend>
-              <label
-                style={{
-                  display: 'flex',
-                  gap: 6,
-                  fontSize: 13,
-                  fontWeight: 600,
-                  marginBottom: 6,
-                  alignItems: 'center',
-                }}
-              >
-                <input
-                  type="checkbox"
-                  name="events"
-                  value="*"
-                  style={{ accentColor: 'var(--brand)' }}
-                />
-                All events (wildcard, including future types)
-              </label>
-              <div className="grid gap-1 sm:grid-cols-2">
-                {eventTypes.map((t) => (
-                  <label
-                    key={t}
-                    style={{ display: 'flex', gap: 6, fontSize: 13, alignItems: 'center' }}
-                  >
-                    <input
-                      type="checkbox"
-                      name="events"
-                      value={t}
-                      style={{ accentColor: 'var(--brand)' }}
-                    />
-                    <code>{t}</code>
+        {creating && (
+          <Card title="New endpoint" className="form-narrow">
+            <form onSubmit={create}>
+              <FormGrid cols={1}>
+                <Field label="URL" required>
+                  <Input
+                    name="url"
+                    type="url"
+                    placeholder="https://example.com/webhooks/la-mattress-erp"
+                    required
+                  />
+                </Field>
+                <Field label="Description (optional)">
+                  <Input name="description" />
+                </Field>
+                <fieldset className="m-0 min-w-0 border-0 p-0">
+                  <legend className="field-label">Subscribe to events *</legend>
+                  <label className="flex items-center gap-1.5 pb-2 font-semibold">
+                    <input type="checkbox" name="events" value="*" />
+                    All events (wildcard, including future types)
                   </label>
-                ))}
-              </div>
-            </fieldset>
-            <Button type="submit" variant="primary" style={{ width: 'fit-content' }}>
-              Create endpoint
-            </Button>
-          </form>
-        </Card>
-      )}
+                  <div className="grid gap-1 sm:grid-cols-2">
+                    {eventTypes.map((t) => (
+                      <label key={t} className="flex items-center gap-1.5">
+                        <input type="checkbox" name="events" value={t} />
+                        <code>{t}</code>
+                      </label>
+                    ))}
+                  </div>
+                </fieldset>
+              </FormGrid>
+              <FormActions>
+                <Button type="submit" variant="primary" disabled={submitting}>
+                  {submitting ? 'Creating…' : 'Create endpoint'}
+                </Button>
+              </FormActions>
+            </form>
+          </Card>
+        )}
 
-      <Card>
         {rows == null ? (
           <LoadingRows />
         ) : rows.length === 0 ? (
-          <EmptyState>No webhook endpoints yet.</EmptyState>
+          <EmptyState title="No webhook endpoints yet">
+            Add an endpoint to receive a POST whenever a subscribed event fires.
+          </EmptyState>
         ) : (
-          <div style={{ overflowX: 'auto' }}>
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>URL</th>
-                  <th>Events</th>
-                  <th>Health</th>
-                  <th>&nbsp;</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((r) => (
-                  <tr key={r.id} style={{ verticalAlign: 'top' }}>
-                    <td>
-                      <code style={{ wordBreak: 'break-all' }}>{r.url}</code>
-                      {r.description && (
-                        <div style={{ color: 'var(--text-secondary)', fontSize: 12 }}>
-                          {r.description}
+          <Card flush>
+            <TableWrap>
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>URL</th>
+                    <th>Events</th>
+                    <th>Health</th>
+                    <th className="actions">
+                      <span className="sr-only">Actions</span>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((r) => (
+                    <tr key={r.id}>
+                      <td>
+                        <code className="break-all">{r.url}</code>
+                        {r.description && <div className="muted">{r.description}</div>}
+                      </td>
+                      <td>
+                        <code className="break-words">{r.events.join(', ')}</code>
+                      </td>
+                      <td>
+                        <span className="inline-flex flex-wrap items-center gap-1.5">
+                          <StatusBadge status={r.isActive ? 'active' : 'paused'} />
+                          {r.consecutiveFailures > 0 && (
+                            <span className="text-[var(--danger)]">
+                              {r.consecutiveFailures} consecutive failure(s)
+                            </span>
+                          )}
+                        </span>
+                        <div className="muted">
+                          {r.totalDeliveries} delivered ·{' '}
+                          {r.lastSuccessAt
+                            ? `ok ${new Date(r.lastSuccessAt).toLocaleString()}`
+                            : 'no success yet'}
                         </div>
-                      )}
-                    </td>
-                    <td>
-                      {r.events.map((e) => (
-                        <code
-                          key={e}
-                          style={{
-                            fontSize: 11,
-                            background: 'var(--neutral-soft)',
-                            padding: '1px 4px',
-                            borderRadius: 3,
-                            marginRight: 3,
-                          }}
+                      </td>
+                      <td className="actions">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => testFire(r)}
+                          disabled={testing === r.id}
                         >
-                          {e}
-                        </code>
-                      ))}
-                    </td>
-                    <td>
-                      <div style={{ fontSize: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <StatusBadge status={r.isActive ? 'active' : 'paused'} />
-                        {r.consecutiveFailures > 0 && (
-                          <span style={{ color: 'var(--danger)' }}>
-                            {r.consecutiveFailures} consecutive failure(s)
-                          </span>
-                        )}
-                      </div>
-                      <div style={{ color: 'var(--text-muted)', fontSize: 11, marginTop: 2 }}>
-                        {r.totalDeliveries} delivered ·{' '}
-                        {r.lastSuccessAt
-                          ? `ok ${new Date(r.lastSuccessAt).toLocaleString()}`
-                          : 'no success yet'}
-                      </div>
-                    </td>
-                    <td>
-                      <span style={{ display: 'inline-flex', gap: 6, flexWrap: 'wrap' }}>
-                        <Button size="sm" variant="ghost" onClick={() => testFire(r)}>
-                          Test
+                          {testing === r.id ? 'Testing…' : 'Test'}
                         </Button>
                         <Button size="sm" variant="ghost" onClick={() => loadDeliveries(r.id)}>
                           History
@@ -324,30 +294,27 @@ export default function WebhooksPage() {
                         <Button size="sm" variant="danger" onClick={() => destroy(r)}>
                           Delete
                         </Button>
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </TableWrap>
+          </Card>
         )}
-      </Card>
 
-      {openEndpointId && (
-        <Card
-          title="Recent deliveries"
-          actions={
-            <Button size="sm" variant="ghost" onClick={() => setOpenEndpointId(null)}>
-              Close
-            </Button>
-          }
-        >
-          {deliveries.length === 0 ? (
-            <EmptyState>No deliveries yet.</EmptyState>
-          ) : (
-            <div style={{ overflowX: 'auto' }}>
-              <table className="table" style={{ fontSize: 12 }}>
+        {openEndpointId && (
+          <Card
+            title="Recent deliveries"
+            flush
+            actions={
+              <Button size="sm" variant="ghost" onClick={() => setOpenEndpointId(null)}>
+                Close
+              </Button>
+            }
+          >
+            <TableWrap maxHeight="60vh">
+              <table className="table table-dense table-sticky">
                 <thead>
                   <tr>
                     <th>Time</th>
@@ -357,35 +324,26 @@ export default function WebhooksPage() {
                   </tr>
                 </thead>
                 <tbody>
+                  {deliveries.length === 0 && (
+                    <TableEmpty colSpan={4}>No deliveries yet.</TableEmpty>
+                  )}
                   {deliveries.map((d) => (
-                    <tr key={d.id} style={{ verticalAlign: 'top' }}>
-                      <td style={{ whiteSpace: 'nowrap' }}>
-                        {new Date(d.createdAt).toLocaleString()}
-                      </td>
+                    <tr key={d.id}>
+                      <td className="nowrap">{new Date(d.createdAt).toLocaleString()}</td>
                       <td>
                         <code>{d.eventType}</code>
                       </td>
                       <td>
                         <StatusBadge status={d.status} />
                         {d.responseStatus != null && (
-                          <span style={{ color: 'var(--text-muted)' }}> ({d.responseStatus})</span>
+                          <span className="muted"> ({d.responseStatus})</span>
                         )}
                       </td>
                       <td>
                         {d.errorMessage ? (
-                          <code style={{ color: 'var(--danger)', fontSize: 11 }}>
-                            {d.errorMessage}
-                          </code>
+                          <code className="text-[var(--danger)]">{d.errorMessage}</code>
                         ) : d.responseBody ? (
-                          <code
-                            style={{
-                              fontSize: 11,
-                              display: 'block',
-                              maxHeight: 60,
-                              overflow: 'auto',
-                              wordBreak: 'break-all',
-                            }}
-                          >
+                          <code className="block max-h-[60px] overflow-auto break-all">
                             {d.responseBody.slice(0, 200)}
                           </code>
                         ) : (
@@ -396,10 +354,10 @@ export default function WebhooksPage() {
                   ))}
                 </tbody>
               </table>
-            </div>
-          )}
-        </Card>
-      )}
+            </TableWrap>
+          </Card>
+        )}
+      </Stack>
     </div>
   );
 }

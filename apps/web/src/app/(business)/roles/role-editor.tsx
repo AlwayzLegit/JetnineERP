@@ -1,10 +1,21 @@
 'use client';
 
-import Link from 'next/link';
 import { toast } from 'sonner';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Button, Card, Field, Input, LinkButton, LoadingRows, PageHeader } from '@/components/ui';
+import {
+  Alert,
+  BackLink,
+  Button,
+  Card,
+  Field,
+  FormGrid,
+  Input,
+  LinkButton,
+  LoadingRows,
+  PageHeader,
+  Stack,
+} from '@/components/ui';
 import { PermissionGroupsEditor } from '@/components/permission-groups';
 import { api } from '@/lib/api';
 
@@ -91,29 +102,29 @@ export function RoleEditor({ roleId, basedOnId }: { roleId?: string; basedOnId?:
   }
 
   if (loading) return <LoadingRows rows={6} />;
-  if (error) return <p style={{ color: 'var(--danger)' }}>{error}</p>;
+  if (error) {
+    return (
+      <div>
+        <PageHeader
+          eyebrow={<BackLink href="/roles">Roles</BackLink>}
+          title={error === 'Role not found' ? 'Role not found' : 'Role'}
+        />
+        <Alert tone="error">{error}</Alert>
+      </div>
+    );
+  }
 
   return (
     <div>
-      <p style={{ marginBottom: 12 }}>
-        <Link href="/roles">← Roles</Link>
-      </p>
       <PageHeader
+        eyebrow={<BackLink href="/roles">Roles</BackLink>}
         title={
-          isEdit ? (
-            <>
-              {source?.name}
-              {source?.isSystem && (
-                <span className="badge badge-neutral" style={{ marginLeft: 10 }}>
-                  System
-                </span>
-              )}
-            </>
-          ) : basedOnId ? (
-            `Duplicate ${source?.name ?? 'role'}`
-          ) : (
-            'Create role'
-          )
+          isEdit ? source?.name : basedOnId ? `Duplicate ${source?.name ?? 'role'}` : 'Create role'
+        }
+        meta={
+          isEdit && source?.isSystem ? (
+            <span className="badge badge-neutral">System</span>
+          ) : undefined
         }
         sub={
           readOnly
@@ -126,53 +137,48 @@ export function RoleEditor({ roleId, basedOnId }: { roleId?: string; basedOnId?:
               Duplicate to customize
             </LinkButton>
           ) : (
-            <span style={{ display: 'inline-flex', gap: 8 }}>
-              <LinkButton href="/roles" variant="ghost">
+            <>
+              <LinkButton href="/roles" variant="ghost" size="sm">
                 Cancel
               </LinkButton>
               <Button variant="primary" onClick={() => void save()} disabled={saving}>
                 {saving ? 'Saving…' : isEdit ? 'Save role' : 'Create role'}
               </Button>
-            </span>
+            </>
           )
         }
       />
 
-      {!readOnly && (
-        <Card style={{ marginBottom: 16 }}>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <Field label="Role name">
-              <Input
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="e.g. Warehouse lead"
-                style={{ width: '100%' }}
-              />
-            </Field>
-            <Field label="Description (optional)">
-              <Input
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                placeholder="What is this role for?"
-                style={{ width: '100%' }}
-              />
-            </Field>
-          </div>
-        </Card>
-      )}
+      <Stack>
+        {!readOnly && (
+          <Card title="Details">
+            <FormGrid cols={2}>
+              <Field label="Role name" required>
+                <Input
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="e.g. Warehouse lead"
+                />
+              </Field>
+              <Field label="Description (optional)">
+                <Input
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  placeholder="What is this role for?"
+                />
+              </Field>
+            </FormGrid>
+          </Card>
+        )}
 
-      <Card
-        title="Permissions"
-        actions={
-          <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{selected.size} granted</span>
-        }
-      >
-        <PermissionGroupsEditor
-          value={selected}
-          onChange={readOnly ? undefined : setSelected}
-          disabled={readOnly}
-        />
-      </Card>
+        <Card title="Permissions" actions={<span className="muted">{selected.size} granted</span>}>
+          <PermissionGroupsEditor
+            value={selected}
+            onChange={readOnly ? undefined : setSelected}
+            disabled={readOnly}
+          />
+        </Card>
+      </Stack>
     </div>
   );
 }

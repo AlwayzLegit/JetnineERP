@@ -521,6 +521,196 @@ holds · per-category commission rates · approval queues (dashboard visibility
 instead) · automated customer email/SMS · driver mobile app · white-glove
 itemization beyond the $0 Removal line · signature capture at POS · dark mode.
 
+### 12.8 Report Cash Drawer Balancing Totals (amendment A12, owner 2026-09-02)
+
+Owner ask (STORIS AR.317 parameter screen + sample output): "create this too".
+
+- **Endpoint** `GET /v1/reports/cash-drawer-balancing` (`reports.sales.view`,
+  selling scope): `start`/`end` (balance date, default today), `startTime`/
+  `endTime` (HH:MM in the store's timezone, ending time inclusive to the
+  minute, default 00:00–23:59), `balanceBy=drawer|operator|store` (default
+  store), `locationId`, `operatorId` (user), `drawerId` (shift id or its
+  8-character drawer number), `drawerState=all|balanced|unbalanced`,
+  `format=csv`.
+- **Register** (the STORIS body): every succeeded payment in the window,
+  grouped Balance-By group → pay class (1 CASH, 2 CHECK, 3 CREDIT, 4
+  FINANCING, 5 GIFT CARD, 6 STORE CREDIT, 9 OTHER) → payment type (method,
+  plus processor / financing provider), with customer code + name, reference
+  (document number, linked), gift cert. / check no. / processor ref, amount,
+  reference subtotal (all money on that document in the window), time,
+  drawer number, operator initials; subtotals at each level, group total,
+  grand total.
+- **Cash Drawer Reconciliation** per group and grand: CASH, CHECK, Total
+  Deposit (= cash + check).
+- **Drawer counts** per group: the shifts under that heading (float,
+  expected, counted, over/short, in-tolerance against
+  `ops.cashBalancing.toleranceCents`).
+- **Mapping decisions**: a drawer is a cash shift; a payment belongs to the
+  shift open at its store when it was taken (the operator's own shift when
+  several are open); operator = register-sale associate or order
+  salesperson; "Balanced drawer reference" = closed (counted) drawers,
+  "UnBalanced" = still open or no drawer. Imported legacy documents are
+  excluded (D8). Refunds are not attributed to a tender and stay off this
+  register (the Z-report carries them).
+- **UI** `/reports/cash-drawer-balancing`, linked from Reports: the STORIS
+  parameter card (date range picker, starting/ending time, Balance By,
+  store, operator, drawer, drawer reference), Run, Print, Export CSV; URL
+  carries the parameters.
+- Tests: `cash-drawer-balancing.int.spec.ts` (6).
+
+### 12.9 Report Written Sales Dollars (amendment A13, owner 2026-09-02)
+
+Owner ask (STORIS TE.320 parameter screen + sample output): "We also need
+this built".
+
+- **Endpoint** `GET /v1/reports/written-sales` (`reports.sales.view`,
+  selling scope): `start`/`end` (written date in the store's timezone,
+  default today), `locationId` (one, repeated, or comma-separated — the
+  STORIS multi-store picker), `orderType=both|orders|adjustments`,
+  `reportType=detail|summary`, `includeAuditComments` (default off),
+  `includeAllSalespeople` (default on), `includeAddress` (default on),
+  `format=csv`.
+- **Body** (the STORIS layout): location → type → order → line. Lines carry
+  qty, product number (variant SKU), description, merch amount, gross
+  profit, profit %, entered-by initials; each order carries number, written
+  date + time, customer code + name, salespeople initials, marketing code,
+  ship-to address (order address, else the customer's first address) and
+  the footer columns charges (delivery + install), customer discount
+  (order-level), misc fee charge (other fee), sales tax, total order.
+  Totals per order, type, location and grand (profit % recomputed at each
+  level).
+- **Types**: "New Transactions excluding Layaway" (sales orders),
+  "Layaway" (order kind layaway), "Register Sales" (POS cash-and-carry
+  sales — Jetnine's register has no STORIS equivalent, so it is its own
+  type), "ADJUSTMENT".
+- **Adjustments** = money that moved in the window on documents written
+  before it: price adjustments granted in the window (audit
+  `order.price_adjustment`, negative merch, reason shown), cancellations in
+  the window of earlier orders (the whole order comes back out, cost
+  included), and lines added in the window to earlier orders (a line
+  stamped a minute or more after its order). Line edits and removals are
+  not tracked as deltas today and stay off the register.
+- **Gross profit** is cost-derived (variant cost × qty) and only present
+  with `reports.financial.view`; otherwise every profit cell is null and
+  the page says so. Quotes, drafts, cancelled-at-write and imported legacy
+  documents are never written sales.
+- **UI** `/reports/written-sales`, linked from Reports: the STORIS parameter
+  card (date range picker, multi-select store, Order Type / Report Type
+  radios, the three include checkboxes), Run, Print, Export CSV; URL
+  carries the parameters.
+- Tests: `written-sales.int.spec.ts` (6).
+
+### 12.10 Advanced Vendor Settings (amendment A14, owner 2026-09-02)
+
+Owner ask (STORIS Advanced Vendor Settings screenshots — General, Shipping,
+PO Cutting Date, Auto PO Replen): "we also need an Advanced Vendor Settings".
+
+- **Page** `/vendors/:id/settings` (vendor name and a Settings link on the
+  Vendors list; `?tab=` deep links), four tabs that each save on their own.
+- **General**: the vendor master (name, contact, email, phone, remit-to,
+  notes, active) plus the purchasing defaults that already lived in the
+  replenishment document — minimum stock days, lead days, default requested
+  date on POs.
+- **Shipping** (`vendors.landed_cost_json`, `PATCH /v1/vendors/:id/shipping`):
+  five landed-cost lines exactly as STORIS lays them out — Landed Freight
+  (percent | dollar), Import Fee, Misc. Fee and two custom lines (percent |
+  dollar | calculate, custom lines carry a label). Active percent/dollar
+  lines are summed into a new PO's freight when the caller does not send
+  one (landed cost lean, Q1: one whole-PO amount spread per unit at
+  receipt); "calculate" lines are entered from the vendor invoice. Applies
+  to manual POs and to sales-rate replenishment POs.
+- **PO Cutting Date** (new tenant table `vendor_po_cutting_dates`, unique
+  per vendor + collection, `PUT /v1/vendors/:id/po-cutting-dates` replaces
+  the list): the STORIS "Collection Exceptions" grid — collection code,
+  description/notes, PO cutting date. Past the date (strictly before
+  today), PO creation and placement refuse lines from that collection with
+  a message naming it, and replenishment drops those lines (noted on the
+  PO). Another vendor's POs are not affected.
+- **Auto PO Replen** (the replenishment document, `PATCH
+/v1/purchasing/replenishment/vendors/:id/settings`): the STORIS fields —
+  Generate Automatic POs, Automatically Hold POs, Weekly Sales Rate
+  Calculation, Include All Back Orders, Days For Replenishment, **First /
+  Second Average Units Period** (new, 1–156 weeks, defaults 4 / 12), Variance
+  Starting / Ending Date, Variance Percentage, Minimum Sales Rate, Build POs
+  (weekday checkboxes), **Sort Criteria** (new: vendor model | product |
+  category | group). Sort criteria orders the replenishment grid and the PO
+  lines it writes; "group" sorts by category (Jetnine has no product
+  groups). The average-units periods are stored and returned; the grid's
+  average-units columns are follow-up work.
+- Read model: `GET /v1/vendors/:id/advanced-settings` returns all four tabs
+  plus the collection picker (the vendor's own collections first).
+- Tests: `vendor-settings.int.spec.ts` (6); `purchasing.int.spec.ts` still
+  green.
+
+### 12.11 Layout contract — screen-by-screen design pass (amendment A15, owner 2026-09-02)
+
+Owner ask: "run a workflow and focus on every screen and every element
+individually. The heading placement in different sections isn't margined
+properly either."
+
+- **Contract** (`apps/web/src/app/globals.css` "Layout contract" block +
+  `components/ui.tsx`): one spacing scale (4 / 8 / 12 / 16 / 24 / 32 as
+  `--space-1..6`), and primitives that own every margin — `PageHeader`
+  (eyebrow / title / meta / sub / actions, 24px below), `BackLink`,
+  `Breadcrumbs`, `SectionHeading` (h2 15px, h3 13px, fixed rhythm),
+  `Stack` (16 / 8 / 24 gaps), `Toolbar`, `FormGrid` / `FormActions`,
+  `StatGrid` / `StatTile`, `TableWrap` / `TableEmpty`, `KeyValue`, `Alert`.
+  Pages never write `marginTop` / `marginBottom` / `mt-*` / `mb-*` on cards,
+  headings, toolbars or forms.
+- **Pass**: 117 web files — every business, POS, auth, print, super-admin
+  and public screen — rebuilt on the primitives: hand-rolled titles, back
+  links and subtitle paragraphs folded into `PageHeader`; inline-styled
+  `h2`/`h3` replaced by `SectionHeading`; card spacing via `Stack`; filter
+  rows via `Toolbar`; forms via `FormGrid` / `FormActions`; bespoke stat
+  tiles via `StatTile`; raw tables wrapped in `TableWrap`; inline colour /
+  weight styles replaced by token classes. Data-testids, labels and
+  behaviour unchanged.
+- **Verification**: typecheck, lint, web unit tests; the full Playwright
+  suite (auth, orders, operations, my-day, warehouse, sweep, PO specs) —
+  one spec updated for a renamed link ("open the order" → "Open order").
+
+### 12.12 Catalog replacement from the STORIS Active Inventory export (amendment A16, owner 2026-09-03)
+
+Owner ask: "replace all of the current Products in the ERP with these
+Products. Include the Group, SKU, Brands, Category, Replacement Cost,
+Vendor, Product Description … Match the products that are on sales orders
+with the new Products List." Decisions (owner answers, 2026-09-03):
+
+- **Stores**: 01 = 201 Western, 02 = West LA, 03 = Hancock Park / La Brea,
+  04 = Studio City, 88 = Warehouse. Codes 05, 06, 08, 09, 10, 11, 12 do not
+  exist — their stock rows are dropped; their SKUs still become products.
+- **Replace** = every product the file does not name is **deleted** when
+  nothing outside the stock ledger references it, and **deactivated**
+  (product + variants) when sales, purchasing, returns, as-is, write-off,
+  serial, count or transfer history does. The foreign keys are discovered
+  from `pg_catalog` at run time so a new history table can never be
+  missed. Order and sale lines keep their variant links; their written
+  description and price are untouched.
+- **Stock**: ON_HAND = Stock + Quantity As-Is (Jetnine counts as-is pieces
+  in on hand), AS_IS becomes that many import-sourced as-is pieces
+  (reconciled on re-import while still pending review), MIN_STOCK is the
+  store's reorder point (new `inventory_levels.reorder_point`, migration 0086) and rolls up into the variant's reorder point as the sum across
+  stores (REPL-040 sums availability the same way).
+- **No selling price**: existing SKUs keep their price, new SKUs land at $0
+  (D12). **Vendors** are created under the STORIS codes. **Group** (QUEEN,
+  CAKING, QUFND, …) is the variant's `group` attribute, not a category;
+  **Catg** is the category; **Brand** is the brand (created on the fly).
+- **Pipeline**: the existing import wizard (Settings → Import). Product
+  spec gains `brand` and `group` columns (category headers are now
+  CATEGORY / CAT / CATG — GROUP no longer maps to category); inventory spec
+  gains `asIsQty` and `reorderPoint`; store names match tolerantly (exact,
+  order prefix, unique contains-match on letters and digits). Commit takes
+  `{ replaceCatalog: true }` (checkbox on the product entity) and returns
+  `{ kept, deleted, deactivated }`.
+- **Files**: `docs/scripts/convert-active-inventory.py` turns the export
+  into `products.csv` (1,948 SKUs) and `inventory.csv` (3,246 SKU@store
+  rows); both are committed under `docs/imports/2026-09-03/`.
+- **Run order**: products.csv as entity _product_ with "Replace catalog"
+  ticked, then inventory.csv as entity _inventory_. Both are idempotent.
+- Tests: `import.int.spec.ts` gains three cases (brand / category / group /
+  vendor / cost; tolerant stores, as-is pieces and per-store minimum
+  stock; replace deletes vs deactivates and keeps order links).
+
 ### 12.3 Cashier dashboard — "My Day" (amendment A7, owner 2026-09-01)
 
 Fixed by role, like Operations and Warehouse: `cashier.dashboard.view` is the

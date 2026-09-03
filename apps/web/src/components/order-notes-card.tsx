@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { Button, Card } from '@/components/ui';
+import { Button, Card, EmptyState, Field, FormActions, LoadingRows, Stack } from '@/components/ui';
 import { api } from '@/lib/api';
 
 interface OrderNote {
@@ -56,83 +56,63 @@ export function OrderNotesCard({ orderId }: { orderId: string }) {
   }
 
   return (
-    <Card title="Notes" style={{ marginBottom: 16 }} data-testid="order-notes-card">
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          void save();
-        }}
-        style={{ display: 'grid', gap: 8, marginBottom: notes && notes.length > 0 ? 12 : 0 }}
-      >
-        <textarea
-          aria-label="New note"
-          data-testid="order-note-input"
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') void save();
+    <Card title="Notes" data-testid="order-notes-card">
+      <Stack>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            void save();
           }}
-          placeholder="Leave a note for whoever picks this order up next…"
-          rows={3}
-          maxLength={4000}
-          style={{
-            width: '100%',
-            fontSize: 13,
-            fontFamily: 'inherit',
-            padding: '8px 10px',
-            border: '1px solid var(--border)',
-            borderRadius: 'var(--radius)',
-            background: 'var(--surface)',
-            color: 'var(--text)',
-            resize: 'vertical',
-          }}
-        />
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <Button
-            type="submit"
-            size="sm"
-            variant="primary"
-            disabled={!draft.trim() || saving}
-            data-testid="order-note-save"
-          >
-            {saving ? 'Saving…' : 'Add note'}
-          </Button>
-          <span className="muted" style={{ fontSize: 11.5 }}>
-            Saved with your name and the time. Ctrl/⌘+Enter to save.
-          </span>
-        </div>
-      </form>
-
-      {notes == null ? (
-        <p className="muted" style={{ fontSize: 13, margin: 0 }}>
-          Loading notes…
-        </p>
-      ) : notes.length === 0 ? (
-        <p
-          className="muted"
-          style={{ fontSize: 13, margin: '10px 0 0' }}
-          data-testid="order-notes-empty"
         >
-          No notes yet.
-        </p>
-      ) : (
-        <ul style={{ margin: 0, padding: 0, listStyle: 'none' }} data-testid="order-notes-list">
-          {notes.map((n) => (
-            <li
-              key={n.id}
-              style={{ padding: '8px 0', borderTop: '1px solid var(--border)', fontSize: 13 }}
+          <Field label="New note">
+            <textarea
+              className="textarea"
+              aria-label="New note"
+              data-testid="order-note-input"
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') void save();
+              }}
+              placeholder="Leave a note for whoever picks this order up next…"
+              rows={3}
+              maxLength={4000}
+            />
+          </Field>
+          <FormActions
+            start={<span>Saved with your name and the time. Ctrl/⌘+Enter to save.</span>}
+          >
+            <Button
+              type="submit"
+              variant="primary"
+              disabled={!draft.trim() || saving}
+              data-testid="order-note-save"
             >
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', fontSize: 12 }}>
-                <strong>{n.mine ? 'You' : (n.authorName ?? n.authorEmail ?? 'Unknown')}</strong>
-                <span style={{ color: 'var(--text-muted)' }}>
-                  {new Date(n.createdAt).toLocaleString()}
-                </span>
-              </div>
-              <div style={{ whiteSpace: 'pre-wrap', marginTop: 2 }}>{n.body}</div>
-            </li>
-          ))}
-        </ul>
-      )}
+              {saving ? 'Saving…' : 'Add note'}
+            </Button>
+          </FormActions>
+        </form>
+
+        {notes == null ? (
+          <LoadingRows rows={2} />
+        ) : notes.length === 0 ? (
+          <div data-testid="order-notes-empty">
+            <EmptyState>No notes yet.</EmptyState>
+          </div>
+        ) : (
+          <ul className="divide-border divide-y" data-testid="order-notes-list">
+            {notes.map((n) => (
+              <li key={n.id} className="py-2">
+                <div className="flex flex-wrap gap-2 text-xs">
+                  <strong>{n.mine ? 'You' : (n.authorName ?? n.authorEmail ?? 'Unknown')}</strong>
+                  <span className="muted">{new Date(n.createdAt).toLocaleString()}</span>
+                </div>
+                <div className="mt-0.5 whitespace-pre-wrap">{n.body}</div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Stack>
     </Card>
   );
 }

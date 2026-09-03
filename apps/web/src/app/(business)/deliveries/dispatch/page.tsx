@@ -9,14 +9,22 @@ import { SecurityOverrideDialog } from '@/components/security-override-dialog';
 import { Money } from '@/components/money';
 import { toast } from 'sonner';
 import {
+  Alert,
+  BackLink,
   Button,
+  Card,
+  Field,
+  FormActions,
+  FormGrid,
   Input,
   LinkButton,
   LoadingRows,
   EmptyState,
   PageHeader,
   Select,
+  Stack,
   StatusBadge,
+  TableWrap,
 } from '@/components/ui';
 
 /**
@@ -69,6 +77,8 @@ interface ReasonCode {
   description: string;
 }
 
+const CLOSED_STOP = ['delivered', 'failed', 'cancelled'];
+
 /**
  * G7 close-out: the mandatory reconciliation. Every open stop gets an
  * outcome; failed stops take a coded reason and an optional reschedule;
@@ -100,9 +110,7 @@ function RunCard({
   const [codCollected, setCodCollected] = useState('');
   const [codReceivedBy, setCodReceivedBy] = useState('');
 
-  const openStops = run.stops.filter(
-    (s) => !['delivered', 'failed', 'cancelled'].includes(s.status),
-  );
+  const openStops = run.stops.filter((s) => !CLOSED_STOP.includes(s.status));
 
   async function act(path: string, body?: unknown) {
     setBusy(true);
@@ -139,14 +147,19 @@ function RunCard({
     setClosing(false);
   }
 
+  const showActionsColumn = closing || run.status !== 'completed';
+
   return (
-    <div className="card" style={{ marginBottom: 12, padding: 14 }} data-testid="run-card">
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center' }}>
-        <strong>
-          Run {run.route ?? '—'} {run.truck ? `· ${run.truck}` : ''}
-        </strong>
-        <StatusBadge status={run.status} />
-        <span style={{ fontSize: 12.5, color: 'var(--text-secondary)' }}>
+    <Card
+      data-testid="run-card"
+      title={
+        <>
+          Run {run.route ?? '—'} {run.truck ? `· ${run.truck}` : ''}{' '}
+          <StatusBadge status={run.status} />
+        </>
+      }
+      description={
+        <>
           {run.stops.length} stop(s) · COD due <Money cents={run.codDueCents} />
           {run.codCollectedCents != null && (
             <>
@@ -154,141 +167,203 @@ function RunCard({
               · collected <Money cents={run.codCollectedCents} />
             </>
           )}
-        </span>
-        <span style={{ flex: 1 }} />
-        <LinkButton
-          href={`/print/delivery-runs/${run.id}`}
-          variant="secondary"
-          size="sm"
-          target="_blank"
-        >
-          <Printer size={13} aria-hidden /> Manifest
-        </LinkButton>
-        {run.status === 'open' && (
-          <Button size="sm" variant="secondary" disabled={busy} onClick={() => void act('/depart')}>
-            Depart
-          </Button>
-        )}
-        {run.status !== 'completed' && (
-          <Button
+        </>
+      }
+      actions={
+        <>
+          <LinkButton
+            href={`/print/delivery-runs/${run.id}`}
+            variant="secondary"
             size="sm"
-            variant="primary"
-            disabled={busy}
-            data-testid="run-close-toggle"
-            onClick={() => setClosing((c) => !c)}
+            target="_blank"
           >
-            {closing ? 'Hide close-out' : 'Close out…'}
-          </Button>
-        )}
-      </div>
-
-      <div style={{ marginTop: 8, fontSize: 12.5 }}>
-        {run.stops.map((s, i) => (
-          <div
-            key={s.id}
-            style={{
-              display: 'flex',
-              flexWrap: 'wrap',
-              gap: 8,
-              alignItems: 'center',
-              padding: '4px 0',
-            }}
-          >
-            <span style={{ width: 24, fontWeight: 600 }}>{s.routePosition ?? i + 1}</span>
-            <span>
-              {s.orderNumber} · {s.customerName ?? '—'}
-            </span>
-            <StatusBadge status={s.status} />
-            {s.balanceDueCents > 0 && (
-              <span style={{ color: 'var(--warning)' }}>
-                collect <Money cents={s.balanceDueCents} />
-              </span>
-            )}
-            {closing && !['delivered', 'failed', 'cancelled'].includes(s.status) && (
-              <>
-                <Select
-                  value={outcomes[s.id]?.outcome ?? ''}
-                  data-testid="stop-outcome"
-                  onChange={(e) =>
-                    setOutcomes((prev) => ({
-                      ...prev,
-                      [s.id]: {
-                        ...prev[s.id],
-                        outcome: e.target.value as 'delivered' | 'failed',
-                      },
-                    }))
-                  }
-                  style={{ width: 120, padding: '3px 6px' }}
-                >
-                  <option value="">Outcome…</option>
-                  <option value="delivered">Delivered</option>
-                  <option value="failed">Failed</option>
-                </Select>
-                {outcomes[s.id]?.outcome === 'failed' && (
-                  <>
-                    {failureCodes.length > 0 ? (
-                      <Select
-                        value={outcomes[s.id]?.reasonCodeId ?? ''}
-                        onChange={(e) =>
-                          setOutcomes((prev) => ({
-                            ...prev,
-                            [s.id]: { ...prev[s.id]!, reasonCodeId: e.target.value },
-                          }))
-                        }
-                        style={{ width: 150, padding: '3px 6px' }}
-                      >
-                        <option value="">Why…</option>
-                        {failureCodes.map((c) => (
-                          <option key={c.id} value={c.id}>
-                            {c.code} — {c.description}
-                          </option>
-                        ))}
-                      </Select>
-                    ) : (
-                      <Input
-                        placeholder="Why?"
-                        value={outcomes[s.id]?.reason ?? ''}
-                        onChange={(e) =>
-                          setOutcomes((prev) => ({
-                            ...prev,
-                            [s.id]: { ...prev[s.id]!, reason: e.target.value },
-                          }))
-                        }
-                        style={{ width: 140, padding: '3px 6px' }}
-                      />
+            <Printer size={13} aria-hidden /> Manifest
+          </LinkButton>
+          {run.status === 'open' && (
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={busy}
+              onClick={() => void act('/depart')}
+            >
+              Depart
+            </Button>
+          )}
+          {run.status !== 'completed' && (
+            <Button
+              size="sm"
+              variant="primary"
+              disabled={busy}
+              data-testid="run-close-toggle"
+              onClick={() => setClosing((c) => !c)}
+            >
+              {closing ? 'Hide close-out' : 'Close out…'}
+            </Button>
+          )}
+        </>
+      }
+    >
+      <Stack>
+        <TableWrap>
+          <table className="table table-dense">
+            <thead>
+              <tr>
+                <th className="num">#</th>
+                <th>Stop</th>
+                <th>Status</th>
+                <th className="num">Collect</th>
+                {showActionsColumn && <th className="actions">{closing ? 'Outcome' : ''}</th>}
+              </tr>
+            </thead>
+            <tbody>
+              {run.stops.map((s, i) => {
+                const open = !CLOSED_STOP.includes(s.status);
+                return (
+                  <tr key={s.id}>
+                    <td className="num">
+                      <strong>{s.routePosition ?? i + 1}</strong>
+                    </td>
+                    <td>
+                      {s.orderNumber} · {s.customerName ?? '—'}
+                    </td>
+                    <td>
+                      <StatusBadge status={s.status} />
+                    </td>
+                    <td className="num">
+                      {s.balanceDueCents > 0 ? <Money cents={s.balanceDueCents} /> : '—'}
+                    </td>
+                    {showActionsColumn && (
+                      <td className="actions">
+                        {closing && open && (
+                          <span className="inline-flex flex-wrap items-center justify-end gap-2">
+                            <Select
+                              value={outcomes[s.id]?.outcome ?? ''}
+                              data-testid="stop-outcome"
+                              aria-label="Outcome"
+                              onChange={(e) =>
+                                setOutcomes((prev) => ({
+                                  ...prev,
+                                  [s.id]: {
+                                    ...prev[s.id],
+                                    outcome: e.target.value as 'delivered' | 'failed',
+                                  },
+                                }))
+                              }
+                              className="w-32"
+                            >
+                              <option value="">Outcome…</option>
+                              <option value="delivered">Delivered</option>
+                              <option value="failed">Failed</option>
+                            </Select>
+                            {outcomes[s.id]?.outcome === 'failed' && (
+                              <>
+                                {failureCodes.length > 0 ? (
+                                  <Select
+                                    value={outcomes[s.id]?.reasonCodeId ?? ''}
+                                    aria-label="Failure reason"
+                                    onChange={(e) =>
+                                      setOutcomes((prev) => ({
+                                        ...prev,
+                                        [s.id]: { ...prev[s.id]!, reasonCodeId: e.target.value },
+                                      }))
+                                    }
+                                    className="w-40"
+                                  >
+                                    <option value="">Why…</option>
+                                    {failureCodes.map((c) => (
+                                      <option key={c.id} value={c.id}>
+                                        {c.code} — {c.description}
+                                      </option>
+                                    ))}
+                                  </Select>
+                                ) : (
+                                  <Input
+                                    placeholder="Why?"
+                                    aria-label="Failure reason"
+                                    value={outcomes[s.id]?.reason ?? ''}
+                                    onChange={(e) =>
+                                      setOutcomes((prev) => ({
+                                        ...prev,
+                                        [s.id]: { ...prev[s.id]!, reason: e.target.value },
+                                      }))
+                                    }
+                                    className="w-36"
+                                  />
+                                )}
+                                <Input
+                                  type="date"
+                                  title="Reschedule to"
+                                  aria-label="Reschedule to"
+                                  value={outcomes[s.id]?.rescheduleDate ?? ''}
+                                  onChange={(e) =>
+                                    setOutcomes((prev) => ({
+                                      ...prev,
+                                      [s.id]: { ...prev[s.id]!, rescheduleDate: e.target.value },
+                                    }))
+                                  }
+                                  className="w-36"
+                                />
+                              </>
+                            )}
+                          </span>
+                        )}
+                        {run.status !== 'completed' && !closing && open && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            disabled={busy}
+                            data-testid="pull-off-run"
+                            onClick={() => setRemovingStopId(s.id)}
+                          >
+                            Pull off run
+                          </Button>
+                        )}
+                      </td>
                     )}
-                    <Input
-                      type="date"
-                      title="Reschedule to"
-                      value={outcomes[s.id]?.rescheduleDate ?? ''}
-                      onChange={(e) =>
-                        setOutcomes((prev) => ({
-                          ...prev,
-                          [s.id]: { ...prev[s.id]!, rescheduleDate: e.target.value },
-                        }))
-                      }
-                      style={{ width: 140, padding: '3px 6px' }}
-                    />
-                  </>
-                )}
-              </>
-            )}
-            {run.status !== 'completed' &&
-              !closing &&
-              !['delivered', 'failed', 'cancelled'].includes(s.status) && (
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  disabled={busy}
-                  data-testid="pull-off-run"
-                  onClick={() => setRemovingStopId(s.id)}
-                >
-                  Pull off run
-                </Button>
-              )}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </TableWrap>
+
+        {closing && (
+          <div>
+            <FormGrid cols={3}>
+              <Field label="COD collected ($)">
+                <Input
+                  type="number"
+                  step="0.01"
+                  min={0}
+                  value={codCollected}
+                  data-testid="cod-collected"
+                  onChange={(e) => setCodCollected(e.target.value)}
+                />
+              </Field>
+              <Field label="Cash handed to">
+                <Input value={codReceivedBy} onChange={(e) => setCodReceivedBy(e.target.value)} />
+              </Field>
+            </FormGrid>
+            <FormActions
+              start={
+                openStops.length > 0
+                  ? `${openStops.length} open stop(s) need an outcome.`
+                  : 'All stops have an outcome.'
+              }
+            >
+              <Button
+                variant="primary"
+                disabled={busy}
+                aria-busy={busy}
+                data-testid="run-close-submit"
+                onClick={() => void submitClose()}
+              >
+                Complete run
+              </Button>
+            </FormActions>
           </div>
-        ))}
-      </div>
+        )}
+      </Stack>
 
       <SecurityOverrideDialog
         open={removingStopId != null}
@@ -304,51 +379,7 @@ function RunCard({
         onClose={() => setRemovingStopId(null)}
         onSuccess={() => void onChanged()}
       />
-
-      {closing && (
-        <div
-          style={{
-            display: 'flex',
-            flexWrap: 'wrap',
-            gap: 8,
-            alignItems: 'end',
-            marginTop: 10,
-            paddingTop: 10,
-            borderTop: '1px solid var(--border)',
-            fontSize: 12.5,
-          }}
-        >
-          <label style={{ display: 'grid', gap: 2 }}>
-            COD collected ($)
-            <Input
-              type="number"
-              step="0.01"
-              min={0}
-              value={codCollected}
-              data-testid="cod-collected"
-              onChange={(e) => setCodCollected(e.target.value)}
-              style={{ width: 120 }}
-            />
-          </label>
-          <label style={{ display: 'grid', gap: 2, flex: 1, minWidth: 140 }}>
-            Cash handed to
-            <Input
-              value={codReceivedBy}
-              onChange={(e) => setCodReceivedBy(e.target.value)}
-              style={{ minWidth: 0 }}
-            />
-          </label>
-          <Button
-            variant="primary"
-            disabled={busy}
-            data-testid="run-close-submit"
-            onClick={() => void submitClose()}
-          >
-            Complete run
-          </Button>
-        </div>
-      )}
-    </div>
+    </Card>
   );
 }
 
@@ -362,6 +393,7 @@ function DispatchInner() {
   const [runs, setRuns] = useState<Run[]>([]);
   const [failureCodes, setFailureCodes] = useState<ReasonCode[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [buildingRun, setBuildingRun] = useState(false);
 
   useEffect(() => {
     api<ReasonCode[]>('/v1/reason-codes?usageClass=delivery_failure')
@@ -410,6 +442,7 @@ function DispatchInner() {
   );
 
   async function createRun() {
+    setBuildingRun(true);
     try {
       await api('/v1/delivery-runs', {
         method: 'POST',
@@ -418,32 +451,36 @@ function DispatchInner() {
       await load(date);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBuildingRun(false);
     }
   }
 
   return (
     <div>
       <PageHeader
+        eyebrow={<BackLink href="/deliveries">Calendar</BackLink>}
         title="Dispatch"
+        meta={
+          day && capacity ? (
+            <span
+              className={`badge badge-${atCap ? 'danger' : day.booked >= capacity.cap - 3 ? 'warning' : 'success'}`}
+              data-testid="capacity-chip"
+            >
+              {day.booked}/{capacity.cap} stops
+            </span>
+          ) : undefined
+        }
         sub="Stops for the day by route. Edit a route label or stop number in place; drivers work off the printed tickets."
         actions={
-          <span style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <>
             <Input
               type="date"
               value={date}
+              aria-label="Dispatch date"
               onChange={(e) => setDate(e.target.value)}
               data-testid="dispatch-date"
-              style={{ width: 160 }}
             />
-            {day && capacity && (
-              <span
-                className={`badge badge-${atCap ? 'danger' : day.booked >= capacity.cap - 3 ? 'warning' : 'success'}`}
-                data-testid="capacity-chip"
-                style={{ fontSize: 13 }}
-              >
-                {day.booked}/{capacity.cap} stops
-              </span>
-            )}
             <LinkButton
               href={`/print/deliveries?date=${date}`}
               variant="secondary"
@@ -452,120 +489,129 @@ function DispatchInner() {
             >
               <Printer size={13} aria-hidden /> All tickets
             </LinkButton>
-            <LinkButton href="/deliveries" variant="ghost" size="sm">
-              ← Calendar
-            </LinkButton>
-          </span>
+          </>
         }
       />
 
-      {error && <p style={{ color: 'var(--danger)', fontSize: 13 }}>{error}</p>}
-      {!rows && !error && <LoadingRows rows={5} />}
-      {rows && rows.length === 0 && runs.length === 0 && (
-        <EmptyState>No deliveries scheduled for {date}.</EmptyState>
-      )}
+      <Stack>
+        {error && <Alert tone="error">{error}</Alert>}
+        {!rows && !error && <LoadingRows rows={5} />}
+        {rows && rows.length === 0 && runs.length === 0 && (
+          <EmptyState title="Nothing to dispatch">No deliveries scheduled for {date}.</EmptyState>
+        )}
 
-      {runs.map((run) => (
-        <RunCard key={run.id} run={run} failureCodes={failureCodes} onChanged={() => load(date)} />
-      ))}
-      {unassigned.length > 0 && (
-        <div style={{ margin: '0 0 10px', display: 'flex', gap: 8, alignItems: 'center' }}>
-          <Button
-            size="sm"
-            variant="secondary"
-            data-testid="create-run"
-            onClick={() => void createRun()}
+        {runs.map((run) => (
+          <RunCard
+            key={run.id}
+            run={run}
+            failureCodes={failureCodes}
+            onChanged={() => load(date)}
+          />
+        ))}
+
+        {unassigned.length > 0 && (
+          <Alert
+            tone="info"
+            action={
+              <Button
+                size="sm"
+                variant="secondary"
+                data-testid="create-run"
+                disabled={buildingRun}
+                aria-busy={buildingRun}
+                onClick={() => void createRun()}
+              >
+                Build run from {unassigned.length} unassigned stop(s)
+              </Button>
+            }
           >
-            Build run from {unassigned.length} unassigned stop(s)
-          </Button>
-          <span className="muted" style={{ fontSize: 12 }}>
             Building the run hard-locks the orders until close-out.
-          </span>
-        </div>
-      )}
+          </Alert>
+        )}
 
-      {rows && rows.length > 0 && (
-        <div className="card" style={{ padding: 0, overflowX: 'auto' }}>
-          <table className="table" data-testid="dispatch-table">
-            <thead>
-              <tr>
-                <th style={{ width: 60 }}>Stop</th>
-                <th style={{ width: 110 }}>Route</th>
-                <th>Order #</th>
-                <th>Customer</th>
-                <th>Address</th>
-                <th>Window</th>
-                <th>Items</th>
-                <th style={{ textAlign: 'right' }}>Collect</th>
-                <th>Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => {
-                const editable = r.status === 'scheduled' || r.status === 'loaded';
-                return (
-                  <tr key={r.id} data-testid="dispatch-row">
-                    <td>
-                      <Input
-                        type="number"
-                        min={1}
-                        defaultValue={r.routePosition ?? ''}
-                        disabled={!editable}
-                        onBlur={(e) => {
-                          const v = Number(e.target.value);
-                          if (Number.isInteger(v) && v > 0 && v !== r.routePosition) {
-                            void patch(r.id, { routePosition: v });
-                          }
-                        }}
-                        style={{ width: 56, padding: '4px 6px' }}
-                      />
-                    </td>
-                    <td>
-                      <Input
-                        defaultValue={r.route ?? ''}
-                        placeholder="—"
-                        disabled={!editable}
-                        data-testid="route-input"
-                        onBlur={(e) => {
-                          const v = e.target.value.trim();
-                          if (v !== (r.route ?? '')) void patch(r.id, { route: v || null });
-                        }}
-                        style={{ width: 96, padding: '4px 6px' }}
-                      />
-                    </td>
-                    <td style={{ whiteSpace: 'nowrap' }}>
-                      <Link href={`/orders/${r.orderId}`}>{r.orderNumber}</Link>
-                    </td>
-                    <td>{r.customerName ?? '—'}</td>
-                    <td style={{ fontSize: 12.5 }}>
-                      {[r.addressLine1, r.addressCity, r.addressPostalCode]
-                        .filter(Boolean)
-                        .join(', ') || '—'}
-                      {r.addressPhone && (
-                        <div style={{ color: 'var(--text-muted)' }}>{r.addressPhone}</div>
-                      )}
-                    </td>
-                    <td style={{ whiteSpace: 'nowrap' }}>
-                      {r.windowStart && r.windowEnd
-                        ? `${r.windowStart.slice(0, 5)}–${r.windowEnd.slice(0, 5)}`
-                        : '—'}
-                    </td>
-                    <td style={{ fontSize: 12.5 }}>
-                      {r.lines.map((l) => `${l.quantity}× ${l.description}`).join(', ')}
-                    </td>
-                    <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
-                      {r.balanceDueCents > 0 ? <Money cents={r.balanceDueCents} /> : '—'}
-                    </td>
-                    <td>
-                      <StatusBadge status={r.status} />
-                    </td>
+        {rows && rows.length > 0 && (
+          <Card title="Stops" flush>
+            <TableWrap>
+              <table className="table" data-testid="dispatch-table">
+                <thead>
+                  <tr>
+                    <th>Stop</th>
+                    <th>Route</th>
+                    <th>Order #</th>
+                    <th>Customer</th>
+                    <th>Address</th>
+                    <th>Window</th>
+                    <th>Items</th>
+                    <th className="num">Collect</th>
+                    <th>Status</th>
                   </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
+                </thead>
+                <tbody>
+                  {rows.map((r) => {
+                    const editable = r.status === 'scheduled' || r.status === 'loaded';
+                    return (
+                      <tr key={r.id} data-testid="dispatch-row">
+                        <td>
+                          <Input
+                            type="number"
+                            min={1}
+                            aria-label="Stop number"
+                            defaultValue={r.routePosition ?? ''}
+                            disabled={!editable}
+                            onBlur={(e) => {
+                              const v = Number(e.target.value);
+                              if (Number.isInteger(v) && v > 0 && v !== r.routePosition) {
+                                void patch(r.id, { routePosition: v });
+                              }
+                            }}
+                            className="w-16"
+                          />
+                        </td>
+                        <td>
+                          <Input
+                            defaultValue={r.route ?? ''}
+                            placeholder="—"
+                            aria-label="Route"
+                            disabled={!editable}
+                            data-testid="route-input"
+                            onBlur={(e) => {
+                              const v = e.target.value.trim();
+                              if (v !== (r.route ?? '')) void patch(r.id, { route: v || null });
+                            }}
+                            className="w-28"
+                          />
+                        </td>
+                        <td className="nowrap">
+                          <Link href={`/orders/${r.orderId}`}>{r.orderNumber}</Link>
+                        </td>
+                        <td>{r.customerName ?? '—'}</td>
+                        <td>
+                          {[r.addressLine1, r.addressCity, r.addressPostalCode]
+                            .filter(Boolean)
+                            .join(', ') || '—'}
+                          {r.addressPhone && <div className="muted">{r.addressPhone}</div>}
+                        </td>
+                        <td className="nowrap">
+                          {r.windowStart && r.windowEnd
+                            ? `${r.windowStart.slice(0, 5)}–${r.windowEnd.slice(0, 5)}`
+                            : '—'}
+                        </td>
+                        <td>{r.lines.map((l) => `${l.quantity}× ${l.description}`).join(', ')}</td>
+                        <td className="num">
+                          {r.balanceDueCents > 0 ? <Money cents={r.balanceDueCents} /> : '—'}
+                        </td>
+                        <td>
+                          <StatusBadge status={r.status} />
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </TableWrap>
+          </Card>
+        )}
+      </Stack>
     </div>
   );
 }

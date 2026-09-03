@@ -6,7 +6,17 @@ import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import { Money } from '@/components/money';
-import { Button, Card, LoadingRows, PageHeader, StatusBadge } from '@/components/ui';
+import {
+  Alert,
+  BackLink,
+  Button,
+  Card,
+  KeyValue,
+  LoadingRows,
+  PageHeader,
+  StatusBadge,
+  TableWrap,
+} from '@/components/ui';
 
 interface ExchangeDetail {
   id: string;
@@ -71,57 +81,44 @@ export default function ExchangeDetailPage() {
     }
   }
 
-  if (error) return <p style={{ color: 'var(--danger)' }}>{error}</p>;
-  if (!exchange) return <LoadingRows rows={4} />;
+  const eyebrow = <BackLink href="/exchanges">All exchanges</BackLink>;
+
+  if (error) {
+    return (
+      <div>
+        <PageHeader title="Exchange not found" eyebrow={eyebrow} />
+        <Alert tone="error">{error}</Alert>
+      </div>
+    );
+  }
+  if (!exchange) {
+    return (
+      <div>
+        <PageHeader title="Exchange" eyebrow={eyebrow} />
+        <LoadingRows rows={4} />
+      </div>
+    );
+  }
 
   const s = exchange.settlement;
   const canSettle = exchange.status === 'open' && exchange.returnStatus === 'authorized';
+  const canEdit = ['open', 'on_hold'].includes(exchange.status);
 
   return (
     <div>
-      <p style={{ marginBottom: 12 }}>
-        <Link href="/exchanges">← All exchanges</Link>
-      </p>
       <PageHeader
+        eyebrow={eyebrow}
         title={<code>{exchange.number}</code>}
-        sub={
+        meta={
           <>
-            <StatusBadge status={exchange.status} /> · {exchange.customerName ?? '—'} ·{' '}
-            {new Date(exchange.createdAt).toLocaleString()}
-            {exchange.evenExchange && (
-              <>
-                {' '}
-                <span className="badge badge-info">even exchange</span>
-              </>
-            )}
+            <StatusBadge status={exchange.status} />
+            {exchange.evenExchange && <span>even exchange</span>}
           </>
         }
+        sub={`${exchange.customerName ?? '—'} · ${new Date(exchange.createdAt).toLocaleString()}`}
         actions={
-          <span style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            {exchange.status === 'on_hold' && (
-              <Button
-                variant="primary"
-                size="sm"
-                disabled={busy}
-                onClick={() => void act(`/v1/exchanges/${id}/approve`)}
-                data-testid="approve-exchange"
-              >
-                Approve (release hold)
-              </Button>
-            )}
-            {canSettle && (
-              <Button
-                variant="primary"
-                size="sm"
-                disabled={busy}
-                onClick={() => void act(`/v1/order-returns/${exchange.returnId}/receive`)}
-                data-testid="settle-exchange"
-                title="Goods are back — settle the exchange"
-              >
-                Receive return & settle
-              </Button>
-            )}
-            {['open', 'on_hold'].includes(exchange.status) && (
+          <>
+            {canEdit && (
               <>
                 <Button
                   variant="secondary"
@@ -145,122 +142,137 @@ export default function ExchangeDetailPage() {
                 </Button>
               </>
             )}
-          </span>
+            {exchange.status === 'on_hold' && (
+              <Button
+                variant="primary"
+                disabled={busy}
+                onClick={() => void act(`/v1/exchanges/${id}/approve`)}
+                data-testid="approve-exchange"
+              >
+                Approve (release hold)
+              </Button>
+            )}
+            {canSettle && (
+              <Button
+                variant="primary"
+                disabled={busy}
+                onClick={() => void act(`/v1/order-returns/${exchange.returnId}/receive`)}
+                data-testid="settle-exchange"
+                title="Goods are back — settle the exchange"
+              >
+                Receive return & settle
+              </Button>
+            )}
+          </>
         }
       />
 
       <div className="grid gap-4 lg:grid-cols-2">
         <Card title="The two legs">
-          <table className="table">
-            <tbody>
-              <tr>
-                <td>Original order</td>
-                <td>
-                  {exchange.originalOrderId ? (
-                    <Link href={`/orders/${exchange.originalOrderId}`}>
-                      <code>{exchange.originalOrderNumber}</code>
-                    </Link>
-                  ) : (
-                    <span title="Pre-cutover sale — number as claimed by the customer">
-                      <code>{exchange.referencedOrderNumber ?? '—'}</code> (no original on file)
-                    </span>
-                  )}
-                </td>
-              </tr>
-              <tr>
-                <td>Return</td>
-                <td>
-                  <code>{exchange.rmaNumber ?? '—'}</code>{' '}
-                  {exchange.returnStatus && <StatusBadge status={exchange.returnStatus} />}
-                </td>
-              </tr>
-              <tr>
-                <td>Replacement order</td>
-                <td>
-                  <Link href={`/orders/${exchange.saleOrderId}`}>
-                    <code>{exchange.saleOrderNumber}</code>
-                  </Link>{' '}
-                  {exchange.saleOrderStatus && <StatusBadge status={exchange.saleOrderStatus} />}
-                </td>
-              </tr>
-              {exchange.notes && (
-                <tr>
-                  <td>Notes</td>
-                  <td>{exchange.notes}</td>
-                </tr>
-              )}
-            </tbody>
-          </table>
+          <KeyValue
+            rows={[
+              {
+                label: 'Original order',
+                value: exchange.originalOrderId ? (
+                  <Link href={`/orders/${exchange.originalOrderId}`}>
+                    <code>{exchange.originalOrderNumber}</code>
+                  </Link>
+                ) : (
+                  <span title="Pre-cutover sale — number as claimed by the customer">
+                    <code>{exchange.referencedOrderNumber ?? '—'}</code>{' '}
+                    <span className="muted">(no original on file)</span>
+                  </span>
+                ),
+              },
+              {
+                label: 'Return',
+                value: (
+                  <>
+                    <code>{exchange.rmaNumber ?? '—'}</code>{' '}
+                    {exchange.returnStatus && <StatusBadge status={exchange.returnStatus} />}
+                  </>
+                ),
+              },
+              {
+                label: 'Replacement order',
+                value: (
+                  <>
+                    <Link href={`/orders/${exchange.saleOrderId}`}>
+                      <code>{exchange.saleOrderNumber}</code>
+                    </Link>{' '}
+                    {exchange.saleOrderStatus && <StatusBadge status={exchange.saleOrderStatus} />}
+                  </>
+                ),
+              },
+              ...(exchange.notes ? [{ label: 'Notes', value: exchange.notes }] : []),
+            ]}
+          />
         </Card>
 
-        <Card title="Settlement">
-          <table className="table">
-            <tbody>
-              <tr>
-                <td>Return credit</td>
-                <td className="num">
-                  <Money cents={s.returnCents} />
-                </td>
-              </tr>
-              <tr>
-                <td>
-                  Restocking fee
-                  {exchange.restockingFeeOverridden && (
-                    <span
-                      className="badge badge-warning"
-                      style={{ marginLeft: 6 }}
-                      title="Overridden — no longer auto-calculated"
-                    >
-                      overridden
-                    </span>
-                  )}
-                </td>
-                <td className="num">
-                  {s.restockingFeeCents > 0 ? (
-                    <>
-                      −<Money cents={s.restockingFeeCents} />
-                    </>
-                  ) : (
-                    '—'
-                  )}
-                </td>
-              </tr>
-              <tr>
-                <td>Credit toward replacement</td>
-                <td className="num">
-                  <Money cents={s.creditCents} />
-                </td>
-              </tr>
-              <tr>
-                <td>Replacement total</td>
-                <td className="num">
-                  <Money cents={s.saleTotalCents} />
-                </td>
-              </tr>
-              <tr>
-                <td>Paid so far (credit + tenders)</td>
-                <td className="num">
-                  <Money cents={s.salePaidCents} />
-                </td>
-              </tr>
-              <tr>
-                <td>
-                  <strong>Balance due</strong>
-                </td>
-                <td className="num" data-testid="exchange-balance-due">
-                  <strong>
-                    <Money cents={s.saleBalanceDueCents} />
-                  </strong>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-          <p style={{ color: 'var(--text-secondary)', fontSize: 12.5, margin: '8px 0 0' }}>
-            Settlement rides the store-credit ledger: at receipt the credit is issued and applied to
-            the replacement. Credit beyond the replacement&apos;s balance stays on the
-            customer&apos;s store credit. Take the remaining balance on the replacement order page
-            like any other order.
-          </p>
+        <Card
+          title="Settlement"
+          description="Settlement rides the store-credit ledger: at receipt the credit is issued and applied to the replacement. Credit beyond the replacement's balance stays on the customer's store credit. Take the remaining balance on the replacement order page like any other order."
+        >
+          <TableWrap>
+            <table className="table">
+              <tbody>
+                <tr>
+                  <td>Return credit</td>
+                  <td className="num">
+                    <Money cents={s.returnCents} />
+                  </td>
+                </tr>
+                <tr>
+                  <td>
+                    Restocking fee
+                    {exchange.restockingFeeOverridden && (
+                      <span className="muted" title="Overridden — no longer auto-calculated">
+                        {' '}
+                        (overridden)
+                      </span>
+                    )}
+                  </td>
+                  <td className="num">
+                    {s.restockingFeeCents > 0 ? (
+                      <>
+                        −<Money cents={s.restockingFeeCents} />
+                      </>
+                    ) : (
+                      '—'
+                    )}
+                  </td>
+                </tr>
+                <tr>
+                  <td>Credit toward replacement</td>
+                  <td className="num">
+                    <Money cents={s.creditCents} />
+                  </td>
+                </tr>
+                <tr>
+                  <td>Replacement total</td>
+                  <td className="num">
+                    <Money cents={s.saleTotalCents} />
+                  </td>
+                </tr>
+                <tr>
+                  <td>Paid so far (credit + tenders)</td>
+                  <td className="num">
+                    <Money cents={s.salePaidCents} />
+                  </td>
+                </tr>
+                <tr>
+                  <td>
+                    <strong>Balance due</strong>
+                  </td>
+                  <td className="num" data-testid="exchange-balance-due">
+                    <strong>
+                      <Money cents={s.saleBalanceDueCents} />
+                    </strong>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </TableWrap>
         </Card>
       </div>
     </div>

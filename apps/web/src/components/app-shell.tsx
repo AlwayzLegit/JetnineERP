@@ -45,6 +45,7 @@ import {
 import { ActiveBusinessBadge } from '@/components/active-business-badge';
 import { api } from '@/lib/api';
 import { GlobalSearch } from '@/components/global-search';
+import { Button, Card, FormActions, Stack } from '@/components/ui';
 import { useBusinessBranding, useBusinessName } from '@/lib/business-settings';
 
 /**
@@ -284,42 +285,36 @@ export function AppShell({ children }: { children: ReactNode }) {
             data-testid="store-picker"
           >
             <div
-              className="card"
-              style={{ maxWidth: 420, width: '100%', padding: 20, background: 'var(--surface)' }}
+              role="dialog"
+              aria-modal
+              aria-label="Which store are you selling at today?"
+              className="w-full max-w-[420px]"
             >
-              <h3 style={{ margin: '0 0 4px', fontSize: 16 }}>
-                Which store are you selling at today?
-              </h3>
-              <p style={{ margin: '0 0 12px', fontSize: 13, color: 'var(--text-secondary)' }}>
-                Everything you ring this session — including the money tendered — counts toward the
-                store you pick.
-              </p>
-              <div style={{ display: 'grid', gap: 8 }}>
-                {storeChoices.map((loc) => (
-                  <button
-                    key={loc.id}
-                    type="button"
-                    className="btn btn-secondary"
-                    style={{ justifyContent: 'flex-start' }}
-                    onClick={() => chooseStore(loc)}
-                    data-testid={`pick-store-${loc.id}`}
-                  >
-                    <MapPin size={14} aria-hidden />
-                    {loc.name}
-                  </button>
-                ))}
-              </div>
-              {sellingStore && (
-                <div style={{ marginTop: 10, textAlign: 'right' }}>
-                  <button
-                    type="button"
-                    className="btn btn-ghost btn-sm"
-                    onClick={() => setPickStore(false)}
-                  >
-                    Keep {sellingStore.name}
-                  </button>
-                </div>
-              )}
+              <Card
+                title="Which store are you selling at today?"
+                description="Everything you ring this session — including the money tendered — counts toward the store you pick."
+              >
+                <Stack gap="sm">
+                  {storeChoices.map((loc) => (
+                    <Button
+                      key={loc.id}
+                      variant="secondary"
+                      onClick={() => chooseStore(loc)}
+                      data-testid={`pick-store-${loc.id}`}
+                    >
+                      <MapPin size={14} aria-hidden />
+                      <span className="flex-1 text-left">{loc.name}</span>
+                    </Button>
+                  ))}
+                </Stack>
+                {sellingStore && (
+                  <FormActions>
+                    <Button variant="ghost" size="sm" onClick={() => setPickStore(false)}>
+                      Keep {sellingStore.name}
+                    </Button>
+                  </FormActions>
+                )}
+              </Card>
             </div>
           </div>
         )}

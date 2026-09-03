@@ -9,7 +9,21 @@ import { api } from '@/lib/api';
 import { autofillFromZip, type ZipHit } from '@/lib/zip-lookup';
 import { ProductSearchDialog, type SearchRow } from '@/components/product-search-dialog';
 import { Money } from '@/components/money';
-import { Button, Card, Field, Input, Select } from '@/components/ui';
+import {
+  Alert,
+  Button,
+  Card,
+  EmptyState,
+  Field,
+  FormActions,
+  FormGrid,
+  Input,
+  SectionHeading,
+  Select,
+  Stack,
+  TableWrap,
+  Toolbar,
+} from '@/components/ui';
 
 /**
  * New Sale — the single-screen order entry from PLAN-POS-OPERATIONS §4
@@ -147,6 +161,7 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
   const [custMore, setCustMore] = useState(false);
   const [custOpen, setCustOpen] = useState(false);
   const [creatingCustomer, setCreatingCustomer] = useState(false);
+  const [creatingBusy, setCreatingBusy] = useState(false);
   const [newCust, setNewCust] = useState({
     firstName: '',
     lastName: '',
@@ -916,12 +931,9 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
 
   if (done) {
     return (
-      <Card>
-        <h2 style={{ marginTop: 0 }}>
-          {done.kind === 'sale' ? 'Sale' : 'Order'} {done.number} complete
-        </h2>
+      <Card title={`${done.kind === 'sale' ? 'Sale' : 'Order'} ${done.number} complete`}>
         {done.splitOrders && done.splitOrders.length > 0 && (
-          <p style={{ fontSize: 13 }} data-testid="split-siblings">
+          <Alert tone="info" data-testid="split-siblings">
             Backordered lines split into{' '}
             {done.splitOrders.map((s, i) => (
               <span key={s.id}>
@@ -932,16 +944,19 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
             ))}{' '}
             — one payment covers them all: money taken at the register lands on each order up to
             what it owes.
-          </p>
+          </Alert>
         )}
         {done.bookedDeliveries && done.bookedDeliveries.length > 0 && (
-          <p style={{ fontSize: 13 }} data-testid="booked-deliveries">
+          <Alert tone="success" data-testid="booked-deliveries">
             Delivery booked: {done.bookedDeliveries.join(', ')} — it&apos;s on the Deliveries
             calendar. Change the date from the order page if plans move.
-          </p>
+          </Alert>
         )}
         {done.takeWith && (
-          <p style={{ fontSize: 13 }} data-testid="take-with-result">
+          <Alert
+            tone={done.takeWith.completed ? 'success' : 'warning'}
+            data-testid="take-with-result"
+          >
             {done.takeWith.completed ? (
               <>
                 Take-with items went out on{' '}
@@ -955,12 +970,13 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
                 {done.takeWith.reason ?? 'not ready yet'}. Finish it with Complete on that order.
               </>
             )}
-          </p>
+          </Alert>
         )}
-        <p className="muted" style={{ fontSize: 13 }}>
-          Open the {done.kind} page to print the invoice or receipt.
-        </p>
-        <div className="flex gap-2">
+        <p className="muted">Open the {done.kind} page to print the invoice or receipt.</p>
+        <FormActions>
+          <Button variant="secondary" onClick={resetAll} data-testid="new-sale-again">
+            New Sale
+          </Button>
           <Button
             variant="primary"
             onClick={() =>
@@ -969,10 +985,7 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
           >
             Open {done.kind}
           </Button>
-          <Button variant="secondary" onClick={resetAll} data-testid="new-sale-again">
-            New Sale
-          </Button>
-        </div>
+        </FormActions>
       </Card>
     );
   }
@@ -980,23 +993,17 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
   return (
     <div className="grid gap-4 xl:grid-cols-[1fr_340px]" data-testid="new-sale">
       <div className="flex min-w-0 flex-col">
+        {/* Banners are DOM-first and visually first; `order` only exists
+            because the draft strip below is DOM-last (BA-0036). */}
         {exchangeOriginal && (
-          <div
-            className="card mb-3"
-            data-testid="exchange-banner"
-            style={{ order: -2, padding: '10px 14px', borderColor: 'var(--warning)', fontSize: 13 }}
-          >
+          <Alert tone="warning" data-testid="exchange-banner" className="-order-2">
             Writing an <strong>Exchange Order</strong> against original invoice{' '}
             <strong>{exchangeOriginal.number}</strong> — the document prints with the original
             number, and the customer is fixed to the original order&apos;s.
-          </div>
+          </Alert>
         )}
         {!exchangeOriginal && openOrders.length > 0 && (
-          <div
-            className="card mb-3"
-            data-testid="duplicate-order-banner"
-            style={{ order: -2, padding: '10px 14px', borderColor: 'var(--warning)', fontSize: 13 }}
-          >
+          <Alert tone="warning" data-testid="duplicate-order-banner" className="-order-2">
             This customer already has {openOrders.length === 1 ? 'an open order' : 'open orders'}:{' '}
             {openOrders.map((o, i) => (
               <span key={o.id}>
@@ -1006,138 +1013,116 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
               </span>
             ))}
             {' — '}consider one truck: add to the existing order or match its delivery date.
-          </div>
+          </Alert>
         )}
 
-        <Card title={<StepTitle n={1} label="Customer" />} style={{ marginBottom: 14 }}>
-          {customer ? (
-            <div className="flex items-center gap-3">
-              <div>
-                <strong data-testid="order-customer">{customerName(customer)}</strong>
-                <div style={{ fontSize: 12.5, color: 'var(--text-secondary)' }}>
-                  {[customer.phone, customer.email, addressPreview(customer)]
-                    .filter(Boolean)
-                    .join(' · ') || '—'}
+        <Card title={<StepTitle n={1} label="Customer" />}>
+          <Stack gap="sm">
+            {customer ? (
+              <div className="flex items-center gap-3">
+                <div className="min-w-0">
+                  <strong data-testid="order-customer">{customerName(customer)}</strong>
+                  <div className="muted">
+                    {[customer.phone, customer.email, addressPreview(customer)]
+                      .filter(Boolean)
+                      .join(' · ') || '—'}
+                  </div>
                 </div>
+                <Button size="sm" variant="ghost" onClick={() => setCustomer(null)}>
+                  Change
+                </Button>
               </div>
-              <Button size="sm" variant="ghost" onClick={() => setCustomer(null)}>
-                Change
-              </Button>
-            </div>
-          ) : (
-            <div style={{ position: 'relative' }}>
-              <Input
-                value={custQuery}
-                onChange={(e) => setCustQuery(e.target.value)}
-                placeholder="Search name, phone, email, or address…"
-                aria-label="Search customers"
-                style={{ width: '100%', padding: '10px 12px', fontSize: 15 }}
-                data-testid="customer-search"
-                autoFocus
-              />
-              {custOpen && custHits.length > 0 && (
-                <Card
-                  style={{
-                    position: 'absolute',
-                    zIndex: 20,
-                    left: 0,
-                    right: 0,
-                    top: '105%',
-                    padding: 6,
-                    maxHeight: 280,
-                    overflowY: 'auto',
-                  }}
-                >
-                  {custHits.map((c) => (
-                    <button
-                      key={c.id}
-                      style={hitBtn}
-                      data-testid="customer-hit"
-                      onClick={() => {
-                        setCustomer(c);
-                        setCustOpen(false);
-                        setCustQuery('');
-                      }}
-                    >
-                      <strong>{customerName(c)}</strong>{' '}
-                      <span style={{ color: 'var(--text-secondary)', fontSize: 12.5 }}>
-                        {[c.phone, addressPreview(c)].filter(Boolean).join(' · ')}
-                      </span>
-                    </button>
-                  ))}
-                  {custMore && (
-                    <div className="muted" style={{ fontSize: 12, padding: '4px 8px' }}>
-                      More matches — keep typing.
+            ) : (
+              <div className="relative">
+                <Input
+                  value={custQuery}
+                  onChange={(e) => setCustQuery(e.target.value)}
+                  placeholder="Search name, phone, email, or address…"
+                  aria-label="Search customers"
+                  className="w-full"
+                  data-testid="customer-search"
+                  autoFocus
+                />
+                {custOpen && custHits.length > 0 && (
+                  <Card flush className="absolute top-[105%] left-0 right-0 z-20">
+                    <div className="max-h-[280px] overflow-y-auto p-1.5">
+                      {custHits.map((c) => (
+                        <button
+                          key={c.id}
+                          style={hitBtn}
+                          data-testid="customer-hit"
+                          onClick={() => {
+                            setCustomer(c);
+                            setCustOpen(false);
+                            setCustQuery('');
+                          }}
+                        >
+                          <strong>{customerName(c)}</strong>{' '}
+                          <span className="muted">
+                            {[c.phone, addressPreview(c)].filter(Boolean).join(' · ')}
+                          </span>
+                        </button>
+                      ))}
+                      {custMore && (
+                        <div className="muted px-2 py-1">More matches — keep typing.</div>
+                      )}
                     </div>
-                  )}
-                </Card>
-              )}
-              <div style={{ marginTop: 8 }}>
-                {creatingCustomer ? (
-                  // Every cell needs min-w-0: grid/flex items refuse to
-                  // shrink below their content width by default, and on a
-                  // narrow column the overflowing Create button lands
-                  // *under* the totals rail, which then swallows its
-                  // clicks (caught by the checkpoint-8 e2e run).
-                  <div style={{ display: 'grid', gap: 8 }}>
-                    <div className="grid gap-2 sm:grid-cols-5">
-                      <Input
-                        placeholder="First name"
-                        aria-label="First name"
-                        value={newCust.firstName}
-                        onChange={(e) => setNewCust({ ...newCust, firstName: e.target.value })}
-                        style={{ minWidth: 0 }}
-                      />
-                      <Input
-                        placeholder="Last name"
-                        aria-label="Last name"
-                        value={newCust.lastName}
-                        onChange={(e) => setNewCust({ ...newCust, lastName: e.target.value })}
-                        style={{ minWidth: 0 }}
-                      />
-                      <Input
-                        placeholder="Phone"
-                        aria-label="Phone"
-                        value={newCust.phone}
-                        onChange={(e) => setNewCust({ ...newCust, phone: e.target.value })}
-                        style={{ minWidth: 0 }}
-                      />
-                      <Input
-                        placeholder="2nd phone (optional)"
-                        aria-label="2nd phone (optional)"
-                        value={newCust.phone2}
-                        onChange={(e) => setNewCust({ ...newCust, phone2: e.target.value })}
-                        style={{ minWidth: 0 }}
-                        data-testid="new-customer-phone2"
-                      />
-                      <Input
-                        placeholder="Email"
-                        aria-label="Email"
-                        value={newCust.email}
-                        onChange={(e) => setNewCust({ ...newCust, email: e.target.value })}
-                        style={{ minWidth: 0 }}
-                      />
-                    </div>
-                    {dupeWarn && (
-                      <div
-                        data-testid="dupe-warning"
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: 8,
-                          flexWrap: 'wrap',
-                          fontSize: 12.5,
-                          padding: '6px 10px',
-                          borderRadius: 'var(--radius-sm)',
-                          border: '1px solid var(--warning, #b58900)',
-                          background: 'var(--warning-soft, transparent)',
-                        }}
-                      >
-                        <span>
-                          Looks like <strong>{dupeWarn.name}</strong>
-                          {dupeWarn.phone ? ` (${dupeWarn.phone})` : ''} already exists — use them
-                          instead?
-                        </span>
+                  </Card>
+                )}
+              </div>
+            )}
+            {!customer &&
+              (creatingCustomer ? (
+                // Every cell needs min-w-0: grid/flex items refuse to
+                // shrink below their content width by default, and on a
+                // narrow column the overflowing Create button lands
+                // *under* the totals rail, which then swallows its
+                // clicks (caught by the checkpoint-8 e2e run).
+                <Stack gap="sm">
+                  <SectionHeading as="h3" title="New customer" />
+                  <div className="grid gap-2 sm:grid-cols-5">
+                    <Input
+                      placeholder="First name"
+                      aria-label="First name"
+                      value={newCust.firstName}
+                      onChange={(e) => setNewCust({ ...newCust, firstName: e.target.value })}
+                      className="min-w-0"
+                    />
+                    <Input
+                      placeholder="Last name"
+                      aria-label="Last name"
+                      value={newCust.lastName}
+                      onChange={(e) => setNewCust({ ...newCust, lastName: e.target.value })}
+                      className="min-w-0"
+                    />
+                    <Input
+                      placeholder="Phone"
+                      aria-label="Phone"
+                      value={newCust.phone}
+                      onChange={(e) => setNewCust({ ...newCust, phone: e.target.value })}
+                      className="min-w-0"
+                    />
+                    <Input
+                      placeholder="2nd phone (optional)"
+                      aria-label="2nd phone (optional)"
+                      value={newCust.phone2}
+                      onChange={(e) => setNewCust({ ...newCust, phone2: e.target.value })}
+                      className="min-w-0"
+                      data-testid="new-customer-phone2"
+                    />
+                    <Input
+                      placeholder="Email"
+                      aria-label="Email"
+                      value={newCust.email}
+                      onChange={(e) => setNewCust({ ...newCust, email: e.target.value })}
+                      className="min-w-0"
+                    />
+                  </div>
+                  {dupeWarn && (
+                    <Alert
+                      tone="warning"
+                      data-testid="dupe-warning"
+                      action={
                         <Button
                           size="sm"
                           variant="secondary"
@@ -1146,254 +1131,264 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
                         >
                           Use existing
                         </Button>
-                      </div>
-                    )}
+                      }
+                    >
+                      Looks like <strong>{dupeWarn.name}</strong>
+                      {dupeWarn.phone ? ` (${dupeWarn.phone})` : ''} already exists — use them
+                      instead?
+                    </Alert>
+                  )}
+                  <SectionHeading as="h3" title="Delivery address" />
+                  <div className="grid gap-2 sm:grid-cols-5">
+                    <Input
+                      placeholder="Delivery address"
+                      aria-label="Delivery address"
+                      value={newCust.line1}
+                      onChange={(e) => setNewCust({ ...newCust, line1: e.target.value })}
+                      className="min-w-0 sm:col-span-2"
+                      data-testid="new-customer-address"
+                    />
+                    <Input
+                      placeholder="Apt / unit"
+                      aria-label="Apt / unit"
+                      value={newCust.line2}
+                      onChange={(e) => setNewCust({ ...newCust, line2: e.target.value })}
+                      className="min-w-0"
+                    />
+                    <Input
+                      placeholder="City"
+                      aria-label="City"
+                      value={newCust.city}
+                      onChange={(e) => setNewCust({ ...newCust, city: e.target.value })}
+                      className="min-w-0"
+                    />
+                    <div className="flex min-w-0 gap-2">
+                      <Input
+                        placeholder="State"
+                        aria-label="State"
+                        value={newCust.region}
+                        onChange={(e) => setNewCust({ ...newCust, region: e.target.value })}
+                        className="w-16 min-w-0"
+                      />
+                      <Input
+                        placeholder="ZIP"
+                        aria-label="ZIP"
+                        value={newCust.postalCode}
+                        onChange={(e) =>
+                          autofillFromZip(e.target.value, setNewCust, zipMemo.current, 'cust')
+                        }
+                        className="min-w-0 flex-1"
+                      />
+                    </div>
+                  </div>
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={billDiffers}
+                      onChange={(e) => setBillDiffers(e.target.checked)}
+                    />
+                    Billing address is different
+                  </label>
+                  {billDiffers && <SectionHeading as="h3" title="Billing address" />}
+                  {billDiffers && (
                     <div className="grid gap-2 sm:grid-cols-5">
                       <Input
-                        placeholder="Delivery address"
-                        aria-label="Delivery address"
-                        value={newCust.line1}
-                        onChange={(e) => setNewCust({ ...newCust, line1: e.target.value })}
-                        style={{ minWidth: 0, gridColumn: 'span 2' }}
-                        data-testid="new-customer-address"
+                        placeholder="Billing address"
+                        aria-label="Billing address"
+                        value={newBill.line1}
+                        onChange={(e) => setNewBill({ ...newBill, line1: e.target.value })}
+                        className="min-w-0 sm:col-span-2"
+                        data-testid="new-customer-billing"
                       />
                       <Input
                         placeholder="Apt / unit"
                         aria-label="Apt / unit"
-                        value={newCust.line2}
-                        onChange={(e) => setNewCust({ ...newCust, line2: e.target.value })}
-                        style={{ minWidth: 0 }}
+                        value={newBill.line2}
+                        onChange={(e) => setNewBill({ ...newBill, line2: e.target.value })}
+                        className="min-w-0"
                       />
                       <Input
                         placeholder="City"
                         aria-label="City"
-                        value={newCust.city}
-                        onChange={(e) => setNewCust({ ...newCust, city: e.target.value })}
-                        style={{ minWidth: 0 }}
+                        value={newBill.city}
+                        onChange={(e) => setNewBill({ ...newBill, city: e.target.value })}
+                        className="min-w-0"
                       />
                       <div className="flex min-w-0 gap-2">
                         <Input
                           placeholder="State"
                           aria-label="State"
-                          value={newCust.region}
-                          onChange={(e) => setNewCust({ ...newCust, region: e.target.value })}
-                          style={{ width: 64, minWidth: 0 }}
+                          value={newBill.region}
+                          onChange={(e) => setNewBill({ ...newBill, region: e.target.value })}
+                          className="w-16 min-w-0"
                         />
                         <Input
                           placeholder="ZIP"
                           aria-label="ZIP"
-                          value={newCust.postalCode}
+                          value={newBill.postalCode}
                           onChange={(e) =>
-                            autofillFromZip(e.target.value, setNewCust, zipMemo.current, 'cust')
+                            autofillFromZip(e.target.value, setNewBill, zipMemo.current, 'bill')
                           }
-                          style={{ flex: 1, minWidth: 0 }}
+                          className="min-w-0 flex-1"
                         />
                       </div>
                     </div>
-                    <label
-                      className="flex items-center gap-2"
-                      style={{ fontSize: 13, color: 'var(--text-secondary)' }}
+                  )}
+                  <Field label="How did they hear about us?">
+                    <Input
+                      placeholder="Walk-in, Google, referral…"
+                      aria-label="How did they hear about us?"
+                      value={newCust.referralSource}
+                      onChange={(e) => setNewCust({ ...newCust, referralSource: e.target.value })}
+                      list="referral-sources"
+                      data-testid="new-customer-referral"
+                    />
+                    <datalist id="referral-sources">
+                      {[
+                        'Walk-in / drive-by',
+                        'Google search',
+                        'Yelp',
+                        'Facebook / Instagram',
+                        'TV / radio',
+                        'Referred by friend or family',
+                        'Repeat customer',
+                        'Billboard',
+                      ].map((s) => (
+                        <option key={s} value={s} />
+                      ))}
+                    </datalist>
+                  </Field>
+                  <FormActions>
+                    <Button
+                      variant="secondary"
+                      disabled={creatingBusy}
+                      onClick={() => setCreatingCustomer(false)}
                     >
-                      <input
-                        type="checkbox"
-                        checked={billDiffers}
-                        onChange={(e) => setBillDiffers(e.target.checked)}
-                      />
-                      Billing address is different
-                    </label>
-                    {billDiffers && (
-                      <div className="grid gap-2 sm:grid-cols-5">
-                        <Input
-                          placeholder="Billing address"
-                          aria-label="Billing address"
-                          value={newBill.line1}
-                          onChange={(e) => setNewBill({ ...newBill, line1: e.target.value })}
-                          style={{ minWidth: 0, gridColumn: 'span 2' }}
-                          data-testid="new-customer-billing"
-                        />
-                        <Input
-                          placeholder="Apt / unit"
-                          aria-label="Apt / unit"
-                          value={newBill.line2}
-                          onChange={(e) => setNewBill({ ...newBill, line2: e.target.value })}
-                          style={{ minWidth: 0 }}
-                        />
-                        <Input
-                          placeholder="City"
-                          aria-label="City"
-                          value={newBill.city}
-                          onChange={(e) => setNewBill({ ...newBill, city: e.target.value })}
-                          style={{ minWidth: 0 }}
-                        />
-                        <div className="flex min-w-0 gap-2">
-                          <Input
-                            placeholder="State"
-                            aria-label="State"
-                            value={newBill.region}
-                            onChange={(e) => setNewBill({ ...newBill, region: e.target.value })}
-                            style={{ width: 64, minWidth: 0 }}
-                          />
-                          <Input
-                            placeholder="ZIP"
-                            aria-label="ZIP"
-                            value={newBill.postalCode}
-                            onChange={(e) =>
-                              autofillFromZip(e.target.value, setNewBill, zipMemo.current, 'bill')
-                            }
-                            style={{ flex: 1, minWidth: 0 }}
-                          />
-                        </div>
-                      </div>
-                    )}
-                    <div className="flex min-w-0 flex-wrap gap-2">
-                      <Input
-                        placeholder="How did they hear about us?"
-                        aria-label="How did they hear about us?"
-                        value={newCust.referralSource}
-                        onChange={(e) => setNewCust({ ...newCust, referralSource: e.target.value })}
-                        style={{ flex: 1, minWidth: 180 }}
-                        list="referral-sources"
-                        data-testid="new-customer-referral"
-                      />
-                      <datalist id="referral-sources">
-                        {[
-                          'Walk-in / drive-by',
-                          'Google search',
-                          'Yelp',
-                          'Facebook / Instagram',
-                          'TV / radio',
-                          'Referred by friend or family',
-                          'Repeat customer',
-                          'Billboard',
-                        ].map((s) => (
-                          <option key={s} value={s} />
-                        ))}
-                      </datalist>
-                      <Button
-                        variant="primary"
-                        size="sm"
-                        data-testid="create-customer"
-                        onClick={() => {
-                          const addr = (a: {
-                            line1: string;
-                            line2: string;
-                            city: string;
-                            region: string;
-                            postalCode: string;
-                          }) => ({
-                            line1: a.line1.trim() || null,
-                            line2: a.line2.trim() || null,
-                            city: a.city.trim() || null,
-                            region: a.region.trim() || null,
-                            postalCode: a.postalCode.trim() || null,
-                          });
-                          const hasAddr = (a: { line1: string; city: string }) =>
-                            Boolean(a.line1.trim() || a.city.trim());
-                          // Entry 0 is the delivery address (the delivery
-                          // flow reads it); billing rides second.
-                          const addresses = [
-                            ...(hasAddr(newCust) ? [{ label: 'delivery', ...addr(newCust) }] : []),
-                            ...(billDiffers && hasAddr(newBill)
-                              ? [{ label: 'billing', ...addr(newBill) }]
-                              : []),
-                          ];
-                          void api<CustomerHit>('/v1/customers', {
-                            method: 'POST',
-                            body: JSON.stringify({
-                              firstName: newCust.firstName || null,
-                              lastName: newCust.lastName || null,
-                              phone: newCust.phone || null,
-                              phone2: newCust.phone2 || null,
-                              email: newCust.email || null,
-                              referralSource: newCust.referralSource || null,
-                              ...(addresses.length > 0 ? { addressesJson: addresses } : {}),
-                            }),
+                      Cancel
+                    </Button>
+                    <Button
+                      variant="primary"
+                      data-testid="create-customer"
+                      disabled={creatingBusy}
+                      onClick={() => {
+                        const addr = (a: {
+                          line1: string;
+                          line2: string;
+                          city: string;
+                          region: string;
+                          postalCode: string;
+                        }) => ({
+                          line1: a.line1.trim() || null,
+                          line2: a.line2.trim() || null,
+                          city: a.city.trim() || null,
+                          region: a.region.trim() || null,
+                          postalCode: a.postalCode.trim() || null,
+                        });
+                        const hasAddr = (a: { line1: string; city: string }) =>
+                          Boolean(a.line1.trim() || a.city.trim());
+                        // Entry 0 is the delivery address (the delivery
+                        // flow reads it); billing rides second.
+                        const addresses = [
+                          ...(hasAddr(newCust) ? [{ label: 'delivery', ...addr(newCust) }] : []),
+                          ...(billDiffers && hasAddr(newBill)
+                            ? [{ label: 'billing', ...addr(newBill) }]
+                            : []),
+                        ];
+                        setCreatingBusy(true);
+                        void api<CustomerHit>('/v1/customers', {
+                          method: 'POST',
+                          body: JSON.stringify({
+                            firstName: newCust.firstName || null,
+                            lastName: newCust.lastName || null,
+                            phone: newCust.phone || null,
+                            phone2: newCust.phone2 || null,
+                            email: newCust.email || null,
+                            referralSource: newCust.referralSource || null,
+                            ...(addresses.length > 0 ? { addressesJson: addresses } : {}),
+                          }),
+                        })
+                          .then((c) => {
+                            setCustomer(c);
+                            setCreatingCustomer(false);
                           })
-                            .then((c) => {
-                              setCustomer(c);
-                              setCreatingCustomer(false);
-                            })
-                            .catch((err) =>
-                              setError(err instanceof Error ? err.message : String(err)),
-                            );
-                        }}
-                      >
-                        Create
-                      </Button>
-                    </div>
-                  </div>
-                ) : (
+                          .catch((err) =>
+                            setError(err instanceof Error ? err.message : String(err)),
+                          )
+                          .finally(() => setCreatingBusy(false));
+                      }}
+                    >
+                      {creatingBusy ? 'Creating…' : 'Create'}
+                    </Button>
+                  </FormActions>
+                </Stack>
+              ) : (
+                <div>
                   <Button size="sm" variant="ghost" onClick={() => setCreatingCustomer(true)}>
                     <Plus size={13} aria-hidden /> New customer
                   </Button>
-                )}
-              </div>
-            </div>
-          )}
-          {customer && fulfillment !== 'take_with' && (
-            <div style={{ marginTop: 10 }}>
-              <label
-                className="flex items-center gap-2"
-                style={{ fontSize: 13, color: 'var(--text-secondary)' }}
-              >
-                <input
-                  type="checkbox"
-                  checked={shipDiffers}
-                  onChange={(e) => setShipDiffers(e.target.checked)}
-                />
-                Ship to a different address (default: billing address)
-              </label>
-              {shipDiffers && (
-                <div className="mt-2 grid gap-2 sm:grid-cols-3">
-                  <Input
-                    placeholder="Address line 1"
-                    aria-label="Address line 1"
-                    value={ship.line1}
-                    onChange={(e) => setShip({ ...ship, line1: e.target.value })}
-                  />
-                  <Input
-                    placeholder="Line 2"
-                    aria-label="Line 2"
-                    value={ship.line2}
-                    onChange={(e) => setShip({ ...ship, line2: e.target.value })}
-                  />
-                  <Input
-                    placeholder="City"
-                    aria-label="City"
-                    value={ship.city}
-                    onChange={(e) => setShip({ ...ship, city: e.target.value })}
-                  />
-                  <Input
-                    placeholder="State"
-                    aria-label="State"
-                    value={ship.region}
-                    onChange={(e) => setShip({ ...ship, region: e.target.value })}
-                  />
-                  <Input
-                    placeholder="ZIP"
-                    aria-label="ZIP"
-                    value={ship.postalCode}
-                    onChange={(e) =>
-                      autofillFromZip(e.target.value, setShip, zipMemo.current, 'ship')
-                    }
-                  />
-                  <Input
-                    placeholder="Phone at address"
-                    aria-label="Phone at address"
-                    value={ship.phone}
-                    onChange={(e) => setShip({ ...ship, phone: e.target.value })}
-                  />
                 </div>
-              )}
-            </div>
-          )}
+              ))}
+            {customer && fulfillment !== 'take_with' && (
+              <Stack gap="sm">
+                <label className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={shipDiffers}
+                    onChange={(e) => setShipDiffers(e.target.checked)}
+                  />
+                  Ship to a different address (default: billing address)
+                </label>
+                {shipDiffers && (
+                  <div className="grid gap-2 sm:grid-cols-3">
+                    <Input
+                      placeholder="Address line 1"
+                      aria-label="Address line 1"
+                      value={ship.line1}
+                      onChange={(e) => setShip({ ...ship, line1: e.target.value })}
+                    />
+                    <Input
+                      placeholder="Line 2"
+                      aria-label="Line 2"
+                      value={ship.line2}
+                      onChange={(e) => setShip({ ...ship, line2: e.target.value })}
+                    />
+                    <Input
+                      placeholder="City"
+                      aria-label="City"
+                      value={ship.city}
+                      onChange={(e) => setShip({ ...ship, city: e.target.value })}
+                    />
+                    <Input
+                      placeholder="State"
+                      aria-label="State"
+                      value={ship.region}
+                      onChange={(e) => setShip({ ...ship, region: e.target.value })}
+                    />
+                    <Input
+                      placeholder="ZIP"
+                      aria-label="ZIP"
+                      value={ship.postalCode}
+                      onChange={(e) =>
+                        autofillFromZip(e.target.value, setShip, zipMemo.current, 'ship')
+                      }
+                    />
+                    <Input
+                      placeholder="Phone at address"
+                      aria-label="Phone at address"
+                      value={ship.phone}
+                      onChange={(e) => setShip({ ...ship, phone: e.target.value })}
+                    />
+                  </div>
+                )}
+              </Stack>
+            )}
+          </Stack>
         </Card>
 
         <Card
           title={<StepTitle n={2} label="Items" />}
-          style={{ marginBottom: 14 }}
           actions={
-            <div className="flex gap-2">
+            <>
               <Button
                 size="sm"
                 variant="ghost"
@@ -1485,15 +1480,13 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
               >
                 <Search size={13} aria-hidden /> Add Product
               </Button>
-            </div>
+            </>
           }
         >
           {lines.length === 0 ? (
-            <p className="muted" style={{ margin: 0, fontSize: 13 }}>
-              No items yet — Add Product to start.
-            </p>
+            <EmptyState>No items yet — Add Product to start.</EmptyState>
           ) : (
-            <div className="overflow-x-auto">
+            <TableWrap>
               <table className="table">
                 <thead>
                   <tr>
@@ -1504,7 +1497,7 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
                     <th>Fulfillment</th>
                     <th>Inventory from</th>
                     <th className="num">Amount</th>
-                    <th />
+                    <th className="actions" />
                   </tr>
                 </thead>
                 <tbody>
@@ -1520,17 +1513,16 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
                   ))}
                 </tbody>
               </table>
-            </div>
+            </TableWrap>
           )}
         </Card>
 
         <Card title={<StepTitle n={3} label="Order details" />}>
-          <div className="grid gap-2 sm:grid-cols-3 lg:grid-cols-4">
+          <FormGrid cols={3}>
             <Field label="Order type">
               <Select
                 value={orderType}
                 onChange={(e) => setOrderType(e.target.value as typeof orderType)}
-                style={{ width: '100%' }}
                 data-testid="order-type"
               >
                 <option value="sales_order">Sales order</option>
@@ -1546,7 +1538,6 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
                   const next = locations.find((l) => l.id === e.target.value);
                   if (next) setTaxRateBps(next.taxRateBps ?? taxRateBps);
                 }}
-                style={{ width: '100%' }}
               >
                 {locations
                   .filter((l) => l.canSellHere !== false)
@@ -1580,7 +1571,6 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
                     ),
                   );
                 }}
-                style={{ width: '100%' }}
                 data-testid="fulfillment-method"
               >
                 {FULFILLMENTS.map((f) => (
@@ -1591,32 +1581,35 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
               </Select>
             </Field>
             {fulfillment !== 'take_with' && (
-              <Field label={fulfillment === 'pickup' ? 'Pickup date' : 'Delivery date'}>
+              <Field
+                label={fulfillment === 'pickup' ? 'Pickup date' : 'Delivery date'}
+                // The capacity note rides the field: muted while stops
+                // remain, red (and marked invalid) once the day is full.
+                hint={
+                  fulfillment === 'delivery' &&
+                  dayCapacity &&
+                  dayCapacity.booked < dayCapacity.cap ? (
+                    <span data-testid="newsale-capacity">
+                      {`${dayCapacity.cap - dayCapacity.booked} of ${dayCapacity.cap} stops left that day`}
+                    </span>
+                  ) : undefined
+                }
+                error={
+                  fulfillment === 'delivery' &&
+                  dayCapacity &&
+                  dayCapacity.booked >= dayCapacity.cap ? (
+                    <span data-testid="newsale-capacity">
+                      {`Full — ${dayCapacity.booked}/${dayCapacity.cap} stops (booking will need a capacity override)`}
+                    </span>
+                  ) : undefined
+                }
+              >
                 <Input
                   type="date"
                   value={requestedDate}
                   min={new Date().toISOString().slice(0, 10)}
                   onChange={(e) => setRequestedDate(e.target.value)}
-                  style={{ width: '100%' }}
                 />
-                {fulfillment === 'delivery' && dayCapacity && (
-                  <span
-                    data-testid="newsale-capacity"
-                    style={{
-                      display: 'block',
-                      marginTop: 3,
-                      fontSize: 11.5,
-                      color:
-                        dayCapacity.booked >= dayCapacity.cap
-                          ? 'var(--danger)'
-                          : 'var(--text-muted)',
-                    }}
-                  >
-                    {dayCapacity.booked >= dayCapacity.cap
-                      ? `Full — ${dayCapacity.booked}/${dayCapacity.cap} stops (booking will need a capacity override)`
-                      : `${dayCapacity.cap - dayCapacity.booked} of ${dayCapacity.cap} stops left that day`}
-                  </span>
-                )}
               </Field>
             )}
             {members.length > 0 && (
@@ -1625,7 +1618,6 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
                   <Select
                     value={salespeople[0] ?? ''}
                     onChange={(e) => setSalespeople([e.target.value, salespeople[1] ?? ''])}
-                    style={{ width: '100%' }}
                   >
                     <option value="">Me (signed in)</option>
                     {members.map((m) => (
@@ -1639,7 +1631,6 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
                   <Select
                     value={salespeople[1] ?? ''}
                     onChange={(e) => setSalespeople([salespeople[0] ?? '', e.target.value])}
-                    style={{ width: '100%' }}
                   >
                     <option value="">None</option>
                     {members.map((m) => (
@@ -1651,77 +1642,42 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
                 </Field>
               </>
             )}
-          </div>
-          {fulfillment !== 'take_with' && (
-            <div style={{ marginTop: 8 }}>
-              <Field label="Delivery / pickup instructions">
+            {fulfillment !== 'take_with' && (
+              <Field label="Delivery / pickup instructions" className="form-span">
                 <textarea
                   value={deliveryInstructions}
                   onChange={(e) => setDeliveryInstructions(e.target.value)}
                   rows={2}
                   className="textarea"
-                  style={{ width: '100%', resize: 'vertical' }}
                 />
               </Field>
-            </div>
-          )}
-          <div style={{ marginTop: 8 }}>
-            <Field label="Order notes (printed on the invoice)">
+            )}
+            <Field label="Order notes (printed on the invoice)" className="form-span">
               <textarea
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
                 rows={2}
                 className="textarea"
-                style={{ width: '100%', resize: 'vertical' }}
               />
             </Field>
-          </div>
+          </FormGrid>
         </Card>
         {/* BA-0036: DOM-last so the entry path gets the first tab stops;
             CSS order keeps the strip visually on top. */}
         {drafts.length > 0 && (
-          <div
-            className="mb-3 flex flex-wrap items-center gap-2"
-            style={{ order: -1 }}
-            data-testid="draft-chips"
-          >
-            <span style={{ fontSize: 12.5, color: 'var(--text-secondary)' }}>Drafts:</span>
+          <Toolbar className="-order-1" data-testid="draft-chips">
+            <span className="muted">Drafts:</span>
             {drafts.map((d) => (
-              <span
-                key={d.id}
-                className="btn btn-sm"
-                style={{
-                  border: '1px dashed var(--border-strong)',
-                  background: 'var(--surface)',
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: 6,
-                  padding: 0,
-                }}
-              >
-                <button
-                  style={{
-                    border: 'none',
-                    background: 'none',
-                    cursor: 'pointer',
-                    font: 'inherit',
-                    padding: '4px 0 4px 10px',
-                  }}
-                  onClick={() => void resumeDraft(d.id)}
-                >
+              <span key={d.id} className="inline-flex items-center gap-1">
+                <Button size="sm" variant="secondary" onClick={() => void resumeDraft(d.id)}>
                   {d.number} · {formatMoney(d.totalCents)}
-                </button>
-                <button
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
                   aria-label={`Delete draft ${d.number}`}
                   title="Delete this draft"
                   data-testid="delete-draft"
-                  style={{
-                    border: 'none',
-                    background: 'none',
-                    cursor: 'pointer',
-                    color: 'var(--text-muted)',
-                    padding: '4px 8px 4px 0',
-                  }}
                   onClick={() => {
                     if (!confirm(`Delete draft ${d.number}? This cannot be undone.`)) return;
                     void api(`/v1/orders/${d.id}/cancel`, {
@@ -1738,21 +1694,23 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
                   }}
                 >
                   ✕
-                </button>
+                </Button>
               </span>
             ))}
-          </div>
+          </Toolbar>
         )}
       </div>
 
       {/* Pinned totals + payments rail */}
       <div>
-        <div style={{ position: 'sticky', top: 12 }}>
-          <Card title="Totals" style={{ marginBottom: 14 }}>
-            <div style={{ fontSize: 13.5 }} data-testid="totals-panel">
-              <TotalRow label="Merchandise" cents={totals.merchandise} />
-              <TotalRow label="Discounts" cents={-totals.discounts} />
-              <div className="my-1 grid grid-cols-2 gap-2">
+        <Stack className="sticky top-3">
+          <Card title="Totals">
+            <Stack gap="sm" data-testid="totals-panel">
+              <div>
+                <TotalRow label="Merchandise" cents={totals.merchandise} />
+                <TotalRow label="Discounts" cents={-totals.discounts} />
+              </div>
+              <FormGrid cols={2}>
                 <Field label="Installation $">
                   <Input
                     type="number"
@@ -1760,7 +1718,6 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
                     min={0}
                     value={installFee}
                     onChange={(e) => setInstallFee(e.target.value)}
-                    style={{ width: '100%', padding: '4px 8px' }}
                   />
                 </Field>
                 <Field label="Delivery $">
@@ -1770,156 +1727,162 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
                     min={0}
                     value={deliveryFee}
                     onChange={(e) => setDeliveryFee(e.target.value)}
-                    style={{ width: '100%', padding: '4px 8px' }}
                   />
                 </Field>
+              </FormGrid>
+              <div>
+                <TotalRow label="Recycling" cents={totals.recycling} />
+                <TotalRow
+                  label={`Tax (${(taxRateBps / 100).toFixed(2)}%)`}
+                  cents={totals.taxCents}
+                />
               </div>
-              <TotalRow label="Recycling" cents={totals.recycling} />
-              <TotalRow label={`Tax (${(taxRateBps / 100).toFixed(2)}%)`} cents={totals.taxCents} />
-              <div className="my-1 grid grid-cols-1">
-                <Field label="Order discount $">
-                  <Input
-                    type="number"
-                    step="0.01"
-                    min={0}
-                    value={orderDiscount}
-                    onChange={(e) => setOrderDiscount(e.target.value)}
-                    style={{ width: '100%', padding: '4px 8px' }}
-                  />
-                  {parseDollars(orderDiscount) > totals.orderDiscApplied && (
-                    <span style={{ fontSize: 11.5, color: 'var(--warning)' }}>
-                      Capped at the merchandise total — {formatMoney(totals.orderDiscApplied)}{' '}
-                      applied.
-                    </span>
-                  )}
-                </Field>
-              </div>
-              <div
-                className="flex justify-between"
-                style={{ fontWeight: 700, fontSize: 17, margin: '6px 0' }}
+              <Field
+                label="Order discount $"
+                hint={
+                  parseDollars(orderDiscount) > totals.orderDiscApplied
+                    ? `Capped at the merchandise total — ${formatMoney(totals.orderDiscApplied)} applied.`
+                    : undefined
+                }
               >
-                <span>Total</span>
-                <span data-testid="grand-total">
-                  <Money cents={totals.totalCents} />
-                </span>
+                <Input
+                  type="number"
+                  step="0.01"
+                  min={0}
+                  value={orderDiscount}
+                  onChange={(e) => setOrderDiscount(e.target.value)}
+                />
+              </Field>
+              <div>
+                <div className="flex justify-between text-lg font-bold">
+                  <span>Total</span>
+                  <span data-testid="grand-total">
+                    <Money cents={totals.totalCents} />
+                  </span>
+                </div>
+                <TotalRow label="Amount paid" cents={totals.paidCents} />
+                <div className="flex justify-between font-semibold">
+                  <span>Balance due</span>
+                  <span data-testid="balance-due">
+                    <Money cents={totals.balanceCents} />
+                  </span>
+                </div>
               </div>
-              <TotalRow label="Amount paid" cents={totals.paidCents} />
-              <div className="flex justify-between" style={{ fontWeight: 600 }}>
-                <span>Balance due</span>
-                <span data-testid="balance-due">
-                  <Money cents={totals.balanceCents} />
-                </span>
-              </div>
-            </div>
+            </Stack>
           </Card>
 
-          <Card title="Payments" style={{ marginBottom: 14 }}>
+          <Card title="Payments">
             {storeCredit != null && storeCredit > 0 && (
-              <p
-                data-testid="store-credit-chip"
-                style={{ fontSize: 12.5, margin: '0 0 8px', color: 'var(--success)' }}
-              >
+              <Alert tone="success" data-testid="store-credit-chip">
                 Store credit available: <strong>{formatMoney(storeCredit)}</strong> — use the “Store
                 credit” tender to apply it.
-              </p>
+              </Alert>
             )}
-            {payments.map((p) => (
-              <div key={p.key} className="mb-1 flex items-center gap-2" style={{ fontSize: 13 }}>
-                <span style={{ flex: 1 }}>
-                  {TENDERS.find((t) => t.value === p.method)?.label}
-                  {p.ref ? ` · ${p.ref}` : ''}
-                </span>
-                <Money cents={p.amountCents} />
-                <button
-                  onClick={() => setPayments((prev) => prev.filter((x) => x.key !== p.key))}
-                  style={{ border: 'none', background: 'none', cursor: 'pointer' }}
-                  aria-label="Remove payment"
+            <Stack gap="sm">
+              {payments.length > 0 && (
+                <div>
+                  {payments.map((p) => (
+                    <div key={p.key} className="flex items-center gap-2">
+                      <span className="min-w-0 flex-1">
+                        {TENDERS.find((t) => t.value === p.method)?.label}
+                        {p.ref ? ` · ${p.ref}` : ''}
+                      </span>
+                      <Money cents={p.amountCents} />
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => setPayments((prev) => prev.filter((x) => x.key !== p.key))}
+                        aria-label="Remove payment"
+                      >
+                        <X size={13} aria-hidden />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div className="grid grid-cols-[1fr_90px] gap-2">
+                <Select
+                  value={payMethod}
+                  onChange={(e) => setPayMethod(e.target.value as Tender)}
+                  data-testid="pay-method"
+                  aria-label="Payment method"
                 >
-                  <X size={13} />
-                </button>
+                  {TENDERS.map((t) => (
+                    <option key={t.value} value={t.value}>
+                      {t.label}
+                    </option>
+                  ))}
+                </Select>
+                <Input
+                  type="number"
+                  step="0.01"
+                  min={0}
+                  placeholder={(totals.balanceCents / 100).toFixed(2)}
+                  value={payAmount}
+                  onChange={(e) => setPayAmount(e.target.value)}
+                  data-testid="pay-amount"
+                  aria-label="Payment amount"
+                />
               </div>
-            ))}
-            <div className="grid gap-2" style={{ gridTemplateColumns: '1fr 90px' }}>
-              <Select
-                value={payMethod}
-                onChange={(e) => setPayMethod(e.target.value as Tender)}
-                data-testid="pay-method"
-                aria-label="Payment method"
-              >
-                {TENDERS.map((t) => (
-                  <option key={t.value} value={t.value}>
-                    {t.label}
-                  </option>
-                ))}
-              </Select>
-              <Input
-                type="number"
-                step="0.01"
-                min={0}
-                placeholder={(totals.balanceCents / 100).toFixed(2)}
-                value={payAmount}
-                onChange={(e) => setPayAmount(e.target.value)}
-                data-testid="pay-amount"
-                aria-label="Payment amount"
-              />
-            </div>
-            {/* BA-0003: this field renders for every method so the rail
+              {/* BA-0003: this field renders for every method so the rail
                 keeps one height and Complete never moves mid-aim. */}
-            <Input
-              placeholder={
-                payMethod === 'cash' ? 'Reference (optional)' : 'Reference / last 4 / approval #'
-              }
-              value={payRef}
-              onChange={(e) => setPayRef(e.target.value)}
-              aria-label="Payment reference"
-              style={{ width: '100%', marginTop: 6 }}
-            />
-            <div className="flex gap-2" style={{ marginTop: 8 }}>
-              <Button size="sm" variant="secondary" onClick={addPayment} data-testid="add-payment">
-                Add payment
-              </Button>
-              {totals.balanceCents > 0 && (
+              <Input
+                placeholder={
+                  payMethod === 'cash' ? 'Reference (optional)' : 'Reference / last 4 / approval #'
+                }
+                value={payRef}
+                onChange={(e) => setPayRef(e.target.value)}
+                aria-label="Payment reference"
+                className="w-full"
+              />
+              <div className="flex gap-2">
                 <Button
                   size="sm"
-                  variant="ghost"
-                  onClick={() => setPayAmount((totals.balanceCents / 100).toFixed(2))}
+                  variant="secondary"
+                  onClick={addPayment}
+                  data-testid="add-payment"
                 >
-                  Exact balance
+                  Add payment
                 </Button>
-              )}
-            </div>
+                {totals.balanceCents > 0 && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => setPayAmount((totals.balanceCents / 100).toFixed(2))}
+                  >
+                    Exact balance
+                  </Button>
+                )}
+              </div>
+            </Stack>
           </Card>
 
-          <div style={{ minHeight: 26, marginBottom: 4 }} aria-live="polite">
-            {error && (
-              <p style={{ color: 'var(--danger)', fontSize: 13, margin: 0 }} role="alert">
-                {error}
-              </p>
-            )}
+          <div>
+            <div aria-live="polite">{error && <Alert tone="error">{error}</Alert>}</div>
+            <div className="flex flex-col gap-2">
+              <Button
+                variant="primary"
+                disabled={busy}
+                onClick={() => void submit('complete')}
+                data-testid="complete-sale"
+              >
+                {busy
+                  ? 'Working…'
+                  : orderType === 'quote'
+                    ? `Save quote ${formatMoney(totals.totalCents)}`
+                    : `Complete ${formatMoney(totals.totalCents)}`}
+              </Button>
+              <Button
+                variant="secondary"
+                disabled={busy}
+                onClick={() => void submit('draft')}
+                data-testid="save-draft"
+              >
+                Save as Draft
+              </Button>
+            </div>
           </div>
-          <div className="flex flex-col gap-2">
-            <Button
-              variant="primary"
-              disabled={busy}
-              onClick={() => void submit('complete')}
-              data-testid="complete-sale"
-            >
-              {busy
-                ? 'Working…'
-                : orderType === 'quote'
-                  ? `Save quote ${formatMoney(totals.totalCents)}`
-                  : `Complete ${formatMoney(totals.totalCents)}`}
-            </Button>
-            <Button
-              variant="secondary"
-              disabled={busy}
-              onClick={() => void submit('draft')}
-              data-testid="save-draft"
-            >
-              Save as Draft
-            </Button>
-          </div>
-        </div>
+        </Stack>
       </div>
 
       {showProductSearch && (
@@ -1957,7 +1920,7 @@ function LineRow({
   return (
     <>
       <tr>
-        <td style={{ minWidth: 180 }}>{l.description}</td>
+        <td className="min-w-[180px]">{l.description}</td>
         <td>
           <Input
             type="number"
@@ -1982,7 +1945,7 @@ function LineRow({
               }
               onPatch(l.key, { quantity: qty });
             }}
-            style={{ width: 56, padding: '4px 8px' }}
+            className="w-16"
           />
         </td>
         <td>
@@ -1995,7 +1958,7 @@ function LineRow({
             defaultValue={(l.unitPriceCents / 100).toFixed(2)}
             onBlur={(e) => onPatch(l.key, { unitPriceCents: parseDollars(e.target.value) })}
             aria-label={`Unit price for ${l.description}`}
-            style={{ width: 84, padding: '4px 8px' }}
+            className="w-24"
             data-testid="line-price"
           />
         </td>
@@ -2007,21 +1970,19 @@ function LineRow({
             placeholder="0.00"
             aria-label={`Discount for ${l.description}`}
             onBlur={(e) => onPatch(l.key, { lineDiscountCents: parseDollars(e.target.value) })}
-            style={{ width: 70, padding: '4px 8px' }}
+            className="w-20"
           />
         </td>
         <td>
           {l.lineType === 'custom' ? (
-            <span className="muted" style={{ fontSize: 12 }}>
-              fee
-            </span>
+            <span className="muted">fee</span>
           ) : (
             <Select
               value={l.fulfillmentMethod}
               onChange={(e) =>
                 onPatch(l.key, { fulfillmentMethod: e.target.value as Line['fulfillmentMethod'] })
               }
-              style={{ width: 116, padding: '4px 8px' }}
+              className="w-32"
               aria-label={`Fulfillment for ${l.description}`}
             >
               <option value="">order default</option>
@@ -2035,9 +1996,7 @@ function LineRow({
         </td>
         <td>
           {l.lineType === 'custom' ? (
-            <span className="muted" style={{ fontSize: 12 }}>
-              —
-            </span>
+            <span className="muted">—</span>
           ) : (
             <Select
               value={l.sourceLocationId || storeId}
@@ -2046,7 +2005,7 @@ function LineRow({
                   sourceLocationId: e.target.value === storeId ? '' : e.target.value,
                 })
               }
-              style={{ width: 130, padding: '4px 8px' }}
+              className="w-36"
               aria-label={`Inventory source for ${l.description}`}
               data-testid="line-source"
             >
@@ -2070,29 +2029,21 @@ function LineRow({
         <td className="num">
           <Money cents={amount} />
         </td>
-        <td>
-          <button
+        <td className="actions">
+          <Button
+            size="sm"
+            variant="ghost"
             onClick={() => onRemove(l.key)}
-            style={{ border: 'none', background: 'none', cursor: 'pointer' }}
             aria-label="Remove line"
           >
-            <X size={14} />
-          </button>
+            <X size={14} aria-hidden />
+          </Button>
         </td>
       </tr>
       {outOfStock && (
         <tr>
-          <td colSpan={8} style={{ paddingTop: 0 }}>
-            <div
-              style={{
-                background: '#fef3c7',
-                color: '#92400e',
-                fontSize: 12.5,
-                padding: '4px 10px',
-                borderRadius: 6,
-              }}
-              data-testid="atp-banner"
-            >
+          <td colSpan={8}>
+            <Alert tone="warning" data-testid="atp-banner">
               Not in stock at the selected source location.
               {l.atpDate
                 ? ` Available ~${new Date(l.atpDate).toLocaleDateString('en-US', {
@@ -2100,7 +2051,7 @@ function LineRow({
                     day: 'numeric',
                   })} via PO.`
                 : ' No open PO — will special-order.'}
-            </div>
+            </Alert>
           </td>
         </tr>
       )}
@@ -2110,22 +2061,8 @@ function LineRow({
 
 function StepTitle({ n, label }: { n: number; label: string }) {
   return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-      <span
-        aria-hidden
-        style={{
-          width: 20,
-          height: 20,
-          borderRadius: '50%',
-          background: 'var(--brand)',
-          color: '#fff',
-          fontSize: 11.5,
-          fontWeight: 700,
-          display: 'inline-flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-        }}
-      >
+    <span className="inline-flex items-center gap-2">
+      <span aria-hidden className="badge badge-brand">
         {n}
       </span>
       {label}
@@ -2135,7 +2072,7 @@ function StepTitle({ n, label }: { n: number; label: string }) {
 
 function TotalRow({ label, cents }: { label: string; cents: number }) {
   return (
-    <div className="flex justify-between" style={{ color: 'var(--text-secondary)' }}>
+    <div className="flex justify-between muted">
       <span>{label}</span>
       <Money cents={cents} />
     </div>
@@ -2171,6 +2108,8 @@ function parseDollars(s: string): number {
   return Math.round(n * 100);
 }
 
+// Autocomplete option inside the customer popover — no shared listbox
+// primitive exists yet, so the reset stays here (structural only).
 const hitBtn = {
   display: 'block',
   width: '100%',
@@ -2179,5 +2118,5 @@ const hitBtn = {
   border: 'none',
   background: 'transparent',
   cursor: 'pointer',
-  fontSize: 13.5,
+  font: 'inherit',
 };

@@ -4,7 +4,15 @@ import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '@/lib/api';
 import { Money } from '@/components/money';
-import { Button, LinkButton, PageHeader } from '@/components/ui';
+import {
+  Alert,
+  Button,
+  LinkButton,
+  PageHeader,
+  SectionHeading,
+  Stack,
+  StatusBadge,
+} from '@/components/ui';
 
 /**
  * Delivery calendar (STORIS cutover Day 3; owner ask 2026-08-30: a full
@@ -114,11 +122,15 @@ export default function DeliveriesPage() {
   }
 
   const today = fmtDate(new Date());
+  const rangeLabel = `${days[0]!.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} – ${days[
+    days.length - 1
+  ]!.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}`;
 
   return (
     <div>
       <PageHeader
         title="Deliveries"
+        meta={<span>{rangeLabel}</span>}
         sub={
           <>
             Drag a card to another day to reschedule. Schedule new deliveries from an order&apos;s
@@ -130,121 +142,110 @@ export default function DeliveriesPage() {
             <LinkButton href="/deliveries/dispatch" variant="secondary" size="sm">
               Dispatch
             </LinkButton>
-            <Button size="sm" onClick={() => shiftWeek(-7)}>
+            <Button size="sm" variant="secondary" onClick={() => shiftWeek(-7)}>
               ← Prev week
             </Button>
-            <Button size="sm" onClick={() => setWeekStart(startOfWeek(new Date()))}>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => setWeekStart(startOfWeek(new Date()))}
+            >
               Today
             </Button>
-            <Button size="sm" onClick={() => shiftWeek(7)}>
+            <Button size="sm" variant="secondary" onClick={() => shiftWeek(7)}>
               Next week →
             </Button>
           </>
         }
       />
-      {error && <p style={{ color: 'var(--danger)', fontSize: 13 }}>{error}</p>}
+      <Stack gap="sm">
+        {error && <Alert tone="error">{error}</Alert>}
 
-      {weeks.map((week) => (
-        <div key={fmtDate(week[0]!)} className="overflow-x-auto pb-2">
-          <div className="flex gap-2 lg:grid lg:grid-cols-7">
-            {week.map((d) => {
-              const key = fmtDate(d);
-              const list = byDay.get(key) ?? [];
-              const isToday = key === today;
-              return (
-                <div
-                  key={key}
-                  onDragOver={(e) => e.preventDefault()}
-                  onDrop={() => {
-                    if (dragId) void reschedule(dragId, key);
-                    setDragId(null);
-                  }}
-                  className="min-w-[160px] flex-1 lg:min-w-0"
-                  style={{
-                    background: isToday ? 'var(--brand-soft)' : 'var(--neutral-soft)',
-                    borderRadius: 'var(--radius)',
-                    padding: 8,
-                    minHeight: 130,
-                  }}
-                >
-                  <Link
-                    href={`/deliveries/day/${key}`}
+        {weeks.map((week) => (
+          <div key={fmtDate(week[0]!)} className="overflow-x-auto">
+            <div className="flex gap-2 lg:grid lg:grid-cols-7">
+              {week.map((d) => {
+                const key = fmtDate(d);
+                const list = byDay.get(key) ?? [];
+                const isToday = key === today;
+                return (
+                  <div
+                    key={key}
+                    onDragOver={(e) => e.preventDefault()}
+                    onDrop={() => {
+                      if (dragId) void reschedule(dragId, key);
+                      setDragId(null);
+                    }}
+                    className="min-w-[160px] flex-1 rounded-[var(--radius)] p-2 lg:min-w-0"
                     style={{
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'center',
-                      fontSize: 11,
-                      fontWeight: 600,
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.05em',
-                      color: isToday ? 'var(--brand-soft-text)' : 'var(--text-secondary)',
-                      textDecoration: 'none',
-                      padding: '2px 4px 8px',
-                      marginBottom: 4,
+                      // Today is the one data-driven cell colour.
+                      background: isToday ? 'var(--brand-soft)' : 'var(--neutral-soft)',
+                      minHeight: 130,
                     }}
                   >
-                    {d.toLocaleDateString(undefined, {
-                      weekday: 'short',
-                      month: 'short',
-                      day: 'numeric',
-                    })}
-                    <span style={{ color: 'var(--text-muted)' }}>{list.length || ''}</span>
-                  </Link>
-                  {list.map((r) => (
-                    <Link
-                      key={r.id}
-                      href={`/deliveries/${r.id}`}
-                      draggable={r.status === 'scheduled' || r.status === 'loaded'}
-                      onDragStart={() => setDragId(r.id)}
-                      data-testid="delivery-card"
-                      className="card card-hover"
-                      style={{
-                        display: 'block',
-                        borderLeft: `4px solid ${STATUS_COLOR[r.status] ?? 'var(--text-muted)'}`,
-                        padding: '8px 10px',
-                        margin: '0 0 6px',
-                        textDecoration: 'none',
-                        color: 'inherit',
-                        fontSize: 12,
-                        cursor: 'pointer',
-                      }}
-                    >
-                      <div style={{ fontWeight: 600 }}>{r.orderNumber}</div>
-                      <div style={{ color: 'var(--text-secondary)' }}>
-                        {r.customerName ?? '—'}
-                        {r.addressCity ? ` · ${r.addressCity}` : ''}
-                      </div>
-                      {(r.windowStart || r.windowEnd) && (
-                        <div style={{ color: 'var(--text-secondary)' }}>
-                          {r.windowStart?.slice(0, 5)}–{r.windowEnd?.slice(0, 5)}
-                        </div>
-                      )}
-                      <div style={{ marginTop: 2 }}>
-                        <span
+                    <SectionHeading
+                      as="h3"
+                      title={
+                        <Link
+                          href={`/deliveries/day/${key}`}
+                          title="Open the printable day-sheet"
+                          className="no-underline"
                           style={{
-                            fontSize: 10,
-                            textTransform: 'uppercase',
-                            letterSpacing: '0.04em',
-                            color: STATUS_COLOR[r.status] ?? 'var(--text-muted)',
-                            fontWeight: 700,
+                            // Today's heading takes the brand-soft text colour (data-driven).
+                            color: isToday ? 'var(--brand-soft-text)' : 'inherit',
                           }}
                         >
-                          {r.status.replace(/_/g, ' ')}
-                        </span>
-                        {r.balanceDueCents > 0 && (
-                          <span style={{ float: 'right', color: 'var(--warning)' }}>
-                            <Money cents={r.balanceDueCents} /> due
-                          </span>
-                        )}
-                      </div>
-                    </Link>
-                  ))}
-                </div>
-              );
-            })}
+                          {d.toLocaleDateString(undefined, {
+                            weekday: 'short',
+                            month: 'short',
+                            day: 'numeric',
+                          })}
+                        </Link>
+                      }
+                      actions={<span className="muted">{list.length || ''}</span>}
+                    />
+                    <div className="flex flex-col gap-1.5">
+                      {list.map((r) => (
+                        <Link
+                          key={r.id}
+                          href={`/deliveries/${r.id}`}
+                          draggable={r.status === 'scheduled' || r.status === 'loaded'}
+                          onDragStart={() => setDragId(r.id)}
+                          data-testid="delivery-card"
+                          className="card card-hover block cursor-pointer text-inherit no-underline"
+                          style={{
+                            // Status colour on the left edge is data-driven.
+                            borderLeft: `4px solid ${STATUS_COLOR[r.status] ?? 'var(--text-muted)'}`,
+                          }}
+                        >
+                          <div className="font-semibold">{r.orderNumber}</div>
+                          <div className="text-[var(--text-secondary)]">
+                            {r.customerName ?? '—'}
+                            {r.addressCity ? ` · ${r.addressCity}` : ''}
+                          </div>
+                          {(r.windowStart || r.windowEnd) && (
+                            <div className="text-[var(--text-secondary)]">
+                              {r.windowStart?.slice(0, 5)}–{r.windowEnd?.slice(0, 5)}
+                            </div>
+                          )}
+                          <div className="flex items-center justify-between gap-2">
+                            <StatusBadge status={r.status} />
+                            {r.balanceDueCents > 0 && (
+                              <span className="text-[var(--warning)]">
+                                <Money cents={r.balanceDueCents} /> due
+                              </span>
+                            )}
+                          </div>
+                        </Link>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
-        </div>
-      ))}
+        ))}
+      </Stack>
     </div>
   );
 }

@@ -4612,3 +4612,81 @@ one page needs individual windows.
   Audit, dashboard trend, Operations (page + salesperson card),
   Exceptions digest, Orders, Sales. E2E orders / operations / my-day
   pass. PLAN §12.7 (A11).
+
+### Checkpoint — 2026-09-02 (Report Cash Drawer Balancing Totals)
+
+Owner ask: the STORIS "Report Cash Drawer Balancing Totals" (parameter
+screen + sample PDF) — "create this too".
+
+- API `GET /v1/reports/cash-drawer-balancing` (balance date + start/end
+  time in store tz, Balance By drawer/operator/store, store / operator /
+  drawer filters, balanced/unbalanced drawer reference, CSV): group →
+  pay class → payment type register with the STORIS columns, subtotals,
+  grand total, Cash Drawer Reconciliation (cash + check = deposit) and
+  drawer counts. `cash-drawer-balancing.int.spec.ts` (6 tests, new CI db
+  `jetnine_cash_drawer`).
+- Web `/reports/cash-drawer-balancing` with the STORIS parameter card,
+  linked from Reports. PLAN §12.8 (A12).
+
+### Checkpoint — 2026-09-02 (Report Written Sales Dollars)
+
+Owner ask: the STORIS "Report Written Sales Dollars" (parameter screen +
+sample PDF) — "We also need this built".
+
+- API `GET /v1/reports/written-sales`: location → type (new transactions
+  excl. layaway / layaway / register sales / ADJUSTMENT) → order → line
+  with merch, gross profit, profit %, charges, customer discount, misc
+  fee, sales tax, total order; totals at every level; Order Type both /
+  orders / adjustments, Report Type detail / summary, include audit
+  comments / all salespeople / customer address, multi-store filter, CSV;
+  profit masked without `reports.financial.view`.
+  `written-sales.int.spec.ts` (6 tests, new CI db `jetnine_written_sales`).
+- Web `/reports/written-sales` with the STORIS parameter card, linked
+  from Reports. PLAN §12.9 (A13).
+
+### Checkpoint — 2026-09-02 (Advanced Vendor Settings)
+
+Owner ask: STORIS Advanced Vendor Settings (General / Shipping / PO
+Cutting Date / Auto PO Replen).
+
+- Schema: `vendors.landed_cost_json`, new `vendor_po_cutting_dates`
+  (RLS), migration 0085.
+- API: `GET /v1/vendors/:id/advanced-settings`, `PATCH
+/v1/vendors/:id/shipping`, `PUT /v1/vendors/:id/po-cutting-dates`;
+  replenishment settings gain first/second average units period and sort
+  criteria (grid + PO line order). Landed-cost lines default PO freight;
+  cutting dates block PO create/place and drop replenishment lines.
+  `vendor-settings.int.spec.ts` (6, CI db `jetnine_vendor_settings`).
+- Web `/vendors/[id]/settings` with the four STORIS tabs; Vendors list
+  links to it; replenishment page links to the Auto PO Replen tab.
+  PLAN §12.10 (A14).
+
+### Checkpoint — 2026-09-02 (design pass: layout contract on every screen)
+
+Owner ask: a screen-by-screen design pass with proper heading placement
+and margins.
+
+- Layout contract (spacing scale + margin-owning primitives in
+  `ui.tsx` / `globals.css`) and a workflow pass over 117 web files: page
+  headers, section headings, stacks, toolbars, forms, stat tiles, table
+  wraps, token classes. PLAN §12.11 (A15).
+- Typecheck, lint, unit tests and the full Playwright suite pass (one
+  spec updated for a renamed link).
+
+### Checkpoint — 2026-09-03 (catalog replacement from STORIS Active Inventory)
+
+Owner ask: replace the product catalog with the ACTIVE_INVENTORY export
+(group, SKU, brand, category, replacement cost, vendor, description), load
+stock / as-is / minimum stock per store, delete non-matching products,
+keep order lines matched.
+
+- Import pipeline: product spec + brand / group, inventory spec + as-is /
+  min stock (new `inventory_levels.reorder_point`, migration 0086),
+  tolerant store-name matching, commit `replaceCatalog` (delete vs
+  deactivate by live FK scan). `import.int.spec.ts` 15 tests.
+- Converter `docs/scripts/convert-active-inventory.py`; CSVs under
+  `docs/imports/2026-09-03/`. PLAN §12.12 (A16).
+- **Ops (owner)**: after deploy, Settings → Import: upload products.csv
+  (entity product, tick Replace catalog, validate, commit), then
+  inventory.csv (entity inventory). Validation lists any store name that
+  did not match an ERP location.

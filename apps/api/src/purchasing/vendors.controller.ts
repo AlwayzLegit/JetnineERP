@@ -9,8 +9,9 @@ import {
   Param,
   Patch,
   Post,
+  Put,
 } from '@nestjs/common';
-import { asc, eq, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { schema } from '@jetnine/db';
 import { AuditService } from '../audit/audit.service';
@@ -19,6 +20,13 @@ import { CurrentTenant } from '../auth/current-user.decorator';
 import { DRIZZLE } from '../database/database.module';
 import { RequirePermission, TenantScoped } from '../tenancy/decorators';
 import type { RequestTenantContext } from '../tenancy/request-context';
+import { parseVendorReplenishment, type VendorReplenishmentSettings } from './replenishment-data';
+import {
+  mergeLandedCost,
+  parseLandedCost,
+  validateLandedCost,
+  type LandedCostSettings,
+} from './vendor-settings';
 
 /**
  * What we carry from a vendor (owner 2026-09-02): products in the
@@ -59,6 +67,33 @@ interface CreateBody {
 }
 
 type UpdateBody = CreateBody & { isActive?: boolean };
+
+/**
+ * Advanced Vendor Settings (owner 2026-09-02, STORIS): the four tabs in
+ * one read — General (the vendor master + replenishment lead/stock days),
+ * Shipping (landed-cost lines), PO Cutting Date (collection exceptions)
+ * and Auto PO Replen (the replenishment document).
+ */
+export interface PoCuttingDateRow {
+  id: string;
+  collectionId: string;
+  collectionName: string;
+  cuttingDate: string;
+  notes: string | null;
+}
+
+export interface AdvancedVendorSettings {
+  vendor: VendorRow;
+  shipping: LandedCostSettings;
+  poCuttingDates: PoCuttingDateRow[];
+  replenishment: VendorReplenishmentSettings | null;
+  /** Every active collection, for the cutting-date picker (vendor's own first). */
+  collections: { id: string; name: string; vendorId: string | null }[];
+}
+
+interface PoCuttingDatesBody {
+  rows?: { collectionId?: string; cuttingDate?: string; notes?: string | null }[];
+}
 
 @TenantScoped()
 @Controller('v1/vendors')
@@ -175,6 +210,163 @@ export class VendorsController {
       .limit(1);
     if (!row) throw new NotFoundException('Vendor not found');
     return row;
+  }
+
+  @Get(':id/advanced-settings')
+  @RequirePermission('vendors.view')
+  async advancedSettings(
+    @CurrentTenant() _tenant: RequestTenantContext,
+    @Param('id') id: string,
+  ): Promise<AdvancedVendorSettings> {
+    const [row] = await this.db
+      .select({
+        ...SELECT_COLS,
+        landedCostJson: schema.vendors.landedCostJson,
+        replenishmentJson: schema.vendors.replenishmentJson,
+      })
+      .from(schema.vendors)
+      .where(eq(schema.vendors.id, id))
+      .limit(1);
+    if (!row) throw new NotFoundException('Vendor not found');
+    const { landedCostJson, replenishmentJson, ...vendor } = row;
+    const [poCuttingDates, collections] = await Promise.all([
+      this.cuttingDates(id),
+      this.db
+        .select({
+          id: schema.collections.id,
+          name: schema.collections.name,
+          vendorId: schema.collections.vendorId,
+        })
+        .from(schema.collections)
+        .where(eq(schema.collections.isActive, true))
+        .orderBy(
+          sql`CASE WHEN ${schema.collections.vendorId} = ${id} THEN 0 ELSE 1 END`,
+          asc(schema.collections.name),
+        ),
+    ]);
+    return {
+      vendor,
+      shipping: parseLandedCost(landedCostJson),
+      poCuttingDates,
+      replenishment: parseVendorReplenishment(replenishmentJson),
+      collections,
+    };
+  }
+
+  private async cuttingDates(vendorId: string): Promise<PoCuttingDateRow[]> {
+    return this.db
+      .select({
+        id: schema.vendorPoCuttingDates.id,
+        collectionId: schema.vendorPoCuttingDates.collectionId,
+        collectionName: schema.collections.name,
+        cuttingDate: schema.vendorPoCuttingDates.cuttingDate,
+        notes: schema.vendorPoCuttingDates.notes,
+      })
+      .from(schema.vendorPoCuttingDates)
+      .innerJoin(
+        schema.collections,
+        eq(schema.collections.id, schema.vendorPoCuttingDates.collectionId),
+      )
+      .where(eq(schema.vendorPoCuttingDates.vendorId, vendorId))
+      .orderBy(asc(schema.collections.name));
+  }
+
+  /** Shipping tab: merge the landed-cost lines over the stored document. */
+  @Patch(':id/shipping')
+  @RequirePermission('vendors.manage')
+  async patchShipping(
+    @CurrentTenant() _tenant: RequestTenantContext,
+    @Param('id') id: string,
+    @Body() body: Partial<Record<keyof LandedCostSettings, unknown>>,
+  ): Promise<{ shipping: LandedCostSettings }> {
+    const [existing] = await this.db
+      .select({ name: schema.vendors.name, landedCostJson: schema.vendors.landedCostJson })
+      .from(schema.vendors)
+      .where(eq(schema.vendors.id, id))
+      .limit(1);
+    if (!existing) throw new NotFoundException('Vendor not found');
+    const before = parseLandedCost(existing.landedCostJson);
+    const next = mergeLandedCost(before, body ?? {});
+    validateLandedCost(next);
+    await this.db
+      .update(schema.vendors)
+      .set({ landedCostJson: next as never, updatedAt: new Date() })
+      .where(eq(schema.vendors.id, id));
+    await this.audit.log({
+      action: 'vendor.update',
+      targetType: 'vendor',
+      targetId: id,
+      before: { landedCost: before },
+      after: { landedCost: next },
+    });
+    return { shipping: next };
+  }
+
+  /** PO Cutting Date tab: replace the vendor's collection exceptions. */
+  @Put(':id/po-cutting-dates')
+  @RequirePermission('vendors.manage')
+  async putCuttingDates(
+    @CurrentTenant() tenant: RequestTenantContext,
+    @Param('id') id: string,
+    @Body() body: PoCuttingDatesBody,
+  ): Promise<{ poCuttingDates: PoCuttingDateRow[] }> {
+    const [existing] = await this.db
+      .select({ id: schema.vendors.id, name: schema.vendors.name })
+      .from(schema.vendors)
+      .where(eq(schema.vendors.id, id))
+      .limit(1);
+    if (!existing) throw new NotFoundException('Vendor not found');
+    const rows = Array.isArray(body?.rows) ? body.rows : [];
+    const seen = new Set<string>();
+    for (const r of rows) {
+      if (!r.collectionId) throw new BadRequestException('rows[].collectionId is required');
+      if (seen.has(r.collectionId)) {
+        throw new BadRequestException('Each collection may carry one PO cutting date');
+      }
+      seen.add(r.collectionId);
+      if (
+        !r.cuttingDate ||
+        !/^\d{4}-\d{2}-\d{2}$/.test(r.cuttingDate) ||
+        Number.isNaN(Date.parse(`${r.cuttingDate}T00:00:00Z`))
+      ) {
+        throw new BadRequestException('rows[].cuttingDate must be YYYY-MM-DD');
+      }
+    }
+    if (seen.size > 0) {
+      const found = await this.db
+        .select({ id: schema.collections.id })
+        .from(schema.collections)
+        .where(inArray(schema.collections.id, [...seen]));
+      if (found.length !== seen.size) throw new NotFoundException('Collection not found');
+    }
+    const before = await this.cuttingDates(id);
+    await this.db
+      .delete(schema.vendorPoCuttingDates)
+      .where(and(eq(schema.vendorPoCuttingDates.vendorId, id)));
+    if (rows.length > 0) {
+      await this.db.insert(schema.vendorPoCuttingDates).values(
+        rows.map((r) => ({
+          businessId: tenant.businessId!,
+          vendorId: id,
+          collectionId: r.collectionId!,
+          cuttingDate: r.cuttingDate!,
+          notes: r.notes?.trim() || null,
+        })),
+      );
+    }
+    const after = await this.cuttingDates(id);
+    await this.audit.log({
+      action: 'vendor.update',
+      targetType: 'vendor',
+      targetId: id,
+      before: {
+        poCuttingDates: before.map((r) => ({ collection: r.collectionName, date: r.cuttingDate })),
+      },
+      after: {
+        poCuttingDates: after.map((r) => ({ collection: r.collectionName, date: r.cuttingDate })),
+      },
+    });
+    return { poCuttingDates: after };
   }
 
   @Post()

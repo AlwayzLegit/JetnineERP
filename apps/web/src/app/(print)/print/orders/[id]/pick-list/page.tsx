@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { api } from '@/lib/api';
 import { Barcode39, type OrderDocumentPayload } from '@/components/order-documents';
+import { TableWrap } from '@/components/ui';
 import { PrintToolbar } from '../../../print-toolbar';
 
 /**
@@ -55,50 +56,55 @@ export default function PickListPrintPage() {
           </div>
         </header>
 
-        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-          <thead>
-            <tr style={{ borderBottom: '2px solid #000', textAlign: 'left' }}>
-              <th style={{ padding: '4px 6px', width: 50 }}>Qty</th>
-              <th style={{ padding: '4px 6px' }}>Item</th>
-              <th style={{ padding: '4px 6px', width: 140 }}>Model / SKU</th>
-              <th style={{ padding: '4px 6px', width: 80 }}>Bin</th>
-              <th style={{ padding: '4px 6px', width: 70 }}>Pulled ☐</th>
-            </tr>
-          </thead>
-          <tbody>
-            {goods.map((l) => (
-              <tr key={l.id} style={{ borderBottom: '1px solid #999' }}>
-                <td style={{ padding: '10px 6px', fontWeight: 700, fontSize: 15 }}>{l.quantity}</td>
-                <td style={{ padding: '10px 6px' }}>
-                  {l.description}
-                  {l.lineType === 'special_order' && (
-                    <span style={{ fontWeight: 700 }}> — SPECIAL ORDER</span>
-                  )}
-                </td>
-                <td style={{ padding: '10px 6px' }}>
-                  {l.model ?? '—'}
-                  {/* BA-0029: SKU barcode per line, when it encodes. */}
-                  {l.model && (
-                    <div>
-                      <Barcode39 value={l.model} height={22} showText={false} />
-                    </div>
-                  )}
-                </td>
-                <td style={{ padding: '10px 6px', fontWeight: 700 }}>{l.bin ?? '—'}</td>
-                <td style={{ padding: '10px 6px' }}>
-                  <span
-                    style={{
-                      display: 'inline-block',
-                      width: 22,
-                      height: 22,
-                      border: '2px solid #000',
-                    }}
-                  />
-                </td>
+        {/* Print sheet: the cells draw their own black rules, so the wrap drops its chrome. */}
+        <TableWrap style={{ border: 'none', borderRadius: 0, background: 'transparent' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead>
+              <tr style={{ borderBottom: '2px solid #000', textAlign: 'left' }}>
+                <th style={{ padding: '4px 6px', width: 50 }}>Qty</th>
+                <th style={{ padding: '4px 6px' }}>Item</th>
+                <th style={{ padding: '4px 6px', width: 140 }}>Model / SKU</th>
+                <th style={{ padding: '4px 6px', width: 80 }}>Bin</th>
+                <th style={{ padding: '4px 6px', width: 70 }}>Pulled ☐</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {goods.map((l) => (
+                <tr key={l.id} style={{ borderBottom: '1px solid #999' }}>
+                  <td style={{ padding: '10px 6px', fontWeight: 700, fontSize: 15 }}>
+                    {l.quantity}
+                  </td>
+                  <td style={{ padding: '10px 6px' }}>
+                    {l.description}
+                    {l.lineType === 'special_order' && (
+                      <span style={{ fontWeight: 700 }}> — SPECIAL ORDER</span>
+                    )}
+                  </td>
+                  <td style={{ padding: '10px 6px' }}>
+                    {l.model ?? '—'}
+                    {/* BA-0029: SKU barcode per line, when it encodes. */}
+                    {l.model && (
+                      <div>
+                        <Barcode39 value={l.model} height={22} showText={false} />
+                      </div>
+                    )}
+                  </td>
+                  <td style={{ padding: '10px 6px', fontWeight: 700 }}>{l.bin ?? '—'}</td>
+                  <td style={{ padding: '10px 6px' }}>
+                    <span
+                      style={{
+                        display: 'inline-block',
+                        width: 22,
+                        height: 22,
+                        border: '2px solid #000',
+                      }}
+                    />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </TableWrap>
 
         <footer style={{ marginTop: 28, display: 'flex', gap: 40 }}>
           <div style={{ flex: 1 }}>

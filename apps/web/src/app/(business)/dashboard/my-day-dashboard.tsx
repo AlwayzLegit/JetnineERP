@@ -2,9 +2,23 @@
 
 import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
-import { Card, EmptyState, LinkButton, LoadingRows, StatusBadge } from '@/components/ui';
+import {
+  Alert,
+  Card,
+  KeyValue,
+  LinkButton,
+  LoadingRows,
+  PageHeader,
+  Select,
+  Stack,
+  StatGrid,
+  StatTile,
+  StatusBadge,
+  TableWrap,
+} from '@/components/ui';
 import { Money } from '@/components/money';
 import { api } from '@/lib/api';
+import { TableCard, usd as fmtUsd } from './dashboard-kit';
 
 /**
  * The Cashier home — "My Day" (owner 2026-09-01, §12.3). Ten cards for
@@ -154,6 +168,18 @@ function ordinal(n: number): string {
   return `${n}${s[(v - 20) % 10] ?? s[v] ?? s[0]}`;
 }
 
+/** A phone number as a tap-to-call line under a customer name. */
+function Phone({ phone }: { phone: string | null }) {
+  if (!phone) return null;
+  return (
+    <div>
+      <a href={`tel:${phone}`} className="muted">
+        {phone}
+      </a>
+    </div>
+  );
+}
+
 export default function MyDayDashboardView({ userName }: { userName: string }) {
   const [summary, setSummary] = useState<Summary | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -175,14 +201,24 @@ export default function MyDayDashboardView({ userName }: { userName: string }) {
     void load(null);
   }, [load]);
 
+  const title = `My Day — ${userName}`;
+
   if (error) {
     return (
-      <Card title="My Day">
-        <p style={{ color: 'var(--danger)', margin: 0, fontSize: 13 }}>{error}</p>
-      </Card>
+      <>
+        <PageHeader title={title} />
+        <Alert tone="error">{error}</Alert>
+      </>
     );
   }
-  if (!summary) return <LoadingRows />;
+  if (!summary) {
+    return (
+      <>
+        <PageHeader title={title} />
+        <LoadingRows />
+      </>
+    );
+  }
 
   const { myDay, drawer, scoreboard, commission } = summary;
   const delta = pctDelta(myDay.today.writtenCents, myDay.lastWeek.writtenCents);
@@ -192,145 +228,139 @@ export default function MyDayDashboardView({ userName }: { userName: string }) {
 
   return (
     <div data-testid="my-day-dashboard">
-      <div className="page-header" style={{ flexWrap: 'wrap', gap: 10 }}>
-        <div>
-          <h1 className="page-title">My Day — {userName}</h1>
-          <p style={{ margin: '2px 0 0', color: 'var(--text-secondary)', fontSize: 13 }}>
+      <PageHeader
+        title={title}
+        sub={
+          <>
             {summary.date} · <strong>{summary.location.name}</strong>
-          </p>
-        </div>
-        <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
-          {summary.locations.length > 1 && (
-            <select
-              data-testid="my-day-location-picker"
-              value={locationId ?? ''}
-              onChange={(e) => {
-                setSummary(null);
-                void load(e.target.value);
-              }}
-              style={{ fontSize: 13 }}
-            >
-              {summary.locations.map((l) => (
-                <option key={l.id} value={l.id}>
-                  {l.name}
-                </option>
-              ))}
-            </select>
-          )}
-          <LinkButton size="sm" variant="primary" href="/pos" data-testid="my-day-new-sale">
-            New Sale
-          </LinkButton>
-        </div>
-      </div>
+          </>
+        }
+        actions={
+          <>
+            {summary.locations.length > 1 && (
+              <Select
+                aria-label="Store"
+                data-testid="my-day-location-picker"
+                value={locationId ?? ''}
+                onChange={(e) => {
+                  setSummary(null);
+                  void load(e.target.value);
+                }}
+              >
+                {summary.locations.map((l) => (
+                  <option key={l.id} value={l.id}>
+                    {l.name}
+                  </option>
+                ))}
+              </Select>
+            )}
+            <LinkButton variant="primary" href="/pos" data-testid="my-day-new-sale">
+              New Sale
+            </LinkButton>
+          </>
+        }
+      />
 
-      {/* Card 1 + the headline numbers from cards 2, 5, 6, 7 */}
-      <div
-        className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5"
-        style={{ marginBottom: 16 }}
-      >
-        <Tile
-          label="Written today"
-          testid="md-kpi-written"
-          main={<Money cents={myDay.today.writtenCents} />}
-          sub={`${tickets(myDay.today.documents)} · ${delta ?? 'nothing last week'}`}
-        />
-        <Tile
-          label="Collected today"
-          testid="md-kpi-collected"
-          main={<Money cents={myDay.today.collectedCents} />}
-          sub={
-            myDay.today.documents > 0
-              ? `avg ticket ${fmtUsd(myDay.today.avgTicketCents)}`
-              : 'no tickets yet'
-          }
-        />
-        <Tile
-          label="My drawer"
-          testid="md-kpi-drawer"
-          tone={drawer.shift?.stale || drawer.shift?.suspended ? 'danger' : undefined}
-          main={drawer.shift ? <Money cents={drawer.shift.expectedCashCents} /> : 'closed'}
-          sub={
-            drawer.shift
-              ? drawer.shift.suspended
-                ? 'suspended — finish the close'
-                : drawer.shift.stale
-                  ? `open ${drawer.shift.hoursOpen}h — close it`
-                  : `open ${drawer.shift.hoursOpen}h · ${drawer.shift.locationName ?? ''}`
-              : 'no shift open'
-          }
-        />
-        <Tile
-          label="Balance due"
-          testid="md-kpi-balance"
-          tone={dueNow > 0 ? 'danger' : undefined}
-          main={<Money cents={summary.balanceDue.totalCents} />}
-          sub={
-            dueNow > 0
-              ? `${dueNow} due now`
-              : `${summary.balanceDue.rows.length} order${summary.balanceDue.rows.length === 1 ? '' : 's'} owing`
-          }
-        />
-        <Tile
-          label={`Commission · ${commission.period}`}
-          testid="md-kpi-commission"
-          main={<Money cents={commission.accruedCents} />}
-          sub={
-            commission.paidCents > 0
-              ? `${fmtUsd(commission.paidCents)} paid`
-              : commission.approvedCents > 0
-                ? `${fmtUsd(commission.approvedCents)} approved`
-                : `${fmtUsd(commission.pendingCents)} pending`
-          }
-        />
-      </div>
+      <Stack>
+        {/* Card 1 + the headline numbers from cards 2, 5, 6, 7 */}
+        <StatGrid cols={5}>
+          <StatTile
+            label="Written today"
+            data-testid="md-kpi-written"
+            value={<Money cents={myDay.today.writtenCents} />}
+            sub={`${tickets(myDay.today.documents)} · ${delta ?? 'nothing last week'}`}
+          />
+          <StatTile
+            label="Collected today"
+            data-testid="md-kpi-collected"
+            value={<Money cents={myDay.today.collectedCents} />}
+            sub={
+              myDay.today.documents > 0
+                ? `avg ticket ${fmtUsd(myDay.today.avgTicketCents)}`
+                : 'no tickets yet'
+            }
+          />
+          <StatTile
+            label="My drawer"
+            data-testid="md-kpi-drawer"
+            tone={drawer.shift?.stale || drawer.shift?.suspended ? 'danger' : undefined}
+            value={drawer.shift ? <Money cents={drawer.shift.expectedCashCents} /> : 'closed'}
+            sub={
+              drawer.shift
+                ? drawer.shift.suspended
+                  ? 'suspended — finish the close'
+                  : drawer.shift.stale
+                    ? `open ${drawer.shift.hoursOpen}h — close it`
+                    : `open ${drawer.shift.hoursOpen}h · ${drawer.shift.locationName ?? ''}`
+                : 'no shift open'
+            }
+          />
+          <StatTile
+            label="Balance due"
+            data-testid="md-kpi-balance"
+            tone={dueNow > 0 ? 'danger' : undefined}
+            value={<Money cents={summary.balanceDue.totalCents} />}
+            sub={
+              dueNow > 0
+                ? `${dueNow} due now`
+                : `${summary.balanceDue.rows.length} order${summary.balanceDue.rows.length === 1 ? '' : 's'} owing`
+            }
+          />
+          <StatTile
+            label={`Commission · ${commission.period}`}
+            data-testid="md-kpi-commission"
+            value={<Money cents={commission.accruedCents} />}
+            sub={
+              commission.paidCents > 0
+                ? `${fmtUsd(commission.paidCents)} paid`
+                : commission.approvedCents > 0
+                  ? `${fmtUsd(commission.approvedCents)} approved`
+                  : `${fmtUsd(commission.pendingCents)} pending`
+            }
+          />
+        </StatGrid>
 
-      <div className="grid gap-3 lg:grid-cols-2" style={{ marginBottom: 16 }}>
-        {/* Card 3 */}
-        <Card
-          title="Call-backs — my quotes and drafts"
-          style={{ padding: 0 }}
-          data-testid="md-callbacks"
-          actions={
-            <Link href="/orders?mine=1&status=quote" style={{ fontSize: 12.5 }}>
-              All quotes →
-            </Link>
-          }
-        >
-          {summary.callbacks.length === 0 ? (
-            <Pad>No open quotes or drafts. Every lead is either sold or closed.</Pad>
-          ) : (
-            <table style={{ width: '100%', fontSize: 12.5, borderCollapse: 'collapse' }}>
+        <div className="grid gap-4 lg:grid-cols-2">
+          {/* Card 3 */}
+          <TableCard
+            title="Call-backs — my quotes and drafts"
+            data-testid="md-callbacks"
+            actions={
+              <Link href="/orders?mine=1&status=quote" className="btn-link">
+                All quotes →
+              </Link>
+            }
+            isEmpty={summary.callbacks.length === 0}
+            empty="No open quotes or drafts. Every lead is either sold or closed."
+          >
+            <table className="table table-dense">
+              <thead>
+                <tr>
+                  <th>Order</th>
+                  <th>Customer</th>
+                  <th className="num">Value</th>
+                  <th className="num">Age</th>
+                </tr>
+              </thead>
               <tbody>
                 {summary.callbacks.map((r) => (
-                  <tr key={r.orderId} style={{ borderTop: '1px solid var(--border)' }}>
-                    <td style={{ padding: '7px 12px', whiteSpace: 'nowrap' }}>
+                  <tr key={r.orderId}>
+                    <td className="nowrap">
                       <Link href={`/orders/${r.orderId}`}>{r.number}</Link>
-                      <span className="muted" style={{ fontSize: 11, display: 'block' }}>
-                        {r.status}
-                      </span>
+                      <div>
+                        <StatusBadge status={r.status} />
+                      </div>
                     </td>
-                    <td style={{ padding: '7px 12px' }}>
+                    <td>
                       {r.customerName ?? '—'}
-                      {r.phone && (
-                        <a
-                          href={`tel:${r.phone}`}
-                          className="muted"
-                          style={{ fontSize: 11, display: 'block' }}
-                        >
-                          {r.phone}
-                        </a>
-                      )}
+                      <Phone phone={r.phone} />
                     </td>
-                    <td style={{ padding: '7px 12px', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                    <td className="num nowrap">
                       <Money cents={r.totalCents} />
                     </td>
                     <td
-                      style={{
-                        padding: '7px 12px',
-                        textAlign: 'right',
-                        whiteSpace: 'nowrap',
-                        color: r.ageDays >= 3 ? 'var(--danger)' : 'var(--text-muted)',
-                      }}
+                      className="num nowrap"
+                      style={{ color: r.ageDays >= 3 ? 'var(--danger)' : 'var(--text-muted)' }}
                     >
                       {r.ageDays === 0 ? 'today' : `${r.ageDays}d`}
                     </td>
@@ -338,375 +368,320 @@ export default function MyDayDashboardView({ userName }: { userName: string }) {
                 ))}
               </tbody>
             </table>
-          )}
-        </Card>
+          </TableCard>
 
-        {/* Card 4 */}
-        <Card
-          title={`My deliveries — today${todayDeliveries > 0 ? ` (${todayDeliveries})` : ''} and tomorrow`}
-          style={{ padding: 0 }}
-          data-testid="md-deliveries"
-          actions={
-            <Link href={`/deliveries/day/${summary.date}`} style={{ fontSize: 12.5 }}>
-              Day sheet →
-            </Link>
-          }
-        >
-          {summary.myDeliveries.length === 0 ? (
-            <Pad>None of your customers are on the truck today or tomorrow.</Pad>
-          ) : (
-            <table style={{ width: '100%', fontSize: 12.5, borderCollapse: 'collapse' }}>
+          {/* Card 4 */}
+          <TableCard
+            title={`My deliveries — today${todayDeliveries > 0 ? ` (${todayDeliveries})` : ''} and tomorrow`}
+            data-testid="md-deliveries"
+            actions={
+              <Link href={`/deliveries/day/${summary.date}`} className="btn-link">
+                Day sheet →
+              </Link>
+            }
+            isEmpty={summary.myDeliveries.length === 0}
+            empty="None of your customers are on the truck today or tomorrow."
+          >
+            <table className="table table-dense">
+              <thead>
+                <tr>
+                  <th>When</th>
+                  <th>Order</th>
+                  <th>Driver</th>
+                  <th className="actions">Status</th>
+                </tr>
+              </thead>
               <tbody>
                 {summary.myDeliveries.map((d) => (
-                  <tr key={d.deliveryId} style={{ borderTop: '1px solid var(--border)' }}>
-                    <td style={{ padding: '7px 12px', whiteSpace: 'nowrap' }}>
-                      <strong style={{ color: d.when === 'today' ? 'var(--text)' : undefined }}>
-                        {d.when}
-                      </strong>
-                      <span className="muted" style={{ fontSize: 11, display: 'block' }}>
-                        {window(d.windowStart, d.windowEnd)}
-                      </span>
+                  <tr key={d.deliveryId}>
+                    <td className="nowrap">
+                      <strong>{d.when}</strong>
+                      <div className="muted">{window(d.windowStart, d.windowEnd)}</div>
                     </td>
-                    <td style={{ padding: '7px 12px' }}>
+                    <td>
                       <Link href={`/orders/${d.orderId}`}>{d.orderNumber}</Link>
-                      <span className="muted" style={{ fontSize: 11, display: 'block' }}>
+                      <div className="muted">
                         {d.customerName ?? '—'}
                         {d.phone ? ` · ${d.phone}` : ''}
-                      </span>
+                      </div>
                     </td>
-                    <td style={{ padding: '7px 12px', color: 'var(--text-secondary)' }}>
-                      {d.driverName ?? 'no driver'}
-                    </td>
-                    <td style={{ padding: '7px 12px', textAlign: 'right' }}>
+                    <td className="muted">{d.driverName ?? 'no driver'}</td>
+                    <td className="actions">
                       <StatusBadge status={d.status} />
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
-          )}
-        </Card>
-      </div>
+          </TableCard>
+        </div>
 
-      <div className="grid gap-3 lg:grid-cols-2" style={{ marginBottom: 16 }}>
-        {/* Card 5 */}
-        <Card
-          title="Balance due — my open orders"
-          style={{ padding: 0 }}
-          data-testid="md-balance"
-          actions={
-            <span style={{ fontSize: 12.5 }}>
-              <Money cents={summary.balanceDue.totalCents} /> open
-            </span>
-          }
-        >
-          {summary.balanceDue.rows.length === 0 ? (
-            <Pad>Every open order of yours is paid in full.</Pad>
-          ) : (
-            <table style={{ width: '100%', fontSize: 12.5, borderCollapse: 'collapse' }}>
+        <div className="grid gap-4 lg:grid-cols-2">
+          {/* Card 5 */}
+          <TableCard
+            title="Balance due — my open orders"
+            data-testid="md-balance"
+            actions={
+              <span className="muted">
+                <Money cents={summary.balanceDue.totalCents} /> open
+              </span>
+            }
+            isEmpty={summary.balanceDue.rows.length === 0}
+            empty="Every open order of yours is paid in full."
+          >
+            <table className="table table-dense">
+              <thead>
+                <tr>
+                  <th>Order</th>
+                  <th>Customer</th>
+                  <th className="num">Balance</th>
+                </tr>
+              </thead>
               <tbody>
                 {summary.balanceDue.rows.map((r) => (
-                  <tr key={r.orderId} style={{ borderTop: '1px solid var(--border)' }}>
-                    <td style={{ padding: '7px 12px', whiteSpace: 'nowrap' }}>
+                  <tr key={r.orderId}>
+                    <td className="nowrap">
                       <Link href={`/orders/${r.orderId}`}>{r.number}</Link>
-                      <span className="muted" style={{ fontSize: 11, display: 'block' }}>
+                      <div className="muted">
                         {r.fulfillmentType?.replace(/_/g, ' ') ?? '—'}
                         {r.requestedDate ? ` · ${r.requestedDate}` : ''}
-                      </span>
+                      </div>
                     </td>
-                    <td style={{ padding: '7px 12px' }}>
+                    <td>
                       {r.customerName ?? '—'}
-                      {r.phone && (
-                        <a
-                          href={`tel:${r.phone}`}
-                          className="muted"
-                          style={{ fontSize: 11, display: 'block' }}
-                        >
-                          {r.phone}
-                        </a>
-                      )}
+                      <Phone phone={r.phone} />
                     </td>
-                    <td style={{ padding: '7px 12px', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                    <td className="num nowrap">
                       <strong style={{ color: r.dueNow ? 'var(--danger)' : undefined }}>
                         <Money cents={r.balanceCents} />
                       </strong>
-                      <span className="muted" style={{ fontSize: 11, display: 'block' }}>
+                      <div className="muted">
                         of <Money cents={r.totalCents} />
                         {r.dueNow ? ' · due now' : ''}
-                      </span>
+                      </div>
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
-          )}
-        </Card>
+          </TableCard>
 
-        {/* Card 6 */}
-        <Card
-          title={`Pickups waiting at ${summary.location.name}`}
-          style={{ padding: 0 }}
-          data-testid="md-pickups"
-          actions={
-            <span style={{ fontSize: 12.5, color: 'var(--text-secondary)' }}>
-              {readyPickups} ready
-            </span>
-          }
-        >
-          {summary.pickups.length === 0 ? (
-            <Pad>No pickup orders waiting here.</Pad>
-          ) : (
-            <table style={{ width: '100%', fontSize: 12.5, borderCollapse: 'collapse' }}>
+          {/* Card 6 */}
+          <TableCard
+            title={`Pickups waiting at ${summary.location.name}`}
+            data-testid="md-pickups"
+            actions={<span className="muted">{readyPickups} ready</span>}
+            isEmpty={summary.pickups.length === 0}
+            empty="No pickup orders waiting here."
+          >
+            <table className="table table-dense">
+              <thead>
+                <tr>
+                  <th>Order</th>
+                  <th>Customer</th>
+                  <th className="num">Stock</th>
+                </tr>
+              </thead>
               <tbody>
                 {summary.pickups.map((p) => (
-                  <tr key={p.orderId} style={{ borderTop: '1px solid var(--border)' }}>
-                    <td style={{ padding: '7px 12px', whiteSpace: 'nowrap' }}>
+                  <tr key={p.orderId}>
+                    <td className="nowrap">
                       <Link href={`/orders/${p.orderId}`}>{p.number}</Link>
-                      {p.mine && (
-                        <span className="muted" style={{ fontSize: 11, display: 'block' }}>
-                          mine
-                        </span>
-                      )}
+                      {p.mine && <div className="muted">mine</div>}
                     </td>
-                    <td style={{ padding: '7px 12px' }}>
+                    <td>
                       {p.customerName ?? '—'}
                       {p.phone ? <span className="muted"> · {p.phone}</span> : null}
                     </td>
-                    <td style={{ padding: '7px 12px', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                    <td className="num nowrap">
                       <span style={{ color: p.ready ? 'var(--success)' : 'var(--text-muted)' }}>
                         {p.ready ? 'ready' : 'not all in stock'}
                       </span>
-                      <span className="muted" style={{ fontSize: 11, display: 'block' }}>
+                      <div className="muted">
                         waiting {p.ageDays === 0 ? 'since today' : `${p.ageDays}d`}
-                      </span>
+                      </div>
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
-          )}
-        </Card>
-      </div>
+          </TableCard>
+        </div>
 
-      <div className="grid gap-3 lg:grid-cols-3" style={{ marginBottom: 16 }}>
-        {/* Card 7 */}
-        <Card title={`Commission — ${commission.period}`} data-testid="md-commission">
-          <dl style={{ margin: 0, fontSize: 13, display: 'grid', gap: 4 }}>
-            <Row label="Accrued this period" value={<Money cents={commission.accruedCents} />} />
-            <Row label="Pending review" value={<Money cents={commission.pendingCents} />} />
-            <Row label="Approved" value={<Money cents={commission.approvedCents} />} />
-            <Row label="Paid" value={<Money cents={commission.paidCents} />} />
-            <Row
-              label="Last payout"
-              value={
-                commission.lastPaid ? (
-                  <>
-                    <Money cents={commission.lastPaid.cents} />
-                    <span className="muted"> · {commission.lastPaid.period}</span>
-                  </>
-                ) : (
-                  '—'
-                )
-              }
+        <div className="grid gap-4 lg:grid-cols-3">
+          {/* Card 7 */}
+          <Card title={`Commission — ${commission.period}`} data-testid="md-commission">
+            <KeyValue
+              rows={[
+                { label: 'Accrued this period', value: <Money cents={commission.accruedCents} /> },
+                { label: 'Pending review', value: <Money cents={commission.pendingCents} /> },
+                { label: 'Approved', value: <Money cents={commission.approvedCents} /> },
+                { label: 'Paid', value: <Money cents={commission.paidCents} /> },
+                {
+                  label: 'Last payout',
+                  value: commission.lastPaid ? (
+                    <>
+                      <Money cents={commission.lastPaid.cents} />
+                      <span className="muted"> · {commission.lastPaid.period}</span>
+                    </>
+                  ) : (
+                    '—'
+                  ),
+                },
+              ]}
             />
-          </dl>
-        </Card>
+          </Card>
 
-        {/* Card 8 */}
-        <Card title="What I can offer" data-testid="md-promos">
-          <p style={{ margin: '0 0 8px', fontSize: 13 }}>
-            Discount without a manager: up to{' '}
-            <strong>{summary.promos.priceVariance.tier1Pct}%</strong> or{' '}
-            <strong>{fmtUsd(summary.promos.priceVariance.tier1MaxCents)}</strong> per ticket.
-            Manager approval up to <strong>{summary.promos.priceVariance.tier2Pct}%</strong>.
-          </p>
-          {summary.promos.codes.length === 0 ? (
-            <p className="muted" style={{ margin: 0, fontSize: 13 }}>
-              No promo codes running.
-            </p>
-          ) : (
-            <ul style={{ margin: 0, padding: 0, listStyle: 'none', fontSize: 13 }}>
-              {summary.promos.codes.map((c) => (
-                <li key={c.id} style={{ padding: '4px 0', borderTop: '1px solid var(--border)' }}>
-                  <code>{c.code}</code>{' '}
-                  <strong>
-                    {c.kind === 'percent' ? `${c.value}% off` : `${fmtUsd(c.value)} off`}
-                  </strong>
-                  {c.minSubtotalCents ? (
-                    <span className="muted"> · min {fmtUsd(c.minSubtotalCents)}</span>
-                  ) : null}
-                  {c.endsAt ? <span className="muted"> · ends {c.endsAt.slice(0, 10)}</span> : null}
-                  {c.remainingUses != null ? (
-                    <span className="muted"> · {c.remainingUses} left</span>
-                  ) : null}
-                  {c.description && (
-                    <span className="muted" style={{ display: 'block', fontSize: 11.5 }}>
-                      {c.description}
-                    </span>
-                  )}
-                </li>
-              ))}
-            </ul>
-          )}
-        </Card>
+          {/* Card 8 */}
+          <Card
+            title="What I can offer"
+            description={
+              <>
+                Discount without a manager: up to{' '}
+                <strong>{summary.promos.priceVariance.tier1Pct}%</strong> or{' '}
+                <strong>{fmtUsd(summary.promos.priceVariance.tier1MaxCents)}</strong> per ticket.
+                Manager approval up to <strong>{summary.promos.priceVariance.tier2Pct}%</strong>.
+              </>
+            }
+            data-testid="md-promos"
+          >
+            {summary.promos.codes.length === 0 ? (
+              <p className="muted">No promo codes running.</p>
+            ) : (
+              <TableWrap>
+                <table className="table table-dense">
+                  <thead>
+                    <tr>
+                      <th>Code</th>
+                      <th>Offer</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {summary.promos.codes.map((c) => (
+                      <tr key={c.id}>
+                        <td className="nowrap">
+                          <code>{c.code}</code>
+                        </td>
+                        <td>
+                          <strong>
+                            {c.kind === 'percent' ? `${c.value}% off` : `${fmtUsd(c.value)} off`}
+                          </strong>
+                          {c.minSubtotalCents ? (
+                            <span className="muted"> · min {fmtUsd(c.minSubtotalCents)}</span>
+                          ) : null}
+                          {c.endsAt ? (
+                            <span className="muted"> · ends {c.endsAt.slice(0, 10)}</span>
+                          ) : null}
+                          {c.remainingUses != null ? (
+                            <span className="muted"> · {c.remainingUses} left</span>
+                          ) : null}
+                          {c.description && <div className="muted">{c.description}</div>}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </TableWrap>
+            )}
+          </Card>
 
-        {/* Card 10 */}
-        <Card title={`${summary.location.name} today`} data-testid="md-scoreboard">
-          <dl style={{ margin: 0, fontSize: 13, display: 'grid', gap: 4 }}>
-            <Row
-              label="Store written"
-              value={
-                <>
-                  <Money cents={scoreboard.storeTodayCents} />
-                  <span className="muted"> · {scoreboard.storeTodayDocuments} tickets</span>
-                </>
-              }
+          {/* Card 10 */}
+          <Card title={`${summary.location.name} today`} data-testid="md-scoreboard">
+            <KeyValue
+              rows={[
+                {
+                  label: 'Store written',
+                  value: (
+                    <>
+                      <Money cents={scoreboard.storeTodayCents} />
+                      <span className="muted"> · {scoreboard.storeTodayDocuments} tickets</span>
+                    </>
+                  ),
+                },
+                { label: 'My share', value: <Money cents={scoreboard.myShareCents} /> },
+                {
+                  label: 'This week',
+                  value:
+                    scoreboard.week.rank != null ? (
+                      <>
+                        <strong>{ordinal(scoreboard.week.rank)}</strong> of{' '}
+                        {scoreboard.week.sellers} · <Money cents={scoreboard.week.myCents} />
+                        {scoreboard.week.rank > 1 && (
+                          <span className="muted">
+                            {' '}
+                            · leader <Money cents={scoreboard.week.leaderCents} />
+                          </span>
+                        )}
+                      </>
+                    ) : (
+                      <span className="muted">nothing written yet this week</span>
+                    ),
+                },
+              ]}
             />
-            <Row label="My share" value={<Money cents={scoreboard.myShareCents} />} />
-            <Row
-              label="This week"
-              value={
-                scoreboard.week.rank != null ? (
-                  <>
-                    <strong>{ordinal(scoreboard.week.rank)}</strong> of {scoreboard.week.sellers} ·{' '}
-                    <Money cents={scoreboard.week.myCents} />
-                    {scoreboard.week.rank > 1 && (
-                      <span className="muted">
-                        {' '}
-                        · leader <Money cents={scoreboard.week.leaderCents} />
-                      </span>
-                    )}
-                  </>
-                ) : (
-                  <span className="muted">nothing written yet this week</span>
-                )
-              }
-            />
-          </dl>
-        </Card>
-      </div>
+          </Card>
+        </div>
 
-      {/* Card 9 */}
-      <Card
-        title="My returns and exchanges in progress"
-        style={{ padding: 0, marginBottom: 16 }}
-        data-testid="md-returns"
-      >
-        {summary.myReturns.length === 0 ? (
-          <Pad>Nothing you started is waiting on goods or a refund.</Pad>
-        ) : (
-          <table style={{ width: '100%', fontSize: 12.5, borderCollapse: 'collapse' }}>
+        {/* Card 9 */}
+        <TableCard
+          title="My returns and exchanges in progress"
+          data-testid="md-returns"
+          isEmpty={summary.myReturns.length === 0}
+          empty="Nothing you started is waiting on goods or a refund."
+        >
+          <table className="table table-dense">
+            <thead>
+              <tr>
+                <th>Number</th>
+                <th>Customer</th>
+                <th className="num">Amount</th>
+                <th className="actions">Status</th>
+              </tr>
+            </thead>
             <tbody>
               {summary.myReturns.map((r) => (
-                <tr key={`${r.kind}-${r.id}`} style={{ borderTop: '1px solid var(--border)' }}>
-                  <td style={{ padding: '7px 12px', whiteSpace: 'nowrap' }}>
+                <tr key={`${r.kind}-${r.id}`}>
+                  <td className="nowrap">
                     <Link href={r.kind === 'return' ? `/returns/${r.id}` : `/exchanges/${r.id}`}>
                       {r.number}
                     </Link>
-                    <span className="muted" style={{ fontSize: 11, display: 'block' }}>
-                      {r.kind}
-                    </span>
+                    <div className="muted">{r.kind}</div>
                   </td>
-                  <td style={{ padding: '7px 12px' }}>
+                  <td>
                     {r.customerName ?? '—'}
                     {r.orderId && r.orderNumber && (
-                      <span className="muted" style={{ fontSize: 11, display: 'block' }}>
+                      <div className="muted">
                         on <Link href={`/orders/${r.orderId}`}>{r.orderNumber}</Link>
-                      </span>
+                      </div>
                     )}
                   </td>
-                  <td style={{ padding: '7px 12px', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                  <td className="num nowrap">
                     {r.amountCents != null ? <Money cents={r.amountCents} /> : '—'}
                   </td>
-                  <td style={{ padding: '7px 12px', textAlign: 'right' }}>
+                  <td className="actions">
                     <StatusBadge status={r.status} />
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
+        </TableCard>
+
+        {drawer.lastClose && (
+          <p className="muted">
+            Last drawer close at {summary.location.name}:{' '}
+            {new Date(drawer.lastClose.closedAt).toLocaleString()}
+            {drawer.lastClose.varianceCents != null && drawer.lastClose.varianceCents !== 0 ? (
+              <>
+                {' '}
+                · variance <Money cents={drawer.lastClose.varianceCents} />
+              </>
+            ) : (
+              ' · balanced'
+            )}
+          </p>
         )}
-      </Card>
-
-      {drawer.lastClose && (
-        <p className="muted" style={{ fontSize: 12, margin: 0 }}>
-          Last drawer close at {summary.location.name}:{' '}
-          {new Date(drawer.lastClose.closedAt).toLocaleString()}
-          {drawer.lastClose.varianceCents != null && drawer.lastClose.varianceCents !== 0 ? (
-            <>
-              {' '}
-              · variance <Money cents={drawer.lastClose.varianceCents} />
-            </>
-          ) : (
-            ' · balanced'
-          )}
-        </p>
-      )}
-    </div>
-  );
-}
-
-function fmtUsd(cents: number): string {
-  return `$${(cents / 100).toLocaleString(undefined, {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`;
-}
-
-function Row({ label, value }: { label: string; value: React.ReactNode }) {
-  return (
-    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
-      <dt style={{ color: 'var(--text-secondary)' }}>{label}</dt>
-      <dd style={{ margin: 0, textAlign: 'right' }}>{value}</dd>
-    </div>
-  );
-}
-
-function Tile({
-  label,
-  main,
-  sub,
-  tone,
-  testid,
-}: {
-  label: string;
-  main: React.ReactNode;
-  sub: string;
-  tone?: 'danger';
-  testid: string;
-}) {
-  return (
-    <div
-      data-testid={testid}
-      style={{
-        background: 'var(--surface)',
-        border: '1px solid var(--border)',
-        borderRadius: 'var(--radius)',
-        boxShadow: 'var(--shadow-sm)',
-        padding: '12px 14px',
-        height: '100%',
-      }}
-    >
-      <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)' }}>{label}</div>
-      <div
-        style={{
-          fontSize: 18,
-          fontWeight: 700,
-          color: tone === 'danger' ? 'var(--danger)' : 'var(--text)',
-          marginTop: 2,
-        }}
-      >
-        {main}
-      </div>
-      <div style={{ fontSize: 11.5, color: 'var(--text-secondary)', marginTop: 2 }}>{sub}</div>
-    </div>
-  );
-}
-
-function Pad({ children }: { children: React.ReactNode }) {
-  return (
-    <div style={{ padding: 14 }}>
-      <EmptyState>{children}</EmptyState>
+      </Stack>
     </div>
   );
 }

@@ -1,10 +1,19 @@
 'use client';
 
-import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import { Money } from '@/components/money';
-import { EmptyState, LinkButton, LoadingRows, PageHeader, StatusBadge } from '@/components/ui';
+import {
+  Alert,
+  Card,
+  EmptyState,
+  LinkButton,
+  LoadingRows,
+  PageHeader,
+  Stack,
+  StatusBadge,
+  TableWrap,
+} from '@/components/ui';
 
 interface GiftCard {
   id: string;
@@ -41,20 +50,23 @@ export default function GiftCardsPage() {
           </LinkButton>
         }
       />
-      {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
-      {!rows && !error && (
-        <div className="card">
-          <LoadingRows />
-        </div>
-      )}
-      {rows && (
-        <div className="card">
-          {rows.length === 0 ? (
-            <EmptyState>
-              No gift cards issued yet. Use “+ Issue new” to create the first one.
+      <Stack>
+        {error && <Alert tone="error">{error}</Alert>}
+        {!rows && !error && (
+          <Card>
+            <LoadingRows />
+          </Card>
+        )}
+        {rows && rows.length === 0 && (
+          <Card>
+            <EmptyState title="No gift cards issued yet">
+              Use “+ Issue new” to create the first one.
             </EmptyState>
-          ) : (
-            <div className="overflow-x-auto">
+          </Card>
+        )}
+        {rows && rows.length > 0 && (
+          <Card flush>
+            <TableWrap>
               <table className="table">
                 <thead>
                   <tr>
@@ -64,7 +76,7 @@ export default function GiftCardsPage() {
                     <th>Status</th>
                     <th>Issued</th>
                     <th>Expires</th>
-                    <th>&nbsp;</th>
+                    <th className="actions" />
                   </tr>
                 </thead>
                 <tbody>
@@ -75,7 +87,7 @@ export default function GiftCardsPage() {
                       </td>
                       <td className="num">
                         <Money cents={g.currentBalanceCents} />
-                        <div className="muted" style={{ fontSize: 11 }}>
+                        <div className="muted">
                           of <Money cents={g.initialBalanceCents} />
                         </div>
                       </td>
@@ -83,19 +95,23 @@ export default function GiftCardsPage() {
                       <td>
                         <StatusBadge status={g.status} />
                       </td>
-                      <td>{new Date(g.createdAt).toLocaleDateString()}</td>
-                      <td>{g.expiresAt ? new Date(g.expiresAt).toLocaleDateString() : '—'}</td>
-                      <td>
-                        <Link href={`/gift-cards/${g.id}`}>Open</Link>
+                      <td className="nowrap">{new Date(g.createdAt).toLocaleDateString()}</td>
+                      <td className="nowrap">
+                        {g.expiresAt ? new Date(g.expiresAt).toLocaleDateString() : '—'}
+                      </td>
+                      <td className="actions">
+                        <LinkButton size="sm" href={`/gift-cards/${g.id}`}>
+                          Open
+                        </LinkButton>
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
-            </div>
-          )}
-        </div>
-      )}
+            </TableWrap>
+          </Card>
+        )}
+      </Stack>
     </div>
   );
 }

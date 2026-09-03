@@ -6,7 +6,24 @@ import { useParams } from 'next/navigation';
 import { parseMoneyToCents } from '@jetnine/shared';
 import { api } from '@/lib/api';
 import { Money } from '@/components/money';
-import { Button, EmptyState, Input, LoadingRows, StatusBadge } from '@/components/ui';
+import {
+  Alert,
+  BackLink,
+  Button,
+  Card,
+  Field,
+  FormActions,
+  FormGrid,
+  Input,
+  LoadingRows,
+  PageHeader,
+  Stack,
+  StatGrid,
+  StatTile,
+  StatusBadge,
+  TableEmpty,
+  TableWrap,
+} from '@/components/ui';
 
 interface GiftCardTransaction {
   id: string;
@@ -38,6 +55,7 @@ export default function GiftCardDetailPage() {
   const [card, setCard] = useState<GiftCardDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [adjust, setAdjust] = useState('');
+  const [busy, setBusy] = useState<'adjust' | 'cancel' | null>(null);
 
   async function load() {
     try {
@@ -59,6 +77,7 @@ export default function GiftCardDetailPage() {
       setError('Adjustment must be a non-zero amount');
       return;
     }
+    setBusy('adjust');
     try {
       await api(`/v1/gift-cards/${id}/adjust`, {
         method: 'POST',
@@ -68,89 +87,103 @@ export default function GiftCardDetailPage() {
       void load();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(null);
     }
   }
 
   async function cancelCard() {
     if (!confirm('Cancel this gift card? Remaining balance will be voided.')) return;
+    setBusy('cancel');
     try {
       await api(`/v1/gift-cards/${id}`, { method: 'DELETE' });
       void load();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(null);
     }
   }
 
-  if (error && !card) return <p style={{ color: 'var(--danger)' }}>{error}</p>;
+  if (error && !card) {
+    return (
+      <div>
+        <PageHeader
+          title="Gift card not found"
+          eyebrow={<BackLink href="/gift-cards">Gift cards</BackLink>}
+        />
+        <Alert tone="error">{error}</Alert>
+      </div>
+    );
+  }
   if (!card) return <LoadingRows rows={4} />;
+
+  const adjustable = card.status !== 'cancelled';
 
   return (
     <div>
-      <p style={{ marginBottom: 12 }}>
-        <Link href="/gift-cards">← Gift cards</Link>
-      </p>
-      <div className="page-header">
-        <h1 className="page-title" style={{ fontSize: 22 }}>
-          <code>{card.code}</code>
-        </h1>
-        <StatusBadge status={card.status} />
-      </div>
+      <PageHeader
+        eyebrow={<BackLink href="/gift-cards">Gift cards</BackLink>}
+        title={<code>{card.code}</code>}
+        meta={<StatusBadge status={card.status} />}
+        sub={`Issued ${new Date(card.createdAt).toLocaleDateString()}`}
+      />
 
-      <div className="card grid gap-4 sm:grid-cols-2">
-        <div>
-          <div className="field-label">Current balance</div>
-          <div style={{ fontSize: 24, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>
-            <Money cents={card.currentBalanceCents} />
-          </div>
-        </div>
-        <div>
-          <div className="field-label">Initial balance</div>
-          <div style={{ fontSize: 16, fontVariantNumeric: 'tabular-nums' }}>
-            <Money cents={card.initialBalanceCents} />
-          </div>
-          {card.expiresAt && (
-            <div className="muted" style={{ fontSize: 12, marginTop: 8 }}>
-              Expires {new Date(card.expiresAt).toLocaleDateString()}
-            </div>
-          )}
-        </div>
-      </div>
+      <Stack>
+        <StatGrid cols={3}>
+          <StatTile
+            label="Current balance"
+            value={<Money cents={card.currentBalanceCents} />}
+            tone="brand"
+          />
+          <StatTile label="Initial balance" value={<Money cents={card.initialBalanceCents} />} />
+          <StatTile
+            label="Expires"
+            value={card.expiresAt ? new Date(card.expiresAt).toLocaleDateString() : 'Never'}
+          />
+        </StatGrid>
 
-      {card.status !== 'cancelled' && (
-        <div className="card">
-          <h2 className="card-title">Adjust balance</h2>
-          <div className="flex flex-wrap items-center gap-2">
-            <Input
-              type="text"
-              inputMode="decimal"
-              placeholder="±$0.00"
-              value={adjust}
-              onChange={(e) => setAdjust(e.target.value)}
-              style={{ width: 120 }}
-            />
-            <Button variant="primary" onClick={applyAdjust}>
-              Apply
-            </Button>
-            <Button variant="danger" onClick={cancelCard}>
-              Cancel card
-            </Button>
-            {error && <span style={{ color: 'var(--danger)', fontSize: 13 }}>{error}</span>}
-          </div>
-          <p
-            style={{ color: 'var(--text-secondary)', fontSize: 12, marginTop: 8, marginBottom: 0 }}
+        {/* The adjust card owns the error when it is shown; otherwise the
+            page shows it (e.g. a refresh failure on a cancelled card). */}
+        {error && !adjustable && <Alert tone="error">{error}</Alert>}
+
+        {adjustable && (
+          <Card
+            title="Adjust balance"
+            description="Use a negative amount to debit, positive to credit. Cancelling voids any remaining balance."
           >
-            Use a negative amount to debit, positive to credit. Cancelling voids any remaining
-            balance.
-          </p>
-        </div>
-      )}
+            <FormGrid cols={2}>
+              <Field label="Amount">
+                <Input
+                  type="text"
+                  inputMode="decimal"
+                  placeholder="±$0.00"
+                  value={adjust}
+                  onChange={(e) => setAdjust(e.target.value)}
+                />
+              </Field>
+            </FormGrid>
+            {error && (
+              <Alert tone="error" className="mt-3">
+                {error}
+              </Alert>
+            )}
+            <FormActions
+              start={
+                <Button variant="danger" size="sm" onClick={cancelCard} disabled={busy != null}>
+                  {busy === 'cancel' ? 'Cancelling…' : 'Cancel card'}
+                </Button>
+              }
+            >
+              <Button variant="primary" onClick={applyAdjust} disabled={busy != null}>
+                {busy === 'adjust' ? 'Applying…' : 'Apply'}
+              </Button>
+            </FormActions>
+          </Card>
+        )}
 
-      <div className="card">
-        <h2 className="card-title">Transactions</h2>
-        {card.transactions.length === 0 ? (
-          <EmptyState>No activity yet. Redemptions and adjustments will show up here.</EmptyState>
-        ) : (
-          <div className="overflow-x-auto">
+        <Card title="Transactions" flush>
+          <TableWrap>
             <table className="table">
               <thead>
                 <tr>
@@ -162,9 +195,14 @@ export default function GiftCardDetailPage() {
                 </tr>
               </thead>
               <tbody>
+                {card.transactions.length === 0 && (
+                  <TableEmpty colSpan={5}>
+                    No activity yet. Redemptions and adjustments will show up here.
+                  </TableEmpty>
+                )}
                 {card.transactions.map((t) => (
                   <tr key={t.id}>
-                    <td>{new Date(t.createdAt).toLocaleString()}</td>
+                    <td className="nowrap">{new Date(t.createdAt).toLocaleString()}</td>
                     <td>{t.kind}</td>
                     <td className="num">
                       <Money cents={t.amountCents} />
@@ -185,9 +223,9 @@ export default function GiftCardDetailPage() {
                 ))}
               </tbody>
             </table>
-          </div>
-        )}
-      </div>
+          </TableWrap>
+        </Card>
+      </Stack>
     </div>
   );
 }

@@ -241,6 +241,22 @@ code {
   box-shadow: 0 0 0 3px var(--brand-soft);
 }
 
+/* Compact controls for table-row editors and totals rails. */
+.input-sm,
+.select-sm {
+  padding: 4px 8px;
+  font-size: 12px;
+}
+/* Hero entry point (register customer search). */
+.input-lg {
+  padding: 10px 12px;
+  font-size: 15px;
+}
+/* Host input for an .input-adornment button (wrapper is position: relative). */
+.input-adorned {
+  padding-right: 36px;
+}
+
 .field-label {
   display: block;
   font-size: 12px;
@@ -609,6 +625,18 @@ code {
 .alert-action {
   flex: 0 0 auto;
 }
+/* Inside a stack / form grid / table cell the parent gap is the rhythm, and an
+   alert that closes a card carries no trailing space. */
+.stack > .alert,
+.form-grid > .alert,
+td > .alert,
+.alert:last-child {
+  margin-bottom: 0;
+}
+/* Feedback directly above the closing button row reads as one 16px step. */
+.alert + .form-actions {
+  margin-top: var(--space-1);
+}
 .alert .btn-link {
   background: none;
   border: none;
@@ -628,8 +656,7 @@ code {
   padding: 48px 16px;
   background:
     radial-gradient(1200px 600px at 10% -10%, var(--brand-soft), transparent 60%),
-    radial-gradient(900px 500px at 110% 110%, #ecfeff, transparent 55%),
-    var(--bg);
+    radial-gradient(900px 500px at 110% 110%, #ecfeff, transparent 55%), var(--bg);
 }
 .auth-column {
   width: 100%;
@@ -996,4 +1023,701 @@ code {
     border-bottom: 1px solid var(--border);
     max-height: 160px;
   }
+}
+
+/* =====================================================================
+   Layout contract (design overhaul, 2026-09-02)
+   The primitives in src/components/ui.tsx (PageHeader, SectionHeading,
+   Stack, Toolbar, FormGrid/FormActions, StatGrid/StatTile, TableWrap,
+   KeyValue) render these classes. Spacing scale: 4 / 8 / 12 / 16 / 24 / 32.
+     4  inside a control (label→input, title→sub)
+     8  between sibling controls (toolbar, button rows)
+     12 heading → its content, card title → body
+     16 between cards / stacked blocks (the default rhythm)
+     24 page header → content, section → next section
+     32 only for major page breaks (rare)
+   ===================================================================== */
+
+:root {
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+}
+
+/* ---------- Page head: eyebrow → title row → sub, 24px below ---------- */
+
+.page-head {
+  margin: 0 0 var(--space-5);
+}
+.page-head > .page-header {
+  margin-bottom: 0;
+  align-items: flex-start;
+}
+.page-eyebrow {
+  margin-bottom: var(--space-2);
+  font-size: 12.5px;
+  line-height: 1.3;
+}
+.page-head .page-title {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  min-width: 0;
+  line-height: 1.3;
+  /* Title takes the row; actions sit at the right edge. */
+  flex: 1 1 240px;
+}
+.page-title-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  font-weight: 400;
+  color: var(--text-muted);
+}
+.page-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-left: auto;
+  /* Matches the title's line box so buttons centre on the h1. */
+  min-height: 26px;
+}
+.page-head .page-sub {
+  margin: var(--space-1) 0 0;
+  max-width: 72ch;
+}
+@media (max-width: 640px) {
+  .page-actions {
+    margin-left: 0;
+    width: 100%;
+  }
+}
+
+.back-link,
+.breadcrumbs a {
+  color: var(--text-muted);
+  text-decoration: none;
+  font-weight: 500;
+}
+.back-link:hover,
+.breadcrumbs a:hover {
+  color: var(--brand);
+  text-decoration: underline;
+}
+.breadcrumbs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  color: var(--text-muted);
+}
+.breadcrumb {
+  display: inline-flex;
+  align-items: center;
+}
+.breadcrumb-sep {
+  margin: 0 6px;
+  color: var(--text-faint);
+}
+.breadcrumb [aria-current='page'] {
+  color: var(--text);
+  font-weight: 500;
+}
+
+/* ---------- Section heading: 24 above, 12 below ---------- */
+
+.section-heading {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  margin: var(--space-5) 0 var(--space-3);
+}
+.section-heading:first-child,
+.page-head + .section-heading,
+.stack > .section-heading {
+  margin-top: 0;
+}
+.section-heading-main {
+  flex: 1 1 240px;
+  min-width: 0;
+}
+.section-title {
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.3;
+  margin: 0;
+}
+.section-heading-sm .section-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+.section-heading-sm {
+  margin: var(--space-4) 0 var(--space-2);
+}
+.section-desc {
+  margin: var(--space-1) 0 0;
+  font-size: 13px;
+  color: var(--text-secondary);
+  max-width: 72ch;
+}
+.section-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-left: auto;
+}
+/* A section heading directly inside a card is the card's subhead. */
+.card > .section-heading:first-child {
+  margin-top: 0;
+}
+
+/* ---------- Stack: sibling rhythm without ad-hoc margins ---------- */
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.stack-sm {
+  gap: var(--space-2);
+}
+.stack-lg {
+  gap: var(--space-5);
+}
+/* Inside a stack or a grid the gap IS the rhythm; the legacy adjacent-card
+   margin would double it (and mis-align grid rows). */
+.stack > .card + .card,
+.grid > .card + .card,
+.stat-grid > .card + .card {
+  margin-top: 0;
+}
+/* Sections inside a stack manage their own top margin via the gap. */
+.stack > .section-heading {
+  margin-bottom: calc(var(--space-3) - var(--space-4));
+}
+
+/* ---------- Card header ---------- */
+
+.card-flush {
+  padding: 0;
+  overflow: hidden;
+}
+.card-header {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-3);
+}
+.card-flush > .card-header {
+  padding: var(--space-3) var(--space-4) 0;
+}
+.card-header-main {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+.card-header .card-title {
+  margin: 0;
+  line-height: 1.4;
+}
+.card-desc {
+  margin: 2px 0 0;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+}
+.card-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-left: auto;
+}
+
+/* ---------- Toolbar: filter/search row ---------- */
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-4);
+}
+.toolbar > .input {
+  flex: 1 1 220px;
+  max-width: 340px;
+  min-width: 160px;
+}
+.toolbar > .select {
+  min-width: 140px;
+}
+.toolbar-end {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-left: auto;
+}
+/* Toolbar directly under a card header hugs it. */
+.card > .toolbar {
+  margin-bottom: var(--space-3);
+}
+/* Inside a stack the gap is the rhythm. */
+.stack > .toolbar {
+  margin-bottom: 0;
+}
+/* Labelled fields beside plain buttons: align controls, not label+control. */
+.toolbar-align-end {
+  align-items: flex-end;
+}
+@media (max-width: 640px) {
+  .toolbar > .input {
+    max-width: none;
+    flex-basis: 100%;
+  }
+  .toolbar-end {
+    margin-left: 0;
+    width: 100%;
+  }
+}
+
+/* ---------- Fields / form layout ---------- */
+
+.field {
+  display: block;
+  min-width: 0;
+}
+.field > .input,
+.field > .select,
+.field > .textarea {
+  width: 100%;
+  display: block;
+}
+.field-required {
+  color: var(--danger);
+}
+.field-error,
+.field-hint {
+  display: block;
+}
+.textarea {
+  resize: vertical;
+  min-height: 72px;
+  line-height: 1.45;
+}
+.form-grid {
+  display: grid;
+  gap: var(--space-3) var(--space-4);
+  grid-template-columns: 1fr;
+  align-items: start;
+}
+@media (min-width: 640px) {
+  .form-grid-2,
+  .form-grid-3 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (min-width: 960px) {
+  .form-grid-3 {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+/* A field that should take the whole row (notes, addresses, long labels). */
+.form-span {
+  grid-column: 1 / -1;
+}
+/* A subhead between groups of fields inside the same form. */
+.form-grid > .section-heading {
+  grid-column: 1 / -1;
+  margin: var(--space-2) 0 calc(var(--space-1) * -1);
+}
+.form-grid > .section-heading:first-child {
+  margin-top: 0;
+}
+.form-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  margin-top: var(--space-4);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border);
+}
+.form-actions-start {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+.form-actions-end {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-left: auto;
+}
+.form-grid > .form-actions {
+  grid-column: 1 / -1;
+}
+/* A form that is its own card should cap its reading width. */
+.form-narrow {
+  max-width: 640px;
+}
+
+/* ---------- Stat tiles (KPI rows) ---------- */
+
+.stat-grid {
+  display: grid;
+  gap: var(--space-3);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+@media (min-width: 768px) {
+  .stat-grid-3 {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .stat-grid-4 {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+  .stat-grid-5 {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+  .stat-grid-6 {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+@media (min-width: 1100px) {
+  .stat-grid-6 {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+}
+.stat-tile {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+  padding: 12px 14px;
+  min-width: 0;
+  height: 100%;
+}
+/* Tiles inside a card are flat panels, not nested cards. */
+.card .stat-tile {
+  box-shadow: none;
+  background: var(--surface-muted);
+}
+.stat-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+  line-height: 1.3;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+/* A tile that is itself a link to the screen behind the number. */
+.stat-tile-link {
+  display: block;
+  color: inherit;
+  text-decoration: none;
+  cursor: pointer;
+}
+.stat-tile-link:hover {
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-md);
+}
+.stat-value {
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.25;
+  margin-top: 2px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+.stat-sub {
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  margin-top: 2px;
+}
+.stat-tile-success .stat-value {
+  color: var(--success);
+}
+.stat-tile-warning .stat-value {
+  color: var(--warning);
+}
+.stat-tile-danger .stat-value {
+  color: var(--danger);
+}
+.stat-tile-brand .stat-value {
+  color: var(--brand);
+}
+
+/* ---------- Tables ---------- */
+
+.table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  -webkit-overflow-scrolling: touch;
+}
+.table-wrap > .table {
+  min-width: 100%;
+}
+.table-wrap .table th:first-child,
+.table-wrap .table th:last-child {
+  border-radius: 0;
+}
+/* In a flush card the card IS the frame, so the wrap drops its own. */
+.card-flush > .table-wrap {
+  border: none;
+  border-radius: 0;
+}
+.table-empty {
+  text-align: center;
+  color: var(--text-muted);
+  padding: 28px 12px !important;
+  font-size: 13px;
+}
+/* Actions column: right-aligned small buttons that don't wrap. */
+.table .actions {
+  text-align: right;
+  white-space: nowrap;
+}
+.table .actions .btn + .btn {
+  margin-left: 6px;
+}
+/* Secondary line under a value inside a cell. */
+.cell-sub {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+/* Sortable header: a button that inherits the th type. */
+.table th .sort-btn {
+  font: inherit;
+  text-transform: inherit;
+  letter-spacing: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.table th .sort-btn:hover {
+  color: var(--text);
+}
+
+/* ---------- Meter: track + data-driven fill ---------- */
+
+.meter {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--neutral-soft);
+  overflow: hidden;
+}
+.meter-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--brand);
+  transition: width 0.2s ease;
+}
+.meter-success .meter-fill {
+  background: var(--success);
+}
+.meter-warning .meter-fill {
+  background: var(--warning);
+}
+.meter-danger .meter-fill {
+  background: var(--danger);
+}
+
+/* ---------- Menu: dropdown popover ---------- */
+
+.menu {
+  position: absolute;
+  z-index: 60;
+  min-width: 180px;
+  padding: 4px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-md);
+}
+.menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 6px 10px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  background: none;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  text-decoration: none;
+}
+.menu-item:hover,
+.menu-item:focus-visible {
+  background: var(--neutral-soft);
+  outline: none;
+}
+.menu-item:disabled {
+  color: var(--text-faint);
+  cursor: not-allowed;
+  background: none;
+}
+
+/* ---------- Listbox options in autocomplete popovers ---------- */
+
+.popover-option {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 8px 10px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+}
+.popover-option:last-child {
+  border-bottom: none;
+}
+.popover-option:hover,
+.popover-option:focus-visible,
+.popover-option[aria-selected='true'] {
+  background: var(--neutral-soft);
+  outline: none;
+}
+
+/* ---------- Typeahead: suggestion list anchored under an input ---------- */
+
+.typeahead {
+  margin-top: var(--space-1);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-md);
+  overflow: hidden;
+}
+
+/* ---------- Modal: fixed overlay + centred panel ---------- */
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-4);
+  background: rgb(17 24 39 / 0.45);
+}
+.modal-panel {
+  width: 100%;
+  max-width: 560px;
+  max-height: calc(100vh - 2 * var(--space-4));
+  overflow: auto;
+  padding: var(--space-4);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+}
+.modal-panel-lg {
+  max-width: 880px;
+}
+
+/* ---------- Sub-nav: vertical view switcher down the left ---------- */
+
+.subnav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-1);
+  margin: 0;
+  list-style: none;
+}
+.subnav-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 7px 10px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text-secondary);
+  background: none;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  text-decoration: none;
+}
+.subnav-item:hover {
+  background: var(--neutral-soft);
+  color: var(--text);
+}
+.subnav-item[aria-current='page'],
+.subnav-item[aria-current='true'] {
+  background: var(--brand-soft);
+  color: var(--brand-soft-text);
+  font-weight: 500;
+}
+
+/* ---------- Key/value rows for detail cards ---------- */
+
+.kv {
+  margin: 0;
+  display: grid;
+  gap: 6px 12px;
+  grid-template-columns: max-content minmax(0, 1fr);
+  font-size: 13px;
+}
+.kv-row {
+  display: contents;
+}
+.kv-label {
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.kv-value {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* ---------- Empty + loading ---------- */
+
+.empty-state-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+.empty-state-action {
+  margin-top: var(--space-3);
+}
+.loading-rows {
+  display: grid;
+  gap: 10px;
+}
+
+/* ---------- Inline helpers ---------- */
+
+.nowrap {
+  white-space: nowrap;
 }

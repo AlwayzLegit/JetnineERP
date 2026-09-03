@@ -8,13 +8,19 @@ import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import { SecurityOverrideDialog } from '@/components/security-override-dialog';
 import {
+  Alert,
+  BackLink,
   Button,
   Card,
+  FormActions,
   Input,
+  KeyValue,
   LinkButton,
   LoadingRows,
   PageHeader,
+  Stack,
   StatusBadge,
+  TableWrap,
 } from '@/components/ui';
 
 interface TransferLine {
@@ -121,161 +127,225 @@ export default function TransferDetailPage() {
     }
   }
 
-  if (error && !t) return <p style={{ color: 'var(--danger)' }}>{error}</p>;
+  const back = <BackLink href="/transfers">All transfers</BackLink>;
+
+  if (error && !t) {
+    return (
+      <div>
+        <PageHeader eyebrow={back} title="Transfer not found" />
+        <Alert tone="error">{error}</Alert>
+      </div>
+    );
+  }
   if (!t) return <LoadingRows rows={5} />;
 
   const isDraft = t.status === 'draft';
   const isInTransit = t.status === 'in_transit';
+  const hasShortfall = t.lines.some((l) => l.quantityShipped > l.quantityReceived);
+  const lineColumns = isInTransit ? 5 : 4;
+
+  const linesTable = (
+    <TableWrap>
+      <table className="table">
+        <thead>
+          <tr>
+            <th>Item</th>
+            <th className="num">Shipped</th>
+            <th className="num">Held</th>
+            <th className="num">Received</th>
+            {isInTransit && <th className="num">Receive qty</th>}
+          </tr>
+        </thead>
+        <tbody>
+          {t.lines.length === 0 && (
+            <tr>
+              <td colSpan={lineColumns} className="table-empty">
+                This transfer has no lines.
+              </td>
+            </tr>
+          )}
+          {t.lines.map((l) => {
+            const remaining = l.quantityShipped - l.quantityReceived;
+            return (
+              <tr key={l.id}>
+                <td>
+                  {l.productName}
+                  {l.variantName && <span className="muted"> — {l.variantName}</span>}
+                  {l.sku && (
+                    <>
+                      {' '}
+                      <code className="muted">{l.sku}</code>
+                    </>
+                  )}
+                </td>
+                <td className="num">{l.quantityShipped}</td>
+                <td className="num">{l.quantityHeld > 0 ? l.quantityHeld : '—'}</td>
+                <td className="num">{l.quantityReceived}</td>
+                {isInTransit && (
+                  <td className="num">
+                    {remaining > 0 ? (
+                      <Input
+                        type="number"
+                        min={0}
+                        max={remaining}
+                        aria-label={`Receive quantity for ${l.productName}`}
+                        value={recvQty[l.id] ?? 0}
+                        onChange={(e) =>
+                          setRecvQty((prev) => ({
+                            ...prev,
+                            [l.id]: Math.max(0, Math.min(remaining, Number(e.target.value) || 0)),
+                          }))
+                        }
+                        className="w-20"
+                      />
+                    ) : (
+                      <span className="badge badge-success">complete</span>
+                    )}
+                  </td>
+                )}
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </TableWrap>
+  );
 
   return (
     <div>
-      <p style={{ marginBottom: 12 }}>
-        <Link href="/transfers">← All transfers</Link>
-      </p>
       <PageHeader
+        eyebrow={back}
         title={<code>{t.number}</code>}
+        meta={<StatusBadge status={t.status} />}
         sub={
           <>
-            <StatusBadge status={t.status} /> · <strong>{t.fromLocationName ?? '—'}</strong> →{' '}
-            <strong>{t.toLocationName ?? '—'}</strong> · {new Date(t.createdAt).toLocaleString()}
+            <strong>{t.fromLocationName ?? '—'}</strong> →{' '}
+            <strong>{t.toLocationName ?? '—'}</strong> · created{' '}
+            {new Date(t.createdAt).toLocaleString()}
           </>
         }
         actions={
-          <LinkButton
-            href={`/print/transfers/${id}`}
-            variant="secondary"
-            size="sm"
-            target="_blank"
-            data-testid="print-transfer-ticket"
-          >
-            <Printer size={13} aria-hidden /> Transfer ticket
-          </LinkButton>
+          <>
+            <LinkButton
+              href={`/print/transfers/${id}`}
+              variant="secondary"
+              size="sm"
+              target="_blank"
+              data-testid="print-transfer-ticket"
+            >
+              <Printer size={13} aria-hidden /> Transfer ticket
+            </LinkButton>
+            {isDraft && (
+              <>
+                <Button variant="danger" size="sm" onClick={cancel} disabled={busy}>
+                  Cancel
+                </Button>
+                <Button variant="primary" onClick={ship} disabled={busy}>
+                  <Truck size={14} aria-hidden />
+                  {busy ? 'Shipping…' : 'Ship transfer'}
+                </Button>
+              </>
+            )}
+          </>
         }
       />
 
-      <Card title="Lines" style={{ marginBottom: 16 }}>
-        <div className="overflow-x-auto">
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Item</th>
-                <th className="num">Shipped</th>
-                <th className="num">Held</th>
-                <th className="num">Received</th>
-                {isInTransit && <th>Receive qty</th>}
-              </tr>
-            </thead>
-            <tbody>
-              {t.lines.map((l) => {
-                const remaining = l.quantityShipped - l.quantityReceived;
-                return (
-                  <tr key={l.id}>
-                    <td>
-                      {l.productName}
-                      {l.variantName && (
-                        <span style={{ color: 'var(--text-secondary)' }}> — {l.variantName}</span>
-                      )}
-                      {l.sku && (
-                        <span style={{ color: 'var(--text-muted)', fontSize: 11, marginLeft: 6 }}>
-                          <code>{l.sku}</code>
-                        </span>
-                      )}
-                    </td>
-                    <td className="num">{l.quantityShipped}</td>
-                    <td className="num">{l.quantityHeld > 0 ? l.quantityHeld : '—'}</td>
-                    <td className="num">{l.quantityReceived}</td>
-                    {isInTransit && (
-                      <td>
-                        {remaining > 0 ? (
-                          <Input
-                            type="number"
-                            min={0}
-                            max={remaining}
-                            value={recvQty[l.id] ?? 0}
-                            onChange={(e) =>
-                              setRecvQty((prev) => ({
-                                ...prev,
-                                [l.id]: Math.max(
-                                  0,
-                                  Math.min(remaining, Number(e.target.value) || 0),
-                                ),
-                              }))
-                            }
-                            style={{ width: 70 }}
-                          />
-                        ) : (
-                          <span className="badge badge-success">complete</span>
-                        )}
-                      </td>
-                    )}
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </Card>
+      <div className="grid gap-4 lg:grid-cols-[2fr_1fr]">
+        <Stack>
+          {isInTransit ? (
+            <Card
+              title="Lines"
+              description="Enter what arrived on each line. Sent units that never arrive can't be dismissed — “Close short” writes the shortfall off at cost (manager approval + coded reason) and registers the variance."
+            >
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  void submitReceive();
+                }}
+              >
+                {linesTable}
+                <FormActions
+                  start={
+                    hasShortfall && (
+                      <Button
+                        type="button"
+                        variant="danger"
+                        size="sm"
+                        disabled={busy}
+                        data-testid="close-short"
+                        onClick={() => setCloseShortOpen(true)}
+                      >
+                        Close short…
+                      </Button>
+                    )
+                  }
+                >
+                  <Button type="submit" variant="primary" disabled={busy}>
+                    <PackageCheck size={14} aria-hidden />
+                    {busy ? 'Receiving…' : 'Record receipt'}
+                  </Button>
+                </FormActions>
+              </form>
+            </Card>
+          ) : (
+            <Card title="Lines" flush>
+              {linesTable}
+            </Card>
+          )}
+        </Stack>
 
-      {t.notes && (
-        <Card style={{ marginBottom: 16 }}>
-          <strong style={{ fontSize: 13 }}>Notes:</strong>
-          <p style={{ fontSize: 13, color: 'var(--text-secondary)', margin: '4px 0 0' }}>
-            {t.notes}
-          </p>
-        </Card>
-      )}
-
-      <div className="flex flex-wrap gap-2">
-        {isDraft && (
-          <>
-            <Button variant="primary" onClick={ship} disabled={busy}>
-              <Truck size={14} />
-              {busy ? 'Shipping…' : 'Ship transfer'}
-            </Button>
-            {t.manifestId && (
-              <span style={{ fontSize: 12, color: 'var(--text-secondary)', alignSelf: 'center' }}>
-                On manifest{' '}
-                <Link href={`/transfers/manifests/${t.manifestId}`}>
-                  <code>{t.manifestNumber}</code>
-                </Link>
-                {t.loadNumber != null ? ` (load ${t.loadNumber})` : ''} — ships when the manifest
-                completes
-              </span>
-            )}
-            {/* Q3: shipping is gated on a printed ticket by default. */}
-            <span style={{ fontSize: 12, color: 'var(--text-secondary)', alignSelf: 'center' }}>
-              {t.ticketPrintedAt
-                ? `Ticket printed ${new Date(t.ticketPrintedAt).toLocaleString()}${t.ticketPrintCount > 1 ? ` (×${t.ticketPrintCount})` : ''}`
-                : 'Ticket not printed yet — print it before shipping'}
-            </span>
-            <Button variant="danger" onClick={cancel} disabled={busy}>
-              Cancel
-            </Button>
-          </>
-        )}
-        {isInTransit && (
-          <Button variant="primary" onClick={submitReceive} disabled={busy}>
-            <PackageCheck size={14} />
-            {busy ? 'Receiving…' : 'Record receipt'}
-          </Button>
-        )}
-        {isInTransit && t.lines.some((l) => l.quantityShipped > l.quantityReceived) && (
-          <Button
-            variant="danger"
-            disabled={busy}
-            data-testid="close-short"
-            onClick={() => setCloseShortOpen(true)}
-          >
-            Close short…
-          </Button>
-        )}
+        <Stack>
+          <Card title="Details">
+            <KeyValue
+              rows={[
+                { label: 'From', value: t.fromLocationName ?? '—' },
+                { label: 'To', value: t.toLocationName ?? '—' },
+                {
+                  label: 'Manifest',
+                  value: t.manifestId ? (
+                    <>
+                      <Link href={`/transfers/manifests/${t.manifestId}`}>
+                        <code>{t.manifestNumber}</code>
+                      </Link>
+                      {t.loadNumber != null ? ` (load ${t.loadNumber})` : ''}
+                      {isDraft && (
+                        <span className="muted"> — ships when the manifest completes</span>
+                      )}
+                    </>
+                  ) : (
+                    '—'
+                  ),
+                },
+                {
+                  // Q3: shipping is gated on a printed ticket by default.
+                  label: 'Ticket',
+                  value: t.ticketPrintedAt
+                    ? `Printed ${new Date(t.ticketPrintedAt).toLocaleString()}${t.ticketPrintCount > 1 ? ` (×${t.ticketPrintCount})` : ''}`
+                    : isDraft
+                      ? 'Not printed yet — print it before shipping'
+                      : 'Not printed',
+                },
+                {
+                  label: 'Shipped',
+                  value: t.shippedAt ? new Date(t.shippedAt).toLocaleString() : '—',
+                },
+                {
+                  label: 'Received',
+                  value: t.receivedAt ? new Date(t.receivedAt).toLocaleString() : '—',
+                },
+                ...(t.canceledAt
+                  ? [{ label: 'Cancelled', value: new Date(t.canceledAt).toLocaleString() }]
+                  : []),
+              ]}
+            />
+          </Card>
+          {t.notes && (
+            <Card title="Notes">
+              <p className="muted">{t.notes}</p>
+            </Card>
+          )}
+        </Stack>
       </div>
-      {isInTransit && (
-        <p className="muted" style={{ fontSize: 12, marginTop: 8 }}>
-          Sent units that never arrive can&apos;t be dismissed — &quot;Close short&quot; writes the
-          shortfall off at cost (manager approval + coded reason) and registers the variance.
-        </p>
-      )}
 
       <SecurityOverrideDialog
         open={closeShortOpen}

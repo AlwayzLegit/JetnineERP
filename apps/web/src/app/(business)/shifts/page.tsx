@@ -1,12 +1,27 @@
 'use client';
 
-import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import { LoadMore } from '@/components/load-more';
 import { useCursorList } from '@/lib/use-cursor-list';
 import { Money } from '@/components/money';
-import { Button, EmptyState, Field, Input, LoadingRows, PageHeader, Select } from '@/components/ui';
+import {
+  Alert,
+  Button,
+  Card,
+  EmptyState,
+  Field,
+  FormActions,
+  FormGrid,
+  Input,
+  LinkButton,
+  LoadingRows,
+  PageHeader,
+  Select,
+  Stack,
+  StatusBadge,
+  TableWrap,
+} from '@/components/ui';
 
 interface ShiftRow {
   id: string;
@@ -75,99 +90,108 @@ export default function ShiftsPage() {
     }
   }
 
+  const hasRows = rows != null && rows.length > 0;
+
   return (
     <div>
       <PageHeader title="Cash drawer" />
-      {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
-      {list.error && <p style={{ color: 'var(--danger)' }}>{list.error}</p>}
+      <Stack>
+        {list.error && <Alert tone="error">{list.error}</Alert>}
 
-      <div className="card">
-        <h2 className="card-title">Open new shift</h2>
-        <div className="grid gap-2 sm:flex sm:flex-wrap sm:items-end">
-          <Field label="Location">
-            <Select value={openLocationId} onChange={(e) => setOpenLocationId(e.target.value)}>
-              {locations.map((l) => (
-                <option key={l.id} value={l.id}>
-                  {l.name}
-                </option>
-              ))}
-            </Select>
-          </Field>
-          <Field label="Opening float ($)">
-            <Input
-              type="number"
-              step="0.01"
-              min={0}
-              value={floatStr}
-              onChange={(e) => setFloatStr(e.target.value)}
-            />
-          </Field>
-          <Field label="Notes">
-            <Input value={openNotes} onChange={(e) => setOpenNotes(e.target.value)} />
-          </Field>
-          <Button
-            variant="primary"
-            onClick={openShift}
-            disabled={opening || !floatStr}
-            className="min-h-11 w-fit"
-          >
-            {opening ? 'Opening…' : 'Open shift'}
-          </Button>
-        </div>
-      </div>
+        <Card title="Open new shift">
+          <FormGrid cols={3}>
+            <Field label="Location" required>
+              <Select value={openLocationId} onChange={(e) => setOpenLocationId(e.target.value)}>
+                {locations.length === 0 && <option value="">No locations available</option>}
+                {locations.map((l) => (
+                  <option key={l.id} value={l.id}>
+                    {l.name}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Opening float ($)" required>
+              <Input
+                type="number"
+                step="0.01"
+                min={0}
+                value={floatStr}
+                onChange={(e) => setFloatStr(e.target.value)}
+              />
+            </Field>
+            <Field label="Notes">
+              <Input value={openNotes} onChange={(e) => setOpenNotes(e.target.value)} />
+            </Field>
+          </FormGrid>
+          {error && (
+            <Alert tone="error" className="mt-3">
+              {error}
+            </Alert>
+          )}
+          <FormActions>
+            <Button
+              variant="primary"
+              onClick={openShift}
+              disabled={opening || !floatStr || !openLocationId}
+            >
+              {opening ? 'Opening…' : 'Open shift'}
+            </Button>
+          </FormActions>
+        </Card>
 
-      <div className="card">
-        <h2 className="card-title">Shifts</h2>
-        {rows == null ? (
-          <LoadingRows />
-        ) : rows.length === 0 ? (
-          <EmptyState>No shifts yet. Open one above to start tracking the drawer.</EmptyState>
-        ) : (
-          <>
-            <div className="overflow-x-auto">
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>Opened</th>
-                    <th>Location</th>
-                    <th className="num">Float</th>
-                    <th>Status</th>
-                    <th className="num">Variance</th>
-                    <th>&nbsp;</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((r) => (
-                    <tr key={r.id}>
-                      <td>{new Date(r.openedAt).toLocaleString()}</td>
-                      <td>{r.locationName ?? '—'}</td>
-                      <td className="num">
-                        <Money cents={r.openingFloatCents} />
-                      </td>
-                      <td>
-                        {r.closedAt ? (
-                          <span style={{ color: 'var(--text-secondary)' }}>
-                            Closed {new Date(r.closedAt).toLocaleString()}
-                          </span>
-                        ) : (
-                          <strong style={{ color: 'var(--success)' }}>Open</strong>
-                        )}
-                      </td>
-                      <td className="num">
-                        {r.varianceCents == null ? '—' : <Money cents={r.varianceCents} />}
-                      </td>
-                      <td>
-                        <Link href={`/shifts/${r.id}`}>Open</Link>
-                      </td>
+        <Card title="Shifts" flush={hasRows}>
+          {rows == null ? (
+            <LoadingRows />
+          ) : rows.length === 0 ? (
+            <EmptyState title="No shifts yet">
+              Open one above to start tracking the drawer.
+            </EmptyState>
+          ) : (
+            <>
+              <TableWrap>
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Opened</th>
+                      <th>Location</th>
+                      <th className="num">Float</th>
+                      <th>Status</th>
+                      <th className="num">Variance</th>
+                      <th className="actions" />
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <LoadMore state={list} noun="shifts" />
-          </>
-        )}
-      </div>
+                  </thead>
+                  <tbody>
+                    {rows.map((r) => (
+                      <tr key={r.id}>
+                        <td className="nowrap">{new Date(r.openedAt).toLocaleString()}</td>
+                        <td>{r.locationName ?? '—'}</td>
+                        <td className="num">
+                          <Money cents={r.openingFloatCents} />
+                        </td>
+                        <td>
+                          <StatusBadge status={r.closedAt ? 'closed' : 'open'} />
+                          {r.closedAt && (
+                            <span className="muted"> {new Date(r.closedAt).toLocaleString()}</span>
+                          )}
+                        </td>
+                        <td className="num">
+                          {r.varianceCents == null ? '—' : <Money cents={r.varianceCents} />}
+                        </td>
+                        <td className="actions">
+                          <LinkButton size="sm" href={`/shifts/${r.id}`}>
+                            Open
+                          </LinkButton>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </TableWrap>
+              <LoadMore state={list} noun="shifts" />
+            </>
+          )}
+        </Card>
+      </Stack>
     </div>
   );
 }

@@ -155,19 +155,12 @@ export function GlobalSearch() {
 
   let lastSection: string | null = null;
   return (
-    <div ref={boxRef} style={{ position: 'relative', flex: '1 1 220px', maxWidth: 420 }}>
-      <div style={{ position: 'relative' }}>
+    <div ref={boxRef} className="relative min-w-0 max-w-[420px] flex-[1_1_220px]">
+      <div className="relative">
         <Search
           size={14}
           aria-hidden
-          style={{
-            position: 'absolute',
-            left: 10,
-            top: '50%',
-            transform: 'translateY(-50%)',
-            color: 'var(--text-muted)',
-            pointerEvents: 'none',
-          }}
+          className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted"
         />
         <input
           ref={inputRef}
@@ -179,38 +172,20 @@ export function GlobalSearch() {
           onFocus={() => hits && setOpen(true)}
           onKeyDown={onInputKey}
           aria-label="Search customers and orders"
-          style={{
-            width: '100%',
-            fontSize: 13,
-            padding: '6px 10px 6px 30px',
-            border: '1px solid var(--border)',
-            borderRadius: 999,
-            background: 'var(--surface)',
-            color: 'var(--text)',
-          }}
+          aria-expanded={open && hits != null}
+          aria-controls="global-search-results"
+          className="w-full rounded-full border border-border bg-surface py-1.5 pl-[30px] pr-2.5 text-[13px] text-text placeholder:text-[var(--text-faint)] focus:border-brand focus:outline-none focus:ring-[3px] focus:ring-brand-soft"
         />
       </div>
       {open && hits && (
         <div
+          id="global-search-results"
           data-testid="search-results"
           role="listbox"
-          style={{
-            position: 'absolute',
-            top: 'calc(100% + 6px)',
-            left: 0,
-            right: 0,
-            zIndex: 60,
-            background: 'var(--surface)',
-            border: '1px solid var(--border)',
-            borderRadius: 'var(--radius)',
-            boxShadow: 'var(--shadow-md, var(--shadow-sm))',
-            maxHeight: 420,
-            overflowY: 'auto',
-            padding: 4,
-          }}
+          className="absolute left-0 right-0 top-[calc(100%+6px)] z-[60] max-h-[420px] overflow-y-auto rounded-card border border-border bg-surface p-1 shadow-[var(--shadow-md)]"
         >
           {hits.length === 0 ? (
-            <div style={{ padding: '10px 12px', fontSize: 13, color: 'var(--text-secondary)' }}>
+            <div className="px-3 py-2.5 text-[13px] text-secondary">
               Nothing matches — check the spelling, or try the phone number digits only.
             </div>
           ) : (
@@ -220,16 +195,7 @@ export function GlobalSearch() {
               return (
                 <div key={hit.key}>
                   {header && (
-                    <div
-                      style={{
-                        padding: '6px 10px 2px',
-                        fontSize: 10.5,
-                        fontWeight: 700,
-                        textTransform: 'uppercase',
-                        letterSpacing: 0.4,
-                        color: 'var(--text-muted)',
-                      }}
-                    >
+                    <div className="px-2.5 pb-0.5 pt-1.5 text-[10.5px] font-bold uppercase tracking-wider text-muted">
                       {header}
                     </div>
                   )}
@@ -240,24 +206,12 @@ export function GlobalSearch() {
                     data-testid={`search-hit-${hit.key}`}
                     onMouseEnter={() => setActive(i)}
                     onClick={() => go(hit)}
-                    style={{
-                      display: 'block',
-                      width: '100%',
-                      textAlign: 'left',
-                      padding: '7px 10px',
-                      border: 'none',
-                      borderRadius: 'var(--radius-sm)',
-                      background:
-                        i === active ? 'var(--accent-soft, var(--border))' : 'transparent',
-                      cursor: 'pointer',
-                      fontSize: 13,
-                      color: 'var(--text)',
-                    }}
+                    className={`block w-full cursor-pointer rounded-control border-0 px-2.5 py-[7px] text-left text-[13px] text-text ${
+                      i === active ? 'bg-brand-soft' : 'bg-transparent'
+                    }`}
                   >
                     <strong>{hit.primary}</strong>
-                    {hit.secondary && (
-                      <span style={{ color: 'var(--text-secondary)' }}> — {hit.secondary}</span>
-                    )}
+                    {hit.secondary && <span className="text-secondary"> — {hit.secondary}</span>}
                   </button>
                 </div>
               );

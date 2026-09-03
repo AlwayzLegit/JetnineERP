@@ -1,10 +1,22 @@
 'use client';
 
-import Link from 'next/link';
 import { Printer, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import { formatMoney } from '@jetnine/shared';
-import { Button, Card, EmptyState, Field, Input, PageHeader, Select } from '@/components/ui';
+import {
+  Alert,
+  BackLink,
+  Button,
+  Card,
+  EmptyState,
+  Field,
+  Input,
+  PageHeader,
+  Select,
+  Stack,
+  TableWrap,
+  Toolbar,
+} from '@/components/ui';
 import { api } from '@/lib/api';
 import { code128Svg } from '@/lib/code128';
 
@@ -35,19 +47,23 @@ type SheetKey = keyof typeof SHEETS;
 
 export default function LabelsPage() {
   const [query, setQuery] = useState('');
-  const [hits, setHits] = useState<LookupRow[]>([]);
+  const [hits, setHits] = useState<LookupRow[] | null>(null);
   const [picked, setPicked] = useState<PickedLabel[]>([]);
   const [sheet, setSheet] = useState<SheetKey>('avery30');
+  const [searching, setSearching] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function search() {
     const q = query.trim();
     if (!q) return;
+    setSearching(true);
     try {
       setHits(await api<LookupRow[]>(`/v1/pos/lookup?q=${encodeURIComponent(q)}&limit=200`));
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSearching(false);
     }
   }
 
@@ -87,10 +103,9 @@ export default function LabelsPage() {
 
   return (
     <div>
-      <p style={{ marginBottom: 12 }} className="no-print">
-        <Link href="/products">← Products</Link>
-      </p>
       <PageHeader
+        className="no-print"
+        eyebrow={<BackLink href="/products">Products</BackLink>}
         title="Barcode labels"
         sub="Pick items, set copy counts, and print a label sheet. Labels carry the variant barcode when set, otherwise the SKU."
         actions={
@@ -105,71 +120,80 @@ export default function LabelsPage() {
           </Button>
         }
       />
-      {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
 
-      <div className="no-print">
+      <Stack className="no-print">
+        {error && <Alert tone="error">{error}</Alert>}
+
         <Card title="Find items">
-          <div className="flex flex-wrap items-end gap-2">
-            <Field label="Search by name, SKU, or barcode" className="min-w-64 flex-1">
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              void search();
+            }}
+          >
+            <Toolbar>
               <Input
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') void search();
-                }}
-                placeholder="e.g. mattress, A-1"
+                placeholder="Search by name, SKU, or barcode"
+                aria-label="Search by name, SKU, or barcode"
                 data-testid="label-search"
-                className="w-full"
               />
-            </Field>
-            <Button variant="secondary" onClick={() => void search()}>
-              Search
-            </Button>
-          </div>
-          {hits.length > 0 && (
-            <div className="mt-3 overflow-x-auto">
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>Product</th>
-                    <th>SKU</th>
-                    <th className="num">Price</th>
-                    <th></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {hits.map((h) => (
-                    <tr key={h.variantId}>
-                      <td>
-                        {h.productName}
-                        {h.variantName && (
-                          <span style={{ color: 'var(--text-secondary)' }}> — {h.variantName}</span>
-                        )}
-                      </td>
-                      <td>
-                        <code>{h.barcode ?? h.sku ?? '—'}</code>
-                      </td>
-                      <td className="num">{formatMoney(h.priceCents)}</td>
-                      <td style={{ textAlign: 'right' }}>
-                        <Button size="sm" onClick={() => add(h)} data-testid={`add-label-${h.sku}`}>
-                          Add
-                        </Button>
-                      </td>
+              <Button type="submit" variant="secondary" size="sm" disabled={searching}>
+                {searching ? 'Searching…' : 'Search'}
+              </Button>
+            </Toolbar>
+          </form>
+          {hits && hits.length === 0 && (
+            <EmptyState title="No matches">Try a different name, SKU, or barcode.</EmptyState>
+          )}
+          {hits && hits.length > 0 && (
+            <Stack gap="sm">
+              <TableWrap>
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Product</th>
+                      <th>SKU</th>
+                      <th className="num">Price</th>
+                      <th className="actions" />
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {hits.map((h) => (
+                      <tr key={h.variantId}>
+                        <td>
+                          {h.productName}
+                          {h.variantName && <span className="muted"> — {h.variantName}</span>}
+                        </td>
+                        <td>
+                          <code>{h.barcode ?? h.sku ?? '—'}</code>
+                        </td>
+                        <td className="num">{formatMoney(h.priceCents)}</td>
+                        <td className="actions">
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            onClick={() => add(h)}
+                            data-testid={`add-label-${h.sku}`}
+                          >
+                            Add
+                          </Button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </TableWrap>
               {hits.length >= 200 && (
-                <p style={{ color: 'var(--text-secondary)', fontSize: 12, marginTop: 8 }}>
-                  Showing first 200 matches — refine your search.
-                </p>
+                <p className="muted">Showing first 200 matches — refine your search.</p>
               )}
-            </div>
+            </Stack>
           )}
         </Card>
 
         <Card title="Print queue">
-          <div className="mb-3 flex flex-wrap items-end gap-2">
+          <Toolbar>
             <Field label="Label layout">
               <Select value={sheet} onChange={(e) => setSheet(e.target.value as SheetKey)}>
                 {Object.entries(SHEETS).map(([k, v]) => (
@@ -179,68 +203,69 @@ export default function LabelsPage() {
                 ))}
               </Select>
             </Field>
-          </div>
-          {picked.length === 0 ? (
-            <EmptyState>Nothing queued — search above and add items.</EmptyState>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>Product</th>
-                    <th>Code</th>
-                    <th className="num">Copies</th>
-                    <th></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {picked.map((p) => (
-                    <tr key={p.variantId}>
-                      <td>
-                        {p.productName}
-                        {p.variantName && (
-                          <span style={{ color: 'var(--text-secondary)' }}> — {p.variantName}</span>
-                        )}
-                      </td>
-                      <td>
-                        <code>{p.barcode ?? p.sku ?? 'no code — skipped'}</code>
-                      </td>
-                      <td className="num" style={{ width: 90 }}>
-                        <Input
-                          type="number"
-                          min={1}
-                          value={p.copies}
-                          onChange={(e) => setCopies(p.variantId, Number(e.target.value))}
-                          style={{ width: 70 }}
-                          data-testid={`copies-${p.sku}`}
-                        />
-                      </td>
-                      <td style={{ textAlign: 'right' }}>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() =>
-                            setPicked((cur) => cur.filter((x) => x.variantId !== p.variantId))
-                          }
-                          aria-label="Remove"
-                        >
-                          <Trash2 size={14} aria-hidden />
-                        </Button>
-                      </td>
+          </Toolbar>
+          <Stack gap="sm">
+            {picked.length === 0 ? (
+              <EmptyState title="Nothing queued">Search above and add items.</EmptyState>
+            ) : (
+              <TableWrap>
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Product</th>
+                      <th>Code</th>
+                      <th className="num">Copies</th>
+                      <th className="actions" />
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-          {skipped.length > 0 && (
-            <p style={{ color: 'var(--warning)', fontSize: 12, marginTop: 8 }}>
-              {skipped.length} item(s) have no printable code (no barcode or SKU, or characters a
-              Code 128 barcode can&apos;t carry) and will be skipped.
-            </p>
-          )}
+                  </thead>
+                  <tbody>
+                    {picked.map((p) => (
+                      <tr key={p.variantId}>
+                        <td>
+                          {p.productName}
+                          {p.variantName && <span className="muted"> — {p.variantName}</span>}
+                        </td>
+                        <td>
+                          <code>{p.barcode ?? p.sku ?? 'no code — skipped'}</code>
+                        </td>
+                        <td className="num">
+                          <Input
+                            type="number"
+                            min={1}
+                            value={p.copies}
+                            aria-label={`Copies of ${p.productName}`}
+                            onChange={(e) => setCopies(p.variantId, Number(e.target.value))}
+                            className="w-20"
+                            data-testid={`copies-${p.sku}`}
+                          />
+                        </td>
+                        <td className="actions">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() =>
+                              setPicked((cur) => cur.filter((x) => x.variantId !== p.variantId))
+                            }
+                            aria-label="Remove"
+                          >
+                            <Trash2 size={14} aria-hidden />
+                          </Button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </TableWrap>
+            )}
+            {skipped.length > 0 && (
+              <Alert tone="warning">
+                {skipped.length} item(s) have no printable code (no barcode or SKU, or characters a
+                Code 128 barcode can&apos;t carry) and will be skipped.
+              </Alert>
+            )}
+          </Stack>
         </Card>
-      </div>
+      </Stack>
 
       {/* Print-only label grid. Same visibility trick as the receipt:
           hidden on screen, and on print everything else hides. */}

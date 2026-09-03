@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { api } from '@/lib/api';
+import { TableWrap } from '@/components/ui';
 import { PrintToolbar } from '../../print-toolbar';
 
 /**
@@ -137,33 +138,43 @@ export default function TransferTicketPrintPage() {
             </div>
           </div>
 
-          <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: 12 }}>
-            <thead>
-              <tr>
-                {['Qty', 'SKU', 'Item', 'Received'].map((h) => (
-                  <th key={h} style={{ ...cell, ...label, textAlign: 'left' }}>
-                    {h}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {t.lines.map((l) => (
-                <tr key={l.id}>
-                  <td style={{ ...cell, width: 48, textAlign: 'right' }}>{l.quantityShipped}</td>
-                  <td style={{ ...cell, width: 140 }}>
-                    <code>{l.sku ?? '—'}</code>
-                  </td>
-                  <td style={cell}>
-                    {l.productName}
-                    {l.variantName ? ` — ${l.variantName}` : ''}
-                  </td>
-                  {/* Blank tally box the receiving store fills by hand. */}
-                  <td style={{ ...cell, width: 70 }}>&nbsp;</td>
+          {/* Print sheet: the cells draw their own black rules, so the wrap drops its chrome. */}
+          <TableWrap
+            style={{
+              marginTop: 'var(--space-3)',
+              border: 'none',
+              borderRadius: 0,
+              background: 'transparent',
+            }}
+          >
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr>
+                  {['Qty', 'SKU', 'Item', 'Received'].map((h) => (
+                    <th key={h} style={{ ...cell, ...label, textAlign: 'left' }}>
+                      {h}
+                    </th>
+                  ))}
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {t.lines.map((l) => (
+                  <tr key={l.id}>
+                    <td style={{ ...cell, width: 48, textAlign: 'right' }}>{l.quantityShipped}</td>
+                    <td style={{ ...cell, width: 140 }}>
+                      <code>{l.sku ?? '—'}</code>
+                    </td>
+                    <td style={cell}>
+                      {l.productName}
+                      {l.variantName ? ` — ${l.variantName}` : ''}
+                    </td>
+                    {/* Blank tally box the receiving store fills by hand. */}
+                    <td style={{ ...cell, width: 70 }}>&nbsp;</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </TableWrap>
 
           {t.notes && (
             <div style={{ ...box, marginTop: 10, minHeight: 30 }}>
@@ -187,7 +198,7 @@ export default function TransferTicketPrintPage() {
               <div style={{ borderTop: '1px solid #000', paddingTop: 4, fontSize: 10 }}>Date</div>
             </div>
           </div>
-          <p style={{ fontSize: 10, color: '#333', marginTop: 16 }}>
+          <p style={{ fontSize: 10, color: '#333', marginTop: 'var(--space-4)' }}>
             Receiving store: count against this ticket, sign, then confirm the received quantities
             in the system to complete transfer {t.number}.
           </p>

@@ -49,8 +49,15 @@ export function ActiveBusinessBadge() {
     function onClick(e: MouseEvent) {
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
     }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') setOpen(false);
+    }
     document.addEventListener('mousedown', onClick);
-    return () => document.removeEventListener('mousedown', onClick);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onClick);
+      document.removeEventListener('keydown', onKey);
+    };
   }, [open]);
 
   async function switchTo(businessId: string) {
@@ -74,25 +81,14 @@ export function ActiveBusinessBadge() {
   }
 
   return (
-    <div ref={ref} style={{ position: 'relative' }}>
+    <div ref={ref} className="relative">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
+        aria-haspopup="menu"
+        aria-expanded={open}
         data-testid="active-business"
-        style={{
-          display: 'inline-flex',
-          alignItems: 'center',
-          gap: 8,
-          fontSize: 12,
-          fontWeight: 600,
-          background: 'var(--neutral-soft)',
-          border: '1px solid var(--border)',
-          borderRadius: 999,
-          padding: '3px 12px',
-          color: 'var(--text-secondary)',
-          whiteSpace: 'nowrap',
-          cursor: 'pointer',
-        }}
+        className="inline-flex cursor-pointer items-center gap-2 whitespace-nowrap rounded-full border border-border bg-[var(--neutral-soft)] px-3 py-[3px] text-[12px] font-semibold text-secondary hover:border-brand hover:text-brand"
       >
         {name ?? 'No business selected'}
         <ChevronDown size={13} aria-hidden />
@@ -100,73 +96,38 @@ export function ActiveBusinessBadge() {
 
       {open && (
         <div
-          className="card"
-          style={{
-            position: 'absolute',
-            top: 'calc(100% + 6px)',
-            left: 0,
-            zIndex: 50,
-            minWidth: 240,
-            padding: 6,
-            boxShadow: 'var(--shadow-lg)',
-          }}
+          role="menu"
+          className="absolute left-0 top-[calc(100%+6px)] z-50 min-w-[240px] rounded-card border border-border bg-surface p-1.5 shadow-[var(--shadow-lg)]"
           data-testid="business-switcher"
         >
-          {memberships == null && (
-            <p className="muted" style={{ fontSize: 12, padding: '6px 8px', margin: 0 }}>
-              Loading…
-            </p>
+          {memberships == null && <p className="muted m-0 px-2 py-1.5 text-[12px]">Loading…</p>}
+          {memberships?.length === 0 && (
+            <p className="muted m-0 px-2 py-1.5 text-[12px]">No businesses to show.</p>
           )}
           {memberships?.map((m) => (
             <button
               key={m.businessId}
               type="button"
+              role="menuitem"
               disabled={switching}
               onClick={() => void switchTo(m.businessId)}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8,
-                width: '100%',
-                textAlign: 'left',
-                background: 'none',
-                border: 'none',
-                borderRadius: 'var(--radius-sm)',
-                padding: '7px 8px',
-                fontSize: 13,
-                cursor: 'pointer',
-                color: 'var(--text)',
-              }}
-              onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--brand-soft)')}
-              onMouseLeave={(e) => (e.currentTarget.style.background = 'none')}
+              className="flex w-full cursor-pointer items-center gap-2 rounded-control border-0 bg-transparent px-2 py-[7px] text-left text-[13px] text-text hover:bg-brand-soft disabled:cursor-default disabled:opacity-60"
             >
-              <span style={{ flex: 1 }}>
+              <span className="flex-1">
                 {m.businessName}
-                <span className="muted" style={{ fontSize: 11, display: 'block' }}>
-                  {m.roleName}
-                </span>
+                <span className="muted block text-[11px]">{m.roleName}</span>
               </span>
               {m.businessId === activeId.current && (
-                <Check size={14} style={{ color: 'var(--success)' }} aria-hidden />
+                <Check size={14} className="text-success" aria-hidden />
               )}
             </button>
           ))}
           {(memberships?.length ?? 0) > 1 && (
             <Link
               href="/agency"
+              role="menuitem"
               onClick={() => setOpen(false)}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8,
-                padding: '7px 8px',
-                fontSize: 12.5,
-                fontWeight: 600,
-                color: 'var(--brand)',
-                textDecoration: 'none',
-                borderTop: '1px solid var(--border)',
-                marginTop: 4,
-              }}
+              className="mt-1 flex items-center gap-2 border-t border-border px-2 py-[7px] text-[12.5px] font-semibold text-brand no-underline"
             >
               <Building2 size={14} aria-hidden /> All businesses overview
             </Link>

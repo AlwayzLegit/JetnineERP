@@ -86,7 +86,17 @@ export const ENTITY_SPECS: EntitySpec[] = [
         required: true,
         headers: ['DESCRIPTION', 'ITEM_DESC', 'NAME', 'DESC'],
       },
-      { name: 'category', type: 'string', headers: ['CATEGORY', 'CAT', 'PRODUCT_GROUP', 'GROUP'] },
+      { name: 'category', type: 'string', headers: ['CATEGORY', 'CAT', 'CATG'] },
+      // STORIS Active Inventory export (owner 2026-09-03): Brand becomes the
+      // catalog brand; Group (QUEEN, CAKING, QUFND, …) is STORIS's size /
+      // product group — kept as the variant's `group` attribute, not a
+      // category.
+      { name: 'brand', type: 'string', headers: ['BRAND', 'MFG', 'MANUFACTURER', 'BRAND_NAME'] },
+      {
+        name: 'group',
+        type: 'string',
+        headers: ['GROUP', 'PRODUCT_GROUP', 'SIZE_GROUP', 'STORIS_GROUP'],
+      },
       {
         // Optional by decision D12: STORIS exports carry cost only and the
         // merchant prices at the register. Absent → new variants land at 0
@@ -145,6 +155,16 @@ export const ENTITY_SPECS: EntitySpec[] = [
         headers: ['ON_HAND', 'QTY_ON_HAND', 'QOH', 'QTY'],
       },
       { name: 'unitCostCents', type: 'money', headers: ['UNIT_COST', 'AVG_COST', 'COST'] },
+      // STORIS Active Inventory (owner 2026-09-03): the as-is units at this
+      // store (a subset of ON_HAND — the converter adds them in) and the
+      // store's minimum stock, which becomes the level's reorder point and
+      // rolls up into the variant's.
+      { name: 'asIsQty', type: 'int', headers: ['AS_IS', 'QUANTITY_AS_IS', 'AS_IS_QTY', 'ASIS'] },
+      {
+        name: 'reorderPoint',
+        type: 'int',
+        headers: ['MIN_STOCK', 'MIN', 'REORDER_POINT', 'MIN_QTY'],
+      },
     ],
   },
   {

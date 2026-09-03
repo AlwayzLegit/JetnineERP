@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { Save } from 'lucide-react';
 import { useEffect, useState, type FormEvent } from 'react';
 import {
@@ -9,7 +10,22 @@ import {
   SUPPORTED_CURRENCIES,
   type ReasonUsageClass,
 } from '@jetnine/shared';
-import { Button, Field, Input, LinkButton, LoadingRows, PageHeader, Select } from '@/components/ui';
+import {
+  Alert,
+  Button,
+  Card,
+  EmptyState,
+  Field,
+  FormActions,
+  FormGrid,
+  Input,
+  LoadingRows,
+  PageHeader,
+  SectionHeading,
+  Select,
+  Stack,
+  TableWrap,
+} from '@/components/ui';
 import { api } from '@/lib/api';
 
 interface Branding {
@@ -54,6 +70,17 @@ interface Settings {
   branding: Branding | null;
   ops: OpsSettings | null;
 }
+
+/** Sub-pages under Settings — rendered as a pill sub-nav, not header buttons. */
+const SETTINGS_SECTIONS: { href: string; label: string }[] = [
+  { href: '/settings/tax-classes', label: 'Tax classes' },
+  { href: '/settings/discounts', label: 'Discounts' },
+  { href: '/settings/webhooks', label: 'Webhooks' },
+  { href: '/settings/api-keys', label: 'API keys' },
+  { href: '/settings/import', label: 'Data import' },
+  { href: '/settings/integrations', label: 'Integrations' },
+  { href: '/settings/billing', label: 'Billing' },
+];
 
 export default function SettingsPage() {
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -101,123 +128,101 @@ export default function SettingsPage() {
     }
   }
 
-  if (error && !settings) return <p style={{ color: 'var(--danger)' }}>{error}</p>;
+  if (error && !settings) {
+    return (
+      <div>
+        <PageHeader title="Business settings" />
+        <Alert tone="error">{error}</Alert>
+      </div>
+    );
+  }
   if (!settings) return <LoadingRows />;
 
   return (
     <div>
       <PageHeader
         title="Business settings"
-        actions={
-          <span className="flex flex-wrap items-center justify-end gap-2">
-            <LinkButton href="/settings/tax-classes" variant="secondary" size="sm">
-              Tax classes
-            </LinkButton>
-            <LinkButton href="/settings/discounts" variant="secondary" size="sm">
-              Discounts
-            </LinkButton>
-            <LinkButton href="/settings/webhooks" variant="secondary" size="sm">
-              Webhooks
-            </LinkButton>
-            <LinkButton href="/settings/api-keys" variant="secondary" size="sm">
-              API keys
-            </LinkButton>
-            <LinkButton href="/settings/import" variant="secondary" size="sm">
-              Data import
-            </LinkButton>
-            <LinkButton href="/settings/integrations" variant="secondary" size="sm">
-              Integrations
-            </LinkButton>
-            <LinkButton href="/settings/billing" variant="primary" size="sm">
-              Billing
-            </LinkButton>
-          </span>
-        }
+        sub="Name, currency, tax defaults, receipts, store operations, and branding for this business."
       />
-      <form onSubmit={submit} className="card grid max-w-[640px] gap-3 sm:grid-cols-2">
-        <Field label="Business name">
-          <Input name="name" defaultValue={settings.name} required style={{ width: '100%' }} />
-        </Field>
-        <Field label="Currency">
-          <Select
-            name="currencyCode"
-            defaultValue={settings.currencyCode}
-            style={{ width: '100%' }}
-          >
-            {SUPPORTED_CURRENCIES.map((code) => (
-              <option key={code} value={code}>
-                {code} — {CURRENCY_LABELS[code]}
-              </option>
-            ))}
-          </Select>
-          <span
-            style={{ color: 'var(--text-muted)', fontSize: 11, marginTop: 2, display: 'block' }}
-          >
-            Switching currency changes how amounts are displayed across the app. Existing balances
-            keep their stored minor-unit value; you may want to coordinate the change with your
-            bookkeeper.
-          </span>
-        </Field>
-        <Field label="Default tax rate (basis points; 250 = 2.5%)" className="sm:col-span-2">
-          <Input
-            name="defaultTaxRateBps"
-            type="number"
-            min={0}
-            defaultValue={settings.defaultTaxRateBps}
-            style={{ width: '100%' }}
-          />
-        </Field>
-        <Field label="Receipt header">
-          <textarea
-            name="receiptHeader"
-            defaultValue={settings.receiptHeader ?? ''}
-            rows={3}
-            className="textarea"
-            style={{ width: '100%', resize: 'vertical' }}
-          />
-        </Field>
-        <Field label="Receipt footer">
-          <textarea
-            name="receiptFooter"
-            defaultValue={settings.receiptFooter ?? ''}
-            rows={3}
-            className="textarea"
-            style={{ width: '100%', resize: 'vertical' }}
-          />
-        </Field>
-        {error && (
-          <p className="sm:col-span-2" style={{ color: 'var(--danger)', fontSize: 13, margin: 0 }}>
-            {error}
-          </p>
-        )}
-        {success && (
-          <p
-            data-testid="settings-success"
-            className="sm:col-span-2"
-            style={{ color: 'var(--success)', fontSize: 13, margin: 0 }}
-          >
-            {success}
-          </p>
-        )}
-        <Button
-          type="submit"
-          variant="primary"
-          disabled={saving}
-          className="sm:col-span-2"
-          style={{ width: 'fit-content' }}
-        >
-          <Save size={14} aria-hidden />
-          {saving ? 'Saving…' : 'Save'}
-        </Button>
-      </form>
+      <Stack>
+        <nav aria-label="Settings sections" className="flex flex-wrap gap-2">
+          {SETTINGS_SECTIONS.map((s) => (
+            <Link key={s.href} href={s.href} className="pill no-underline">
+              {s.label}
+            </Link>
+          ))}
+        </nav>
 
-      <OpsCard settings={settings} onSaved={setSettings} />
+        <Card title="Business" className="form-narrow">
+          <form onSubmit={submit}>
+            <FormGrid cols={2}>
+              <Field label="Business name" required>
+                <Input name="name" defaultValue={settings.name} required />
+              </Field>
+              <Field
+                label="Currency"
+                hint="Switching currency changes how amounts are displayed across the app. Existing balances keep their stored minor-unit value; you may want to coordinate the change with your bookkeeper."
+              >
+                <Select name="currencyCode" defaultValue={settings.currencyCode}>
+                  {SUPPORTED_CURRENCIES.map((code) => (
+                    <option key={code} value={code}>
+                      {code} — {CURRENCY_LABELS[code]}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <Field label="Default tax rate (basis points; 250 = 2.5%)" className="form-span">
+                <Input
+                  name="defaultTaxRateBps"
+                  type="number"
+                  min={0}
+                  defaultValue={settings.defaultTaxRateBps}
+                />
+              </Field>
+              <Field label="Receipt header">
+                <textarea
+                  name="receiptHeader"
+                  defaultValue={settings.receiptHeader ?? ''}
+                  rows={3}
+                  className="textarea"
+                />
+              </Field>
+              <Field label="Receipt footer">
+                <textarea
+                  name="receiptFooter"
+                  defaultValue={settings.receiptFooter ?? ''}
+                  rows={3}
+                  className="textarea"
+                />
+              </Field>
+            </FormGrid>
+            {error && (
+              <Alert tone="error" className="mt-3">
+                {error}
+              </Alert>
+            )}
+            {success && (
+              <Alert tone="success" className="mt-3" data-testid="settings-success">
+                {success}
+              </Alert>
+            )}
+            <FormActions>
+              <Button type="submit" variant="primary" disabled={saving}>
+                <Save size={14} aria-hidden />
+                {saving ? 'Saving…' : 'Save'}
+              </Button>
+            </FormActions>
+          </form>
+        </Card>
 
-      <ReasonCodesCard />
+        <OpsCard settings={settings} onSaved={setSettings} />
 
-      <BrandingCard settings={settings} onSaved={setSettings} />
+        <ReasonCodesCard />
 
-      <RegistryReference />
+        <BrandingCard settings={settings} onSaved={setSettings} />
+
+        <RegistryReference />
+      </Stack>
     </div>
   );
 }
@@ -252,56 +257,68 @@ function RegistryReference() {
   }
 
   return (
-    <details style={{ marginTop: 24 }} data-testid="settings-registry" onToggle={() => void open()}>
-      <summary style={{ cursor: 'pointer', fontSize: 14, fontWeight: 500 }}>
-        Settings registry — what each setting does and what blank means
-      </summary>
-      {failed && (
-        <p style={{ color: 'var(--danger)', fontSize: 13 }}>Could not load the registry.</p>
-      )}
-      {rows && (
-        <div className="overflow-x-auto" style={{ marginTop: 8 }}>
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Setting</th>
-                <th>Type</th>
-                <th>Blank means</th>
-                <th>Read by</th>
-                <th>Class</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => (
-                <tr key={r.key}>
-                  <td>
-                    {r.label}
-                    <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
-                      <code>{r.key}</code>
-                    </div>
-                  </td>
-                  <td>
-                    <code>{r.type}</code>
-                  </td>
-                  <td>{r.nullMeans}</td>
-                  <td style={{ fontSize: 12.5 }}>{r.readBy}</td>
-                  <td>
-                    {r.classTags.length > 0
-                      ? r.classTags.map((t) => (
-                          <span key={t} className="badge badge-warning" style={{ marginRight: 4 }}>
-                            {t}
+    <Card>
+      <details data-testid="settings-registry" onToggle={() => void open()}>
+        <summary className="section-title cursor-pointer">
+          Settings registry — what each setting does and what blank means
+        </summary>
+        <div className="pt-3">
+          {failed && <Alert tone="error">Could not load the registry.</Alert>}
+          {!failed && !rows && <LoadingRows rows={2} />}
+          {rows && (
+            <TableWrap>
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Setting</th>
+                    <th>Type</th>
+                    <th>Blank means</th>
+                    <th>Read by</th>
+                    <th>Class</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((r) => (
+                    <tr key={r.key}>
+                      <td>
+                        {r.label}
+                        <div className="muted">
+                          <code>{r.key}</code>
+                        </div>
+                      </td>
+                      <td>
+                        <code>{r.type}</code>
+                      </td>
+                      <td>{r.nullMeans}</td>
+                      <td>{r.readBy}</td>
+                      <td>
+                        {r.classTags.length > 0 ? (
+                          <span className="inline-flex flex-wrap gap-1">
+                            {r.classTags.map((t) => (
+                              <span key={t} className="badge badge-warning">
+                                {t}
+                              </span>
+                            ))}
                           </span>
-                        ))
-                      : '—'}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                        ) : (
+                          '—'
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </TableWrap>
+          )}
         </div>
-      )}
-    </details>
+      </details>
+    </Card>
   );
+}
+
+/** A checkbox row inside a `Field`: the Field's label already wraps it, so no nested label. */
+function CheckRow({ children }: { children: React.ReactNode }) {
+  return <span className="flex items-center gap-2 py-1.5">{children}</span>;
 }
 
 /**
@@ -376,230 +393,221 @@ function OpsCard({ settings, onSaved }: { settings: Settings; onSaved: (s: Setti
   }
 
   return (
-    <form onSubmit={submit} className="card mt-4 grid max-w-[640px] gap-3 sm:grid-cols-2">
-      <h3 className="card-title sm:col-span-2" style={{ margin: 0 }}>
-        Store operations
-      </h3>
-      <Field label="Recycling fee per unit ($; blank = default 10.50)">
-        <Input
-          name="recyclingFee"
-          type="number"
-          step="0.01"
-          min={0}
-          defaultValue={
-            ops.recyclingFeeCents != null ? (ops.recyclingFeeCents / 100).toFixed(2) : ''
-          }
-          data-testid="ops-recycling-fee"
-          style={{ width: '100%' }}
-        />
-      </Field>
-      <Field label="Delivery stops per day (soft cap; blank = 15)">
-        <Input
-          name="deliveryDailyCap"
-          type="number"
-          min={1}
-          defaultValue={ops.deliveryDailyCap ?? ''}
-          style={{ width: '100%' }}
-        />
-      </Field>
-      <Field label="Invoice header note (printed top-center)">
-        <Input
-          name="invoiceHeaderNote"
-          defaultValue={ops.invoiceHeaderNote ?? ''}
-          placeholder="WE CALL 6-8PM NIGHT BEFORE DEL"
-          data-testid="ops-header-note"
-          style={{ width: '100%' }}
-        />
-      </Field>
-      <Field label="PO reply-to email">
-        <Input
-          name="poReplyTo"
-          type="email"
-          defaultValue={ops.poReplyTo ?? ''}
-          style={{ width: '100%' }}
-        />
-      </Field>
-      <Field label="Max balance for ticket print ($; blank = no cap)">
-        <Input
-          name="maxBalanceForTicket"
-          type="number"
-          step="0.01"
-          min={0}
-          defaultValue={
-            ops.maxBalanceForTicketPrintCents != null
-              ? (ops.maxBalanceForTicketPrintCents / 100).toFixed(2)
-              : ''
-          }
-          style={{ width: '100%' }}
-        />
-      </Field>
-      <Field label="Delivery pieces per day (blank = no piece budget)">
-        <Input
-          name="deliveryPieceCap"
-          type="number"
-          min={1}
-          defaultValue={ops.deliveryDailyPieceCap ?? ''}
-          style={{ width: '100%' }}
-        />
-      </Field>
-      <Field label="Delivery capacity units per day (blank = off; king set > twin)">
-        <Input
-          name="deliveryUnitCap"
-          type="number"
-          min={1}
-          defaultValue={ops.deliveryDailyCapacityUnits ?? ''}
-          style={{ width: '100%' }}
-        />
-      </Field>
-      <Field label="Invoice auto-clear tolerance ($; blank = manual approval)">
-        <Input
-          name="invoiceTolerance"
-          type="number"
-          step="0.01"
-          min={0}
-          defaultValue={
-            ops.invoiceVarianceToleranceCents != null
-              ? (ops.invoiceVarianceToleranceCents / 100).toFixed(2)
-              : ''
-          }
-          style={{ width: '100%' }}
-        />
-      </Field>
-      <Field label="Blind receiving (hide expected quantities at the dock)">
-        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
-          <input
-            type="checkbox"
-            name="blindReceiving"
-            defaultChecked={Boolean(ops.blindReceiving)}
-          />
-          Receivers count what arrived, not what was expected
-        </label>
-      </Field>
-      <Field label="Stock reservation basis (who gets scarce stock first)">
-        <select
-          name="reserveBasis"
-          defaultValue={ops.reserveBasis === 'order_date' ? 'order_date' : 'delivery_date'}
-          className="select"
-          style={{ width: '100%' }}
-        >
-          <option value="delivery_date">Earliest delivery date first</option>
-          <option value="order_date">First order written first</option>
-        </select>
-      </Field>
-      <Field label="Return window (days; blank = no limit)">
-        <Input
-          name="returnWindowDays"
-          type="number"
-          min={1}
-          placeholder="e.g. 120 — older returns need a manager"
-          defaultValue={ops.returnWindowDays ?? ''}
-          style={{ width: '100%' }}
-        />
-      </Field>
-      <Field label="Exchange restocking fee (% of return credit; blank = none)">
-        <Input
-          name="restockingFeePercent"
-          type="number"
-          step="0.5"
-          min={0}
-          max={100}
-          placeholder="e.g. 10 — overridable per exchange"
-          defaultValue={ops.restockingFeePercent ?? ''}
-          style={{ width: '100%' }}
-        />
-      </Field>
-      <Field label="Hold exchanges for approval at entry (E1)">
-        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
-          <input
-            type="checkbox"
-            name="exchangeHoldAtEntry"
-            defaultChecked={Boolean(ops.exchangeHoldAtEntry)}
-          />
-          Every new exchange waits for a manager release before it can settle
-        </label>
-      </Field>
-      <Field label="Auto transfer schedule days (blank = auto transfers off; 0 = next day)">
-        <Input
-          name="autoScheduleDays"
-          type="number"
-          min={0}
-          placeholder="blank disables auto transfers"
-          defaultValue={ops.autoScheduleDays ?? ''}
-          style={{ width: '100%' }}
-        />
-      </Field>
-      <Field label="Nightly auto-replenishment POs">
-        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
-          <input
-            type="checkbox"
-            name="autoReplenishmentEnabled"
-            defaultChecked={Boolean(ops.autoReplenishmentEnabled)}
-          />
-          Draft a PO per vendor overnight for items at or below their reorder point
-        </label>
-      </Field>
-      <Field label="Price variance — no-friction tier (%; blank = 5)">
-        <Input
-          name="pvTier1Pct"
-          type="number"
-          step="0.5"
-          min={0}
-          defaultValue={ops.priceVariance?.tier1Pct ?? ''}
-          style={{ width: '100%' }}
-        />
-      </Field>
-      <Field label="No-friction max discount ($; blank = 50)">
-        <Input
-          name="pvTier1Max"
-          type="number"
-          step="1"
-          min={0}
-          defaultValue={
-            ops.priceVariance?.tier1MaxCents != null
-              ? (ops.priceVariance.tier1MaxCents / 100).toFixed(0)
-              : ''
-          }
-          style={{ width: '100%' }}
-        />
-      </Field>
-      <Field label="Deep-discount log tier starts above (%; blank = 15)">
-        <Input
-          name="pvTier2Pct"
-          type="number"
-          step="0.5"
-          min={0}
-          defaultValue={ops.priceVariance?.tier2Pct ?? ''}
-          style={{ width: '100%' }}
-        />
-      </Field>
-      <Field label="Invoice footer" className="sm:col-span-2">
-        <textarea
-          name="invoiceFooterNote"
-          defaultValue={ops.invoiceFooterNote ?? ''}
-          rows={3}
-          className="textarea"
-          style={{ width: '100%', resize: 'vertical' }}
-        />
-      </Field>
-      {errorMsg && (
-        <p className="sm:col-span-2" style={{ color: 'var(--danger)', fontSize: 13, margin: 0 }}>
-          {errorMsg}
-        </p>
-      )}
-      {message && (
-        <p
-          data-testid="ops-success"
-          className="sm:col-span-2"
-          style={{ color: 'var(--success)', fontSize: 13, margin: 0 }}
-        >
-          {message}
-        </p>
-      )}
-      <Button type="submit" variant="primary" disabled={saving} style={{ width: 'fit-content' }}>
-        <Save size={14} aria-hidden />
-        {saving ? 'Saving…' : 'Save operations'}
-      </Button>
-    </form>
+    <Card
+      title="Store operations"
+      description="Fees, delivery capacity, receiving, returns, and price-variance thresholds. Blank means the documented default."
+      className="form-narrow"
+    >
+      <form onSubmit={submit}>
+        <FormGrid cols={2}>
+          <SectionHeading as="h3" title="Fees & invoices" />
+          <Field label="Recycling fee per unit ($; blank = default 10.50)">
+            <Input
+              name="recyclingFee"
+              type="number"
+              step="0.01"
+              min={0}
+              defaultValue={
+                ops.recyclingFeeCents != null ? (ops.recyclingFeeCents / 100).toFixed(2) : ''
+              }
+              data-testid="ops-recycling-fee"
+            />
+          </Field>
+          <Field label="Max balance for ticket print ($; blank = no cap)">
+            <Input
+              name="maxBalanceForTicket"
+              type="number"
+              step="0.01"
+              min={0}
+              defaultValue={
+                ops.maxBalanceForTicketPrintCents != null
+                  ? (ops.maxBalanceForTicketPrintCents / 100).toFixed(2)
+                  : ''
+              }
+            />
+          </Field>
+          <Field label="Invoice header note (printed top-center)">
+            <Input
+              name="invoiceHeaderNote"
+              defaultValue={ops.invoiceHeaderNote ?? ''}
+              placeholder="WE CALL 6-8PM NIGHT BEFORE DEL"
+              data-testid="ops-header-note"
+            />
+          </Field>
+          <Field label="PO reply-to email">
+            <Input name="poReplyTo" type="email" defaultValue={ops.poReplyTo ?? ''} />
+          </Field>
+          <Field label="Invoice footer" className="form-span">
+            <textarea
+              name="invoiceFooterNote"
+              defaultValue={ops.invoiceFooterNote ?? ''}
+              rows={3}
+              className="textarea"
+            />
+          </Field>
+
+          <SectionHeading as="h3" title="Delivery capacity" />
+          <Field label="Delivery stops per day (soft cap; blank = 15)">
+            <Input
+              name="deliveryDailyCap"
+              type="number"
+              min={1}
+              defaultValue={ops.deliveryDailyCap ?? ''}
+            />
+          </Field>
+          <Field label="Delivery pieces per day (blank = no piece budget)">
+            <Input
+              name="deliveryPieceCap"
+              type="number"
+              min={1}
+              defaultValue={ops.deliveryDailyPieceCap ?? ''}
+            />
+          </Field>
+          <Field label="Delivery capacity units per day (blank = off; king set > twin)">
+            <Input
+              name="deliveryUnitCap"
+              type="number"
+              min={1}
+              defaultValue={ops.deliveryDailyCapacityUnits ?? ''}
+            />
+          </Field>
+          <Field label="Auto transfer schedule days (blank = auto transfers off; 0 = next day)">
+            <Input
+              name="autoScheduleDays"
+              type="number"
+              min={0}
+              placeholder="blank disables auto transfers"
+              defaultValue={ops.autoScheduleDays ?? ''}
+            />
+          </Field>
+
+          <SectionHeading as="h3" title="Receiving & stock" />
+          <Field label="Invoice auto-clear tolerance ($; blank = manual approval)">
+            <Input
+              name="invoiceTolerance"
+              type="number"
+              step="0.01"
+              min={0}
+              defaultValue={
+                ops.invoiceVarianceToleranceCents != null
+                  ? (ops.invoiceVarianceToleranceCents / 100).toFixed(2)
+                  : ''
+              }
+            />
+          </Field>
+          <Field label="Stock reservation basis (who gets scarce stock first)">
+            <Select
+              name="reserveBasis"
+              defaultValue={ops.reserveBasis === 'order_date' ? 'order_date' : 'delivery_date'}
+            >
+              <option value="delivery_date">Earliest delivery date first</option>
+              <option value="order_date">First order written first</option>
+            </Select>
+          </Field>
+          <Field label="Blind receiving (hide expected quantities at the dock)">
+            <CheckRow>
+              <input
+                type="checkbox"
+                name="blindReceiving"
+                defaultChecked={Boolean(ops.blindReceiving)}
+              />
+              Receivers count what arrived, not what was expected
+            </CheckRow>
+          </Field>
+          <Field label="Nightly auto-replenishment POs">
+            <CheckRow>
+              <input
+                type="checkbox"
+                name="autoReplenishmentEnabled"
+                defaultChecked={Boolean(ops.autoReplenishmentEnabled)}
+              />
+              Draft a PO per vendor overnight for items at or below their reorder point
+            </CheckRow>
+          </Field>
+
+          <SectionHeading as="h3" title="Returns & exchanges" />
+          <Field label="Return window (days; blank = no limit)">
+            <Input
+              name="returnWindowDays"
+              type="number"
+              min={1}
+              placeholder="e.g. 120 — older returns need a manager"
+              defaultValue={ops.returnWindowDays ?? ''}
+            />
+          </Field>
+          <Field label="Exchange restocking fee (% of return credit; blank = none)">
+            <Input
+              name="restockingFeePercent"
+              type="number"
+              step="0.5"
+              min={0}
+              max={100}
+              placeholder="e.g. 10 — overridable per exchange"
+              defaultValue={ops.restockingFeePercent ?? ''}
+            />
+          </Field>
+          <Field label="Hold exchanges for approval at entry (E1)" className="form-span">
+            <CheckRow>
+              <input
+                type="checkbox"
+                name="exchangeHoldAtEntry"
+                defaultChecked={Boolean(ops.exchangeHoldAtEntry)}
+              />
+              Every new exchange waits for a manager release before it can settle
+            </CheckRow>
+          </Field>
+
+          <SectionHeading as="h3" title="Price variance" />
+          <Field label="No-friction tier (%; blank = 5)">
+            <Input
+              name="pvTier1Pct"
+              type="number"
+              step="0.5"
+              min={0}
+              defaultValue={ops.priceVariance?.tier1Pct ?? ''}
+            />
+          </Field>
+          <Field label="No-friction max discount ($; blank = 50)">
+            <Input
+              name="pvTier1Max"
+              type="number"
+              step="1"
+              min={0}
+              defaultValue={
+                ops.priceVariance?.tier1MaxCents != null
+                  ? (ops.priceVariance.tier1MaxCents / 100).toFixed(0)
+                  : ''
+              }
+            />
+          </Field>
+          <Field label="Deep-discount log tier starts above (%; blank = 15)">
+            <Input
+              name="pvTier2Pct"
+              type="number"
+              step="0.5"
+              min={0}
+              defaultValue={ops.priceVariance?.tier2Pct ?? ''}
+            />
+          </Field>
+        </FormGrid>
+        {errorMsg && (
+          <Alert tone="error" className="mt-3">
+            {errorMsg}
+          </Alert>
+        )}
+        {message && (
+          <Alert tone="success" className="mt-3" data-testid="ops-success">
+            {message}
+          </Alert>
+        )}
+        <FormActions>
+          <Button type="submit" variant="primary" disabled={saving}>
+            <Save size={14} aria-hidden />
+            {saving ? 'Saving…' : 'Save operations'}
+          </Button>
+        </FormActions>
+      </form>
+    </Card>
   );
 }
 
@@ -648,66 +656,67 @@ function BrandingCard({
   }
 
   return (
-    <form onSubmit={submit} className="card mt-4 grid max-w-[640px] gap-3 sm:grid-cols-2">
-      <h3 className="card-title sm:col-span-2" style={{ margin: 0 }}>
-        Branding
-      </h3>
-      <p className="muted sm:col-span-2" style={{ fontSize: 12.5, margin: 0 }}>
-        Make the app yours: the accent color re-themes buttons and navigation, the logo shows in the
-        sidebar, and the display name appears on the shell and printed receipts (your legal business
-        name above stays on record).
-      </p>
-      <Field label="Display name (optional)">
-        <Input
-          name="publicName"
-          defaultValue={b.publicName ?? ''}
-          placeholder={settings.name}
-          style={{ width: '100%' }}
-        />
-      </Field>
-      <Field label="Logo URL (https, optional)">
-        <Input
-          name="logoUrl"
-          type="url"
-          defaultValue={b.logoUrl ?? ''}
-          placeholder="https://…/logo.png"
-          style={{ width: '100%' }}
-        />
-      </Field>
-      <Field label="Accent color">
-        <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12.5 }}>
-            <input type="checkbox" name="accentEnabled" defaultChecked={Boolean(b.accentColor)} />
-            Use custom color
-          </label>
-          <Input
-            name="accentColor"
-            type="color"
-            defaultValue={b.accentColor ?? '#4f46e5'}
-            style={{ width: 48, height: 32, padding: 2 }}
-            data-testid="branding-accent"
-          />
-        </span>
-      </Field>
-      {errorMsg && (
-        <p className="sm:col-span-2" style={{ color: 'var(--danger)', fontSize: 13, margin: 0 }}>
-          {errorMsg}
-        </p>
-      )}
-      {message && (
-        <p
-          data-testid="branding-success"
-          className="sm:col-span-2"
-          style={{ color: 'var(--success)', fontSize: 13, margin: 0 }}
-        >
-          {message}
-        </p>
-      )}
-      <Button type="submit" variant="primary" disabled={saving} style={{ width: 'fit-content' }}>
-        <Save size={14} aria-hidden />
-        {saving ? 'Saving…' : 'Save branding'}
-      </Button>
-    </form>
+    <Card
+      title="Branding"
+      description="Make the app yours: the accent color re-themes buttons and navigation, the logo shows in the sidebar, and the display name appears on the shell and printed receipts (your legal business name above stays on record)."
+      className="form-narrow"
+    >
+      <form onSubmit={submit}>
+        <FormGrid cols={2}>
+          <Field label="Display name (optional)">
+            <Input
+              name="publicName"
+              defaultValue={b.publicName ?? ''}
+              placeholder={settings.name}
+            />
+          </Field>
+          <Field label="Logo URL (https, optional)">
+            <Input
+              name="logoUrl"
+              type="url"
+              defaultValue={b.logoUrl ?? ''}
+              placeholder="https://…/logo.png"
+            />
+          </Field>
+          <Field label="Accent color" className="form-span">
+            <span className="flex flex-wrap items-center gap-3">
+              <span className="inline-flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  name="accentEnabled"
+                  defaultChecked={Boolean(b.accentColor)}
+                />
+                Use custom color
+              </span>
+              <Input
+                name="accentColor"
+                type="color"
+                defaultValue={b.accentColor ?? '#4f46e5'}
+                className="h-8 w-12 p-0.5"
+                aria-label="Accent color swatch"
+                data-testid="branding-accent"
+              />
+            </span>
+          </Field>
+        </FormGrid>
+        {errorMsg && (
+          <Alert tone="error" className="mt-3">
+            {errorMsg}
+          </Alert>
+        )}
+        {message && (
+          <Alert tone="success" className="mt-3" data-testid="branding-success">
+            {message}
+          </Alert>
+        )}
+        <FormActions>
+          <Button type="submit" variant="primary" disabled={saving}>
+            <Save size={14} aria-hidden />
+            {saving ? 'Saving…' : 'Save branding'}
+          </Button>
+        </FormActions>
+      </form>
+    </Card>
   );
 }
 
@@ -793,18 +802,15 @@ function ReasonCodesCard() {
   }
 
   return (
-    <div className="card mt-4 grid max-w-[640px] gap-3">
-      <h3 className="card-title" style={{ margin: 0 }}>
-        Reason codes
-      </h3>
-      <p className="muted" style={{ fontSize: 12.5, margin: 0 }}>
-        Every reason prompt (unlocks, price adjustments, returns, write-offs…) draws from these
-        codes. Until a class has codes, that prompt accepts free text.
-      </p>
+    <Card
+      title="Reason codes"
+      description="Every reason prompt (unlocks, price adjustments, returns, write-offs…) draws from these codes. Until a class has codes, that prompt accepts free text."
+      className="form-narrow"
+    >
       {codes === null ? (
         <LoadingRows rows={2} />
       ) : codes.length > 0 ? (
-        <div className="overflow-x-auto">
+        <TableWrap>
           <table className="table" data-testid="reason-codes-table">
             <thead>
               <tr>
@@ -812,19 +818,23 @@ function ReasonCodesCard() {
                 <th>Description</th>
                 <th>Class</th>
                 <th>Restricted</th>
-                <th />
+                <th className="actions">
+                  <span className="sr-only">Actions</span>
+                </th>
               </tr>
             </thead>
             <tbody>
               {codes.map((c) => (
-                <tr key={c.id} style={c.active ? undefined : { opacity: 0.5 }}>
-                  <td style={{ fontWeight: 600 }}>{c.code}</td>
+                <tr key={c.id} className={c.active ? undefined : 'opacity-50'}>
+                  <td>
+                    <strong>{c.code}</strong>
+                  </td>
                   <td>{c.description}</td>
                   <td>
                     {REASON_USAGE_CLASS_LABELS[c.usageClass as ReasonUsageClass] ?? c.usageClass}
                   </td>
                   <td>{c.isRestricted ? 'yes' : ''}</td>
-                  <td>
+                  <td className="actions">
                     <Button
                       size="sm"
                       variant="ghost"
@@ -838,64 +848,69 @@ function ReasonCodesCard() {
               ))}
             </tbody>
           </table>
-        </div>
+        </TableWrap>
       ) : (
-        <p className="muted" style={{ fontSize: 13, margin: 0 }}>
-          No codes yet.
-        </p>
+        <EmptyState>No codes yet.</EmptyState>
       )}
-      <div className="flex flex-wrap items-end gap-2" style={{ fontSize: 13 }}>
-        <label style={{ display: 'grid', gap: 2, fontSize: 12 }}>
-          Code
-          <Input
-            value={newCode}
-            onChange={(e) => setNewCode(e.target.value)}
-            placeholder="e.g. DMG"
-            data-testid="reason-code-code"
-            style={{ width: 90, minWidth: 0 }}
-          />
-        </label>
-        <label style={{ display: 'grid', gap: 2, fontSize: 12, flex: 1, minWidth: 140 }}>
-          Description
-          <Input
-            value={newDescription}
-            onChange={(e) => setNewDescription(e.target.value)}
-            data-testid="reason-code-description"
-            style={{ minWidth: 0 }}
-          />
-        </label>
-        <label style={{ display: 'grid', gap: 2, fontSize: 12 }}>
-          Class
-          <Select
-            value={newClass}
-            onChange={(e) => setNewClass(e.target.value)}
-            data-testid="reason-code-class"
-          >
-            {REASON_USAGE_CLASSES.map((uc) => (
-              <option key={uc} value={uc}>
-                {REASON_USAGE_CLASS_LABELS[uc]}
-              </option>
-            ))}
-          </Select>
-        </label>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
-          <input
-            type="checkbox"
-            checked={newRestricted}
-            onChange={(e) => setNewRestricted(e.target.checked)}
-          />
-          Restricted
-        </label>
-        <Button
-          variant="secondary"
-          disabled={working}
-          onClick={() => void add()}
-          data-testid="reason-code-add"
-        >
-          Add code
-        </Button>
-      </div>
-      {errorMsg && <p style={{ color: 'var(--danger)', fontSize: 13, margin: 0 }}>{errorMsg}</p>}
-    </div>
+
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          void add();
+        }}
+      >
+        <SectionHeading as="h3" title="Add a code" />
+        <FormGrid cols={3}>
+          <Field label="Code">
+            <Input
+              value={newCode}
+              onChange={(e) => setNewCode(e.target.value)}
+              placeholder="e.g. DMG"
+              data-testid="reason-code-code"
+            />
+          </Field>
+          <Field label="Description">
+            <Input
+              value={newDescription}
+              onChange={(e) => setNewDescription(e.target.value)}
+              data-testid="reason-code-description"
+            />
+          </Field>
+          <Field label="Class">
+            <Select
+              value={newClass}
+              onChange={(e) => setNewClass(e.target.value)}
+              data-testid="reason-code-class"
+            >
+              {REASON_USAGE_CLASSES.map((uc) => (
+                <option key={uc} value={uc}>
+                  {REASON_USAGE_CLASS_LABELS[uc]}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="Restricted" className="form-span">
+            <CheckRow>
+              <input
+                type="checkbox"
+                checked={newRestricted}
+                onChange={(e) => setNewRestricted(e.target.checked)}
+              />
+              Requires manager authorization to use
+            </CheckRow>
+          </Field>
+        </FormGrid>
+        {errorMsg && (
+          <Alert tone="error" className="mt-3">
+            {errorMsg}
+          </Alert>
+        )}
+        <FormActions>
+          <Button type="submit" variant="primary" disabled={working} data-testid="reason-code-add">
+            {working ? 'Adding…' : 'Add code'}
+          </Button>
+        </FormActions>
+      </form>
+    </Card>
   );
 }

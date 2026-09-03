@@ -6,14 +6,20 @@ import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import { CsvImport } from '@/components/csv-import';
 import {
+  Alert,
   Button,
   Card,
   EmptyState,
+  FormActions,
   Input,
   LinkButton,
   LoadingRows,
   PageHeader,
   Select,
+  Stack,
+  TableEmpty,
+  TableWrap,
+  Toolbar,
 } from '@/components/ui';
 
 interface Location {
@@ -64,6 +70,7 @@ export default function InventoryPage() {
   const [bins, setBins] = useState<Bin[]>([]);
   const [q, setQ] = useState('');
   const [newBin, setNewBin] = useState('');
+  const [addingBin, setAddingBin] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Reserved drill-down: which orders hold this variant's committed units.
   const [resFor, setResFor] = useState<Level | null>(null);
@@ -154,7 +161,8 @@ export default function InventoryPage() {
 
   async function addBin() {
     const code = newBin.trim();
-    if (!code || !locationId) return;
+    if (!code || !locationId || addingBin) return;
+    setAddingBin(true);
     try {
       await api('/v1/inventory/bins', {
         method: 'POST',
@@ -164,6 +172,8 @@ export default function InventoryPage() {
       await loadLevels(locationId);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err));
+    } finally {
+      setAddingBin(false);
     }
   }
 
@@ -232,13 +242,16 @@ export default function InventoryPage() {
     }
   }
 
+  const filtered = q.trim() !== '' || vendor != null;
+  const activeBins = bins.filter((b) => b.isActive);
+
   return (
     <div>
       <PageHeader
         title="Inventory"
         actions={
-          <div className="flex items-center gap-2">
-            <LinkButton href="/inventory/counts" variant="secondary">
+          <>
+            <LinkButton href="/inventory/counts" variant="secondary" size="sm">
               <ClipboardList size={14} />
               Count stock
             </LinkButton>
@@ -246,258 +259,277 @@ export default function InventoryPage() {
               <PackageCheck size={14} />
               Receive
             </LinkButton>
-          </div>
+          </>
         }
       />
 
       <form
-        className="mb-4 flex flex-wrap items-center gap-2"
         onSubmit={(e) => {
           e.preventDefault();
           void loadLevels(locationId);
         }}
       >
-        <label
-          htmlFor="inventory-location"
-          style={{ fontSize: 13, color: 'var(--text-secondary)' }}
-        >
-          Location:
-        </label>
-        <Select
-          id="inventory-location"
-          value={locationId}
-          onChange={(e) => setLocationId(e.target.value)}
-        >
-          <option value="">— Pick —</option>
-          <option value="all">All locations</option>
-          {locations.map((l) => (
-            <option key={l.id} value={l.id}>
-              {l.name}
-            </option>
-          ))}
-        </Select>
-        {vendor && (
-          <span style={{ fontSize: 13 }} data-testid="inventory-vendor-chip">
-            Vendor: <strong>{vendor.name}</strong>{' '}
-            <button
-              type="button"
-              className="btn btn-ghost btn-sm"
-              style={{ padding: '0 6px', fontSize: 12 }}
-              onClick={() => {
-                setVendor(null);
-                window.history.replaceState(null, '', '/inventory');
-                void loadLevels(locationId, q, null);
-              }}
-            >
-              clear
-            </button>
-          </span>
-        )}
-        <Input
-          name="q"
-          placeholder="Search by name, SKU, or barcode"
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          className="min-w-[200px] flex-1"
-        />
-        <Button type="submit" variant="secondary">
-          Search
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          onClick={() => {
-            setQ('');
-            void loadLevels(locationId, '');
-          }}
-        >
-          Clear
-        </Button>
-      </form>
-
-      {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
-      <Card style={{ padding: 0 }}>
-        {levels == null ? (
-          <div style={{ padding: 16 }}>
-            <LoadingRows />
-          </div>
-        ) : levels.length === 0 ? (
-          <EmptyState>
-            {q.trim()
-              ? `No stock matches "${q.trim()}" at this location.`
-              : 'No stock at this location yet. Use Receive to add some.'}
-          </EmptyState>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Product</th>
-                  <th>SKU</th>
-                  <th>Barcode</th>
-                  <th className="num">On hand</th>
-                  <th className="num">Reserved</th>
-                  <th className="num" title="Floor samples — on hand but never sellable as new">
-                    Floor
-                  </th>
-                  <th className="num">Available</th>
-                  <th>Bin</th>
-                  <th>&nbsp;</th>
-                </tr>
-              </thead>
-              <tbody>
-                {levels.map((l) => (
-                  <tr key={`${l.variantId}-${l.locationId}`}>
-                    <td>{l.productName}</td>
-                    <td>
-                      <code>{l.variantSku ?? '—'}</code>
-                    </td>
-                    <td>
-                      <code>{l.variantBarcode ?? '—'}</code>
-                    </td>
-                    <td className="num">{l.onHand}</td>
-                    <td className="num">
-                      {l.reserved > 0 ? (
-                        <button
-                          type="button"
-                          className="badge badge-info"
-                          style={{ cursor: 'pointer', border: 'none' }}
-                          title="See which orders hold these units — release from there to sell the piece today"
-                          data-testid="reserved-count"
-                          onClick={() => void openReservations(l)}
-                        >
-                          {l.reserved}
-                        </button>
-                      ) : (
-                        l.reserved
-                      )}
-                    </td>
-                    <td className="num">
-                      <button
-                        type="button"
-                        className={l.floorSample > 0 ? 'badge badge-info' : undefined}
-                        style={{ cursor: 'pointer', border: 'none', background: 'transparent' }}
-                        title="Click to set the floor-sample hold"
-                        onClick={() => void setFloor(l)}
-                      >
-                        {l.floorSample > 0 ? l.floorSample : '—'}
-                      </button>
-                    </td>
-                    <td className="num">{l.available}</td>
-                    <td>
-                      <Select
-                        value={l.storageBinId ?? ''}
-                        onChange={(e) => void assignBin(l, e.target.value || null)}
-                        style={{ minWidth: 90 }}
-                        aria-label={`Bin for ${l.variantSku ?? l.productName}`}
-                      >
-                        <option value="">—</option>
-                        {bins
-                          .filter((b) => b.isActive || b.id === l.storageBinId)
-                          .map((b) => (
-                            <option key={b.id} value={b.id}>
-                              {b.code}
-                            </option>
-                          ))}
-                      </Select>
-                    </td>
-                    <td style={{ textAlign: 'right' }}>
-                      <Button size="sm" variant="ghost" onClick={() => adjust(l)}>
-                        Adjust
-                      </Button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </Card>
-
-      <details style={{ marginTop: 24 }} data-testid="inventory-bins">
-        <summary style={{ cursor: 'pointer', fontSize: 14, fontWeight: 500 }}>
-          Storage bins at this location ({bins.filter((b) => b.isActive).length})
-        </summary>
-        <p style={{ color: 'var(--text-secondary)', fontSize: 12.5, margin: '6px 0 8px' }}>
-          Bins are named slots inside the warehouse (DOCK, A-14). Assign one per stock row above and
-          the pick list prints it.
-        </p>
-        <div className="mb-2 flex flex-wrap items-center gap-2">
+        <Toolbar>
+          <label htmlFor="inventory-location" className="muted">
+            Location
+          </label>
+          <Select
+            id="inventory-location"
+            value={locationId}
+            onChange={(e) => setLocationId(e.target.value)}
+          >
+            <option value="">— Pick —</option>
+            <option value="all">All locations</option>
+            {locations.map((l) => (
+              <option key={l.id} value={l.id}>
+                {l.name}
+              </option>
+            ))}
+          </Select>
+          {vendor && (
+            <span className="muted" data-testid="inventory-vendor-chip">
+              Vendor: <strong>{vendor.name}</strong>{' '}
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setVendor(null);
+                  window.history.replaceState(null, '', '/inventory');
+                  void loadLevels(locationId, q, null);
+                }}
+              >
+                clear
+              </Button>
+            </span>
+          )}
           <Input
-            placeholder="New bin code…"
-            value={newBin}
-            onChange={(e) => setNewBin(e.target.value)}
-            style={{ width: 160 }}
+            name="q"
+            placeholder="Search by name, SKU, or barcode"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
           />
+          <Button type="submit" variant="secondary" size="sm">
+            Search
+          </Button>
           <Button
             type="button"
-            variant="secondary"
-            disabled={!newBin.trim() || !locationId}
-            onClick={() => void addBin()}
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              setQ('');
+              void loadLevels(locationId, '');
+            }}
           >
-            Add bin
+            Clear
           </Button>
-        </div>
-        {bins.length > 0 && (
-          <div className="flex flex-wrap gap-2">
-            {bins.map((b) => (
-              <span
-                key={b.id}
-                className={`badge ${b.isActive ? 'badge-neutral' : 'badge-warning'}`}
-              >
-                {b.code}
-                {!b.isActive && ' (inactive)'}
-              </span>
-            ))}
-          </div>
-        )}
-      </details>
+        </Toolbar>
+      </form>
 
-      <details style={{ marginTop: 24 }} data-testid="inventory-csv-import">
-        <summary style={{ cursor: 'pointer', fontSize: 14, fontWeight: 500 }}>
-          Import on-hand counts from a CSV file
-        </summary>
-        <p style={{ color: 'var(--text-secondary)', fontSize: 12.5, margin: '6px 0 8px' }}>
-          One row per SKU per location (columns like SKU, LOCATION, ON_HAND, UNIT_COST — the
-          location must match a store name exactly). Products must exist first; import the product
-          file on the Products page if they don&apos;t.
-        </p>
-        <CsvImport
-          entity="inventory"
-          onCommitted={() => (locationId ? loadLevels(locationId) : undefined)}
-        />
-      </details>
+      <Stack>
+        {error && <Alert tone="error">{error}</Alert>}
+
+        {levels == null ? (
+          <Card>
+            <LoadingRows />
+          </Card>
+        ) : levels.length === 0 && !filtered ? (
+          <Card>
+            <EmptyState
+              title="No stock at this location yet"
+              action={
+                <LinkButton size="sm" href="/inventory/receive">
+                  Receive
+                </LinkButton>
+              }
+            >
+              Use Receive to add some.
+            </EmptyState>
+          </Card>
+        ) : (
+          <Card flush>
+            <TableWrap>
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Product</th>
+                    <th>SKU</th>
+                    <th>Barcode</th>
+                    <th className="num">On hand</th>
+                    <th className="num">Reserved</th>
+                    <th className="num" title="Floor samples — on hand but never sellable as new">
+                      Floor
+                    </th>
+                    <th className="num">Available</th>
+                    <th>Bin</th>
+                    <th className="actions" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {levels.length === 0 && (
+                    <TableEmpty colSpan={9}>
+                      {q.trim()
+                        ? `No stock matches "${q.trim()}" at this location.`
+                        : 'No stock from this vendor at this location.'}
+                    </TableEmpty>
+                  )}
+                  {levels.map((l) => (
+                    <tr key={`${l.variantId}-${l.locationId}`}>
+                      <td>{l.productName}</td>
+                      <td>
+                        <code>{l.variantSku ?? '—'}</code>
+                      </td>
+                      <td>
+                        <code>{l.variantBarcode ?? '—'}</code>
+                      </td>
+                      <td className="num">{l.onHand}</td>
+                      <td className="num">
+                        {l.reserved > 0 ? (
+                          <button
+                            type="button"
+                            className="btn-link"
+                            title="See which orders hold these units — release from there to sell the piece today"
+                            data-testid="reserved-count"
+                            onClick={() => void openReservations(l)}
+                          >
+                            {l.reserved}
+                          </button>
+                        ) : (
+                          l.reserved
+                        )}
+                      </td>
+                      <td className="num">
+                        <button
+                          type="button"
+                          className="btn-link"
+                          title="Click to set the floor-sample hold"
+                          onClick={() => void setFloor(l)}
+                        >
+                          {l.floorSample > 0 ? l.floorSample : '—'}
+                        </button>
+                      </td>
+                      <td className="num">{l.available}</td>
+                      <td>
+                        <Select
+                          value={l.storageBinId ?? ''}
+                          onChange={(e) => void assignBin(l, e.target.value || null)}
+                          aria-label={`Bin for ${l.variantSku ?? l.productName}`}
+                        >
+                          <option value="">—</option>
+                          {bins
+                            .filter((b) => b.isActive || b.id === l.storageBinId)
+                            .map((b) => (
+                              <option key={b.id} value={b.id}>
+                                {b.code}
+                              </option>
+                            ))}
+                        </Select>
+                      </td>
+                      <td className="actions">
+                        <Button size="sm" variant="ghost" onClick={() => adjust(l)}>
+                          Adjust
+                        </Button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </TableWrap>
+          </Card>
+        )}
+
+        <Card>
+          <details data-testid="inventory-bins">
+            <summary className="card-title">
+              Storage bins at this location ({activeBins.length})
+            </summary>
+            <Stack gap="sm">
+              <p className="card-desc">
+                Bins are named slots inside the warehouse (DOCK, A-14). Assign one per stock row
+                above and the pick list prints it.
+              </p>
+              <form
+                className="flex flex-wrap items-center gap-2"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  void addBin();
+                }}
+              >
+                <Input
+                  placeholder="New bin code…"
+                  aria-label="New bin code"
+                  value={newBin}
+                  onChange={(e) => setNewBin(e.target.value)}
+                  className="w-40"
+                />
+                <Button
+                  type="submit"
+                  variant="secondary"
+                  size="sm"
+                  disabled={!newBin.trim() || !locationId || addingBin}
+                >
+                  {addingBin ? 'Adding…' : 'Add bin'}
+                </Button>
+              </form>
+              {bins.length > 0 && (
+                <div className="flex flex-wrap gap-2">
+                  {bins.map((b) => (
+                    <span
+                      key={b.id}
+                      className={`badge ${b.isActive ? 'badge-neutral' : 'badge-warning'}`}
+                    >
+                      {b.code}
+                      {!b.isActive && ' (inactive)'}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </Stack>
+          </details>
+        </Card>
+
+        <Card>
+          <details data-testid="inventory-csv-import">
+            <summary className="card-title">Import on-hand counts from a CSV file</summary>
+            <Stack gap="sm">
+              <p className="card-desc">
+                One row per SKU per location (columns like SKU, LOCATION, ON_HAND, UNIT_COST — the
+                location must match a store name exactly). Products must exist first; import the
+                product file on the Products page if they don&apos;t.
+              </p>
+              <CsvImport
+                entity="inventory"
+                onCommitted={() => (locationId ? loadLevels(locationId) : undefined)}
+              />
+            </Stack>
+          </details>
+        </Card>
+      </Stack>
 
       {resFor && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
           data-testid="reservations-dialog"
         >
-          <div
-            className="card"
-            style={{ maxWidth: 640, width: '100%', padding: 20, background: 'var(--surface)' }}
+          <Card
+            className="w-full max-w-[640px]"
+            title={`Reserved — ${resFor.productName}${resFor.variantSku ? ` (${resFor.variantSku})` : ''}`}
+            description="These orders hold the committed units. Release one to sell the piece today, then re-reserve it on that order from its page when replacement stock lands."
           >
-            <h3 style={{ margin: '0 0 4px', fontSize: 16 }}>
-              Reserved — {resFor.productName} {resFor.variantSku ? `(${resFor.variantSku})` : ''}
-            </h3>
-            <p style={{ margin: '0 0 10px', fontSize: 13, color: 'var(--text-secondary)' }}>
-              These orders hold the committed units. Release one to sell the piece today, then
-              re-reserve it on that order from its page when replacement stock lands.
-            </p>
             {!reservations ? (
               <LoadingRows rows={2} />
             ) : reservations.length === 0 ? (
               <EmptyState>No live orders hold this item here.</EmptyState>
             ) : (
-              <div style={{ overflowX: 'auto' }}>
-                <table className="table" style={{ fontSize: 13 }}>
+              <TableWrap>
+                <table className="table">
                   <thead>
                     <tr>
                       <th>Order</th>
                       <th>Customer</th>
                       <th>Promised</th>
                       <th className="num">Reserved</th>
-                      <th />
+                      <th className="actions" />
                     </tr>
                   </thead>
                   <tbody>
@@ -509,7 +541,7 @@ export default function InventoryPage() {
                         <td>{r.customerName ?? '—'}</td>
                         <td>{r.requestedDate ?? '—'}</td>
                         <td className="num">{r.qtyReserved}</td>
-                        <td style={{ textAlign: 'right' }}>
+                        <td className="actions">
                           <Button
                             size="sm"
                             variant="danger"
@@ -523,14 +555,14 @@ export default function InventoryPage() {
                     ))}
                   </tbody>
                 </table>
-              </div>
+              </TableWrap>
             )}
-            <div style={{ marginTop: 12, textAlign: 'right' }}>
+            <FormActions>
               <Button variant="secondary" onClick={() => setResFor(null)}>
                 Close
               </Button>
-            </div>
-          </div>
+            </FormActions>
+          </Card>
         </div>
       )}
     </div>

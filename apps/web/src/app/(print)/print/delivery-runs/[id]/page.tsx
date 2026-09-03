@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { api } from '@/lib/api';
+import { TableWrap } from '@/components/ui';
 import { PrintToolbar } from '../../print-toolbar';
 
 /**
@@ -82,54 +83,59 @@ export default function RunManifestPage() {
         </div>
       </header>
 
-      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-        <thead>
-          <tr style={{ borderBottom: '2px solid #000', textAlign: 'left' }}>
-            <th style={{ padding: '4px 6px', width: 36 }}>#</th>
-            <th style={{ padding: '4px 6px' }}>Customer / address</th>
-            <th style={{ padding: '4px 6px' }}>Items</th>
-            <th style={{ padding: '4px 6px', width: 80, textAlign: 'right' }}>Collect</th>
-            <th style={{ padding: '4px 6px', width: 160 }}>Signature / outcome</th>
-          </tr>
-        </thead>
-        <tbody>
-          {run.stops.map((s, i) => (
-            <tr key={s.id} style={{ borderBottom: '1px solid #999', verticalAlign: 'top' }}>
-              <td style={{ padding: '8px 6px', fontWeight: 700 }}>{s.routePosition ?? i + 1}</td>
-              <td style={{ padding: '8px 6px' }}>
-                <strong>{s.customerName ?? '—'}</strong> · {s.orderNumber}
-                <div>
-                  {[s.addressLine1, s.addressLine2].filter(Boolean).join(', ')}
-                  <br />
-                  {[s.addressCity, s.addressRegion, s.addressPostalCode].filter(Boolean).join(', ')}
-                </div>
-                {s.addressPhone && <div>☎ {s.addressPhone}</div>}
-                {s.windowStart && s.windowEnd && (
-                  <div>
-                    Window {s.windowStart.slice(0, 5)}–{s.windowEnd.slice(0, 5)}
-                  </div>
-                )}
-              </td>
-              <td style={{ padding: '8px 6px' }}>
-                {s.lines.map((l) => (
-                  <div key={l.id}>
-                    {l.quantity}× {l.description}
-                  </div>
-                ))}
-              </td>
-              <td style={{ padding: '8px 6px', textAlign: 'right', fontWeight: 600 }}>
-                {s.balanceDueCents > 0 ? usd(s.balanceDueCents) : '—'}
-              </td>
-              <td style={{ padding: '8px 6px' }}>
-                <div style={{ borderBottom: '1px solid #000', height: 26, marginBottom: 4 }} />
-                <div style={{ fontSize: 10.5 }}>
-                  ☐ delivered &nbsp; ☐ not home &nbsp; ☐ refused &nbsp; ☐ damaged
-                </div>
-              </td>
+      {/* Print sheet: the cells draw their own black rules, so the wrap drops its chrome. */}
+      <TableWrap style={{ border: 'none', borderRadius: 0, background: 'transparent' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <thead>
+            <tr style={{ borderBottom: '2px solid #000', textAlign: 'left' }}>
+              <th style={{ padding: '4px 6px', width: 36 }}>#</th>
+              <th style={{ padding: '4px 6px' }}>Customer / address</th>
+              <th style={{ padding: '4px 6px' }}>Items</th>
+              <th style={{ padding: '4px 6px', width: 80, textAlign: 'right' }}>Collect</th>
+              <th style={{ padding: '4px 6px', width: 160 }}>Signature / outcome</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {run.stops.map((s, i) => (
+              <tr key={s.id} style={{ borderBottom: '1px solid #999', verticalAlign: 'top' }}>
+                <td style={{ padding: '8px 6px', fontWeight: 700 }}>{s.routePosition ?? i + 1}</td>
+                <td style={{ padding: '8px 6px' }}>
+                  <strong>{s.customerName ?? '—'}</strong> · {s.orderNumber}
+                  <div>
+                    {[s.addressLine1, s.addressLine2].filter(Boolean).join(', ')}
+                    <br />
+                    {[s.addressCity, s.addressRegion, s.addressPostalCode]
+                      .filter(Boolean)
+                      .join(', ')}
+                  </div>
+                  {s.addressPhone && <div>☎ {s.addressPhone}</div>}
+                  {s.windowStart && s.windowEnd && (
+                    <div>
+                      Window {s.windowStart.slice(0, 5)}–{s.windowEnd.slice(0, 5)}
+                    </div>
+                  )}
+                </td>
+                <td style={{ padding: '8px 6px' }}>
+                  {s.lines.map((l) => (
+                    <div key={l.id}>
+                      {l.quantity}× {l.description}
+                    </div>
+                  ))}
+                </td>
+                <td style={{ padding: '8px 6px', textAlign: 'right', fontWeight: 600 }}>
+                  {s.balanceDueCents > 0 ? usd(s.balanceDueCents) : '—'}
+                </td>
+                <td style={{ padding: '8px 6px' }}>
+                  <div style={{ borderBottom: '1px solid #000', height: 26, marginBottom: 4 }} />
+                  <div style={{ fontSize: 10.5 }}>
+                    ☐ delivered &nbsp; ☐ not home &nbsp; ☐ refused &nbsp; ☐ damaged
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </TableWrap>
 
       <footer style={{ marginTop: 24, display: 'flex', gap: 40 }}>
         <div style={{ flex: 1 }}>

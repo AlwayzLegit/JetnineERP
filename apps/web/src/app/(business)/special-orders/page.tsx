@@ -4,7 +4,17 @@ import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import { FileText } from 'lucide-react';
 import { api } from '@/lib/api';
-import { Button, Card, EmptyState, LoadingRows, PageHeader, Select } from '@/components/ui';
+import {
+  Alert,
+  Button,
+  Card,
+  EmptyState,
+  LoadingRows,
+  PageHeader,
+  Select,
+  Stack,
+  TableWrap,
+} from '@/components/ui';
 
 /**
  * The to-order queue (STORIS cutover G3): everything customers have
@@ -95,8 +105,12 @@ export default function SpecialOrdersPage() {
         title="Special orders to buy"
         sub="Receiving the PO later commits the arrived units to these customers automatically and emails them that their item is in."
         actions={
-          <span className="flex flex-wrap items-center gap-2">
-            <Select value={vendorId} onChange={(e) => setVendorId(e.target.value)}>
+          <>
+            <Select
+              value={vendorId}
+              onChange={(e) => setVendorId(e.target.value)}
+              aria-label="Vendor to order from"
+            >
               {vendors.length === 0 && <option value="">No vendors yet</option>}
               {vendors.map((v) => (
                 <option key={v.id} value={v.id}>
@@ -113,90 +127,96 @@ export default function SpecialOrdersPage() {
               <FileText size={14} aria-hidden />
               Generate PO ({selected.length})
             </Button>
-          </span>
+          </>
         }
       />
-      {error && <p style={{ color: 'var(--danger)', fontSize: 13 }}>{error}</p>}
-      {message && <p style={{ color: 'var(--success)', fontSize: 13 }}>{message}</p>}
+      <Stack>
+        {error && <Alert tone="error">{error}</Alert>}
+        {message && <Alert tone="success">{message}</Alert>}
 
-      {!rows && !error && <LoadingRows rows={4} />}
-      {rows && rows.length === 0 && (
-        <EmptyState>Queue is clear — every special order is on a PO or fulfilled.</EmptyState>
-      )}
-      {rows && rows.length > 0 && (
-        <Card style={{ padding: 0 }}>
-          <div style={{ overflowX: 'auto' }}>
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>
-                    <input
-                      type="checkbox"
-                      checked={checked.size === rows.length}
-                      onChange={(e) =>
-                        setChecked(
-                          e.target.checked ? new Set(rows.map((r) => r.orderLineId)) : new Set(),
-                        )
-                      }
-                    />
-                  </th>
-                  <th>Order</th>
-                  <th>Customer</th>
-                  <th>Item</th>
-                  <th>SKU</th>
-                  <th className="num">Qty</th>
-                  <th className="num">On PO</th>
-                  <th className="num">To order</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((r) => (
-                  <tr key={r.orderLineId}>
-                    <td>
+        {!rows && !error && <LoadingRows rows={4} />}
+        {rows && rows.length === 0 && (
+          <EmptyState title="Queue is clear">
+            Every special order is on a PO or fulfilled.
+          </EmptyState>
+        )}
+        {rows && rows.length > 0 && (
+          <Card flush>
+            <TableWrap>
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>
                       <input
                         type="checkbox"
-                        checked={checked.has(r.orderLineId)}
-                        onChange={(e) => {
-                          const next = new Set(checked);
-                          if (e.target.checked) next.add(r.orderLineId);
-                          else next.delete(r.orderLineId);
-                          setChecked(next);
-                        }}
+                        aria-label="Select all"
+                        checked={checked.size === rows.length}
+                        onChange={(e) =>
+                          setChecked(
+                            e.target.checked ? new Set(rows.map((r) => r.orderLineId)) : new Set(),
+                          )
+                        }
                       />
-                    </td>
-                    <td>
-                      <Link href={`/orders/${r.orderId}`}>{r.orderNumber}</Link>
-                    </td>
-                    <td>{r.customerName ?? '—'}</td>
-                    <td>
-                      {r.description}
-                      {r.lineType === 'direct_ship' && (
-                        <>
-                          {' '}
-                          <span
-                            className="badge badge-info"
-                            title="The vendor ships this straight to the customer — its PO carries the customer's address"
-                          >
-                            direct ship
-                          </span>
-                        </>
-                      )}
-                    </td>
-                    <td>
-                      <code>{r.sku ?? '—'}</code>
-                    </td>
-                    <td className="num">{r.quantity}</td>
-                    <td className="num">{r.allocated}</td>
-                    <td className="num" style={{ fontWeight: 700 }}>
-                      {r.toOrder}
-                    </td>
+                    </th>
+                    <th>Order</th>
+                    <th>Customer</th>
+                    <th>Item</th>
+                    <th>SKU</th>
+                    <th className="num">Qty</th>
+                    <th className="num">On PO</th>
+                    <th className="num">To order</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </Card>
-      )}
+                </thead>
+                <tbody>
+                  {rows.map((r) => (
+                    <tr key={r.orderLineId}>
+                      <td>
+                        <input
+                          type="checkbox"
+                          aria-label={`Select ${r.orderNumber} — ${r.description}`}
+                          checked={checked.has(r.orderLineId)}
+                          onChange={(e) => {
+                            const next = new Set(checked);
+                            if (e.target.checked) next.add(r.orderLineId);
+                            else next.delete(r.orderLineId);
+                            setChecked(next);
+                          }}
+                        />
+                      </td>
+                      <td>
+                        <Link href={`/orders/${r.orderId}`}>{r.orderNumber}</Link>
+                      </td>
+                      <td>{r.customerName ?? '—'}</td>
+                      <td>
+                        {r.description}
+                        {r.lineType === 'direct_ship' && (
+                          <>
+                            {' '}
+                            <span
+                              className="badge badge-info"
+                              title="The vendor ships this straight to the customer — its PO carries the customer's address"
+                            >
+                              direct ship
+                            </span>
+                          </>
+                        )}
+                      </td>
+                      <td>
+                        <code>{r.sku ?? '—'}</code>
+                      </td>
+                      <td className="num">{r.quantity}</td>
+                      <td className="num">{r.allocated}</td>
+                      <td className="num">
+                        <strong>{r.toOrder}</strong>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </TableWrap>
+          </Card>
+        )}
+      </Stack>
     </div>
   );
 }

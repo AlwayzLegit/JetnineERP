@@ -6,14 +6,20 @@ import { Plus } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import {
+  Alert,
   Button,
   Card,
   EmptyState,
   Field,
+  FormActions,
+  FormGrid,
   Input,
+  LinkButton,
   LoadingRows,
   PageHeader,
+  Stack,
   StatusBadge,
+  TableWrap,
 } from '@/components/ui';
 
 interface Vendor {
@@ -48,17 +54,15 @@ function CountLink({
 }) {
   if (n === 0) {
     return (
-      <span style={{ color: 'var(--text-muted)' }} data-testid={testid}>
+      <span className="muted" data-testid={testid}>
         0
       </span>
     );
   }
   return (
-    <Link href={href} data-testid={testid} style={{ fontWeight: 600 }}>
+    <Link href={href} data-testid={testid} className="font-semibold">
       {n}
-      {sub && (
-        <span style={{ color: 'var(--text-muted)', fontWeight: 400, fontSize: 11.5 }}> {sub}</span>
-      )}
+      {sub && <span className="muted font-normal"> {sub}</span>}
     </Link>
   );
 }
@@ -67,6 +71,7 @@ export default function VendorsPage() {
   const [rows, setRows] = useState<Vendor[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [saving, setSaving] = useState(false);
 
   async function load() {
     setError(null);
@@ -86,6 +91,7 @@ export default function VendorsPage() {
     // React nulls the synthetic event's currentTarget once the handler
     // yields — grab the form element before any await or reset() throws.
     const form = e.currentTarget;
+    setSaving(true);
     try {
       const data = new FormData(form);
       await api('/v1/vendors', {
@@ -103,6 +109,8 @@ export default function VendorsPage() {
       void load();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -121,126 +129,154 @@ export default function VendorsPage() {
       <PageHeader
         title="Vendors"
         actions={
-          <Button
-            variant={creating ? 'secondary' : 'primary'}
-            onClick={() => setCreating((v) => !v)}
-          >
-            {creating ? 'Cancel' : '+ New vendor'}
-          </Button>
+          <>
+            <LinkButton size="sm" variant="secondary" href="/purchase-orders">
+              Purchase orders
+            </LinkButton>
+            <Button
+              variant={creating ? 'secondary' : 'primary'}
+              onClick={() => setCreating((v) => !v)}
+            >
+              {creating ? 'Cancel' : '+ New vendor'}
+            </Button>
+          </>
         }
       />
 
-      {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
+      <Stack>
+        {error && <Alert tone="error">{error}</Alert>}
 
-      {creating && (
-        <Card style={{ maxWidth: 560, marginBottom: 16 }}>
-          <form onSubmit={create} style={{ display: 'grid', gap: 8 }}>
-            <Field label="Name *">
-              <Input name="name" required style={{ width: '100%' }} />
-            </Field>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <Field label="Contact name">
-                <Input name="contactName" style={{ width: '100%' }} />
-              </Field>
-              <Field label="Email">
-                <Input name="email" type="email" style={{ width: '100%' }} />
-              </Field>
-            </div>
-            <Field label="Phone">
-              <Input name="phone" style={{ width: '100%' }} />
-            </Field>
-            <Field label="Notes">
-              <textarea
-                className="textarea"
-                name="notes"
-                rows={2}
-                style={{ width: '100%', resize: 'vertical' }}
-              />
-            </Field>
-            <div>
-              <Button type="submit" variant="primary">
-                <Plus size={14} />
-                Create vendor
-              </Button>
-            </div>
-          </form>
-        </Card>
-      )}
-
-      <Card style={{ padding: 0 }}>
-        {rows == null ? (
-          <div style={{ padding: 16 }}>
-            <LoadingRows />
-          </div>
-        ) : rows.length === 0 ? (
-          <EmptyState>No vendors yet. Add a vendor to start placing purchase orders.</EmptyState>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Name</th>
-                  <th>Contact</th>
-                  <th>Email</th>
-                  <th>Phone</th>
-                  <th className="num">Products</th>
-                  <th className="num">In inventory</th>
-                  <th className="num">On PO</th>
-                  <th>Status</th>
-                  <th>&nbsp;</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((v) => (
-                  <tr key={v.id}>
-                    <td>
-                      <strong>{v.name}</strong>
-                    </td>
-                    <td>{v.contactName ?? '—'}</td>
-                    <td>{v.email ?? '—'}</td>
-                    <td>{v.phone ?? '—'}</td>
-                    <td className="num">
-                      <CountLink
-                        n={v.stats.productsCarried}
-                        href={`/products?vendorId=${v.id}&vendor=${encodeURIComponent(v.name)}`}
-                        testid="vendor-products"
-                      />
-                    </td>
-                    <td className="num">
-                      <CountLink
-                        n={v.stats.inStockProducts}
-                        sub={`· ${v.stats.inStockUnits} units`}
-                        href={`/inventory?vendorId=${v.id}&vendor=${encodeURIComponent(v.name)}&locationId=all`}
-                        testid="vendor-in-stock"
-                      />
-                    </td>
-                    <td className="num">
-                      <CountLink
-                        n={v.stats.onPoUnits}
-                        sub={`· ${v.stats.openPos} PO${v.stats.openPos === 1 ? '' : 's'}`}
-                        href={`/purchase-orders?vendorId=${v.id}&vendor=${encodeURIComponent(v.name)}`}
-                        testid="vendor-on-po"
-                      />
-                    </td>
-                    <td>
-                      <StatusBadge status={v.isActive ? 'active' : 'inactive'} />
-                    </td>
-                    <td style={{ textAlign: 'right' }}>
-                      <Button size="sm" variant="danger" onClick={() => destroy(v.id)}>
-                        Delete
-                      </Button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+        {creating && (
+          <Card title="New vendor" className="form-narrow">
+            <form onSubmit={create}>
+              <FormGrid cols={2}>
+                <Field label="Name" required className="form-span">
+                  <Input name="name" required />
+                </Field>
+                <Field label="Contact name">
+                  <Input name="contactName" />
+                </Field>
+                <Field label="Email">
+                  <Input name="email" type="email" />
+                </Field>
+                <Field label="Phone">
+                  <Input name="phone" type="tel" />
+                </Field>
+                <Field label="Notes" className="form-span">
+                  <textarea className="textarea" name="notes" rows={2} />
+                </Field>
+              </FormGrid>
+              <FormActions>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => setCreating(false)}
+                  disabled={saving}
+                >
+                  Cancel
+                </Button>
+                <Button type="submit" variant="primary" disabled={saving}>
+                  <Plus size={14} aria-hidden />
+                  {saving ? 'Creating…' : 'Create vendor'}
+                </Button>
+              </FormActions>
+            </form>
+          </Card>
         )}
-      </Card>
 
-      <p style={{ fontSize: 13, marginTop: 12 }}>
-        <Link href="/purchase-orders">→ Purchase orders</Link>
-      </p>
+        {rows == null ? (
+          <LoadingRows />
+        ) : rows.length === 0 ? (
+          <EmptyState
+            title="No vendors yet"
+            action={
+              !creating ? (
+                <Button size="sm" variant="secondary" onClick={() => setCreating(true)}>
+                  + New vendor
+                </Button>
+              ) : undefined
+            }
+          >
+            Add a vendor to start placing purchase orders.
+          </EmptyState>
+        ) : (
+          <Card flush>
+            <TableWrap>
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>Contact</th>
+                    <th>Email</th>
+                    <th>Phone</th>
+                    <th className="num">Products</th>
+                    <th className="num">In inventory</th>
+                    <th className="num">On PO</th>
+                    <th>Status</th>
+                    <th className="actions" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((v) => (
+                    <tr key={v.id}>
+                      <td>
+                        <Link
+                          href={`/vendors/${v.id}/settings`}
+                          className="font-bold"
+                          data-testid="vendor-settings-link"
+                        >
+                          {v.name}
+                        </Link>
+                      </td>
+                      <td>{v.contactName ?? '—'}</td>
+                      <td>{v.email ?? '—'}</td>
+                      <td>{v.phone ?? '—'}</td>
+                      <td className="num">
+                        <CountLink
+                          n={v.stats.productsCarried}
+                          href={`/products?vendorId=${v.id}&vendor=${encodeURIComponent(v.name)}`}
+                          testid="vendor-products"
+                        />
+                      </td>
+                      <td className="num">
+                        <CountLink
+                          n={v.stats.inStockProducts}
+                          sub={`· ${v.stats.inStockUnits} units`}
+                          href={`/inventory?vendorId=${v.id}&vendor=${encodeURIComponent(v.name)}&locationId=all`}
+                          testid="vendor-in-stock"
+                        />
+                      </td>
+                      <td className="num">
+                        <CountLink
+                          n={v.stats.onPoUnits}
+                          sub={`· ${v.stats.openPos} PO${v.stats.openPos === 1 ? '' : 's'}`}
+                          href={`/purchase-orders?vendorId=${v.id}&vendor=${encodeURIComponent(v.name)}`}
+                          testid="vendor-on-po"
+                        />
+                      </td>
+                      <td>
+                        <StatusBadge status={v.isActive ? 'active' : 'inactive'} />
+                      </td>
+                      <td className="actions">
+                        <LinkButton
+                          size="sm"
+                          variant="secondary"
+                          href={`/vendors/${v.id}/settings`}
+                        >
+                          Settings
+                        </LinkButton>
+                        <Button size="sm" variant="danger" onClick={() => destroy(v.id)}>
+                          Delete
+                        </Button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </TableWrap>
+          </Card>
+        )}
+      </Stack>
     </div>
   );
 }
