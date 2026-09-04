@@ -156,6 +156,7 @@ export class MembersController {
     /** The approved stores WITH names — the login store picker renders these. */
     scopeLocations: { id: string; name: string }[];
     hiddenNav: string[];
+    roleName: string | null;
     managerDashboard: boolean;
     /**
      * Whether /dashboard opens on the Operations home. Keyed to the role
@@ -203,6 +204,8 @@ export class MembersController {
       scopeLocationIds: tenant.scopeLocationIds,
       scopeLocations,
       hiddenNav,
+      /** Redesign 2026-09-04: the shell shows the role badge and, for Owners, the role-home switch. */
+      roleName: tenant.roleName,
       managerDashboard,
       operationsDashboard:
         tenant.roleName === 'Operations' && tenant.permissions.has('ops.dashboard.view'),

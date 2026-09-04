@@ -563,7 +563,9 @@ export class MorningDashboardController {
       .from(schema.memberships)
       .where(eq(schema.memberships.id, tenant.membershipId))
       .limit(1);
-    if (!me?.managerDashboard) {
+    // Redesign 2026-09-04: an Owner may preview the manager home from the
+    // dashboard's role switch without the per-member toggle.
+    if (!me?.managerDashboard && tenant.roleName !== 'Owner' && !tenant.isSuperAdmin) {
       throw new ForbiddenException(
         'The manager dashboard is not enabled for you — a manager can turn it on from your member page',
       );
@@ -1260,7 +1262,7 @@ export class MorningDashboardController {
     }
 
     kpiMine.monthWrittenCents = (monthOrders?.cents ?? 0) + monthSalesCents;
-    kpiMine.monthlyGoalCents = me.monthlyGoalCents ?? null;
+    kpiMine.monthlyGoalCents = me?.monthlyGoalCents ?? null;
     kpiMine.commissionPeriodCents = commission?.cents ?? 0;
     kpiStore.tenderMix = [...tenderMix.entries()]
       .map(([method, cents]) => ({ method, cents }))

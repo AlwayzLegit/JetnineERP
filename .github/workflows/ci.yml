@@ -91,6 +91,7 @@ jobs:
       CASH_DRAWER_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/jetnine_cash_drawer
       WRITTEN_SALES_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/jetnine_written_sales
       VENDOR_SETTINGS_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/jetnine_vendor_settings
+      OWNER_DASHBOARD_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/jetnine_owner_dashboard
       REDIS_URL: redis://localhost:6379
 
     steps:
@@ -158,6 +159,7 @@ jobs:
           createdb -h localhost -U postgres jetnine_cash_drawer
           createdb -h localhost -U postgres jetnine_written_sales
           createdb -h localhost -U postgres jetnine_vendor_settings
+          createdb -h localhost -U postgres jetnine_owner_dashboard
 
       - name: Format check
         run: pnpm format:check
