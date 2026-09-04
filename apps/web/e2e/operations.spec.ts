@@ -145,6 +145,11 @@ test.describe('Operations dashboard', () => {
     expect(before).toBeGreaterThan(0);
     await page.getByTestId('ops-feed-select-all').check();
     await page.getByTestId('ops-feed-clear').click();
+    // Redesign 2026-09-04: clearing asks for a confirmation first.
+    await page
+      .getByTestId('ops-feed-clear-confirm')
+      .getByRole('button', { name: 'Clear items' })
+      .click();
     await expect(writeDown).toHaveCount(0);
 
     // The sign-off is durable, not just a hidden row in this tab.

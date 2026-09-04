@@ -4690,3 +4690,25 @@ keep order lines matched.
   (entity product, tick Replace catalog, validate, commit), then
   inventory.csv (entity inventory). Validation lists any store name that
   did not match an ERP location.
+
+### Checkpoint — 2026-09-04 (dashboard redesign hand-off: shell + role homes)
+
+Owner hand-off from Claude Design (`LA Mattress ERP.dc.html`): implemented
+the app shell and the four role homes; the module screens in the other
+design files are follow-ups. PLAN §12.13 (A17).
+
+- Tokens (Geist, gray + green accent, dark theme, density), shell
+  (sidebar counts + sync footer, ⌘K palette, store scope / period /
+  compare controls, notifications drawer, account menu, shortcuts, Owner
+  role switch), owner home on new `GET /v1/dashboard/owner`,
+  `/owner/orders`, `/nav-counts` (`owner-dashboard.int.spec.ts`, 7 tests,
+  CI db `jetnine_owner_dashboard`), manager / operations / warehouse homes
+  restyled on the shared kit with their test ids intact.
+- Typecheck, lint, format and the reports suite pass; Playwright suite
+  run against the new shell (operations spec updated for the new
+  clear-selected confirmation).
+- Geist / Geist Mono are self-hosted under `apps/web/public/fonts`
+  (variable fonts, latin subsets) — no third-party stylesheet, works
+  offline. Theme / density live per browser under the avatar menu.
+- Open: the catalog-source lockdown plan (`docs/HANDOFF-catalog-source-lockdown.md`)
+  and the staff schedule proposal await owner approval.

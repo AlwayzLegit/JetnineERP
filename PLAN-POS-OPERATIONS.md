@@ -711,6 +711,53 @@ with the new Products List." Decisions (owner answers, 2026-09-03):
   vendor / cost; tolerant stores, as-is pieces and per-store minimum
   stock; replace deletes vs deactivates and keeps order links).
 
+### 12.13 Dashboard redesign — shell and role homes (amendment A17, owner 2026-09-04)
+
+Owner hand-off: the Claude Design project "LA Mattress ERP dashboard
+redesign" (`LA Mattress ERP.dc.html` + `support.js`; module files for
+Sell / Deliveries / Aftersale / Catalog / Purchasing / Transfers / People /
+Insights / Admin / Staff are follow-ups). Implemented as the primary file
+specifies:
+
+- **Tokens**: neutral grays with one green accent (oklch 155), Geist +
+  Geist Mono, 13px base, 9px cards / 6px controls; light and dark
+  (`html[data-theme]`) and Cozy / Compact density (`html[data-density]`),
+  both per browser (`lib/ui-prefs.ts`, stamped before first paint). The
+  pre-redesign token names stay as aliases so every existing screen picks
+  up the palette; primary buttons are ink-on-paper.
+- **Shell** (`components/app-shell.tsx` + `components/shell/*`): 220px
+  paper sidebar with dot-marked nav groups, live counts (open orders,
+  past-promise, open exceptions, today's trucks from
+  `GET /v1/dashboard/nav-counts`) and a sync footer (online state + queued
+  offline sales); 50px topbar with the ⌘K palette (orders, customers,
+  receipts, pages, New sale), the dashboard's store scope / period /
+  compare-to controls, the notifications bell + drawer (per-browser read
+  marker over `/v1/notifications`), New sale (N) and the account menu
+  (selling store, theme, density, sign out with "also my other devices").
+  Shortcuts: ⌘K ? n t p [ ] g-o/d/i/c/r/h Esc. Owners get a role switch
+  (Owner / Manager / Operations / Warehouse) to preview every home; other
+  members keep their fixed home. `members/me` now returns `roleName`.
+- **Owner home** (`dashboard/owner/*`): KPI strip (Written, Register,
+  Refunds, Open orders, Receivables, Trucks today) and the stacked
+  written-business chart with a dashed comparison line from
+  `GET /v1/dashboard/owner?start&end&compare&locationIds`; morning brief
+  from `/v1/dashboard/morning`; the orders table from
+  `GET /v1/dashboard/owner/orders` (saved views, filter chips with counts,
+  search, column toggles, sort, bulk select + CSV, paging); low stock;
+  order changes; per-browser card order / hide ("Customize"); an order
+  quick-view modal. "Written" = orders created in the window (not
+  draft/quote/cancelled), "Register" = completed POS sales, imported
+  history excluded (D8); receivables match the AR report.
+- **Manager / Operations / Warehouse homes** restructured to the design's
+  sections on the shared kit (`owner-kit.tsx`: KPI strip, panel, status
+  pill, mono money) with their data and test ids unchanged; the ops feed
+  "Clear selected" now confirms first.
+- Tests: `owner-dashboard.int.spec.ts` (7, CI db `jetnine_owner_dashboard`);
+  the Playwright suite runs against the new shell.
+- Deferred (separate design files): the routed module screens, the Staff
+  module (schedule / time clock / timesheets — see
+  `docs/PROPOSAL-staff-schedule.md`), the sign-in previews.
+
 ### 12.3 Cashier dashboard — "My Day" (amendment A7, owner 2026-09-01)
 
 Fixed by role, like Operations and Warehouse: `cashier.dashboard.view` is the

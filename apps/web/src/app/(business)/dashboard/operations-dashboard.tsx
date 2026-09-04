@@ -1,37 +1,38 @@
 'use client';
 
 import Link from 'next/link';
-import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
-import {
-  Alert,
-  Button,
-  Card,
-  EmptyState,
-  LinkButton,
-  LoadingRows,
-  PageHeader,
-  SectionHeading,
-  Stack,
-  StatGrid,
-  StatTile,
-  TableEmpty,
-  TableWrap,
-  Toolbar,
-} from '@/components/ui';
+import { Fragment, useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
+import { Alert, LinkButton } from '@/components/ui';
 import { DateRangePicker, useUrlDateRange } from '@/components/date-range-picker';
-import { Money } from '@/components/money';
+import { ConfirmDialog } from '@/components/shell/confirm-dialog';
 import { api } from '@/lib/api';
 import { formatRange, presetLabel, type DateRange } from '@/lib/date-range';
-import { TableCard, usd } from './dashboard-kit';
+import { usd } from './dashboard-kit';
+import {
+  EmptyRow,
+  KpiStrip,
+  Panel,
+  ShimmerRows,
+  StatusPill,
+  usdWhole,
+  type KpiTile,
+  type Tone,
+} from './owner/owner-kit';
 
 /**
- * The Operations home (owner 2026-08-31).
+ * The Operations home (owner 2026-08-31; Claude Design hand-off 2026-09-04).
  *
  * Exception-first, not selling-first: the page opens on what needs a
  * person today, and the numbers sit underneath. Every store, always —
  * there is no store picker, because the whole point of the role is
  * watching all of them at once. No goal or commission tiles: this
  * member sells occasionally and carries neither.
+ *
+ * Layout: KPI strip (money in / out / net / exchanges / flagged /
+ * drawers), the feed panel (its border turns danger while a critical
+ * row is on it), then "By store" beside "Open & close". The tender
+ * split, the 14-day chart, the salesperson table, the by-person digest
+ * and the store activity log sit below as panels.
  *
  * Each card fetches on its own and hides itself on a 403, so a member
  * with a narrower grant sees a smaller page rather than an error.
@@ -87,6 +88,18 @@ interface StoreRow {
   documents: StoreDocument[];
 }
 
+interface RitualRow {
+  locationId: string;
+  locationName: string;
+  date: string;
+  drawerOpen: boolean;
+  drawerClosed: boolean;
+  drawerSuspended: boolean;
+  varianceCents: number | null;
+  closeoutRan: boolean;
+  closeoutExceptions: number;
+}
+
 interface Summary {
   date: string;
   /** The window the money block and byStore were scoped to (echoed by the API). */
@@ -102,17 +115,7 @@ interface Summary {
   };
   salesByDay: { day: string; writtenCents: number }[];
   byStore: StoreRow[];
-  ritual: {
-    locationId: string;
-    locationName: string;
-    date: string;
-    drawerOpen: boolean;
-    drawerClosed: boolean;
-    drawerSuspended: boolean;
-    varianceCents: number | null;
-    closeoutRan: boolean;
-    closeoutExceptions: number;
-  }[];
+  ritual: RitualRow[];
 }
 
 interface SalespersonRow {
@@ -144,8 +147,8 @@ interface ActivityGroup {
 
 const SEVERITY_COLOR: Record<Severity, string> = {
   critical: 'var(--danger)',
-  warning: 'var(--warning, #b26a00)',
-  info: 'var(--text-muted)',
+  warning: 'var(--warn)',
+  info: 'var(--muted)',
 };
 
 function subjectKey(r: { subjectType: string; subjectId: string }): string {
@@ -168,15 +171,43 @@ function ago(iso: string): string {
   return `${Math.floor(hours / 24)}d ago`;
 }
 
+/** "−$84.50" / "$12.00" — a signed exact amount for variances. */
+function signedUsd(cents: number): string {
+  return cents < 0 ? `−${usd(Math.abs(cents))}` : usd(cents);
+}
+
 /** The severity dot: colour is the data. */
 function SeverityDot({ severity }: { severity: Severity }) {
   return (
     <span
       title={severity}
-      className="inline-block size-2 rounded-full align-middle"
-      style={{ background: SEVERITY_COLOR[severity] }}
+      style={{
+        display: 'inline-block',
+        width: 7,
+        height: 7,
+        borderRadius: '50%',
+        background: SEVERITY_COLOR[severity],
+        flex: 'none',
+        verticalAlign: 'middle',
+      }}
     />
   );
+}
+
+const MUTED_CELL: CSSProperties = { color: 'var(--text2)' };
+
+/** Drawer state → pill tone + label, per the design's Open & close list. */
+function drawerMeta(r: RitualRow): { label: string; tone: Tone } {
+  if (r.drawerSuspended) return { label: 'suspended', tone: 'danger' };
+  if (r.drawerOpen) return { label: 'open', tone: 'info' };
+  if (r.drawerClosed) return { label: 'closed', tone: 'ok' };
+  return { label: 'never opened', tone: 'muted' };
+}
+
+function closeoutNote(r: RitualRow): string {
+  if (r.drawerSuspended) return 'needs a manager close';
+  if (r.closeoutRan) return `close-out ran · ${r.closeoutExceptions} flagged`;
+  return 'close-out not run';
 }
 
 export default function OperationsDashboardView({ userName }: { userName: string }) {
@@ -187,6 +218,7 @@ export default function OperationsDashboardView({ userName }: { userName: string
   // Thresholds ride on the /feed response — the summary stays cheap.
   const [thresholds, setThresholds] = useState<Thresholds | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [confirmClear, setConfirmClear] = useState(false);
   const [clearing, setClearing] = useState(false);
   const [clearError, setClearError] = useState<string | null>(null);
   const [salespeople, setSalespeople] = useState<SalespersonRow[] | null>(null);
@@ -269,257 +301,421 @@ export default function OperationsDashboardView({ userName }: { userName: string
         body: JSON.stringify({ subjects }),
       });
       setSelected(new Set());
+      setConfirmClear(false);
       await loadFeed();
     } catch (err) {
+      setConfirmClear(false);
       setClearError(err instanceof Error ? err.message : String(err));
     } finally {
       setClearing(false);
     }
   }
 
-  const title = `Operations — ${userName}`;
+  const loading = !summary;
+  const money = summary?.money;
+  const ritual = summary?.ritual ?? [];
+
+  // ---- KPI strip -------------------------------------------------------
+  const critical = (feed ?? []).filter((r) => r.severity === 'critical').length;
+  const warning = (feed ?? []).filter((r) => r.severity === 'warning').length;
+  const hasCritical = critical > 0;
+  const drawersOpen = ritual.filter((r) => r.drawerOpen).length;
+  const worstVariance = ritual
+    .filter((r) => r.varianceCents != null && r.varianceCents !== 0)
+    .sort((a, b) => Math.abs(b.varianceCents ?? 0) - Math.abs(a.varianceCents ?? 0))[0];
+
+  const tiles: KpiTile[] = [
+    {
+      key: 'in',
+      label: 'Money in',
+      value: money ? usdWhole(money.inCents) : '',
+      sub: money
+        ? `${money.byTender.length} tender${money.byTender.length === 1 ? '' : 's'} · every store`
+        : '',
+      href: '/sales',
+      testid: 'ops-kpi-in',
+    },
+    {
+      key: 'out',
+      label: 'Money out',
+      value: money ? usdWhole(money.outCents) : '',
+      sub: money
+        ? `${usdWhole(money.out.refundsCents)} refunds · ${usdWhole(money.out.returnsCents)} returns · ${usdWhole(money.out.writeOffsCents)} write-offs`
+        : '',
+      href: '/returns',
+      tone: money && money.outCents > 0 ? 'danger' : undefined,
+      testid: 'ops-kpi-out',
+    },
+    {
+      key: 'net',
+      label: 'Net',
+      value: money ? usdWhole(money.netCents) : '',
+      sub: 'in − out',
+      href: '/reports',
+      testid: 'ops-kpi-net',
+    },
+    {
+      key: 'exchanges',
+      label: 'Exchanges',
+      value: money ? String(money.exchanges.count) : '',
+      sub: money ? `${usdWhole(money.exchanges.restockingFeeCents)} restocking fees` : '',
+      href: '/exchanges',
+      testid: 'ops-kpi-exchanges',
+    },
+    {
+      key: 'flagged',
+      label: 'Flagged items',
+      value: String(feedTotal),
+      sub:
+        feed == null
+          ? 'loading…'
+          : feedTotal === 0
+            ? 'nothing to review'
+            : `${critical} critical · ${warning} warning`,
+      href: '/exceptions',
+      tone: feedTotal > 0 ? 'danger' : undefined,
+      testid: 'ops-kpi-flagged',
+    },
+    {
+      key: 'drawers',
+      label: 'Drawers open',
+      value: summary ? `${drawersOpen} / ${ritual.length}` : '',
+      sub: worstVariance
+        ? `${worstVariance.locationName} ${(worstVariance.varianceCents ?? 0) < 0 ? 'short' : 'over'} ${usd(Math.abs(worstVariance.varianceCents ?? 0))}`
+        : ritual.some((r) => r.drawerSuspended)
+          ? 'a drawer is suspended'
+          : 'no variances',
+      href: '/shifts',
+      testid: 'ops-kpi-drawers',
+    },
+  ];
+
+  const feedTitle =
+    feedTotal === 0
+      ? 'Nothing needs you today'
+      : `${feedTotal} thing${feedTotal === 1 ? '' : 's'} need${feedTotal === 1 ? 's' : ''} you today`;
+
+  const pageSub = `${summary?.date ?? '—'} · every store · exception-first`;
+
+  const header = (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'flex-end',
+        justifyContent: 'space-between',
+        gap: 16,
+        flexWrap: 'wrap',
+      }}
+    >
+      <div>
+        <h1 className="page-title">Operations</h1>
+        <div style={{ color: 'var(--muted)', fontSize: 12.5, marginTop: 3 }}>
+          {pageSub}
+          <span style={{ marginLeft: 8, color: 'var(--faint)' }}>· {userName}</span>
+        </div>
+      </div>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }} data-noprint="true">
+        <DateRangePicker value={range} onChange={setRange} align="right" testid="ops-range" />
+        <LinkButton variant="primary" href="/orders/new">
+          New Sale
+        </LinkButton>
+      </div>
+    </div>
+  );
 
   if (error) {
     return (
-      <>
-        <PageHeader title={title} />
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+        {header}
         <Alert tone="error">{error}</Alert>
-      </>
+      </div>
     );
   }
-  if (!summary) {
-    return (
-      <>
-        <PageHeader title={title} />
-        <LoadingRows />
-      </>
-    );
-  }
-
-  const { money } = summary;
 
   return (
-    <div data-testid="operations-dashboard">
-      <PageHeader
-        title={title}
-        sub={
-          <>
-            {summary.date} · {summary.stores.length} store
-            {summary.stores.length === 1 ? '' : 's'}
-          </>
-        }
+    <div
+      style={{ display: 'flex', flexDirection: 'column', gap: 18 }}
+      data-testid="operations-dashboard"
+    >
+      {header}
+
+      {/* ---- KPI strip: money in the window, plus the feed and the drawers ---- */}
+      <KpiStrip tiles={tiles} loading={loading} />
+
+      {/* ---- The feed. Everything else on this page is context for it. ---- */}
+      <Panel
+        title={feedTitle}
+        sub={`refunds, overrides, adjustments and drawer counts in the last ${thresholds?.lookbackDays ?? 7} days`}
+        style={hasCritical ? { borderColor: 'var(--danger)' } : undefined}
+        testid="ops-feed"
         actions={
-          <>
-            <DateRangePicker value={range} onChange={setRange} align="right" testid="ops-range" />
-            <LinkButton variant="primary" href="/orders/new">
-              New Sale
-            </LinkButton>
-          </>
-        }
-      />
-
-      <Stack>
-        {/* ---- The feed. Everything else on this page is context for it. ---- */}
-        <Card
-          title={
-            feedTotal === 0
-              ? 'Nothing needs you today'
-              : `${feedTotal} thing${feedTotal === 1 ? '' : 's'} need${feedTotal === 1 ? 's' : ''} you today`
-          }
-        >
-          {feed == null ? (
-            <LoadingRows rows={4} />
-          ) : feed.length === 0 ? (
-            <EmptyState>
-              Every refund, override, adjustment and drawer count in the last{' '}
-              {thresholds?.lookbackDays ?? 7} days has been reviewed.
-            </EmptyState>
-          ) : (
+          feed && feed.length > 0 ? (
             <>
-              <Toolbar
-                end={
-                  <>
-                    {feedTotal > feed.length && (
-                      <span className="muted">
-                        Showing {feed.length} of {feedTotal}. Clear some to see the rest.
-                      </span>
-                    )}
-                    <span className="muted">
-                      Clearing records your name and the time — it does not approve anything.
-                    </span>
-                  </>
-                }
+              <label
+                style={{
+                  marginLeft: 'auto',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  fontSize: 12.5,
+                  color: 'var(--text2)',
+                }}
               >
-                <label className="flex items-center gap-1.5">
-                  <input
-                    type="checkbox"
-                    data-testid="ops-feed-select-all"
-                    checked={selected.size === feed.length && feed.length > 0}
-                    onChange={(e) =>
-                      setSelected(e.target.checked ? new Set(feed.map(subjectKey)) : new Set())
-                    }
-                  />
-                  Select all
-                </label>
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  data-testid="ops-feed-clear"
-                  disabled={selected.size === 0 || clearing}
-                  onClick={() => void clearSelected()}
-                >
-                  {clearing ? 'Clearing…' : `Clear selected (${selected.size})`}
-                </Button>
-              </Toolbar>
-              {clearError && <Alert tone="error">{clearError}</Alert>}
-              <TableWrap maxHeight={460}>
-                <table className="table table-dense table-sticky">
-                  <thead>
-                    <tr>
-                      <th aria-label="Select" />
-                      <th aria-label="Severity" />
-                      <th>What</th>
-                      <th>Who</th>
-                      <th>Store</th>
-                      <th className="num">Amount</th>
-                      <th>When</th>
-                      <th className="actions" />
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {feed.map((r) => {
-                      const key = subjectKey(r);
-                      return (
-                        <tr key={key} data-testid="ops-feed-row">
-                          <td>
-                            <input
-                              type="checkbox"
-                              aria-label={`Clear ${r.kind}`}
-                              checked={selected.has(key)}
-                              onChange={(e) =>
-                                setSelected((prev) => {
-                                  const next = new Set(prev);
-                                  if (e.target.checked) next.add(key);
-                                  else next.delete(key);
-                                  return next;
-                                })
-                              }
-                            />
-                          </td>
-                          <td>
-                            <SeverityDot severity={r.severity} />
-                          </td>
-                          <td>
-                            <strong>{r.kind}</strong>
-                            <div className="muted">{r.summary}</div>
-                          </td>
-                          <td className="muted">{r.actorName ?? '—'}</td>
-                          <td className="muted">{r.locationName ?? '—'}</td>
-                          <td
-                            className="num nowrap"
-                            style={{
-                              color: (r.amountCents ?? 0) < 0 ? 'var(--danger)' : undefined,
-                            }}
-                          >
-                            {r.amountCents == null ? '' : usd(r.amountCents)}
-                          </td>
-                          <td className="muted nowrap">{ago(r.occurredAt)}</td>
-                          <td className="actions">
-                            {r.href && (
-                              <Link href={r.href} className="btn-link">
-                                Open
-                              </Link>
-                            )}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </TableWrap>
+                <input
+                  type="checkbox"
+                  data-testid="ops-feed-select-all"
+                  style={{ accentColor: 'var(--accent)' }}
+                  checked={selected.size === feed.length && feed.length > 0}
+                  onChange={(e) =>
+                    setSelected(e.target.checked ? new Set(feed.map(subjectKey)) : new Set())
+                  }
+                />
+                Select all
+              </label>
+              <button
+                type="button"
+                className="topbar-btn"
+                data-testid="ops-feed-clear"
+                disabled={selected.size === 0 || clearing}
+                style={{ opacity: selected.size === 0 ? 0.5 : 1 }}
+                onClick={() => setConfirmClear(true)}
+              >
+                {clearing ? 'Clearing…' : 'Clear selected'}{' '}
+                <span className="mono" style={{ color: 'var(--muted)' }}>
+                  {selected.size}
+                </span>
+              </button>
             </>
+          ) : undefined
+        }
+      >
+        {feed == null ? (
+          <ShimmerRows rows={4} />
+        ) : feed.length === 0 ? (
+          <EmptyRow>
+            Every refund, override, adjustment and drawer count in the last{' '}
+            {thresholds?.lookbackDays ?? 7} days has been reviewed.
+          </EmptyRow>
+        ) : (
+          <>
+            {clearError && (
+              <div style={{ padding: '8px var(--pad) 0' }}>
+                <Alert tone="error">{clearError}</Alert>
+              </div>
+            )}
+            <div style={{ maxHeight: 380, overflow: 'auto' }}>
+              <table className="dt">
+                <thead>
+                  <tr>
+                    <th className="first" style={{ width: 34, top: 0 }} aria-label="Select" />
+                    <th style={{ top: 0 }}>What</th>
+                    <th style={{ top: 0 }}>Who</th>
+                    <th style={{ top: 0 }}>Store</th>
+                    <th className="num" style={{ top: 0 }}>
+                      Amount
+                    </th>
+                    <th style={{ top: 0 }}>When</th>
+                    <th className="last" style={{ top: 0 }} aria-label="Open" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {feed.map((r) => {
+                    const key = subjectKey(r);
+                    const checked = selected.has(key);
+                    return (
+                      <tr
+                        key={key}
+                        data-testid="ops-feed-row"
+                        className={checked ? 'is-checked' : undefined}
+                      >
+                        <td className="first">
+                          <input
+                            type="checkbox"
+                            aria-label={`Clear ${r.kind}`}
+                            style={{ accentColor: 'var(--accent)' }}
+                            checked={checked}
+                            onChange={(e) =>
+                              setSelected((prev) => {
+                                const next = new Set(prev);
+                                if (e.target.checked) next.add(key);
+                                else next.delete(key);
+                                return next;
+                              })
+                            }
+                          />
+                        </td>
+                        <td style={{ whiteSpace: 'normal' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                            <SeverityDot severity={r.severity} />
+                            <span style={{ fontWeight: 500 }}>{r.kind}</span>
+                          </div>
+                          <div style={{ color: 'var(--muted)', fontSize: 12, paddingLeft: 14 }}>
+                            {r.summary}
+                          </div>
+                        </td>
+                        <td style={MUTED_CELL}>{r.actorName ?? '—'}</td>
+                        <td style={MUTED_CELL}>{r.locationName ?? '—'}</td>
+                        <td
+                          className="num"
+                          style={{
+                            color: (r.amountCents ?? 0) < 0 ? 'var(--danger)' : 'var(--text)',
+                          }}
+                        >
+                          {r.amountCents == null ? '' : usd(r.amountCents)}
+                        </td>
+                        <td className="mono" style={{ color: 'var(--muted)', fontSize: 11.5 }}>
+                          {ago(r.occurredAt)}
+                        </td>
+                        <td className="last" style={{ textAlign: 'right' }}>
+                          {r.href && (
+                            <Link
+                              href={r.href}
+                              className="topbar-btn"
+                              style={{ padding: '3px 9px', fontSize: 12, fontWeight: 400 }}
+                            >
+                              Open
+                            </Link>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <div className="panel-foot" style={{ fontSize: 12, color: 'var(--muted)' }}>
+              {feedTotal > feed.length && (
+                <span>
+                  Showing {feed.length} of {feedTotal}. Clear some to see the rest.
+                </span>
+              )}
+              <span style={{ marginLeft: 'auto' }}>
+                Clearing records your name and the time — it does not approve anything.
+              </span>
+            </div>
+          </>
+        )}
+      </Panel>
+
+      {/* ---- By store beside Open & close ---- */}
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'minmax(0, 1.6fr) minmax(0, 1fr)',
+          gap: 18,
+        }}
+        className="ops-grid"
+      >
+        <Panel
+          title="By store"
+          sub={`${windowLabel(range)} · click a store for its orders`}
+          testid="ops-by-store-panel"
+        >
+          {loading ? <ShimmerRows rows={5} /> : <StoreTable rows={summary.byStore} />}
+        </Panel>
+
+        <Panel title="Open & close" sub="today" testid="ops-ritual-panel">
+          {loading ? (
+            <ShimmerRows rows={5} />
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column' }} data-testid="ops-ritual">
+              {ritual.length === 0 && <EmptyRow>No stores yet.</EmptyRow>}
+              {ritual.map((r) => {
+                const drawer = drawerMeta(r);
+                const v = r.varianceCents;
+                return (
+                  <div
+                    key={r.locationId}
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: '1fr auto',
+                      gap: 8,
+                      padding: 'var(--rowy) var(--pad)',
+                      borderBottom: '1px solid var(--border)',
+                      fontSize: 12.5,
+                      alignItems: 'center',
+                    }}
+                  >
+                    <div>
+                      <div style={{ fontWeight: 500 }}>{r.locationName}</div>
+                      <div style={{ fontSize: 11.5, color: 'var(--muted)' }}>{closeoutNote(r)}</div>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span
+                        className="mono"
+                        style={{
+                          fontSize: 12,
+                          color: v != null && v < 0 ? 'var(--danger)' : 'var(--muted)',
+                        }}
+                      >
+                        {v == null ? '' : v === 0 ? 'balanced' : signedUsd(v)}
+                      </span>
+                      <StatusPill tone={drawer.tone}>{drawer.label}</StatusPill>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           )}
-        </Card>
+        </Panel>
+      </div>
 
-        {/* ---- Money in the window, all stores ---- */}
-        <SectionHeading title={`Money — ${windowLabel(range)}, every store`} />
-        <StatGrid cols={4}>
-          <StatTile
-            label="Money in"
-            data-testid="ops-kpi-in"
-            value={<Money cents={money.inCents} />}
-            sub={`${money.byTender.length} tender${money.byTender.length === 1 ? '' : 's'}`}
-          />
-          <StatTile
-            label="Money out"
-            data-testid="ops-kpi-out"
-            tone={money.outCents > 0 ? 'danger' : undefined}
-            value={<Money cents={money.outCents} />}
-            sub={`${usd(money.out.refundsCents)} refunds · ${usd(money.out.returnsCents)} returns · ${usd(money.out.writeOffsCents)} write-offs`}
-          />
-          <StatTile
-            label="Net"
-            data-testid="ops-kpi-net"
-            value={<Money cents={money.netCents} />}
-            sub="in − out"
-          />
-          <StatTile
-            label="Exchanges entered"
-            data-testid="ops-kpi-exchanges"
-            value={String(money.exchanges.count)}
-            sub={`${usd(money.exchanges.restockingFeeCents)} in restocking fees`}
-          />
-        </StatGrid>
-
-        <div className="grid gap-4 lg:grid-cols-2">
-          <TableCard
-            title="Money in by tender"
-            isEmpty={money.byTender.length === 0}
-            empty={
-              range.preset === 'today'
+      {/* ---- Tender split beside the 14-day written chart ---- */}
+      <div
+        style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: 18 }}
+        className="ops-grid"
+      >
+        <Panel title="Money in by tender" sub={`${windowLabel(range)} · every store`}>
+          {loading ? (
+            <ShimmerRows rows={3} />
+          ) : money && money.byTender.length === 0 ? (
+            <EmptyRow>
+              {range.preset === 'today'
                 ? 'Nothing collected yet today.'
-                : 'Nothing collected in the window.'
-            }
-          >
-            <table className="table table-dense">
+                : 'Nothing collected in the window.'}
+            </EmptyRow>
+          ) : (
+            <table className="dt dt-static">
               <thead>
                 <tr>
-                  <th>Tender</th>
+                  <th className="first">Tender</th>
                   <th className="num">Count</th>
-                  <th className="num">Amount</th>
+                  <th className="num last">Amount</th>
                 </tr>
               </thead>
               <tbody>
-                {money.byTender.map((t) => (
+                {(money?.byTender ?? []).map((t) => (
                   <tr key={t.method}>
-                    <td className="capitalize">{t.method.replace(/_/g, ' ')}</td>
-                    <td className="num muted">×{t.count}</td>
-                    <td className="num">{usd(t.cents)}</td>
+                    <td className="first" style={{ textTransform: 'capitalize' }}>
+                      {t.method.replace(/_/g, ' ')}
+                    </td>
+                    <td className="num" style={{ color: 'var(--muted)' }}>
+                      ×{t.count}
+                    </td>
+                    <td className="num last">{usd(t.cents)}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
-          </TableCard>
-          <Card title="Written business — 14 days, all stores">
-            <SalesByDayChart points={summary.salesByDay} />
-          </Card>
-        </div>
+          )}
+        </Panel>
+        <Panel title="Written business" sub="14 days · every store" clip={false}>
+          <div className="panel-body">
+            {loading ? (
+              <div className="shimmer" style={{ height: 110 }} />
+            ) : (
+              <SalesByDayChart points={summary.salesByDay} />
+            )}
+          </div>
+        </Panel>
+      </div>
 
-        {/* ---- Every store, every salesperson ---- */}
-        <SectionHeading title={`Selling — ${windowLabel(range)}`} />
-        <TableCard
-          title={`By store — ${windowLabel(range)}`}
-          description="Click a store to see its orders. Cost is the standard cost of the lines; profit is merchandise minus cost — tax, delivery and fees are not counted."
-          isEmpty={summary.byStore.length === 0}
-          empty="No stores yet."
-          maxHeight={420}
-        >
-          <StoreTable rows={summary.byStore} />
-        </TableCard>
-
-        <TableCard
-          title={`By salesperson — ${windowLabel(spRange)}`}
-          actions={
+      {/* ---- Every salesperson ---- */}
+      <Panel
+        title="By salesperson"
+        sub={windowLabel(spRange)}
+        actions={
+          <div style={{ marginLeft: 'auto' }} data-noprint="true">
             <DateRangePicker
               compact
               align="right"
@@ -527,210 +723,259 @@ export default function OperationsDashboardView({ userName }: { userName: string
               onChange={setSpRange}
               testid="ops-salespeople-range"
             />
-          }
-          loading={salespeople == null}
-          isEmpty={false}
-          empty={null}
-          maxHeight={320}
-        >
-          <ScrollTable
-            head={['Salesperson', 'Written', 'Sales', 'Collected', 'Refunded', 'Discount']}
-            align={['left', 'right', 'right', 'right', 'right', 'right']}
-            rows={(salespeople ?? []).map((s) => [
-              s.name,
-              usd(s.writtenCents),
-              String(s.writtenCount),
-              usd(s.collectedCents),
-              s.refundedCents > 0 ? usd(s.refundedCents) : '—',
-              `${s.discountPct}%`,
-            ])}
-            empty="Nobody has written business in the window."
-            testid="ops-by-salesperson"
-          />
-        </TableCard>
+          </div>
+        }
+      >
+        <div style={{ maxHeight: 320, overflow: 'auto' }}>
+          {salespeople == null ? (
+            <ShimmerRows rows={4} />
+          ) : (
+            <ScrollTable
+              head={['Salesperson', 'Written', 'Sales', 'Collected', 'Refunded', 'Discount']}
+              align={['left', 'right', 'right', 'right', 'right', 'right']}
+              rows={salespeople.map((s) => [
+                s.name,
+                usd(s.writtenCents),
+                String(s.writtenCount),
+                usd(s.collectedCents),
+                s.refundedCents > 0 ? usd(s.refundedCents) : '—',
+                `${s.discountPct}%`,
+              ])}
+              empty="Nobody has written business in the window."
+              testid="ops-by-salesperson"
+            />
+          )}
+        </div>
+      </Panel>
 
-        {/* ---- Who is generating the exceptions ---- */}
-        <div className="grid gap-4 lg:grid-cols-2">
-          <TableCard
-            title="Flagged activity by person"
-            loading={digest == null}
-            isEmpty={digest?.length === 0}
-            empty="Nobody has tripped a threshold in the window."
-          >
-            <table className="table table-dense">
+      {/* ---- Who is generating the exceptions, and what changed on orders ---- */}
+      <div
+        style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: 18 }}
+        className="ops-grid"
+      >
+        <Panel
+          title="Flagged activity by person"
+          sub={`last ${thresholds?.lookbackDays ?? 7} days`}
+        >
+          {digest == null ? (
+            <ShimmerRows rows={3} />
+          ) : digest.length === 0 ? (
+            <EmptyRow>Nobody has tripped a threshold in the window.</EmptyRow>
+          ) : (
+            <table className="dt dt-static">
               <thead>
                 <tr>
-                  <th>Who</th>
+                  <th className="first">Who</th>
                   <th>Flags</th>
-                  <th className="num">Amount</th>
+                  <th className="num last">Amount</th>
                 </tr>
               </thead>
               <tbody>
-                {(digest ?? []).map((d) => (
+                {digest.map((d) => (
                   <tr key={d.actorUserId ?? 'system'}>
-                    <td className="nowrap">
-                      <SeverityDot severity={d.worstSeverity} />{' '}
-                      <strong>{d.actorName ?? 'System'}</strong>
+                    <td className="first">
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
+                        <SeverityDot severity={d.worstSeverity} />
+                        <span style={{ fontWeight: 500 }}>{d.actorName ?? 'System'}</span>
+                      </span>
                     </td>
-                    <td className="muted">
+                    <td style={{ color: 'var(--muted)', whiteSpace: 'normal' }}>
                       {Object.entries(d.byKind)
                         .map(([kind, n]) => `${n} × ${kind.toLowerCase()}`)
                         .join(' · ')}
                     </td>
-                    <td className="num nowrap">{d.amountCents > 0 ? usd(d.amountCents) : ''}</td>
+                    <td className="num last">{d.amountCents > 0 ? usd(d.amountCents) : ''}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
-          </TableCard>
+          )}
+        </Panel>
 
-          <TableCard title="Open & close — today" isEmpty={false} empty={null} maxHeight={320}>
-            <ScrollTable
-              head={['Store', 'Drawer', 'Variance', 'Close-out']}
-              align={['left', 'left', 'right', 'left']}
-              rows={summary.ritual.map((r) => [
-                r.locationName,
-                r.drawerSuspended
-                  ? 'suspended'
-                  : r.drawerOpen
-                    ? 'open'
-                    : r.drawerClosed
-                      ? 'closed'
-                      : 'never opened',
-                r.varianceCents == null ? '—' : usd(r.varianceCents),
-                r.closeoutRan ? `ran · ${r.closeoutExceptions} flagged` : 'not run',
-              ])}
-              empty="No stores yet."
-              testid="ops-ritual"
-            />
-          </TableCard>
-        </div>
-
-        {/* ---- Store activity ---- */}
-        <TableCard
-          title="Store activity — grouped by order"
-          loading={activity == null}
-          isEmpty={activity?.length === 0}
-          empty="No order changes recorded yet."
-          maxHeight={340}
+        <Panel
+          title="Store activity"
+          sub="grouped by order"
+          link={{ href: '/audit', label: 'Audit log' }}
         >
-          <table className="table table-dense table-sticky">
-            <thead>
-              <tr>
-                <th>Order</th>
-                <th>Changes</th>
-                <th className="num">Latest</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(activity ?? []).map((g) => (
-                <tr key={g.orderId}>
-                  <td className="nowrap">
-                    <Link href={`/orders/${g.orderId}`}>{g.orderNumber}</Link>
-                  </td>
-                  <td className="muted">
-                    {g.events
-                      .slice(0, 4)
-                      .map((e) => `${e.action}${e.actorName ? ` (${e.actorName})` : ''}`)
-                      .join(' · ')}
-                    {g.events.length > 4 ? ` +${g.events.length - 4} more` : ''}
-                  </td>
-                  <td className="num muted nowrap">{ago(g.latestAt)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </TableCard>
-      </Stack>
+          {activity == null ? (
+            <ShimmerRows rows={4} />
+          ) : activity.length === 0 ? (
+            <EmptyRow>No order changes recorded yet.</EmptyRow>
+          ) : (
+            <div style={{ maxHeight: 340, overflow: 'auto' }}>
+              <table className="dt dt-static">
+                <thead>
+                  <tr>
+                    <th className="first">Order</th>
+                    <th>Changes</th>
+                    <th className="num last">Latest</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {activity.map((g) => (
+                    <tr key={g.orderId}>
+                      <td className="first mono">
+                        <Link href={`/orders/${g.orderId}`}>{g.orderNumber}</Link>
+                      </td>
+                      <td style={{ color: 'var(--muted)', whiteSpace: 'normal' }}>
+                        {g.events
+                          .slice(0, 4)
+                          .map((e) => `${e.action}${e.actorName ? ` (${e.actorName})` : ''}`)
+                          .join(' · ')}
+                        {g.events.length > 4 ? ` +${g.events.length - 4} more` : ''}
+                      </td>
+                      <td className="num last" style={{ color: 'var(--muted)', fontSize: 11.5 }}>
+                        {ago(g.latestAt)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Panel>
+      </div>
+
+      {confirmClear && (
+        <ConfirmDialog
+          title={`Clear ${selected.size} flagged item${selected.size === 1 ? '' : 's'}?`}
+          confirmLabel="Clear items"
+          busy={clearing}
+          onCancel={() => setConfirmClear(false)}
+          onConfirm={() => void clearSelected()}
+          testid="ops-feed-clear-confirm"
+        >
+          <p style={{ margin: 0 }}>
+            Clearing records your name and the time. It does not approve or reverse anything.
+          </p>
+        </ConfirmDialog>
+      )}
+
+      <style>{`@media (max-width: 1000px) { .ops-grid { grid-template-columns: minmax(0, 1fr) !important; } }`}</style>
     </div>
   );
 }
 
 /**
- * By store — today, with each store expandable to the orders and register
- * sales behind its Written number (owner 2026-09-02): order #, written,
- * cost, profit. Cost is standard cost of the lines; profit is merchandise
- * minus cost (tax, delivery and fees excluded).
+ * By store — the window, with each store expandable to the orders and
+ * register sales behind its Written number (owner 2026-09-02): order #,
+ * written, profit, margin. Cost is standard cost of the lines; profit is
+ * merchandise minus cost (tax, delivery and fees excluded); margin is
+ * profit over written, per the design.
  */
 function StoreTable({ rows }: { rows: StoreRow[] }) {
   const [open, setOpen] = useState<Record<string, boolean>>({});
+  const margin = (profit: number, written: number): number | null =>
+    written > 0 ? Math.round((profit / written) * 100) : null;
+  const marginCell = (m: number | null) => (
+    <span
+      style={{ color: m == null ? 'var(--muted)' : m < 33 ? 'var(--warn)' : 'var(--accent-ink)' }}
+    >
+      {m == null ? '—' : `${m}%`}
+    </span>
+  );
   return (
-    <table className="table table-dense table-sticky" data-testid="ops-by-store">
+    <table className="dt dt-static" data-testid="ops-by-store">
       <thead>
         <tr>
-          <th>Store</th>
+          <th className="first">Store</th>
           <th className="num">Written</th>
           <th className="num">Orders</th>
-          <th className="num">Cost</th>
           <th className="num">Profit</th>
-          <th className="num">Collected</th>
-          <th className="num">Refunded</th>
+          <th className="num">Margin</th>
+          <th className="num last">Refunded</th>
         </tr>
       </thead>
       <tbody>
+        {rows.length === 0 && <EmptyRow colSpan={6}>No stores yet.</EmptyRow>}
         {rows.map((s) => {
           const expandable = s.documents.length > 0;
           const isOpen = !!open[s.locationId];
           return (
             <Fragment key={s.locationId}>
               <tr
-                className={expandable ? 'cursor-pointer' : undefined}
+                className={expandable ? 'is-clickable' : undefined}
+                style={isOpen ? { background: 'var(--surface2)' } : undefined}
                 onClick={() =>
                   expandable && setOpen((o) => ({ ...o, [s.locationId]: !o[s.locationId] }))
                 }
                 data-testid="ops-store-row"
                 aria-expanded={expandable ? isOpen : undefined}
+                title={expandable ? undefined : 'Nothing written in the window'}
               >
-                <td className="nowrap">
+                <td className="first" style={{ fontWeight: 500 }}>
                   <span
                     aria-hidden
-                    className="muted inline-block w-3"
-                    style={{ visibility: expandable ? 'visible' : 'hidden' }}
+                    style={{
+                      display: 'inline-block',
+                      width: 14,
+                      color: 'var(--muted)',
+                      fontSize: 10,
+                      visibility: expandable ? 'visible' : 'hidden',
+                    }}
                   >
-                    {isOpen ? '▾' : '▸'}
+                    {isOpen ? '▼' : '▶'}
                   </span>
                   {s.locationName}
                 </td>
-                <td className="num nowrap">{usd(s.writtenCents)}</td>
-                <td className="num nowrap">{s.writtenCount}</td>
-                <td className="num nowrap">{s.writtenCount > 0 ? usd(s.costCents) : '—'}</td>
+                <td className="num">{usd(s.writtenCents)}</td>
+                <td className="num" style={{ color: 'var(--muted)' }}>
+                  {s.writtenCount}
+                </td>
                 <td
-                  className="num nowrap"
+                  className="num"
                   style={{ color: s.profitCents < 0 ? 'var(--danger)' : undefined }}
+                  title={s.writtenCount > 0 ? `cost ${usd(s.costCents)}` : undefined}
                 >
                   {s.writtenCount > 0 ? usd(s.profitCents) : '—'}
                 </td>
-                <td className="num nowrap">{usd(s.collectedCents)}</td>
-                <td className="num nowrap">{s.refundedCents > 0 ? usd(s.refundedCents) : '—'}</td>
+                <td className="num">
+                  {marginCell(s.writtenCount > 0 ? margin(s.profitCents, s.writtenCents) : null)}
+                </td>
+                <td className="num last" style={{ color: 'var(--muted)' }}>
+                  {s.refundedCents > 0 ? usd(s.refundedCents) : '—'}
+                </td>
               </tr>
               {isOpen &&
                 s.documents.map((d) => (
                   <tr
                     key={d.id}
-                    style={{ background: 'var(--surface-muted)' }}
+                    style={{ background: 'var(--surface2)' }}
                     data-testid="ops-store-doc"
                   >
-                    <td className="nowrap pl-8">
+                    <td
+                      className="first"
+                      style={{ paddingLeft: 38, paddingTop: 5, paddingBottom: 5 }}
+                    >
                       <Link
                         href={d.kind === 'sale' ? `/sales/${d.id}` : `/orders/${d.id}`}
+                        className="mono"
                         onClick={(e) => e.stopPropagation()}
                       >
                         {d.number}
                       </Link>{' '}
-                      <span className="muted">
+                      <span style={{ color: 'var(--muted)' }}>
                         {d.customerName ?? (d.kind === 'sale' ? 'Register sale' : 'Walk-in')}
                       </span>
                     </td>
-                    <td className="num nowrap">{usd(d.writtenCents)}</td>
+                    <td className="num" style={{ paddingTop: 5, paddingBottom: 5 }}>
+                      {usd(d.writtenCents)}
+                    </td>
                     <td />
-                    <td className="num nowrap">{usd(d.costCents)}</td>
                     <td
-                      className="num nowrap"
-                      style={{ color: d.profitCents < 0 ? 'var(--danger)' : undefined }}
+                      className="num"
+                      style={{
+                        paddingTop: 5,
+                        paddingBottom: 5,
+                        color: d.profitCents < 0 ? 'var(--danger)' : undefined,
+                      }}
+                      title={`cost ${usd(d.costCents)}`}
                     >
                       {usd(d.profitCents)}
                     </td>
-                    <td />
+                    <td className="num" style={{ paddingTop: 5, paddingBottom: 5 }}>
+                      {marginCell(margin(d.profitCents, d.writtenCents))}
+                    </td>
                     <td />
                   </tr>
                 ))}
@@ -756,23 +1001,28 @@ function ScrollTable({
   empty: string;
   testid: string;
 }) {
+  const last = head.length - 1;
+  const cls = (i: number) =>
+    [align[i] === 'right' ? 'num' : '', i === 0 ? 'first' : '', i === last ? 'last' : '']
+      .filter(Boolean)
+      .join(' ') || undefined;
   return (
-    <table className="table table-dense table-sticky" data-testid={testid}>
+    <table className="dt dt-static" data-testid={testid}>
       <thead>
         <tr>
           {head.map((h, i) => (
-            <th key={h} className={align[i] === 'right' ? 'num' : undefined}>
+            <th key={h} className={cls(i)}>
               {h}
             </th>
           ))}
         </tr>
       </thead>
       <tbody>
-        {rows.length === 0 && <TableEmpty colSpan={head.length}>{empty}</TableEmpty>}
+        {rows.length === 0 && <EmptyRow colSpan={head.length}>{empty}</EmptyRow>}
         {rows.map((r) => (
           <tr key={r.join('|')}>
             {r.map((cell, i) => (
-              <td key={head[i] ?? String(i)} className={align[i] === 'right' ? 'num' : undefined}>
+              <td key={head[i] ?? String(i)} className={cls(i)}>
                 {cell}
               </td>
             ))}
@@ -786,19 +1036,25 @@ function ScrollTable({
 function SalesByDayChart({ points }: { points: { day: string; writtenCents: number }[] }) {
   const max = Math.max(1, ...points.map((p) => p.writtenCents));
   return (
-    <div className="flex items-end gap-1" style={{ height: 110 }}>
+    <div style={{ display: 'flex', alignItems: 'flex-end', gap: 4, height: 110 }}>
       {points.map((p) => (
         <div
           key={p.day}
           title={`${p.day}: ${usd(p.writtenCents)}`}
-          className="flex flex-1 flex-col justify-end"
+          style={{
+            display: 'flex',
+            flex: 1,
+            flexDirection: 'column',
+            justifyContent: 'flex-end',
+            height: '100%',
+          }}
         >
           <div
-            className="rounded-t"
             style={{
               height: `${Math.round((p.writtenCents / max) * 100)}%`,
               minHeight: p.writtenCents > 0 ? 2 : 0,
               background: 'var(--accent)',
+              borderRadius: '3px 3px 0 0',
             }}
           />
         </div>

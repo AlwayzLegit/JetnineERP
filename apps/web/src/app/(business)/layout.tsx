@@ -3,6 +3,7 @@ import { AuthGate } from '@/components/auth-gate';
 import { ImpersonationBanner } from '@/components/impersonation-banner';
 import { AppShell } from '@/components/app-shell';
 import { BusinessSettingsProvider } from '@/lib/business-settings';
+import { DashboardFiltersProvider } from '@/lib/dashboard-filters';
 
 // Every (business) page calls per-tenant client hooks (the
 // settings provider, useSession, etc.) — none of them are useful
@@ -14,8 +15,10 @@ export default function BusinessLayout({ children }: { children: ReactNode }) {
   return (
     <AuthGate>
       <BusinessSettingsProvider>
-        <ImpersonationBanner />
-        <AppShell>{children}</AppShell>
+        <DashboardFiltersProvider>
+          <ImpersonationBanner />
+          <AppShell>{children}</AppShell>
+        </DashboardFiltersProvider>
       </BusinessSettingsProvider>
     </AuthGate>
   );
