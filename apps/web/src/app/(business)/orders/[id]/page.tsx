@@ -1123,14 +1123,16 @@ export default function OrderDetailPage() {
                               aria-label={`Fulfillment for ${l.description}`}
                               data-testid="order-line-fulfillment"
                             >
-                              <option value="">order default</option>
+                              <option value="">Same as order</option>
                               <option value="delivery">Delivery</option>
                               <option value="pickup">Customer pickup</option>
                               <option value="take_with">Take-with</option>
                               <option value="direct_ship">Direct ship</option>
                             </Select>
+                          ) : l.fulfillmentMethod ? (
+                            l.fulfillmentMethod.replace(/_/g, ' ')
                           ) : (
-                            (l.fulfillmentMethod ?? 'order default').replace(/_/g, ' ')
+                            'Same as order'
                           )}
                         </td>
                         <td>

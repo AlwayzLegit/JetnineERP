@@ -1985,7 +1985,7 @@ function LineRow({
               className="w-32"
               aria-label={`Fulfillment for ${l.description}`}
             >
-              <option value="">order default</option>
+              <option value="">Same as order</option>
               {FULFILLMENTS.map((f) => (
                 <option key={f.value} value={f.value}>
                   {f.label}
