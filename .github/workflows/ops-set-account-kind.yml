@@ -1,0 +1,121 @@
+name: Ops — set account kind
+
+# Runs packages/db/src/set-account-kind.ts as a Render one-off job inside the
+# jetnine-api service (same build, same env vars — DATABASE_URL included),
+# waits for it, and prints its log. This is the only write path into
+# production data that does not go through the console, and it is limited to
+# that one script: `action` is list | set, `slug` and `kind` are validated
+# before anything is sent to Render.
+#
+# Needs the RENDER_API_KEY repository secret (same one deploy-api.yml uses).
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: list every business, or set one business's kind
+        required: true
+        type: choice
+        options: [list, set]
+      slug:
+        description: Business slug (required for set)
+        required: false
+        type: string
+      kind:
+        description: Account kind (required for set)
+        required: false
+        type: choice
+        options: [agency, saas]
+
+concurrency:
+  group: ops-set-account-kind
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    name: ${{ inputs.action }} ${{ inputs.slug }} ${{ inputs.kind }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      RENDER_SERVICE_ID: srv-da4tua3m8hqs73apsflg
+      RENDER_OWNER_ID: tea-da4l4hgjo6nc73db7i10
+      RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+      ACTION: ${{ inputs.action }}
+      SLUG: ${{ inputs.slug }}
+      KIND: ${{ inputs.kind }}
+    steps:
+      - name: Validate inputs
+        run: |
+          set -euo pipefail
+          if [ -z "$RENDER_API_KEY" ]; then
+            echo "::error::RENDER_API_KEY is not set (Settings → Secrets and variables → Actions)."
+            exit 1
+          fi
+          script="pnpm --filter @jetnine/db exec tsx src/set-account-kind.ts"
+          case "$ACTION" in
+            list)
+              cmd="$script --list" ;;
+            set)
+              if ! [[ "$SLUG" =~ ^[a-z0-9][a-z0-9-]{0,63}$ ]]; then
+                echo "::error::slug must be lowercase letters, digits and dashes"; exit 1
+              fi
+              if [ "$KIND" != "agency" ] && [ "$KIND" != "saas" ]; then
+                echo "::error::kind must be agency or saas"; exit 1
+              fi
+              cmd="$script --slug $SLUG --kind $KIND" ;;
+            *)
+              echo "::error::action must be list or set"; exit 1 ;;
+          esac
+          echo "Will run: $cmd"
+          echo "CMD=$cmd" >> "$GITHUB_ENV"
+
+      - name: Start Render job
+        run: |
+          set -euo pipefail
+          auth="Authorization: Bearer $RENDER_API_KEY"
+          job=$(curl -sSf -X POST -H "$auth" -H "Content-Type: application/json" \
+            -d "$(jq -nc --arg c "$CMD" '{startCommand: $c}')" \
+            "https://api.render.com/v1/services/$RENDER_SERVICE_ID/jobs")
+          id=$(echo "$job" | jq -r '.id')
+          echo "Job $id created"
+          echo "JOB_ID=$id" >> "$GITHUB_ENV"
+
+      - name: Wait for job
+        run: |
+          set -euo pipefail
+          auth="Authorization: Bearer $RENDER_API_KEY"
+          api="https://api.render.com/v1/services/$RENDER_SERVICE_ID/jobs/$JOB_ID"
+          final=""
+          for i in $(seq 1 90); do
+            status=$(curl -sSf -H "$auth" "$api" | jq -r '.status // "pending"')
+            echo "[$i] $status"
+            case "$status" in
+              succeeded) final=ok; break ;;
+              failed|canceled) final=bad; break ;;
+            esac
+            sleep 10
+          done
+          echo "JOB_RESULT=$final" >> "$GITHUB_ENV"
+          if [ -z "$final" ]; then
+            echo "::error::Timed out waiting for job $JOB_ID"
+            exit 1
+          fi
+
+      - name: Job log
+        if: always() && env.JOB_ID != ''
+        run: |
+          set -euo pipefail
+          auth="Authorization: Bearer $RENDER_API_KEY"
+          # Logs land a few seconds after the job finishes.
+          sleep 8
+          curl -sS -H "$auth" \
+            "https://api.render.com/v1/logs?ownerId=$RENDER_OWNER_ID&resource=$JOB_ID&limit=100&direction=forward" \
+            | jq -r '.logs[]? | "\(.timestamp)  \(.message)"' || echo "(could not fetch logs; see the Render dashboard)"
+          echo "Dashboard: https://dashboard.render.com/web/$RENDER_SERVICE_ID/jobs"
+          if [ "${JOB_RESULT:-}" != "ok" ]; then
+            echo "::error::Job $JOB_ID did not succeed"
+            exit 1
+          fi

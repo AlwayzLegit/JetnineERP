@@ -34,37 +34,46 @@ owner-side Ops list in §3.
 | API deploy branch | `claude/fix-latent-int-spec-failures`                                                                                                       |
 | Sprint branch     | `claude/la-mattress-erp-storis-cutover-z9xj2t`                                                                                              |
 
-**The trap (fixed in code, needs one secret):** the Render dashboard's repo URL still
-points at the _old_ repo (`AlwayzLegit/JetnineERP`) and its branch at
-`claude/fix-latent-int-spec-failures`, so Render's own auto-deploy never fires even
-though the service reports `autoDeploy: yes`. Since 2026-09-06
-`.github/workflows/deploy-api.yml` is the auto-deploy: on every push to `main` that
-touches the API it repoints the service at `AlwayzLegit/LA-Mattress-ERP@main` and
-starts a Render deploy, waiting for it to go live. It needs the `RENDER_API_KEY`
-repository secret (owner Ops item §3). Until that secret exists the workflow fails
-on purpose and the manual sequence below still applies.
+**The trap (closed 2026-09-06):** the Render service used to point at the _old_ repo
+(`AlwayzLegit/JetnineERP`) on `claude/fix-latent-int-spec-failures`, so Render's own
+auto-deploy never fired. `.github/workflows/deploy-api.yml` is now the auto-deploy:
+on every push to `main` that touches the API it repoints the service at
+`AlwayzLegit/LA-Mattress-ERP@main` if it has drifted (repo and branch as _separate_
+Render API updates — Render drops `branch` when both arrive in one PATCH), starts a
+deploy, refuses to continue if Render picks a commit other than the run's own, and
+fails the run unless Render reaches `live`. The `RENDER_API_KEY` repository secret is
+set (verified by run 98). The service reads `LA-Mattress-ERP @ main`.
 
-### The deploy sequence (manual, while `RENDER_API_KEY` is unset)
+### The deploy sequence
 
 1. PR the sprint branch → `main`; wait for all four checks green.
-2. Squash-merge. Vercel production deploys `main` on its own.
-3. Merge `main` into `claude/fix-latent-int-spec-failures`, push.
-4. `mcp__Render__trigger_deploy` on the API service.
-5. Verify the boot log line: `Schema migrations: N/N applied, head=…`. **Do not skip
-   this** — it is the only proof migrations ran.
+2. Squash-merge. Vercel production deploys `main` on its own; the **Deploy API to
+   Render** workflow run on `main` is the API deploy.
+3. Verify the boot log line: `Schema migrations: N/N applied, head=…`. **Do not skip
+   this** — it is the only proof migrations ran. (`mcp__Render__list_logs` on the
+   service, text filter `igration`.)
 
-Once the secret is set, steps 3–4 disappear: the workflow run on `main` is the deploy,
-and its last step fails if Render does not reach `live`.
+The old fallback still works if the workflow is ever red: merge `main` into the
+branch Render tracks and `mcp__Render__trigger_deploy`.
+
+### One-off commands in production
+
+The API host and the database are unreachable from a Claude sandbox, so anything that
+must touch production data goes through `.github/workflows/ops-set-account-kind.yml`
+(manual dispatch; inputs `action` = list | set, `slug`, `kind`; validated, no free-form
+commands). It runs `packages/db/src/set-account-kind.ts` as a Render one-off job inside
+the API service — same build and env, so `DATABASE_URL` is there — waits, and prints
+the job log. The script mirrors the console's "Mark as agency" (businesses +
+subscriptions rows, audit row with `actor_type = 'system'`). Add further admin scripts
+the same way: a script under `packages/db/src/` and a workflow with validated inputs.
 
 ---
 
 ## 3. Open Ops items (owner's, not yours — flag, never silently block on)
 
 1. **Resend DNS — in flight, see §4.** The one item with a concrete next action.
-2. **Add the `RENDER_API_KEY` repository secret** (Render → Account settings → API
-   keys; GitHub → Settings → Secrets and variables → Actions). That lets
-   `deploy-api.yml` repoint the service at `AlwayzLegit/LA-Mattress-ERP@main` and
-   deploy automatically; no dashboard edit needed after that.
+2. ~~Add the `RENDER_API_KEY` repository secret~~ — done 2026-09-06; the API deploys
+   from `main` automatically (§2).
 3. **Rotate the shared owner password.** Credentials for `pos.lamattress@gmail.com` were
    shared into an earlier session for API testing. They were used in-session only and
    never written to the repo. Rotation is still advised and still outstanding.
