@@ -87,6 +87,11 @@ the same way: a script under `packages/db/src/` and a workflow with validated in
 5. **Two sample invoices into `docs/`** for the P4 document templates; confirm the PO
    reply-to address.
 6. **Cashier + manager accounts still do not exist.** No longer blocked — see §4.
+7. **Shopify listings cleanup (A18, 2026-09-06).** Products → Shopify cleanup: download
+   the sales sheet, confirm the proposed STORIS listing per line (or confirm on the
+   page), preview, apply, then retire the listings. Do not press "Sync now" on the
+   Shopify integration — it recreates them; disconnecting it is still an owner call
+   (`docs/HANDOFF-catalog-source-lockdown.md` B1).
 
 ---
 

@@ -81,6 +81,9 @@ export default function ProductsPage() {
             <LinkButton href="/products/duplicates" variant="secondary" size="sm">
               Find duplicates
             </LinkButton>
+            <LinkButton href="/products/cleanup" variant="secondary" size="sm">
+              Shopify cleanup
+            </LinkButton>
             <LinkButton href="/products/pricing" variant="secondary" size="sm">
               Set prices
             </LinkButton>

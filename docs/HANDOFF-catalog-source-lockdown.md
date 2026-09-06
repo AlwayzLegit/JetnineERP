@@ -1,6 +1,10 @@
 # HANDOFF — Catalog source lockdown + wrong-SKU sales remap
 
-Status: **PLAN — awaiting owner approval (2026-09-03).** Nothing below has been executed.
+Status: **PLAN — awaiting owner approval (2026-09-03).** Update 2026-09-06: B3/B4 shipped
+in a self-serve form as PLAN-POS-OPERATIONS §12.14 (A18) — `GET /v1/products/cleanup/shopify`
+(candidates + lines + scored crosswalk, CSV sheets) and `POST …/apply` (relink lines with
+reservation / stock moves, retire listings), page `/products/cleanup`. B0 (D11/D12 amendments),
+B1 (sync off), B2 (import hardening), B5, B6 and Phase C remain as written.
 
 Owner ask (2026-09-03): "the only inventory and products we have in ERP are coming from
 our import, not synced from Shopify or any other sources, because that's conflicting
@@ -315,8 +319,9 @@ MIN_STOCK = 0 everywhere.
 
 - **Q1 Tenant.** Which business is the live one (name/slug from Q1)? If it is the QA tenant
   from the docs, say so; the plan then runs there.
-- **Q2 Prices.** Keep the prices Shopify wrote on shared SKUs, or reset those SKUs to $0 and
-  re-price at the register / via `/products/pricing`?
+- ~~**Q2 Prices.**~~ Answered 2026-09-06: **do not keep them** — reset to $0 (shipped as the
+  cleanup page's "Reset prices"; D12 pricing at the register / `/products/pricing`). Same
+  day: **do not keep stock on Shopify listings** — cleared when a listing retires.
 - **Q3 Min stock.** The export has MIN_STOCK 0 for every SKU. Load zeros (reorder points
   cleared; keep auto-replenishment off until you set them), or leave existing reorder
   points untouched (I drop the column from the file)?
