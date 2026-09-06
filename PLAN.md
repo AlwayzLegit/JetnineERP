@@ -843,7 +843,9 @@ product, two monthly per-location Prices (`STRIPE_PRICE_STARTER_PER_LOCATION`,
 - **Guard rails.** With real Stripe Billing live (key + prices), the inline
   `POST /v1/billing/subscribe` refuses (409): a subscription only becomes active through
   a paid Checkout. Stub mode (no key) keeps every path usable locally: checkout / portal
-  return same-origin URLs and the webhook accepts unsigned JSON.
+  return same-origin URLs and the webhook accepts unsigned JSON — **never in production**:
+  with `NODE_ENV=production` and no key, `configured` is false and the webhook rejects
+  every request instead of trusting it.
 - **Tenant UI.** The Billing page's Subscription card shows the plan picker and
   "Subscribe with Stripe" while not on an active Stripe subscription, "Manage billing"
   once a customer exists, and the `?checkout=success|cancelled` outcome. Agency accounts

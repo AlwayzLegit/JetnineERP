@@ -41,6 +41,7 @@ export class PlatformBillingService {
   private readonly logger = new Logger(PlatformBillingService.name);
   readonly stub: boolean;
   readonly configured: boolean;
+  private readonly production: boolean;
   private readonly client: StripeClient | null;
   private readonly prices: Record<PlanId, string | null>;
 
@@ -52,7 +53,14 @@ export class PlatformBillingService {
       starter: this.config.get<string>('STRIPE_PRICE_STARTER_PER_LOCATION') ?? null,
       pro: this.config.get<string>('STRIPE_PRICE_PRO_PER_LOCATION') ?? null,
     };
-    this.configured = this.stub || Boolean(this.prices.starter && this.prices.pro);
+    // Stub mode is a dev/test convenience only. In production a missing key
+    // means "not configured": no fake checkout URLs, and (below) no unsigned
+    // webhook acceptance on a public endpoint.
+    this.production =
+      (this.config.get<string>('NODE_ENV') ?? process.env.NODE_ENV) === 'production';
+    this.configured = this.stub
+      ? !this.production
+      : Boolean(this.prices.starter && this.prices.pro);
     if (this.stub) {
       this.logger.warn(
         'PlatformBillingService running in STUB mode (no STRIPE_SECRET_KEY): checkout/portal return local URLs and the billing webhook accepts unsigned JSON.',
@@ -144,6 +152,11 @@ export class PlatformBillingService {
   ): BillingWebhookEvent {
     const secret = this.config.get<string>('STRIPE_BILLING_WEBHOOK_SECRET');
     if (this.stub || !this.client || !secret) {
+      if (this.production) {
+        throw new Error(
+          'Stripe Billing webhook is not configured (STRIPE_SECRET_KEY + STRIPE_BILLING_WEBHOOK_SECRET required in production)',
+        );
+      }
       const text = typeof rawBody === 'string' ? rawBody : rawBody.toString('utf8');
       const parsed = JSON.parse(text) as Partial<BillingWebhookEvent>;
       if (!parsed.id || !parsed.type) {
