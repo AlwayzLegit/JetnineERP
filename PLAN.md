@@ -809,7 +809,44 @@ Every mutation is audited: `business.account_kind.update`,
 
 ### 15.4 Not in this amendment (follow-ups)
 
-- Stripe Billing: checkout, invoices, webhook → `subscription_payments`.
+- ~~Stripe Billing: checkout, invoices, webhook → `subscription_payments`.~~ Built — §15.5.
 - Plan limits (max locations / users) enforced from the plan catalog.
 - Self-serve plan changes on the tenant Billing page (paused, per Epic 1.12 §4).
 - Per-account resource quotas (storage, API calls) — counted, not enforced.
+
+### 15.5 Stripe Billing (2026-09-06)
+
+SaaS accounts pay through Stripe Billing on the **platform's** Stripe account (the
+same `STRIPE_SECRET_KEY` as Connect, without the `Stripe-Account` header). One
+product, two monthly per-location Prices (`STRIPE_PRICE_STARTER_PER_LOCATION`,
+`STRIPE_PRICE_PRO_PER_LOCATION`), and a dedicated endpoint secret
+(`STRIPE_BILLING_WEBHOOK_SECRET`) for `POST /v1/billing/stripe/webhook`.
+
+- **Checkout.** `POST /v1/billing/checkout { plan }` (`business.billing.update`)
+  creates a subscription-mode Checkout Session: quantity = locations (min 1),
+  customer reused from `subscriptions.stripe_customer_id` or created by Stripe,
+  `client_reference_id` + metadata carry the business id and plan. Agency accounts
+  → 409. Activation is **not** done here; the webhook does it.
+- **Portal.** `POST /v1/billing/portal` opens the Stripe Customer Portal for cards,
+  invoices, quantity and cancellation. Needs a customer id (409 otherwise).
+- **Webhook** (Public, raw body, signature-verified, idempotent via
+  `stripe_webhook_events`, always 200 once recorded):
+  `checkout.session.completed` → active + ids; `customer.subscription.created|updated`
+  → status map (`active|trialing→active`, `past_due|unpaid|incomplete|paused→past_due`,
+  `canceled|incomplete_expired→canceled`), period, quantity → `paid_location_count`,
+  plan from the Price id; `customer.subscription.deleted` → canceled;
+  `invoice.paid|payment_succeeded` → one `subscription_payments` row per invoice
+  (`method='stripe'`, `reference` = invoice id, period from the first line) and active;
+  `invoice.payment_failed` → a `failed` ledger row and past_due. Every projection
+  mirrors `businesses.status/plan`, clears `trial_ends_at`, and writes an audit row
+  `billing.stripe.sync`. Agency accounts are never driven by Stripe state.
+- **Guard rails.** With real Stripe Billing live (key + prices), the inline
+  `POST /v1/billing/subscribe` refuses (409): a subscription only becomes active through
+  a paid Checkout. Stub mode (no key) keeps every path usable locally: checkout / portal
+  return same-origin URLs and the webhook accepts unsigned JSON.
+- **Tenant UI.** The Billing page's Subscription card shows the plan picker and
+  "Subscribe with Stripe" while not on an active Stripe subscription, "Manage billing"
+  once a customer exists, and the `?checkout=success|cancelled` outcome. Agency accounts
+  see "house (not billed)".
+- **Ops.** Create the product + two Prices in the Stripe dashboard, add the three env
+  vars on Render, register the webhook endpoint for the six event types above.

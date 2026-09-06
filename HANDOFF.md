@@ -74,12 +74,19 @@ the same way: a script under `packages/db/src/` and a workflow with validated in
 1. **Resend DNS — in flight, see §4.** The one item with a concrete next action.
 2. ~~Add the `RENDER_API_KEY` repository secret~~ — done 2026-09-06; the API deploys
    from `main` automatically (§2).
-3. **Rotate the shared owner password.** Credentials for `pos.lamattress@gmail.com` were
+3. **Stripe Billing go-live (PLAN §15.5).** Create the product + two monthly
+   per-location Prices in the Stripe dashboard; set
+   `STRIPE_PRICE_STARTER_PER_LOCATION`, `STRIPE_PRICE_PRO_PER_LOCATION` and
+   `STRIPE_BILLING_WEBHOOK_SECRET` on Render; register
+   `/v1/billing/stripe/webhook` for the six event types listed in PLAN §15.5.
+   Until then the API runs Stripe Billing in stub mode and the inline subscribe
+   endpoint still activates plans without payment.
+4. **Rotate the shared owner password.** Credentials for `pos.lamattress@gmail.com` were
    shared into an earlier session for API testing. They were used in-session only and
    never written to the repo. Rotation is still advised and still outstanding.
-4. **Two sample invoices into `docs/`** for the P4 document templates; confirm the PO
+5. **Two sample invoices into `docs/`** for the P4 document templates; confirm the PO
    reply-to address.
-5. **Cashier + manager accounts still do not exist.** No longer blocked — see §4.
+6. **Cashier + manager accounts still do not exist.** No longer blocked — see §4.
 
 ---
 
