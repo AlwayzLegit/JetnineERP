@@ -623,6 +623,26 @@ export class SettingsController {
     return OPS_SETTINGS_REGISTRY;
   }
 
+  /**
+   * The subset of settings every screen needs regardless of role — the
+   * POS recycling fee, receipt header/footer, currency, branding, delivery
+   * caps. `business.settings.view` belongs to Owner/Manager only, so the
+   * register (cashiers, salespeople) could never read the full settings and
+   * silently fell back to the hard-coded $10.50 fee. Any active member of
+   * the business may read this; nothing here is sensitive (no reply-to
+   * email, no unlock role ids).
+   */
+  @Get('pos')
+  async pos(@CurrentTenant() tenant: RequestTenantContext): Promise<PosSettings> {
+    const [b] = await this.db
+      .select()
+      .from(schema.businesses)
+      .where(eq(schema.businesses.id, tenant.businessId!))
+      .limit(1);
+    if (!b) throw new BadRequestException('Business not found');
+    return toPosSettings(b);
+  }
+
   @Get()
   @RequirePermission('business.settings.view')
   async get(@CurrentTenant() tenant: RequestTenantContext): Promise<BusinessSettings> {
@@ -746,6 +766,56 @@ export class SettingsController {
 
     return toSettings(updated);
   }
+}
+
+/** Ops keys safe for every member to read (everything except contact/role plumbing). */
+const POS_VISIBLE_OPS_KEYS = [
+  'recyclingFeeCents',
+  'invoiceHeaderNote',
+  'invoiceFooterNote',
+  'deliveryDailyCap',
+  'deliveryDailyPieceCap',
+  'deliveryDailyCapacityUnits',
+  'zipRoutes',
+  'maxBalanceForTicketPrintCents',
+  'reserveBasis',
+  'returnWindowDays',
+  'restockingFeePercent',
+  'exchangeHoldAtEntry',
+  'autoScheduleDays',
+  'priceVariance',
+] as const;
+
+export interface PosSettings {
+  id: string;
+  name: string;
+  currencyCode: string;
+  defaultTaxRateBps: number;
+  receiptHeader: string | null;
+  receiptFooter: string | null;
+  branding: BusinessBranding | null;
+  ops: Pick<OpsSettings, (typeof POS_VISIBLE_OPS_KEYS)[number]> | null;
+}
+
+function toPosSettings(b: typeof schema.businesses.$inferSelect): PosSettings {
+  const full = (b.opsSettingsJson as OpsSettings | null) ?? null;
+  let ops: PosSettings['ops'] = null;
+  if (full) {
+    ops = {};
+    for (const key of POS_VISIBLE_OPS_KEYS) {
+      if (full[key] !== undefined) (ops as Record<string, unknown>)[key] = full[key];
+    }
+  }
+  return {
+    id: b.id,
+    name: b.name,
+    currencyCode: b.currencyCode,
+    defaultTaxRateBps: b.defaultTaxRateBps,
+    receiptHeader: b.receiptHeader ?? null,
+    receiptFooter: b.receiptFooter ?? null,
+    branding: (b.brandingJson as BusinessBranding | null) ?? null,
+    ops,
+  };
 }
 
 function toSettings(b: typeof schema.businesses.$inferSelect): BusinessSettings {

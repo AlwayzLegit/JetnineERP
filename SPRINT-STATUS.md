@@ -4814,3 +4814,15 @@ customerId, subscriptionId }`; tenant Billing page: plan picker + "Subscribe
   `https://jetnine-api.onrender.com/v1/billing/stripe/webhook` for
   `checkout.session.completed`, `customer.subscription.created|updated|deleted`,
   `invoice.paid`, `invoice.payment_succeeded`, `invoice.payment_failed`.
+
+### Checkpoint — 2026-09-06 (POS could not read the recycling fee: 403 for non-owners)
+
+Owner set the recycling fee to $18.00 but every register still showed $10.50.
+`GET /v1/business/settings` needs `business.settings.view` (Owner/Manager);
+New Sale, the order page, the sale page and the currency/branding provider all
+read it, got 403 for cashiers/salespeople, swallowed it, and kept the hard-coded
+default. New `GET /v1/business/settings/pos` (any active member) returns the
+register-facing subset — name, currency, tax, receipt header/footer, branding
+and the non-sensitive ops keys (fee, invoice notes, delivery caps, returns,
+price-variance) — and those four consumers now use it. `business.int.spec.ts`
++1: owner sets 1800 → cashier gets 403 on full settings, 200 + 1800 on `/pos`.

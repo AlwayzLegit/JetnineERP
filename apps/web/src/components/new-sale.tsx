@@ -388,7 +388,7 @@ export function NewSale({ exchangeOf }: { exchangeOf?: string } = {}) {
     void api<MemberRow[]>('/v1/business/members')
       .then((rows) => setMembers(rows.filter((m) => m.status === 'active')))
       .catch(() => setMembers([]));
-    void api<{ ops: { recyclingFeeCents?: number | null } | null }>('/v1/business/settings')
+    void api<{ ops: { recyclingFeeCents?: number | null } | null }>('/v1/business/settings/pos')
       .then((s) => {
         if (s.ops?.recyclingFeeCents != null) setRecyclingFeeCents(s.ops.recyclingFeeCents);
       })

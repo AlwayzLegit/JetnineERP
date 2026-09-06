@@ -88,7 +88,7 @@ export default function SaleDetailPage() {
       receiptHeader: string | null;
       receiptFooter: string | null;
       branding?: { publicName?: string | null } | null;
-    }>('/v1/business/settings')
+    }>('/v1/business/settings/pos')
       .then((s) =>
         setBusiness({
           name: s.branding?.publicName ?? s.name,
