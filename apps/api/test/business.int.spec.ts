@@ -489,6 +489,37 @@ describe('Epic 1.6 — Business admin console', () => {
     }
   });
 
+  it('Every member can read POS settings; the recycling fee reaches the register', async () => {
+    // Owner sets the CA recycling fee to $18.00.
+    const set = await request(app.getHttpServer())
+      .patch('/v1/business/settings')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ ops: { recyclingFeeCents: 1800, poReplyTo: 'po@biz-test.local' } });
+    expect(set.status).toBe(200);
+    expect(set.body.ops.recyclingFeeCents).toBe(1800);
+
+    // Full settings stay Owner/Manager-only …
+    const full = await request(app.getHttpServer())
+      .get('/v1/business/settings')
+      .set('Cookie', cashierCookie)
+      .set('X-Business-Id', businessId);
+    expect(full.status).toBe(403);
+
+    // … but the register-facing subset is readable by any member, and
+    // carries the fee (not the contact plumbing).
+    const pos = await request(app.getHttpServer())
+      .get('/v1/business/settings/pos')
+      .set('Cookie', cashierCookie)
+      .set('X-Business-Id', businessId);
+    expect(pos.status).toBe(200);
+    expect(pos.body.ops.recyclingFeeCents).toBe(1800);
+    expect(pos.body.ops.poReplyTo).toBeUndefined();
+    expect(pos.body.currencyCode).toBe('USD');
+    expect(pos.body.receiptHeader).toBe('Biz Test Co — Main Receipt');
+    expect(pos.body.status).toBeUndefined();
+  });
+
   it('Cashier has cashier permissions only', async () => {
     // products.view → 200
     const list = await request(app.getHttpServer())

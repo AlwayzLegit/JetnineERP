@@ -55,7 +55,7 @@ export function BusinessSettingsProvider({ children }: { children: ReactNode }) 
           currencyCode: string;
           name?: string;
           branding?: BusinessBranding | null;
-        }>('/v1/business/settings');
+        }>('/v1/business/settings/pos');
         const code = settings.currencyCode?.toUpperCase();
         const currency = code && isSupportedCurrency(code) ? code : 'USD';
         setValue({

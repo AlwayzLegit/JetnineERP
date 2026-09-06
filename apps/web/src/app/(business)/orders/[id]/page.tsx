@@ -449,7 +449,7 @@ export default function OrderDetailPage() {
   // untaxed fee line; each click counts one more unit on it.
   const [recyclingFeeCents, setRecyclingFeeCents] = useState(1050);
   useEffect(() => {
-    api<{ ops: { recyclingFeeCents?: number | null } | null }>('/v1/business/settings')
+    api<{ ops: { recyclingFeeCents?: number | null } | null }>('/v1/business/settings/pos')
       .then((s2) => {
         if (s2.ops?.recyclingFeeCents != null) setRecyclingFeeCents(s2.ops.recyclingFeeCents);
       })
