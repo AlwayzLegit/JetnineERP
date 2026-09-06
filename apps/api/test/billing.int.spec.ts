@@ -14,6 +14,7 @@
 import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { hashPassword } from 'better-auth/crypto';
+import { eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 import request from 'supertest';
@@ -160,7 +161,8 @@ beforeAll(async () => {
   process.env.NODE_ENV ??= 'test';
 
   const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
-  app = moduleRef.createNestApplication({ bufferLogs: true });
+  // rawBody: the Stripe Billing webhook verifies the raw request body (same as main.ts).
+  app = moduleRef.createNestApplication({ bufferLogs: true, rawBody: true });
   await app.init();
 
   ownerCookie = await captureCookie('owner@billing-test.local');
@@ -302,5 +304,303 @@ describe('Epic 1.12 — Billing & read-only mode', () => {
         payments: [{ method: 'cash', amountCents: 1000 }],
       });
     expect(sale.status).toBe(402);
+  });
+
+  // ---- PLAN §15.5 — Stripe Billing (stub mode: no STRIPE_SECRET_KEY) ----
+
+  const webhook = (event: Record<string, unknown>) =>
+    request(app.getHttpServer())
+      .post('/v1/billing/stripe/webhook')
+      .set('Content-Type', 'application/json')
+      .send(event);
+  const unix = (d: Date) => Math.floor(d.getTime() / 1000);
+  let stubCustomerId = '';
+
+  it('Subscription view exposes Stripe Billing state (configured in stub mode)', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/v1/billing/subscription')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId);
+    expect(res.status).toBe(200);
+    expect(res.body.accountKind).toBe('saas');
+    expect(res.body.stripeBilling).toMatchObject({
+      configured: true,
+      stubMode: true,
+      subscriptionId: null,
+    });
+  });
+
+  it('Checkout (stub) returns a redirect URL and remembers a customer', async () => {
+    const bad = await request(app.getHttpServer())
+      .post('/v1/billing/checkout')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ plan: 'enterprise' });
+    expect(bad.status).toBe(400);
+
+    const res = await request(app.getHttpServer())
+      .post('/v1/billing/checkout')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ plan: 'pro' });
+    expect(res.status).toBe(201);
+    expect(res.body.stub).toBe(true);
+    expect(res.body.url).toContain('/settings/billing?checkout=success');
+
+    const view = await request(app.getHttpServer())
+      .get('/v1/billing/subscription')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId);
+    stubCustomerId = view.body.stripeBilling.customerId;
+    expect(stubCustomerId).toMatch(/^cus_stub_/);
+    // Checkout alone activates nothing — the webhook does.
+    expect(view.body.status).toBe('canceled');
+  });
+
+  it('Cashier cannot start checkout (permission), portal works for the owner', async () => {
+    const denied = await request(app.getHttpServer())
+      .post('/v1/billing/checkout')
+      .set('Cookie', cashierCookie)
+      .set('X-Business-Id', businessId)
+      .send({ plan: 'pro' });
+    expect(denied.status).toBe(403);
+
+    const portal = await request(app.getHttpServer())
+      .post('/v1/billing/portal')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId);
+    expect(portal.status).toBe(201);
+    expect(portal.body.url).toContain('portal=stub');
+  });
+
+  it('checkout.session.completed activates the subscription and writes resume', async () => {
+    const res = await webhook({
+      id: 'evt_test_checkout_1',
+      type: 'checkout.session.completed',
+      data: {
+        object: {
+          id: 'cs_test_1',
+          mode: 'subscription',
+          customer: stubCustomerId,
+          subscription: 'sub_test_1',
+          client_reference_id: businessId,
+          metadata: { businessId, plan: 'pro' },
+        },
+      },
+    });
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ received: true });
+
+    const view = await request(app.getHttpServer())
+      .get('/v1/billing/subscription')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId);
+    expect(view.body.status).toBe('active');
+    expect(view.body.plan).toBe('pro');
+    expect(view.body.readOnly).toBe(false);
+    expect(view.body.stripeBilling.subscriptionId).toBe('sub_test_1');
+
+    const sale = await request(app.getHttpServer())
+      .post('/v1/sales')
+      .set('Cookie', cashierCookie)
+      .set('X-Business-Id', businessId)
+      .send({
+        locationId,
+        lines: [{ variantId, quantity: 1 }],
+        payments: [{ method: 'cash', amountCents: 1000 }],
+      });
+    expect(sale.status).toBe(201);
+  });
+
+  it('invoice.paid records one ledger row per invoice, even when redelivered', async () => {
+    const start = new Date();
+    const end = new Date(start.getTime() + 30 * 24 * 60 * 60 * 1000);
+    const event = {
+      id: 'evt_test_invoice_paid_1',
+      type: 'invoice.paid',
+      data: {
+        object: {
+          id: 'in_test_1',
+          number: 'INV-0001',
+          customer: stubCustomerId,
+          subscription: 'sub_test_1',
+          amount_paid: 20000,
+          currency: 'usd',
+          hosted_invoice_url: 'https://invoice.stripe.com/i/in_test_1',
+          status_transitions: { paid_at: unix(start) },
+          lines: { data: [{ period: { start: unix(start), end: unix(end) } }] },
+        },
+      },
+    };
+    const first = await webhook(event);
+    expect(first.status).toBe(200);
+    expect(first.body).toEqual({ received: true });
+    const again = await webhook(event);
+    expect(again.body).toEqual({ received: true, deduped: true });
+    // A different event about the same invoice (Stripe sends both).
+    const succeeded = await webhook({
+      ...event,
+      id: 'evt_test_invoice_paid_1b',
+      type: 'invoice.payment_succeeded',
+    });
+    expect(succeeded.body).toEqual({ received: true });
+
+    const sql = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    const db = drizzle(sql);
+    try {
+      const rows = await db
+        .select()
+        .from(schema.subscriptionPayments)
+        .where(eq(schema.subscriptionPayments.businessId, businessId));
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({
+        amountCents: 20000,
+        currencyCode: 'USD',
+        status: 'paid',
+        method: 'stripe',
+        reference: 'in_test_1',
+      });
+      expect(rows[0]!.note).toContain('INV-0001');
+      expect(rows[0]!.periodEnd?.getTime()).toBe(Math.floor(end.getTime() / 1000) * 1000);
+
+      const [sub] = await db
+        .select()
+        .from(schema.subscriptions)
+        .where(eq(schema.subscriptions.businessId, businessId));
+      expect(sub!.status).toBe('active');
+      expect(sub!.currentPeriodEnd?.getTime()).toBe(Math.floor(end.getTime() / 1000) * 1000);
+    } finally {
+      await sql.end({ timeout: 5 });
+    }
+  });
+
+  it('invoice.payment_failed flips to past_due and read-only; a sale returns 402', async () => {
+    const res = await webhook({
+      id: 'evt_test_invoice_failed_1',
+      type: 'invoice.payment_failed',
+      data: {
+        object: {
+          id: 'in_test_2',
+          customer: stubCustomerId,
+          subscription: 'sub_test_1',
+          amount_due: 20000,
+          currency: 'usd',
+        },
+      },
+    });
+    expect(res.status).toBe(200);
+
+    const view = await request(app.getHttpServer())
+      .get('/v1/billing/subscription')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId);
+    expect(view.body.status).toBe('past_due');
+    expect(view.body.readOnly).toBe(true);
+
+    const sale = await request(app.getHttpServer())
+      .post('/v1/sales')
+      .set('Cookie', cashierCookie)
+      .set('X-Business-Id', businessId)
+      .send({
+        locationId,
+        lines: [{ variantId, quantity: 1 }],
+        payments: [{ method: 'cash', amountCents: 1000 }],
+      });
+    expect(sale.status).toBe(402);
+
+    const sql = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    const db = drizzle(sql);
+    try {
+      const rows = await db
+        .select({
+          status: schema.subscriptionPayments.status,
+          reference: schema.subscriptionPayments.reference,
+        })
+        .from(schema.subscriptionPayments)
+        .where(eq(schema.subscriptionPayments.businessId, businessId));
+      expect(rows.map((r) => r.status).sort()).toEqual(['failed', 'paid']);
+      expect(rows.find((r) => r.status === 'failed')!.reference).toBe('in_test_2:failed');
+    } finally {
+      await sql.end({ timeout: 5 });
+    }
+  });
+
+  it('customer.subscription.updated syncs status, quantity and period from Stripe', async () => {
+    const end = new Date(Date.now() + 25 * 24 * 60 * 60 * 1000);
+    const res = await webhook({
+      id: 'evt_test_sub_updated_1',
+      type: 'customer.subscription.updated',
+      data: {
+        object: {
+          id: 'sub_test_1',
+          customer: stubCustomerId,
+          status: 'active',
+          cancel_at_period_end: true,
+          items: {
+            data: [
+              { quantity: 3, price: { id: 'price_stub_starter' }, current_period_end: unix(end) },
+            ],
+          },
+        },
+      },
+    });
+    expect(res.status).toBe(200);
+    const view = await request(app.getHttpServer())
+      .get('/v1/billing/subscription')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId);
+    expect(view.body.status).toBe('active');
+    expect(view.body.readOnly).toBe(false);
+    expect(view.body.plan).toBe('starter');
+    expect(view.body.paidLocationCount).toBe(3);
+    expect(new Date(view.body.cancelAtPeriodEnd).getTime()).toBe(unix(end) * 1000);
+  });
+
+  it('customer.subscription.deleted cancels; agency accounts are ignored by Stripe state', async () => {
+    const res = await webhook({
+      id: 'evt_test_sub_deleted_1',
+      type: 'customer.subscription.deleted',
+      data: { object: { id: 'sub_test_1', customer: stubCustomerId, status: 'canceled' } },
+    });
+    expect(res.status).toBe(200);
+    const view = await request(app.getHttpServer())
+      .get('/v1/billing/subscription')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId);
+    expect(view.body.status).toBe('canceled');
+    expect(view.body.readOnly).toBe(true);
+
+    // Flip to agency: checkout is refused and a Stripe event cannot block it.
+    const sql = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    const db = drizzle(sql);
+    try {
+      await db
+        .update(schema.businesses)
+        .set({ accountKind: 'agency' })
+        .where(eq(schema.businesses.id, businessId));
+    } finally {
+      await sql.end({ timeout: 5 });
+    }
+    const checkout = await request(app.getHttpServer())
+      .post('/v1/billing/checkout')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ plan: 'pro' });
+    expect(checkout.status).toBe(409);
+
+    const failed = await webhook({
+      id: 'evt_test_invoice_failed_agency',
+      type: 'invoice.payment_failed',
+      data: {
+        object: { id: 'in_test_3', customer: stubCustomerId, amount_due: 5000, currency: 'usd' },
+      },
+    });
+    expect(failed.status).toBe(200);
+    const agencyView = await request(app.getHttpServer())
+      .get('/v1/billing/subscription')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId);
+    expect(agencyView.body.accountKind).toBe('agency');
+    expect(agencyView.body.readOnly).toBe(false);
   });
 });

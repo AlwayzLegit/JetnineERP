@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   Body,
+  ConflictException,
   Controller,
   ForbiddenException,
   Get,
@@ -8,7 +9,9 @@ import {
   NotFoundException,
   Patch,
   Post,
+  ServiceUnavailableException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { eq, sql } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { schema } from '@jetnine/db';
@@ -18,6 +21,7 @@ import type { CurrentUserPayload } from '../auth/current-user.decorator';
 import { DRIZZLE } from '../database/database.module';
 import { RequirePermission, TenantScoped } from '../tenancy/decorators';
 import type { RequestTenantContext } from '../tenancy/request-context';
+import { PlatformBillingService } from './platform-billing.service';
 import { monthlyPriceCents, PLANS, type PlanId } from './pricing';
 import { isReadOnly } from './subscription-state';
 
@@ -36,6 +40,13 @@ interface SubscriptionView {
   monthlyPriceCents: number;
   cancelAtPeriodEnd: Date | null;
   readOnly: boolean;
+  /** PLAN §15.5 — Stripe Billing state for the tenant Billing page. */
+  stripeBilling: {
+    configured: boolean;
+    stubMode: boolean;
+    customerId: string | null;
+    subscriptionId: string | null;
+  };
 }
 
 const VALID_PLANS = new Set<PlanId>(['starter', 'pro']);
@@ -46,6 +57,8 @@ export class BillingController {
   constructor(
     @Inject(DRIZZLE) private readonly db: PostgresJsDatabase,
     @Inject(AuditService) private readonly audit: AuditService,
+    @Inject(PlatformBillingService) private readonly stripeBilling: PlatformBillingService,
+    @Inject(ConfigService) private readonly config: ConfigService,
   ) {}
 
   /**
@@ -92,6 +105,11 @@ export class BillingController {
     const plan = body.plan;
     if (!plan || !VALID_PLANS.has(plan)) {
       throw new BadRequestException(`plan must be one of: ${[...VALID_PLANS].join(', ')}`);
+    }
+    if (this.stripeBilling.configured && !this.stripeBilling.stub) {
+      // PLAN §15.5: with real Stripe Billing live, activation only happens
+      // through Checkout + webhook — never by an unpaid API call.
+      throw new ConflictException('Use Stripe checkout to start a subscription');
     }
     const businessId = tenant.businessId!;
     const now = new Date();
@@ -181,6 +199,105 @@ export class BillingController {
       after: { plan },
     });
     return this.hydrate(businessId);
+  }
+
+  /**
+   * PLAN §15.5 — start a Stripe Checkout Session for the chosen plan,
+   * quantity = locations (min 1). Activation happens when the
+   * `checkout.session.completed` webhook lands, not here.
+   */
+  @Post('checkout')
+  @RequirePermission('business.billing.update')
+  async checkout(
+    @CurrentTenant() tenant: RequestTenantContext,
+    @CurrentUser() actor: CurrentUserPayload,
+    @Body() body: { plan?: PlanId },
+  ): Promise<{ url: string; stub: boolean }> {
+    const plan = body.plan;
+    if (!plan || !VALID_PLANS.has(plan)) {
+      throw new BadRequestException(`plan must be one of: ${[...VALID_PLANS].join(', ')}`);
+    }
+    if (!this.stripeBilling.configured) {
+      throw new ServiceUnavailableException(
+        'Stripe Billing is not configured on this platform yet; ask your super admin to set the plan.',
+      );
+    }
+    const businessId = tenant.businessId!;
+    const [biz] = await this.db
+      .select({
+        name: schema.businesses.name,
+        accountKind: schema.businesses.accountKind,
+        customerId: schema.subscriptions.stripeCustomerId,
+      })
+      .from(schema.businesses)
+      .leftJoin(schema.subscriptions, eq(schema.subscriptions.businessId, schema.businesses.id))
+      .where(eq(schema.businesses.id, businessId))
+      .limit(1);
+    if (!biz) throw new NotFoundException('Business not found');
+    if (biz.accountKind === 'agency') {
+      throw new ConflictException('Agency (house) accounts are not billed');
+    }
+    const [user] = await this.db
+      .select({ email: schema.users.email })
+      .from(schema.users)
+      .where(eq(schema.users.id, actor.id))
+      .limit(1);
+
+    const base = `${this.webBase()}/settings/billing`;
+    const quantity = Math.max(1, await this.locationCount(businessId));
+    const session = await this.stripeBilling.createCheckoutSession({
+      businessId,
+      businessName: biz.name,
+      plan,
+      quantity,
+      customerId: biz.customerId ?? null,
+      customerEmail: user?.email ?? null,
+      successUrl: `${base}?checkout=success`,
+      cancelUrl: `${base}?checkout=cancelled`,
+    });
+    if (session.customerId && !biz.customerId) {
+      // Remember the customer so the portal works before the first
+      // webhook arrives (and so stub mode has one at all).
+      await this.db
+        .insert(schema.subscriptions)
+        .values({ businessId, plan, status: 'trial', stripeCustomerId: session.customerId })
+        .onConflictDoUpdate({
+          target: schema.subscriptions.businessId,
+          set: { stripeCustomerId: session.customerId, updatedAt: new Date() },
+        });
+    }
+    await this.audit.log({
+      action: 'billing.checkout.started',
+      targetType: 'business',
+      targetId: businessId,
+      after: { plan, quantity, sessionId: session.sessionId, stub: this.stripeBilling.stub },
+    });
+    return { url: session.url, stub: this.stripeBilling.stub };
+  }
+
+  /** PLAN §15.5 — Stripe Customer Portal: card, invoices, cancel, plan quantity. */
+  @Post('portal')
+  @RequirePermission('business.billing.update')
+  async portal(@CurrentTenant() tenant: RequestTenantContext): Promise<{ url: string }> {
+    if (!this.stripeBilling.configured) {
+      throw new ServiceUnavailableException(
+        'Stripe Billing is not configured on this platform yet.',
+      );
+    }
+    const businessId = tenant.businessId!;
+    const [sub] = await this.db
+      .select({ customerId: schema.subscriptions.stripeCustomerId })
+      .from(schema.subscriptions)
+      .where(eq(schema.subscriptions.businessId, businessId))
+      .limit(1);
+    if (!sub?.customerId) {
+      throw new ConflictException('No Stripe customer on file yet — start a subscription first.');
+    }
+    const url = await this.stripeBilling.createPortalSession({
+      customerId: sub.customerId,
+      returnUrl: `${this.webBase()}/settings/billing?portal=return`,
+    });
+    return { url };
   }
 
   @Post('cancel')
@@ -290,7 +407,17 @@ export class BillingController {
       monthlyPriceCents: monthlyPriceCents(plan, locationCount),
       cancelAtPeriodEnd: sub?.cancelAtPeriodEnd ?? null,
       readOnly: accountKind === 'agency' ? false : isReadOnly(status, trialEndsAt),
+      stripeBilling: {
+        configured: this.stripeBilling.configured,
+        stubMode: this.stripeBilling.stub,
+        customerId: sub?.stripeCustomerId ?? null,
+        subscriptionId: sub?.stripeSubscriptionId ?? null,
+      },
     };
+  }
+
+  private webBase(): string {
+    return (this.config.get<string>('WEB_BASE_URL') ?? 'http://localhost:3000').replace(/\/$/, '');
   }
 
   private async locationCount(businessId: string): Promise<number> {

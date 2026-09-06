@@ -4788,3 +4788,29 @@ mirrors the console's "Mark as agency" (businesses + subscriptions + audit row,
 validated `action` / `slug` / `kind` inputs — no free-form commands) runs it as
 a Render one-off job inside the API service and prints the log. First use:
 mark LA Mattress as an agency account. HANDOFF §2 updated.
+
+### Checkpoint — 2026-09-06 (PLAN §15.5: Stripe Billing for SaaS accounts)
+
+- `PlatformBillingService` (platform Stripe account; stub mode without
+  `STRIPE_SECRET_KEY`; `configured` needs both per-location Price ids).
+- `POST /v1/billing/checkout { plan }` → Checkout Session (quantity = locations),
+  `POST /v1/billing/portal` → Customer Portal; agency accounts 409; inline
+  `POST /v1/billing/subscribe` refuses once real Stripe Billing is live.
+- `POST /v1/billing/stripe/webhook` (Public, raw body, `STRIPE_BILLING_WEBHOOK_SECRET`,
+  idempotent via `stripe_webhook_events`): checkout completed, subscription
+  created/updated/deleted, invoice paid/succeeded/failed → `subscriptions` +
+  `businesses` mirror + one `subscription_payments` row per invoice
+  (`method='stripe'`) + `billing.stripe.sync` audit rows. Agency accounts are
+  never driven by Stripe state.
+- `GET /v1/billing/subscription` gains `stripeBilling { configured, stubMode,
+customerId, subscriptionId }`; tenant Billing page: plan picker + "Subscribe
+  with Stripe", "Manage billing" (portal), checkout outcome banners.
+- `billing.int.spec.ts` +8 (18 total): checkout/portal in stub mode, permission,
+  full webhook lifecycle incl. redelivery dedupe and the agency guard.
+- **Ops (before flipping a real SaaS tenant to Stripe):** in the Stripe
+  dashboard create the product + two monthly per-location Prices; set
+  `STRIPE_PRICE_STARTER_PER_LOCATION`, `STRIPE_PRICE_PRO_PER_LOCATION`,
+  `STRIPE_BILLING_WEBHOOK_SECRET` on Render; register
+  `https://jetnine-api.onrender.com/v1/billing/stripe/webhook` for
+  `checkout.session.completed`, `customer.subscription.created|updated|deleted`,
+  `invoice.paid`, `invoice.payment_succeeded`, `invoice.payment_failed`.
