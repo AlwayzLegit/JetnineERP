@@ -4844,8 +4844,13 @@ confirms and applies the sheet in the app (PLAN-POS-OPERATIONS §12.14).
 - `/products/cleanup`: confirm on the page or upload the filled sheet →
   preview → apply. `apps/api/test/catalog-cleanup.int.spec.ts` (10). CI
   gets `jetnine_catalog_cleanup`.
+- Owner decisions (same day): Shopify prices on shared STORIS SKUs are not
+  kept — the page lists them and resets them to $0 (`resetPrices`); stock
+  on Shopify listings is not kept — retiring a listing clears it
+  (`listing_retire` movements) and stock never blocks a delete; the relink
+  takes sold units off the STORIS SKU only.
 - **Ops (owner):** open Products → Shopify cleanup, download the sales
   sheet, confirm rows (or confirm on the page), preview, apply; then retire
-  the listings. Disconnect the Shopify integration (or leave "Sync now"
+  the listings and reset the Shopify prices. Disconnect the Shopify integration (or leave "Sync now"
   alone) — the sync would recreate the listings; B1/B2 of the lockdown plan
   are still open.

@@ -63,10 +63,18 @@ interface CleanupLine {
   qtyReserved: number;
   serialTracked: boolean;
 }
+interface ShopifyPriced {
+  productId: string;
+  variantId: string;
+  sku: string | null;
+  name: string;
+  priceCents: number;
+}
 interface Report {
   lastInventoryImportAt: string | null;
   products: CleanupProduct[];
   lines: CleanupLine[];
+  shopifyPriced: ShopifyPriced[];
   counts: {
     products: number;
     withProposal: number;
@@ -74,6 +82,8 @@ interface Report {
     orderLines: number;
     linesWithProposal: number;
     linesTruncated: boolean;
+    shopifyPriced: number;
+    stockOnListings: number;
   };
 }
 interface LineChange {
@@ -100,12 +110,27 @@ interface ApplyResult {
     reservationMoved?: number;
   }[];
   products: { productId: string; action: string; ok: boolean; message: string }[];
+  prices: {
+    variantId: string;
+    sku: string | null;
+    name: string;
+    fromCents: number;
+    ok: boolean;
+    message: string;
+  }[];
   summary: {
     linesRelinked: number;
     linesFailed: number;
     productsRetired: number;
     productsFailed: number;
+    pricesReset: number;
+    stockCleared: number;
   };
+}
+interface Changes {
+  lines: LineChange[];
+  products: ProductChange[];
+  resetPrices?: boolean;
 }
 
 /** Per-line choices the owner makes on the page: which listing, and whether to move stock. */
@@ -222,10 +247,7 @@ export default function ShopifyCleanupPage() {
   const [busy, setBusy] = useState<string | null>(null);
   const [choices, setChoices] = useState<Record<string, LineChoice>>({});
   const [productOn, setProductOn] = useState<Record<string, 'deactivate' | 'delete' | ''>>({});
-  const [preview, setPreview] = useState<{
-    changes: { lines: LineChange[]; products: ProductChange[] };
-    result: ApplyResult;
-  } | null>(null);
+  const [preview, setPreview] = useState<{ changes: Changes; result: ApplyResult } | null>(null);
   const [applied, setApplied] = useState<ApplyResult | null>(null);
 
   const load = useCallback(async () => {
@@ -289,8 +311,8 @@ export default function ShopifyCleanupPage() {
     }
   }
 
-  async function dryRun(changes: { lines: LineChange[]; products: ProductChange[] }) {
-    if (changes.lines.length === 0 && changes.products.length === 0) {
+  async function dryRun(changes: Changes) {
+    if (changes.lines.length === 0 && changes.products.length === 0 && !changes.resetPrices) {
       toast.error('Nothing selected');
       return;
     }
@@ -311,19 +333,19 @@ export default function ShopifyCleanupPage() {
 
   async function applyPreview() {
     if (!preview) return;
-    const { lines, products } = preview.changes;
-    const n = lines.length + products.length;
+    const { lines, products, resetPrices } = preview.changes;
+    const n = lines.length + products.length + (resetPrices ? preview.result.prices.length : 0);
     if (!confirm(`Apply ${n} change${n === 1 ? '' : 's'}? Every change is audit-logged.`)) return;
     setBusy('apply');
     try {
       const result = await api<ApplyResult>('/v1/products/cleanup/shopify/apply', {
         method: 'POST',
-        body: JSON.stringify({ dryRun: false, lines, products }),
+        body: JSON.stringify({ dryRun: false, lines, products, resetPrices: Boolean(resetPrices) }),
       });
       setApplied(result);
       setPreview(null);
       toast.success(
-        `${result.summary.linesRelinked} line${result.summary.linesRelinked === 1 ? '' : 's'} relinked · ${result.summary.productsRetired} listing${result.summary.productsRetired === 1 ? '' : 's'} retired` +
+        `${result.summary.linesRelinked} line${result.summary.linesRelinked === 1 ? '' : 's'} relinked · ${result.summary.productsRetired} listing${result.summary.productsRetired === 1 ? '' : 's'} retired · ${result.summary.pricesReset} price${result.summary.pricesReset === 1 ? '' : 's'} reset` +
           (result.summary.linesFailed + result.summary.productsFailed
             ? ` · ${result.summary.linesFailed + result.summary.productsFailed} failed`
             : ''),
@@ -420,7 +442,8 @@ export default function ShopifyCleanupPage() {
           (and a SKU in <code>override_sku</code> to disagree), and upload it back. Preview first:
           nothing is written until you apply, and every change is audit-logged. Retire a listing
           only after its lines have moved: deactivate keeps history, delete is refused while
-          anything still points at it.
+          anything still points at it. Either way the stock on the listing is cleared — stock on a
+          Shopify listing is never kept — and the sold units come off the STORIS SKU only.
           {report?.lastInventoryImportAt && (
             <>
               {' '}
@@ -445,6 +468,56 @@ export default function ShopifyCleanupPage() {
           </StatGrid>
         )}
 
+        {report && (
+          <Card
+            title="Prices the Shopify sync wrote on STORIS listings"
+            description="Shared SKUs the sync re-priced. STORIS carries no retail price (D12); these go back to $0 and get priced at the register or on Set prices."
+            flush
+            actions={
+              <Button
+                variant="primary"
+                size="sm"
+                disabled={busy != null || report.shopifyPriced.length === 0}
+                onClick={() => void dryRun({ lines: [], products: [], resetPrices: true })}
+                data-testid="cleanup-preview-prices"
+              >
+                {busy === 'preview'
+                  ? 'Checking…'
+                  : `Reset ${report.shopifyPriced.length} price${report.shopifyPriced.length === 1 ? '' : 's'} to $0`}
+              </Button>
+            }
+          >
+            {report.shopifyPriced.length === 0 ? (
+              <EmptyState title="No Shopify prices left on STORIS listings" />
+            ) : (
+              <TableWrap>
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>SKU</th>
+                      <th>Name</th>
+                      <th className="num">Price from Shopify</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {report.shopifyPriced.map((p) => (
+                      <tr key={p.variantId}>
+                        <td>
+                          <Link href={`/products/${p.productId}`}>{p.sku ?? '—'}</Link>
+                        </td>
+                        <td>{p.name}</td>
+                        <td className="num">
+                          <Money cents={p.priceCents} />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </TableWrap>
+            )}
+          </Card>
+        )}
+
         {preview && (
           <Card
             title={`Preview — ${preview.changes.lines.length} line${preview.changes.lines.length === 1 ? '' : 's'}, ${preview.changes.products.length} listing${preview.changes.products.length === 1 ? '' : 's'}`}
@@ -459,7 +532,8 @@ export default function ShopifyCleanupPage() {
                   disabled={
                     busy != null ||
                     preview.result.summary.linesRelinked +
-                      preview.result.summary.productsRetired ===
+                      preview.result.summary.productsRetired +
+                      preview.result.summary.pricesReset ===
                       0
                   }
                   onClick={() => void applyPreview()}
@@ -669,10 +743,7 @@ export default function ShopifyCleanupPage() {
                     </thead>
                     <tbody>
                       {report.products.map((p) => {
-                        const referenced =
-                          p.saleLines + p.orderLines + p.otherRefs > 0 ||
-                          p.onHand !== 0 ||
-                          p.reserved !== 0;
+                        const referenced = p.saleLines + p.orderLines + p.otherRefs > 0;
                         return (
                           <tr key={p.id} data-testid="cleanup-product">
                             <td>
@@ -776,6 +847,17 @@ function ResultTable({
               </tr>
             );
           })}
+          {result.prices.map((r) => (
+            <tr key={`$-${r.variantId}`}>
+              <td>
+                {r.sku ?? r.variantId} <span className="muted small">price</span>
+              </td>
+              <td className={r.ok ? undefined : 'text-danger'}>{r.ok ? r.message : 'skipped'}</td>
+              <td>
+                {r.name} · <Money cents={r.fromCents} /> → <Money cents={0} />
+              </td>
+            </tr>
+          ))}
           {result.products.map((r) => {
             const p = productsById.get(r.productId);
             return (

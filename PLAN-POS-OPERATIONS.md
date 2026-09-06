@@ -792,9 +792,19 @@ lines|products` (review sheets with `confirm` / `override_sku` / `adjust_stock`
   Every relink is an audit entry (`sale_line.relink` / `order_line.relink`,
   before/after with SKUs).
 - **Retire semantics:** deactivate keeps every document; delete is refused while the
-  listing holds stock or is referenced by any line table (sale, order, refund,
-  return, PO, transfer, as-is, write-off, serial, service, count) and removes the
-  product's `legacy_refs` so a later import cannot resurrect it.
+  listing is referenced by any line table (sale, order, refund, return, PO, transfer,
+  as-is, write-off, serial, service, count) and removes the product's `legacy_refs`
+  so a later import cannot resurrect it.
+- **Stock on Shopify listings is never kept (owner 2026-09-06).** Retiring a listing
+  either way first zeroes its `inventory_levels` (on hand and reserved) with an
+  `adjustment` movement, `reference_type = 'listing_retire'` pointing at the product;
+  stock never blocks a delete. The relink's "Move stock" takes the sold units off the
+  STORIS SKU only — nothing goes back onto the Shopify SKU.
+- **Prices the Shopify sync wrote are not kept (owner 2026-09-06; answers lockdown
+  plan Q2).** STORIS listings that a connector batch also wrote (shared SKUs) carry
+  Shopify's price. The report lists them (`shopifyPriced`); `apply { resetPrices }`
+  sets those variants back to $0 (D12: priced at the register or on Set prices),
+  audit `product_variant.price.reset`. Sale lines keep what was charged.
 - **Not done here (still owner decisions, see `docs/HANDOFF-catalog-source-lockdown.md`):**
   turning the Shopify product sync off (B1) and the import-lookup hardening (B2).
   Until the connector is disconnected, "Sync now" recreates the listings.

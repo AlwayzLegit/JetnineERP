@@ -319,8 +319,9 @@ MIN_STOCK = 0 everywhere.
 
 - **Q1 Tenant.** Which business is the live one (name/slug from Q1)? If it is the QA tenant
   from the docs, say so; the plan then runs there.
-- **Q2 Prices.** Keep the prices Shopify wrote on shared SKUs, or reset those SKUs to $0 and
-  re-price at the register / via `/products/pricing`?
+- ~~**Q2 Prices.**~~ Answered 2026-09-06: **do not keep them** — reset to $0 (shipped as the
+  cleanup page's "Reset prices"; D12 pricing at the register / `/products/pricing`). Same
+  day: **do not keep stock on Shopify listings** — cleared when a listing retires.
 - **Q3 Min stock.** The export has MIN_STOCK 0 for every SKU. Load zeros (reorder points
   cleared; keep auto-replenishment off until you set them), or leave existing reorder
   points untouched (I drop the column from the file)?

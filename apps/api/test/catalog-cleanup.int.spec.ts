@@ -130,6 +130,7 @@ async function seed() {
       name: string;
       group?: string;
       source: 'storis' | 'shopify';
+      alsoShopify?: boolean;
       onHand?: number;
       price: number;
     }[] = [
@@ -161,7 +162,9 @@ async function seed() {
         name: 'QUEEN DUSK-ELITE MED FIRM',
         group: 'QUEEN',
         source: 'storis',
-        price: 0,
+        // A shared SKU: the Shopify sync also wrote this row and left its price on it.
+        alsoShopify: true,
+        price: 99_900,
       },
       {
         sku: SHOPIFY_CK,
@@ -175,7 +178,7 @@ async function seed() {
         source: 'shopify',
         price: 119_900,
       },
-      { sku: SHOPIFY_PILLOW, name: 'Helix Pillow', source: 'shopify', price: 9_900 },
+      { sku: SHOPIFY_PILLOW, name: 'Helix Pillow', source: 'shopify', price: 9_900, onHand: 4 },
     ];
     let row = 0;
     for (const item of catalog) {
@@ -205,6 +208,17 @@ async function seed() {
         status: 'committed',
         jetnineId: p!.id,
       });
+      if (item.alsoShopify) {
+        await db.insert(schema.importRows).values({
+          businessId,
+          batchId: shopifyBatch!.id,
+          rowNumber: ++row,
+          legacyId: item.sku,
+          rawJson: { SKU: item.sku } as never,
+          status: 'committed',
+          jetnineId: p!.id,
+        });
+      }
       await db.insert(schema.legacyRefs).values({
         businessId,
         entity: 'product',
@@ -389,6 +403,7 @@ interface Report {
     stockAdjustSuggested: boolean;
     qtyReserved: number;
   }[];
+  shopifyPriced: { sku: string | null; priceCents: number }[];
   counts: Record<string, number | boolean>;
   lastInventoryImportAt: string | null;
 }
@@ -459,9 +474,17 @@ describe('Shopify listings cleanup — report', () => {
     expect(mid.reserved).toBe(1);
     expect(mid.action).toBe('relink');
 
+    // Stock on a Shopify listing never keeps it: still deletable, cleared at retire.
     const pillow = r.products.find((p) => p.sku === SHOPIFY_PILLOW)!;
     expect(pillow.proposed).toBeNull();
+    expect(pillow.onHand).toBe(4);
     expect(pillow.action).toBe('delete');
+
+    // STORIS SKUs the Shopify sync re-priced; the plain STORIS ones ($0) are not listed.
+    expect(r.shopifyPriced).toEqual(
+      [{ sku: STORIS_Q_DUSK, priceCents: 99_900 }].map((x) => expect.objectContaining(x)),
+    );
+    expect(r.counts).toMatchObject({ shopifyPriced: 1, stockOnListings: 4 });
 
     expect(r.counts).toMatchObject({ products: 3, withProposal: 2, saleLines: 2, orderLines: 1 });
   });
@@ -551,8 +574,9 @@ describe('Shopify listings cleanup — apply', () => {
     });
     expect(res.body.products[0]).toMatchObject({
       ok: true,
-      message: `would delete ${SHOPIFY_PILLOW}`,
+      message: `would delete ${SHOPIFY_PILLOW} (clears 4 on hand)`,
     });
+    expect(await level(SHOPIFY_PILLOW)).toEqual({ onHand: 4, reserved: 0 });
     const [line] = await withDb((db) =>
       db.select().from(schema.saleLines).where(eq(schema.saleLines.id, ids.registerLine)),
     );
@@ -610,7 +634,8 @@ describe('Shopify listings cleanup — apply', () => {
     expect(line!.description).toBe('CAKING TWILIGHT-ELITE FIRM');
     expect(line!.unitPriceCents).toBe(148_900);
     expect(await level(STORIS_CK)).toEqual({ onHand: 1, reserved: 0 });
-    expect(await level(SHOPIFY_CK)).toEqual({ onHand: 1, reserved: 0 });
+    // Nothing goes back onto the Shopify SKU — its stock is never kept.
+    expect(await level(SHOPIFY_CK)).toEqual({ onHand: 0, reserved: 0 });
 
     const moves = await withDb((db) =>
       db
@@ -622,10 +647,7 @@ describe('Shopify listings cleanup — apply', () => {
       moves
         .map((m) => [m.variantId === variantBySku.get(STORIS_CK) ? 'storis' : 'shopify', m.delta])
         .sort(),
-    ).toEqual([
-      ['shopify', 1],
-      ['storis', -1],
-    ]);
+    ).toEqual([['storis', -1]]);
     const audits = await withDb((db) =>
       db.select().from(schema.auditLogs).where(eq(schema.auditLogs.action, 'sale_line.relink')),
     );
@@ -639,7 +661,7 @@ describe('Shopify listings cleanup — apply', () => {
 
     // The lines have left the listing: the report now shows it unreferenced by documents.
     const r = await getReport();
-    expect(r.products.find((p) => p.sku === SHOPIFY_CK)).toMatchObject({ saleLines: 0, onHand: 1 });
+    expect(r.products.find((p) => p.sku === SHOPIFY_CK)).toMatchObject({ saleLines: 0, onHand: 0 });
     expect(r.lines.map((l) => l.number)).toEqual(['SO-CL-001']);
   });
 
@@ -678,7 +700,14 @@ describe('Shopify listings cleanup — apply', () => {
     expect(audits).toHaveLength(1);
   });
 
-  it('retires the listings: deletes the unreferenced one (legacy ref included), deactivates the rest', async () => {
+  it('retires the listings: clears their stock, deletes the unreferenced ones (legacy ref included), deactivates the rest', async () => {
+    // Give the Queen Midnight listing stray stock so deactivate has something to clear.
+    await withDb((db) =>
+      db
+        .update(schema.inventoryLevels)
+        .set({ onHand: 2 })
+        .where(eq(schema.inventoryLevels.variantId, variantBySku.get(SHOPIFY_Q_MID)!)),
+    );
     const res = await request(app.getHttpServer())
       .post('/v1/products/cleanup/shopify/apply')
       .set('Cookie', ownerCookie)
@@ -687,38 +716,100 @@ describe('Shopify listings cleanup — apply', () => {
         products: [
           { productId: productBySku.get(SHOPIFY_PILLOW), action: 'delete' },
           { productId: productBySku.get(SHOPIFY_CK), action: 'delete' },
-          { productId: productBySku.get(SHOPIFY_CK), action: 'deactivate' },
           { productId: productBySku.get(SHOPIFY_Q_MID), action: 'deactivate' },
         ],
       })
       .expect(201);
-    expect(res.body.products.map((p: { ok: boolean }) => p.ok)).toEqual([true, false, true, true]);
-    // The Cal King still holds the unit the relink handed back — deactivate, never delete.
-    expect(res.body.products[1].message).toContain('1 on hand');
-
-    const gone = await withDb((db) =>
-      db
-        .select()
-        .from(schema.products)
-        .where(eq(schema.products.id, productBySku.get(SHOPIFY_PILLOW)!)),
-    );
-    expect(gone).toHaveLength(0);
-    const refs = await withDb((db) =>
-      db
-        .select()
-        .from(schema.legacyRefs)
-        .where(eq(schema.legacyRefs.jetnineId, productBySku.get(SHOPIFY_PILLOW)!)),
-    );
-    expect(refs).toHaveLength(0);
-    const r = await getReport();
-    expect(r.products.map((p) => [p.sku, p.isActive]).sort()).toEqual([
-      [SHOPIFY_Q_MID, false],
-      [SHOPIFY_CK, false],
+    expect(
+      res.body.products.map((p: { ok: boolean; message: string }) => [p.ok, p.message]),
+    ).toEqual([
+      [true, `deleted ${SHOPIFY_PILLOW} (clears 4 on hand)`],
+      [true, `deleted ${SHOPIFY_CK}`],
+      [true, `deactivated ${SHOPIFY_Q_MID} (clears 2 on hand)`],
     ]);
+    expect(res.body.summary).toMatchObject({
+      productsRetired: 3,
+      productsFailed: 0,
+      stockCleared: 6,
+    });
+
+    for (const sku of [SHOPIFY_PILLOW, SHOPIFY_CK]) {
+      const gone = await withDb((db) =>
+        db
+          .select()
+          .from(schema.products)
+          .where(eq(schema.products.id, productBySku.get(sku)!)),
+      );
+      expect(gone).toHaveLength(0);
+      const refs = await withDb((db) =>
+        db
+          .select()
+          .from(schema.legacyRefs)
+          .where(eq(schema.legacyRefs.jetnineId, productBySku.get(sku)!)),
+      );
+      expect(refs).toHaveLength(0);
+    }
+    expect(await level(SHOPIFY_Q_MID)).toEqual({ onHand: 0, reserved: 0 });
+    const cleared = await withDb((db) =>
+      db
+        .select({ delta: schema.inventoryMovements.delta })
+        .from(schema.inventoryMovements)
+        .where(eq(schema.inventoryMovements.referenceType, 'listing_retire')),
+    );
+    // The pillow's −4 went with its product (movements cascade on delete);
+    // the audit row keeps stockCleared. The deactivated listing keeps its ledger.
+    expect(cleared.map((m) => m.delta)).toEqual([-2]);
+
+    const r = await getReport();
+    expect(r.products.map((p) => [p.sku, p.isActive])).toEqual([[SHOPIFY_Q_MID, false]]);
     const deactivations = await withDb((db) =>
       db.select().from(schema.auditLogs).where(eq(schema.auditLogs.action, 'product.deactivate')),
     );
-    expect(deactivations).toHaveLength(2);
+    expect(deactivations).toHaveLength(1);
+  });
+
+  it('resets the prices the Shopify sync wrote on STORIS listings to $0', async () => {
+    const dry = await request(app.getHttpServer())
+      .post('/v1/products/cleanup/shopify/apply')
+      .set('Cookie', ownerCookie)
+      .set('x-business-id', businessId)
+      .send({ dryRun: true, resetPrices: true })
+      .expect(201);
+    expect(dry.body.prices).toEqual([
+      expect.objectContaining({
+        sku: STORIS_Q_DUSK,
+        fromCents: 99_900,
+        ok: true,
+        message: 'would reset to $0',
+      }),
+    ]);
+    const res = await request(app.getHttpServer())
+      .post('/v1/products/cleanup/shopify/apply')
+      .set('Cookie', ownerCookie)
+      .set('x-business-id', businessId)
+      .send({ resetPrices: true })
+      .expect(201);
+    expect(res.body.summary).toMatchObject({ pricesReset: 1 });
+    const [v] = await withDb((db) =>
+      db
+        .select({ priceCents: schema.productVariants.priceCents })
+        .from(schema.productVariants)
+        .where(eq(schema.productVariants.id, variantBySku.get(STORIS_Q_DUSK)!)),
+    );
+    expect(v!.priceCents).toBe(0);
+    // The relinked sale kept what was charged.
+    const [line] = await withDb((db) =>
+      db.select().from(schema.saleLines).where(eq(schema.saleLines.id, ids.registerLine)),
+    );
+    expect(line!.unitPriceCents).toBe(148_900);
+    const audits = await withDb((db) =>
+      db
+        .select()
+        .from(schema.auditLogs)
+        .where(eq(schema.auditLogs.action, 'product_variant.price.reset')),
+    );
+    expect(audits).toHaveLength(1);
+    expect((await getReport()).shopifyPriced).toEqual([]);
   });
 
   it('validates the body', async () => {

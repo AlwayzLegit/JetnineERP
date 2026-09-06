@@ -73,6 +73,7 @@ interface ProductRow {
   variantSku: string | null;
   variantName: string | null;
   attributes: Record<string, unknown> | null;
+  priceCents: number;
   /** Distinct import batch sources that ever wrote this product. */
   sources: string[];
 }
@@ -125,11 +126,21 @@ export interface CleanupLine {
   serialTracked: boolean;
 }
 
+/** A STORIS listing whose price the Shopify sync wrote (shared SKU). Owner 2026-09-06: reset to $0. */
+export interface ShopifyPriced {
+  productId: string;
+  variantId: string;
+  sku: string | null;
+  name: string;
+  priceCents: number;
+}
+
 export interface CleanupReport {
   rule: { lowercaseName: true; connectorSources: string[]; proposalMinScore: number };
   lastInventoryImportAt: Date | null;
   products: CleanupProduct[];
   lines: CleanupLine[];
+  shopifyPriced: ShopifyPriced[];
   counts: {
     products: number;
     withProposal: number;
@@ -137,6 +148,8 @@ export interface CleanupReport {
     orderLines: number;
     linesWithProposal: number;
     linesTruncated: boolean;
+    shopifyPriced: number;
+    stockOnListings: number;
   };
 }
 
@@ -155,6 +168,8 @@ interface ApplyBody {
   dryRun?: boolean;
   lines?: LineChange[];
   products?: ProductChange[];
+  /** Reset every price the Shopify sync wrote on a STORIS listing to $0 (report.shopifyPriced). */
+  resetPrices?: boolean;
 }
 
 interface ApplyResult {
@@ -170,11 +185,21 @@ interface ApplyResult {
     reservationMoved?: number;
   }[];
   products: { productId: string; action: string; ok: boolean; message: string }[];
+  prices: {
+    variantId: string;
+    sku: string | null;
+    name: string;
+    fromCents: number;
+    ok: boolean;
+    message: string;
+  }[];
   summary: {
     linesRelinked: number;
     linesFailed: number;
     productsRetired: number;
     productsFailed: number;
+    pricesReset: number;
+    stockCleared: number;
   };
 }
 
@@ -336,10 +361,12 @@ export class CatalogCleanupController {
       variant_sku: string | null;
       variant_name: string | null;
       attributes: Record<string, unknown> | null;
+      price_cents: number | null;
       sources: string[] | null;
     }>(sql`
       SELECT p.id, p.sku, p.name, p.is_active, p.created_at, b.name AS brand,
         v.id AS variant_id, v.sku AS variant_sku, v.name AS variant_name, v.attributes_json AS attributes,
+        v.price_cents,
         (
           SELECT array_agg(DISTINCT src) FROM (
             SELECT ib.source AS src FROM import_rows ir JOIN import_batches ib ON ib.id = ir.batch_id
@@ -352,7 +379,7 @@ export class CatalogCleanupController {
       FROM products p
       LEFT JOIN brands b ON b.id = p.brand_id
       LEFT JOIN LATERAL (
-        SELECT pv.id, pv.sku, pv.name, pv.attributes_json FROM product_variants pv
+        SELECT pv.id, pv.sku, pv.name, pv.attributes_json, pv.price_cents FROM product_variants pv
          WHERE pv.product_id = p.id
          ORDER BY (pv.sku = p.sku) DESC NULLS LAST, pv.is_active DESC, pv.created_at ASC
          LIMIT 1
@@ -371,6 +398,7 @@ export class CatalogCleanupController {
       variantSku: r.variant_sku,
       variantName: r.variant_name,
       attributes: r.attributes,
+      priceCents: r.price_cents ?? 0,
       sources: (r.sources ?? []).filter((s): s is string => typeof s === 'string'),
     }));
 
@@ -483,7 +511,9 @@ export class CatalogCleanupController {
       const otherRefs = r?.other_refs ?? 0;
       const onHand = r?.on_hand ?? 0;
       const reserved = r?.reserved ?? 0;
-      const referenced = saleLines + orderLines + otherRefs > 0 || onHand !== 0 || reserved !== 0;
+      // Stock on a Shopify listing is never kept (owner 2026-09-06): it is
+      // cleared when the listing retires, so only documents block a delete.
+      const referenced = saleLines + orderLines + otherRefs > 0;
       const source =
         p.sources.find((s) => CONNECTOR_SOURCES.has(s.toLowerCase())) ?? p.sources[0] ?? null;
       return {
@@ -662,6 +692,23 @@ export class CatalogCleanupController {
       (a, b) => Number(a.imported) - Number(b.imported) || b.date.getTime() - a.date.getTime(),
     );
 
+    // STORIS listings a connector batch also wrote: the sync overwrote
+    // their price with Shopify's (STORIS carries no retail price, D12).
+    const shopifyPriced: ShopifyPriced[] = keepers
+      .filter(
+        (p) =>
+          p.priceCents > 0 &&
+          p.sources.some((x) => CONNECTOR_SOURCES.has(x.toLowerCase())) &&
+          p.sources.some((x) => !CONNECTOR_SOURCES.has(x.toLowerCase())),
+      )
+      .map((p) => ({
+        productId: p.id,
+        variantId: p.variantId!,
+        sku: p.variantSku ?? p.sku,
+        name: p.name,
+        priceCents: p.priceCents,
+      }));
+
     return {
       rule: {
         lowercaseName: true,
@@ -671,6 +718,7 @@ export class CatalogCleanupController {
       lastInventoryImportAt,
       products: outProducts,
       lines,
+      shopifyPriced,
       counts: {
         products: outProducts.length,
         withProposal: outProducts.filter((p) => p.proposed).length,
@@ -678,6 +726,8 @@ export class CatalogCleanupController {
         orderLines: lines.filter((l) => l.doc === 'order').length,
         linesWithProposal: lines.filter((l) => l.proposed).length,
         linesTruncated: false,
+        shopifyPriced: shopifyPriced.length,
+        stockOnListings: outProducts.reduce((n, p) => n + p.onHand, 0),
       },
     };
   }
@@ -700,8 +750,11 @@ export class CatalogCleanupController {
     const dryRun = body?.dryRun === true;
     const lineChanges = Array.isArray(body?.lines) ? body.lines : [];
     const productChanges = Array.isArray(body?.products) ? body.products : [];
-    if (lineChanges.length === 0 && productChanges.length === 0) {
-      throw new BadRequestException('Nothing to apply: give lines[] and/or products[]');
+    const resetPrices = body?.resetPrices === true;
+    if (lineChanges.length === 0 && productChanges.length === 0 && !resetPrices) {
+      throw new BadRequestException(
+        'Nothing to apply: give lines[], products[] and/or resetPrices',
+      );
     }
     if (lineChanges.length + productChanges.length > 5000) {
       throw new BadRequestException('At most 5000 changes per call');
@@ -730,7 +783,15 @@ export class CatalogCleanupController {
       dryRun,
       lines: [],
       products: [],
-      summary: { linesRelinked: 0, linesFailed: 0, productsRetired: 0, productsFailed: 0 },
+      prices: [],
+      summary: {
+        linesRelinked: 0,
+        linesFailed: 0,
+        productsRetired: 0,
+        productsFailed: 0,
+        pricesReset: 0,
+        stockCleared: 0,
+      },
     };
 
     for (const c of lineChanges) {
@@ -753,9 +814,15 @@ export class CatalogCleanupController {
     }
     for (const c of productChanges) {
       try {
-        const message = await this.retireProduct(businessId, c, dryRun);
+        const { message, stockCleared } = await this.retireProduct(
+          businessId,
+          tenant.userId,
+          c,
+          dryRun,
+        );
         result.products.push({ productId: c.productId, action: c.action, ok: true, message });
         result.summary.productsRetired += 1;
+        result.summary.stockCleared += stockCleared;
       } catch (err) {
         result.products.push({
           productId: c.productId,
@@ -764,6 +831,34 @@ export class CatalogCleanupController {
           message: err instanceof Error ? err.message : String(err),
         });
         result.summary.productsFailed += 1;
+      }
+    }
+    if (resetPrices) {
+      const { shopifyPriced } = await this.build(businessId);
+      for (const p of shopifyPriced) {
+        if (!dryRun) {
+          await this.db
+            .update(schema.productVariants)
+            .set({ priceCents: 0 })
+            .where(eq(schema.productVariants.id, p.variantId));
+          await this.audit.log({
+            action: 'product_variant.price.reset',
+            targetType: 'product_variant',
+            targetId: p.variantId,
+            before: { priceCents: p.priceCents },
+            after: { priceCents: 0 },
+            metadata: { sku: p.sku, reason: 'price written by the Shopify sync (cleanup)' },
+          });
+        }
+        result.prices.push({
+          variantId: p.variantId,
+          sku: p.sku,
+          name: p.name,
+          fromCents: p.priceCents,
+          ok: true,
+          message: dryRun ? 'would reset to $0' : 'reset to $0',
+        });
+        result.summary.pricesReset += 1;
       }
     }
     return result;
@@ -908,7 +1003,6 @@ export class CatalogCleanupController {
     }
     if (stockQty > 0 && line.variantId) {
       await this.moveStock(businessId, actorUserId, {
-        fromVariantId: line.variantId,
         toVariantId: target.variantId,
         locationId: line.locationId,
         quantity: stockQty,
@@ -1067,7 +1161,6 @@ export class CatalogCleanupController {
     }
     if (stockQty > 0 && line.variantId) {
       await this.moveStock(businessId, actorUserId, {
-        fromVariantId: line.variantId,
         toVariantId: target.variantId,
         locationId: stockLocationId,
         quantity: stockQty,
@@ -1099,17 +1192,16 @@ export class CatalogCleanupController {
   }
 
   /**
-   * Undo the stock effect of a sale on the wrong listing and apply it to
-   * the right one: +qty back on the Shopify variant, −qty off the STORIS
-   * variant, both as `adjustment` movements that point at the line so
-   * the ledger explains itself. The STORIS side floors at zero like the
-   * register does.
+   * Apply the stock effect of the sale to the right listing: −qty off the
+   * STORIS variant as an `adjustment` movement that points at the line so
+   * the ledger explains itself, floored at zero like the register does.
+   * Nothing goes back onto the Shopify variant — stock on those listings
+   * is never kept (owner 2026-09-06); it is cleared when they retire.
    */
   private async moveStock(
     businessId: string,
     actorUserId: string | null,
     args: {
-      fromVariantId: string;
       toVariantId: string;
       locationId: string;
       quantity: number;
@@ -1117,19 +1209,6 @@ export class CatalogCleanupController {
       note: string;
     },
   ): Promise<void> {
-    const now = new Date();
-    await this.db
-      .insert(schema.inventoryLevels)
-      .values({
-        businessId,
-        variantId: args.fromVariantId,
-        locationId: args.locationId,
-        onHand: args.quantity,
-      })
-      .onConflictDoUpdate({
-        target: [schema.inventoryLevels.variantId, schema.inventoryLevels.locationId],
-        set: { onHand: sql`${schema.inventoryLevels.onHand} + ${args.quantity}`, updatedAt: now },
-      });
     await this.db
       .insert(schema.inventoryLevels)
       .values({
@@ -1142,47 +1221,37 @@ export class CatalogCleanupController {
         target: [schema.inventoryLevels.variantId, schema.inventoryLevels.locationId],
         set: {
           onHand: sql`GREATEST(0, ${schema.inventoryLevels.onHand} - ${args.quantity})`,
-          updatedAt: now,
+          updatedAt: new Date(),
         },
       });
-    await this.db.insert(schema.inventoryMovements).values([
-      {
-        businessId,
-        variantId: args.fromVariantId,
-        locationId: args.locationId,
-        delta: args.quantity,
-        reason: 'adjustment',
-        referenceType: 'listing_relink',
-        referenceId: args.referenceId,
-        actorUserId,
-        notes: args.note,
-      },
-      {
-        businessId,
-        variantId: args.toVariantId,
-        locationId: args.locationId,
-        delta: -args.quantity,
-        reason: 'adjustment',
-        referenceType: 'listing_relink',
-        referenceId: args.referenceId,
-        actorUserId,
-        notes: args.note,
-      },
-    ]);
+    await this.db.insert(schema.inventoryMovements).values({
+      businessId,
+      variantId: args.toVariantId,
+      locationId: args.locationId,
+      delta: -args.quantity,
+      reason: 'adjustment',
+      referenceType: 'listing_relink',
+      referenceId: args.referenceId,
+      actorUserId,
+      notes: args.note,
+    });
   }
 
   /**
-   * Retire a listing. Deactivate hides it from selling and keeps every
-   * document; delete is refused while anything still points at it or it
-   * holds stock (the full reference list, not the shorter one the
+   * Retire a listing. Either way its stock is cleared first (owner
+   * 2026-09-06: stock on a Shopify listing is never kept) as `adjustment`
+   * movements pointing at the product. Deactivate then hides it from
+   * selling and keeps every document; delete is refused while anything
+   * still points at it (the full reference list, not the shorter one the
    * generic DELETE checks), and takes its legacy_refs with it so a later
    * import cannot resurrect it.
    */
   private async retireProduct(
     businessId: string,
+    actorUserId: string | null,
     c: ProductChange,
     dryRun: boolean,
-  ): Promise<string> {
+  ): Promise<{ message: string; stockCleared: number }> {
     const [product] = await this.db
       .select({
         id: schema.products.id,
@@ -1196,70 +1265,110 @@ export class CatalogCleanupController {
     if (!product) throw new Error('Product not found');
     const label = product.sku ?? product.name;
 
-    if (c.action === 'deactivate') {
-      if (!product.isActive) return `${label} was already inactive`;
-      if (dryRun) return `would deactivate ${label}`;
-      await this.db
-        .update(schema.products)
-        .set({ isActive: false, updatedAt: new Date() })
-        .where(eq(schema.products.id, product.id));
-      await this.audit.log({
-        action: 'product.deactivate',
-        targetType: 'product',
-        targetId: product.id,
-        before: { isActive: true },
-        after: { isActive: false, reason: 'shopify listing cleanup' },
-      });
-      return `deactivated ${label}`;
-    }
-
     const variantRows = await this.db
       .select({ id: schema.productVariants.id })
       .from(schema.productVariants)
       .where(eq(schema.productVariants.productId, product.id));
     const variantIds = variantRows.map((v) => v.id);
-    if (variantIds.length > 0) {
-      const [stock] = await this.db
-        .select({
-          onHand: sql<number>`coalesce(sum(${schema.inventoryLevels.onHand}), 0)::int`,
-          reserved: sql<number>`coalesce(sum(${schema.inventoryLevels.reserved}), 0)::int`,
-        })
-        .from(schema.inventoryLevels)
-        .where(inArray(schema.inventoryLevels.variantId, variantIds));
-      if ((stock?.onHand ?? 0) !== 0 || (stock?.reserved ?? 0) !== 0) {
-        throw new Error(
-          `Cannot delete ${label}: ${stock!.onHand} on hand / ${stock!.reserved} reserved — deactivate instead`,
-        );
+    const levels = variantIds.length
+      ? await this.db
+          .select({
+            variantId: schema.inventoryLevels.variantId,
+            locationId: schema.inventoryLevels.locationId,
+            onHand: schema.inventoryLevels.onHand,
+            reserved: schema.inventoryLevels.reserved,
+          })
+          .from(schema.inventoryLevels)
+          .where(inArray(schema.inventoryLevels.variantId, variantIds))
+      : [];
+    const stocked = levels.filter((l) => l.onHand !== 0 || l.reserved !== 0);
+    const stockCleared = stocked.reduce((n, l) => n + l.onHand, 0);
+    const clearNote = stocked.length
+      ? ` (clears ${stockCleared} on hand${stocked.some((l) => l.reserved) ? ' + reservations' : ''})`
+      : '';
+
+    if (c.action === 'delete') {
+      if (variantIds.length > 0) {
+        const refTables = [
+          ['sale lines', schema.saleLines.variantId, schema.saleLines],
+          ['order lines', schema.orderLines.variantId, schema.orderLines],
+          ['refund lines', schema.refundLines.variantId, schema.refundLines],
+          ['return lines', schema.orderReturnLines.variantId, schema.orderReturnLines],
+          ['PO lines', schema.purchaseOrderLines.variantId, schema.purchaseOrderLines],
+          ['transfer lines', schema.stockTransferLines.variantId, schema.stockTransferLines],
+          ['as-is pieces', schema.asIsItems.variantId, schema.asIsItems],
+          ['as-is restocks', schema.asIsItems.restockedVariantId, schema.asIsItems],
+          ['write-offs', schema.writeOffs.variantId, schema.writeOffs],
+          ['serial units', schema.serialUnits.variantId, schema.serialUnits],
+          ['service lines', schema.serviceOrderLines.variantId, schema.serviceOrderLines],
+          ['count lines', schema.physicalCountLines.variantId, schema.physicalCountLines],
+        ] as const;
+        const blockers: string[] = [];
+        for (const [name, column, table] of refTables) {
+          const [row] = await this.db
+            .select({ n: sql<number>`count(*)::int` })
+            .from(table)
+            .where(inArray(column, variantIds));
+          if ((row?.n ?? 0) > 0) blockers.push(`${row!.n} ${name}`);
+        }
+        if (blockers.length > 0) {
+          throw new Error(
+            `Cannot delete ${label}: still on ${blockers.join(', ')} — relink those first or deactivate`,
+          );
+        }
       }
-      const refTables = [
-        ['sale lines', schema.saleLines.variantId, schema.saleLines],
-        ['order lines', schema.orderLines.variantId, schema.orderLines],
-        ['refund lines', schema.refundLines.variantId, schema.refundLines],
-        ['return lines', schema.orderReturnLines.variantId, schema.orderReturnLines],
-        ['PO lines', schema.purchaseOrderLines.variantId, schema.purchaseOrderLines],
-        ['transfer lines', schema.stockTransferLines.variantId, schema.stockTransferLines],
-        ['as-is pieces', schema.asIsItems.variantId, schema.asIsItems],
-        ['as-is restocks', schema.asIsItems.restockedVariantId, schema.asIsItems],
-        ['write-offs', schema.writeOffs.variantId, schema.writeOffs],
-        ['serial units', schema.serialUnits.variantId, schema.serialUnits],
-        ['service lines', schema.serviceOrderLines.variantId, schema.serviceOrderLines],
-        ['count lines', schema.physicalCountLines.variantId, schema.physicalCountLines],
-      ] as const;
-      const blockers: string[] = [];
-      for (const [name, column, table] of refTables) {
-        const [row] = await this.db
-          .select({ n: sql<number>`count(*)::int` })
-          .from(table)
-          .where(inArray(column, variantIds));
-        if ((row?.n ?? 0) > 0) blockers.push(`${row!.n} ${name}`);
-      }
-      if (blockers.length > 0) {
-        throw new Error(
-          `Cannot delete ${label}: still on ${blockers.join(', ')} — relink those first or deactivate`,
-        );
-      }
+    } else if (!product.isActive && stocked.length === 0) {
+      return { message: `${label} was already inactive`, stockCleared: 0 };
     }
-    if (dryRun) return `would delete ${label}`;
+    if (dryRun) {
+      return {
+        message: `would ${c.action} ${label}${clearNote}`,
+        stockCleared,
+      };
+    }
+
+    for (const l of stocked) {
+      await this.db
+        .update(schema.inventoryLevels)
+        .set({ onHand: 0, reserved: 0, updatedAt: new Date() })
+        .where(
+          and(
+            eq(schema.inventoryLevels.variantId, l.variantId),
+            eq(schema.inventoryLevels.locationId, l.locationId),
+          ),
+        );
+      await this.db.insert(schema.inventoryMovements).values({
+        businessId,
+        variantId: l.variantId,
+        locationId: l.locationId,
+        delta: -l.onHand,
+        reason: 'adjustment',
+        referenceType: 'listing_retire',
+        referenceId: product.id,
+        actorUserId,
+        notes:
+          `${label} retired — stock on a Shopify listing is not kept` +
+          (l.reserved ? ` (released ${l.reserved} reserved)` : ''),
+      });
+    }
+
+    if (c.action === 'deactivate') {
+      if (product.isActive) {
+        await this.db
+          .update(schema.products)
+          .set({ isActive: false, updatedAt: new Date() })
+          .where(eq(schema.products.id, product.id));
+      }
+      await this.audit.log({
+        action: 'product.deactivate',
+        targetType: 'product',
+        targetId: product.id,
+        before: { isActive: product.isActive },
+        after: { isActive: false, reason: 'shopify listing cleanup', stockCleared },
+      });
+      return { message: `deactivated ${label}${clearNote}`, stockCleared };
+    }
+
     await this.db.delete(schema.products).where(eq(schema.products.id, product.id));
     await this.db
       .delete(schema.legacyRefs)
@@ -1276,8 +1385,8 @@ export class CatalogCleanupController {
       targetId: product.id,
       before: { name: product.name, sku: product.sku, variantCount: variantIds.length },
       after: null,
-      metadata: { reason: 'shopify listing cleanup' },
+      metadata: { reason: 'shopify listing cleanup', stockCleared },
     });
-    return `deleted ${label}`;
+    return { message: `deleted ${label}${clearNote}`, stockCleared };
   }
 }
