@@ -4712,3 +4712,27 @@ design files are follow-ups. PLAN §12.13 (A17).
   offline. Theme / density live per browser under the avatar menu.
 - Open: the catalog-source lockdown plan (`docs/HANDOFF-catalog-source-lockdown.md`)
   and the staff schedule proposal await owner approval.
+
+### Checkpoint — 2026-09-06 (trial expiry lockout: super-admin plan activation)
+
+The LA Mattress business's 14-day trial lapsed on 2026-09-05; from 6:32 PM
+Pacific every POS write from a non-super-admin session (Julio) returned
+402 "Subscription required" from `SubscriptionGuard`. The Billing page
+has no subscribe control (self-serve is paused) and the super-admin
+status toggle only wrote `businesses.status`, while the guard reads the
+`subscriptions` row first — so there was no working way to unblock.
+
+- `PATCH /v1/admin/businesses/:id/subscription` `{ plan }` puts a
+  business on Starter/Pro as `active` with `trial_ends_at`,
+  `current_period_end` and `cancel_at_period_end` cleared — no end date —
+  and mirrors `businesses.status/plan`. `GET …/subscription` returns the
+  guard's view (`readOnly`). Audit action `business.subscription.activate`.
+- `PATCH …/status` now mirrors onto `subscriptions.status`
+  (active/trial/suspended→past_due/cancelled→canceled) so Suspend /
+  Unsuspend on the admin list actually take effect.
+- Super-admin business page gained a Subscription card (state, read-only
+  warning, plan select, "Activate plan (no end date)").
+- `admin.int.spec.ts` +5 tests (16 total): expired trial → 402 for the
+  owner, activation → 201 again, invalid plan → 400, non-super-admin → 403.
+- **Ops:** after deploy, open Admin → Businesses → LA Mattress and click
+  Activate plan; Julio's POS resumes immediately, no re-login needed.

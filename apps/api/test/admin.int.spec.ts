@@ -366,6 +366,133 @@ describe('Epic 1.5 — Super admin console', () => {
     }
   });
 
+  it('Suspending also flips the subscriptions row so the guard sees it', async () => {
+    const res = await request(app.getHttpServer())
+      .get(`/v1/admin/businesses/${businessId}/subscription`)
+      .set('Cookie', superCookie);
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe('past_due');
+    expect(res.body.readOnly).toBe(true);
+  });
+
+  it('Setting status back to active lifts read-only on both tables', async () => {
+    const res = await request(app.getHttpServer())
+      .patch(`/v1/admin/businesses/${businessId}/status`)
+      .set('Cookie', superCookie)
+      .send({ status: 'active' });
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe('active');
+
+    const sub = await request(app.getHttpServer())
+      .get(`/v1/admin/businesses/${businessId}/subscription`)
+      .set('Cookie', superCookie);
+    expect(sub.status).toBe(200);
+    expect(sub.body.status).toBe('active');
+    expect(sub.body.trialEndsAt).toBeNull();
+    expect(sub.body.readOnly).toBe(false);
+  });
+
+  it('An expired trial blocks member writes with 402', async () => {
+    // Rewind the trial the way the calendar does in production: the row
+    // stays 'trial' but trial_ends_at is in the past.
+    const sql = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    const db = drizzle(sql);
+    try {
+      const past = new Date(Date.now() - 60_000);
+      await db
+        .update(schema.subscriptions)
+        .set({ status: 'trial', trialEndsAt: past })
+        .where(eq(schema.subscriptions.businessId, businessId));
+      await db
+        .update(schema.businesses)
+        .set({ status: 'trial', trialEndsAt: past })
+        .where(eq(schema.businesses.id, businessId));
+    } finally {
+      await sql.end({ timeout: 5 });
+    }
+
+    const ownerCookie = await captureCookie(OWNER_EMAIL, OWNER_PASSWORD);
+    const blocked = await request(app.getHttpServer())
+      .post('/v1/customers')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ firstName: 'Blocked', lastName: 'Trial' });
+    expect(blocked.status).toBe(402);
+    expect(blocked.body.message).toMatch(/Subscription required/);
+
+    const view = await request(app.getHttpServer())
+      .get(`/v1/admin/businesses/${businessId}/subscription`)
+      .set('Cookie', superCookie);
+    expect(view.body.status).toBe('trial');
+    expect(view.body.readOnly).toBe(true);
+  });
+
+  it('Super admin activates a plan with no end date; member writes resume', async () => {
+    const bad = await request(app.getHttpServer())
+      .patch(`/v1/admin/businesses/${businessId}/subscription`)
+      .set('Cookie', superCookie)
+      .send({ plan: 'enterprise' });
+    expect(bad.status).toBe(400);
+
+    const res = await request(app.getHttpServer())
+      .patch(`/v1/admin/businesses/${businessId}/subscription`)
+      .set('Cookie', superCookie)
+      .send({ plan: 'pro' });
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      businessId,
+      plan: 'pro',
+      status: 'active',
+      trialEndsAt: null,
+      currentPeriodEnd: null,
+      readOnly: false,
+    });
+
+    const ownerCookie = await captureCookie(OWNER_EMAIL, OWNER_PASSWORD);
+    const created = await request(app.getHttpServer())
+      .post('/v1/customers')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ firstName: 'Active', lastName: 'Plan' });
+    expect(created.status).toBe(201);
+
+    const sql = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    const db = drizzle(sql);
+    try {
+      const [biz] = await db
+        .select({
+          status: schema.businesses.status,
+          plan: schema.businesses.plan,
+          trialEndsAt: schema.businesses.trialEndsAt,
+        })
+        .from(schema.businesses)
+        .where(eq(schema.businesses.id, businessId));
+      expect(biz).toMatchObject({ status: 'active', plan: 'pro', trialEndsAt: null });
+
+      const audits = await db
+        .select()
+        .from(schema.auditLogs)
+        .where(eq(schema.auditLogs.action, 'business.subscription.activate'));
+      const row = audits.find((r) => r.targetId === businessId);
+      expect(row).toBeDefined();
+      expect(row!.changesJson).toMatchObject({
+        before: { subscriptionStatus: 'trial' },
+        after: { plan: 'pro', subscriptionStatus: 'active', endsAt: null },
+      });
+    } finally {
+      await sql.end({ timeout: 5 });
+    }
+  });
+
+  it('A non-super-admin cannot activate a subscription', async () => {
+    const ownerCookie = await captureCookie(OWNER_EMAIL, OWNER_PASSWORD);
+    const res = await request(app.getHttpServer())
+      .patch(`/v1/admin/businesses/${businessId}/subscription`)
+      .set('Cookie', ownerCookie)
+      .send({ plan: 'starter' });
+    expect(res.status).toBe(403);
+  });
+
   it('Platform metrics include the new business + users', async () => {
     const res = await request(app.getHttpServer())
       .get('/v1/admin/metrics')

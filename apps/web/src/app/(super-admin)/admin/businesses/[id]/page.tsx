@@ -12,9 +12,11 @@ import {
   FormActions,
   FormGrid,
   Input,
+  KeyValue,
   LoadingRows,
   PageHeader,
   SectionHeading,
+  Select,
   Stack,
   StatusBadge,
   TableWrap,
@@ -28,6 +30,17 @@ interface BusinessSummary {
   status: string;
   userCount: number;
   locationCount: number;
+}
+
+type PlanId = 'starter' | 'pro';
+
+interface AdminSubscription {
+  businessId: string;
+  plan: string;
+  status: 'trial' | 'active' | 'past_due' | 'canceled';
+  trialEndsAt: string | null;
+  currentPeriodEnd: string | null;
+  readOnly: boolean;
 }
 
 interface Membership {
@@ -45,6 +58,7 @@ export default function BusinessDetailPage() {
   const [biz, setBiz] = useState<BusinessSummary | null>(null);
   const [notFound, setNotFound] = useState(false);
   const [members, setMembers] = useState<Membership[] | null>(null);
+  const [sub, setSub] = useState<AdminSubscription | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   async function load() {
@@ -58,6 +72,7 @@ export default function BusinessDetailPage() {
       setBiz(found ?? null);
       setNotFound(!found);
       setMembers(null); // Members listing is Epic 1.6 territory.
+      if (found) setSub(await api<AdminSubscription>(`/v1/admin/businesses/${id}/subscription`));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -116,6 +131,7 @@ export default function BusinessDetailPage() {
         }
       />
       <Stack>
+        <SubscriptionCard businessId={id} sub={sub} onChanged={load} />
         <Card title="Members">
           {members ? (
             <TableWrap>
@@ -155,6 +171,88 @@ export default function BusinessDetailPage() {
         </Card>
       </Stack>
     </div>
+  );
+}
+
+function SubscriptionCard({
+  businessId,
+  sub,
+  onChanged,
+}: {
+  businessId: string;
+  sub: AdminSubscription | null;
+  onChanged: () => Promise<void>;
+}) {
+  const [plan, setPlan] = useState<PlanId>('starter');
+  const [pending, setPending] = useState(false);
+
+  useEffect(() => {
+    if (sub && (sub.plan === 'starter' || sub.plan === 'pro')) setPlan(sub.plan);
+  }, [sub]);
+
+  async function activate() {
+    setPending(true);
+    try {
+      await api(`/v1/admin/businesses/${businessId}/subscription`, {
+        method: 'PATCH',
+        body: JSON.stringify({ plan }),
+      });
+      toast.success(`Subscription active on ${plan} — no end date`);
+      await onChanged();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <Card
+      title="Subscription"
+      description="Self-serve billing is paused, so plans are set here. Activating puts the business on the chosen plan with no trial or period end, which lifts the read-only mode that blocks sales when a trial expires."
+    >
+      {sub ? (
+        <>
+          {sub.readOnly && (
+            <Alert tone="error">
+              Writes are blocked for this business: members see &ldquo;Subscription required&rdquo;
+              on every save. Activate a plan below to restore them.
+            </Alert>
+          )}
+          <KeyValue
+            rows={[
+              { label: 'Status', value: <StatusBadge status={sub.status} /> },
+              { label: 'Plan', value: sub.plan },
+              {
+                label: 'Trial ends',
+                value: sub.trialEndsAt ? new Date(sub.trialEndsAt).toLocaleString() : 'n/a',
+              },
+              {
+                label: 'Period ends',
+                value: sub.currentPeriodEnd
+                  ? new Date(sub.currentPeriodEnd).toLocaleString()
+                  : 'never',
+              },
+            ]}
+          />
+        </>
+      ) : (
+        <LoadingRows />
+      )}
+      <FormGrid cols={2}>
+        <Field label="Plan">
+          <Select value={plan} onChange={(e) => setPlan(e.target.value as PlanId)}>
+            <option value="starter">Starter</option>
+            <option value="pro">Pro</option>
+          </Select>
+        </Field>
+      </FormGrid>
+      <FormActions>
+        <Button type="button" variant="primary" disabled={pending || !sub} onClick={activate}>
+          {pending ? 'Activating…' : 'Activate plan (no end date)'}
+        </Button>
+      </FormActions>
+    </Card>
   );
 }
 
