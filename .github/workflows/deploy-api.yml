@@ -1,28 +1,116 @@
-name: Deploy API to Fly.io
+name: Deploy API to Render
+
+# The API runs on Render (`srv-da4tua3m8hqs73apsflg`, HANDOFF.md §2). Render's own
+# GitHub auto-deploy stopped firing when the repo was renamed from JetnineERP, so
+# this workflow is the auto-deploy: every push to `main` that touches the API
+# (or a manual dispatch) points the service at this repo's `main` and starts a
+# deploy through the Render API, then waits for it to go live.
+#
+# Needs one repository secret:
+#   RENDER_API_KEY — a Render API key (dashboard → Account settings → API keys).
+#     With it the workflow can also repoint the service's repo/branch, which is
+#     what fixes the dead webhook for good.
+# Fallback if you would rather not hand out an API key:
+#   RENDER_DEPLOY_HOOK_URL — the service's Deploy Hook URL (service → Settings →
+#     Deploy Hook). This can only deploy whatever branch the service already
+#     tracks, so set the branch to `main` in the dashboard first.
 
 on:
   push:
     branches: [main]
     paths:
-      - "apps/api/**"
-      - "packages/db/**"
-      - "packages/shared/**"
-      - "pnpm-lock.yaml"
-      - ".github/workflows/deploy-api.yml"
+      - 'apps/api/**'
+      - 'packages/db/**'
+      - 'packages/shared/**'
+      - 'pnpm-lock.yaml'
+      - 'package.json'
+      - 'pnpm-workspace.yaml'
+      - '.github/workflows/deploy-api.yml'
   workflow_dispatch:
 
 concurrency:
   group: deploy-api
   cancel-in-progress: false
 
+permissions:
+  contents: read
+
 jobs:
   deploy:
+    name: Deploy jetnine-api
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      RENDER_SERVICE_ID: srv-da4tua3m8hqs73apsflg
+      RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+      RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+      REPO_URL: https://github.com/${{ github.repository }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: superfly/flyctl-actions/setup-flyctl@master
-      - name: Deploy
-        working-directory: apps/api
-        run: flyctl deploy --remote-only --config fly.toml
-        env:
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+      - name: Check credentials
+        run: |
+          if [ -z "$RENDER_API_KEY" ] && [ -z "$RENDER_DEPLOY_HOOK_URL" ]; then
+            echo "::error::Neither RENDER_API_KEY nor RENDER_DEPLOY_HOOK_URL is set. Add RENDER_API_KEY under Settings → Secrets and variables → Actions (see the header of this workflow)."
+            exit 1
+          fi
+
+      - name: Point the service at ${{ github.repository }}@main
+        if: env.RENDER_API_KEY != ''
+        run: |
+          set -euo pipefail
+          api="https://api.render.com/v1/services/$RENDER_SERVICE_ID"
+          current=$(curl -sSf -H "Authorization: Bearer $RENDER_API_KEY" "$api")
+          repo=$(echo "$current" | jq -r '.repo // ""')
+          branch=$(echo "$current" | jq -r '.branch // ""')
+          echo "Service currently deploys $repo @ $branch"
+          if [ "$repo" != "$REPO_URL" ] || [ "$branch" != "main" ]; then
+            echo "Repointing to $REPO_URL @ main"
+            curl -sSf -X PATCH \
+              -H "Authorization: Bearer $RENDER_API_KEY" \
+              -H "Content-Type: application/json" \
+              -d "$(jq -nc --arg repo "$REPO_URL" '{repo: $repo, branch: "main", autoDeploy: "yes"}')" \
+              "$api" > /dev/null
+            echo "Repointed."
+          else
+            echo "Already correct."
+          fi
+
+      - name: Start deploy via Render API
+        if: env.RENDER_API_KEY != ''
+        run: |
+          set -euo pipefail
+          api="https://api.render.com/v1/services/$RENDER_SERVICE_ID"
+          deploy=$(curl -sSf -X POST \
+            -H "Authorization: Bearer $RENDER_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d '{"clearCache":"do_not_clear"}' \
+            "$api/deploys")
+          id=$(echo "$deploy" | jq -r '.id')
+          echo "Deploy $id started for commit $(echo "$deploy" | jq -r '.commit.id')"
+          echo "DEPLOY_ID=$id" >> "$GITHUB_ENV"
+
+      - name: Wait for the deploy to go live
+        if: env.RENDER_API_KEY != ''
+        run: |
+          set -euo pipefail
+          api="https://api.render.com/v1/services/$RENDER_SERVICE_ID/deploys/$DEPLOY_ID"
+          for i in $(seq 1 90); do
+            status=$(curl -sSf -H "Authorization: Bearer $RENDER_API_KEY" "$api" | jq -r '.status')
+            echo "[$i] $status"
+            case "$status" in
+              live) echo "Deploy is live."; exit 0 ;;
+              build_failed|update_failed|canceled|deactivated|pre_deploy_failed)
+                echo "::error::Render deploy $DEPLOY_ID ended with status $status — see https://dashboard.render.com/web/$RENDER_SERVICE_ID/deploys/$DEPLOY_ID"
+                exit 1 ;;
+            esac
+            sleep 20
+          done
+          echo "::error::Timed out waiting for deploy $DEPLOY_ID"
+          exit 1
+
+      - name: Start deploy via Deploy Hook (fallback)
+        if: env.RENDER_API_KEY == '' && env.RENDER_DEPLOY_HOOK_URL != ''
+        run: |
+          set -euo pipefail
+          echo "::warning::Using RENDER_DEPLOY_HOOK_URL — this deploys whatever branch the service tracks and cannot be awaited. Set RENDER_API_KEY to get repointing + status."
+          curl -sSf -X POST "$RENDER_DEPLOY_HOOK_URL" > /dev/null
+          echo "Deploy hook fired."

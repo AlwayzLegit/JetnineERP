@@ -34,13 +34,17 @@ owner-side Ops list in §3.
 | API deploy branch | `claude/fix-latent-int-spec-failures`                                                                                                       |
 | Sprint branch     | `claude/la-mattress-erp-storis-cutover-z9xj2t`                                                                                              |
 
-**The trap:** the Render dashboard's repo URL still points at the _old_ repo
-(`AlwayzLegit/JetnineERP`), so **auto-deploy does not fire** even though the service
-reports `autoDeploy: yes`. Every API deploy must be triggered manually
-(`mcp__Render__trigger_deploy`). This is an owner Ops item (§3) and has been open for
-several checkpoints — do not assume a push reached staging.
+**The trap (fixed in code, needs one secret):** the Render dashboard's repo URL still
+points at the _old_ repo (`AlwayzLegit/JetnineERP`) and its branch at
+`claude/fix-latent-int-spec-failures`, so Render's own auto-deploy never fires even
+though the service reports `autoDeploy: yes`. Since 2026-09-06
+`.github/workflows/deploy-api.yml` is the auto-deploy: on every push to `main` that
+touches the API it repoints the service at `AlwayzLegit/LA-Mattress-ERP@main` and
+starts a Render deploy, waiting for it to go live. It needs the `RENDER_API_KEY`
+repository secret (owner Ops item §3). Until that secret exists the workflow fails
+on purpose and the manual sequence below still applies.
 
-### The deploy sequence that works
+### The deploy sequence (manual, while `RENDER_API_KEY` is unset)
 
 1. PR the sprint branch → `main`; wait for all four checks green.
 2. Squash-merge. Vercel production deploys `main` on its own.
@@ -49,13 +53,18 @@ several checkpoints — do not assume a push reached staging.
 5. Verify the boot log line: `Schema migrations: N/N applied, head=…`. **Do not skip
    this** — it is the only proof migrations ran.
 
+Once the secret is set, steps 3–4 disappear: the workflow run on `main` is the deploy,
+and its last step fails if Render does not reach `live`.
+
 ---
 
 ## 3. Open Ops items (owner's, not yours — flag, never silently block on)
 
 1. **Resend DNS — in flight, see §4.** The one item with a concrete next action.
-2. **Repoint the Render dashboard repo URL** to `AlwayzLegit/LA-Mattress-ERP` so
-   auto-deploy works.
+2. **Add the `RENDER_API_KEY` repository secret** (Render → Account settings → API
+   keys; GitHub → Settings → Secrets and variables → Actions). That lets
+   `deploy-api.yml` repoint the service at `AlwayzLegit/LA-Mattress-ERP@main` and
+   deploy automatically; no dashboard edit needed after that.
 3. **Rotate the shared owner password.** Credentials for `pos.lamattress@gmail.com` were
    shared into an earlier session for API testing. They were used in-session only and
    never written to the repo. Rotation is still advised and still outstanding.
