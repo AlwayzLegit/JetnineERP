@@ -67,6 +67,7 @@ export const TENANT_SCOPED_TABLES = [
   'gl_journal_batches',
   'gl_journal_lines',
   'subscriptions',
+  'subscription_payments',
   'merchant_stripe_accounts',
   'stripe_oauth_states',
   'vendors',

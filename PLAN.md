@@ -750,3 +750,66 @@ These are details that should be decided at implementation time, not pre-specifi
 - Internal directory layout within each app/package beyond top-level conventions
 
 When in doubt: choose the simpler option and leave a `// TODO` with a link to a tracking issue.
+
+
+---
+
+## 15. Amendment — Account model: agency vs SaaS sub-accounts (2026-09-06)
+
+Owner decision. The platform serves two kinds of business, and the console
+the platform owner uses must treat them differently.
+
+### 15.1 Account kinds
+
+| Kind | Who | Billing | Read-only mode |
+|------|-----|---------|----------------|
+| `agency` | The owner's own operation — LA Mattress stores today | Never billed. No trial, no plan enforcement. | Never. `SubscriptionGuard` passes agency accounts through unconditionally. |
+| `saas` | Any other business onboarded onto the platform | Trial (14 days) → plan (Starter / Pro, per-location pricing, §Epic 1.12) | When the trial lapses or the subscription is `past_due` / `canceled` (unchanged). |
+
+`businesses.account_kind text not null default 'saas'`. A super admin flips
+the kind from the account page; marking a business `agency` also clears any
+trial / lapse so it can never be blocked. Converting back to `saas` leaves the
+subscription row alone — activate a plan from the Subscription card.
+
+### 15.2 Platform-billing ledger
+
+`subscription_payments` (tenant-scoped, RLS) records every payment made toward a
+SaaS account's subscription: amount (integer cents), `status`
+(`paid` / `failed` / `refunded`), `method` (`manual` / `stripe` / `comp`), the
+period it covers, a reference, a note, who recorded it. A `paid` row marks the
+subscription `active`, clears the trial, and stamps the covered period on the
+subscription. Today rows are recorded by the super admin from the console;
+the Stripe Billing webhook writes `method = 'stripe'` rows once wired. Agency
+accounts never get rows (409).
+
+### 15.3 Owner console (super admin)
+
+`/v1/admin/accounts` is the read / manage surface over every sub-account;
+`/v1/admin/businesses` stays the provisioning surface (create, suspend,
+activate plan).
+
+- `GET /v1/admin/accounts[?kind=]` — every account with kind, plan,
+  subscription state, `readOnly`, MRR (0 for agency), users, locations, last
+  activity, last payment.
+- `GET /v1/admin/accounts/:id` — the above plus subscription detail, resource
+  usage (locations, members, products, customers, orders and sales in the last
+  30 days) and a payments summary.
+- `PATCH /v1/admin/accounts/:id/kind` — `{ accountKind }`.
+- `GET /v1/admin/accounts/:id/members` — who can sign in, with role.
+- `GET | POST /v1/admin/accounts/:id/payments` — ledger + record a payment.
+- `GET /v1/admin/metrics` now reports account counts by kind, subscription
+  state counts, MRR, and trials ending within 7 days.
+
+Console pages: **Accounts** list (kind filter, plan, subscription badge with a
+read-only flag, MRR) and the account page (Account kind, Subscription,
+Resources, Users with impersonate, Payments with a record form).
+
+Every mutation is audited: `business.account_kind.update`,
+`business.subscription.activate`, `billing.payment.recorded`.
+
+### 15.4 Not in this amendment (follow-ups)
+
+- Stripe Billing: checkout, invoices, webhook → `subscription_payments`.
+- Plan limits (max locations / users) enforced from the plan catalog.
+- Self-serve plan changes on the tenant Billing page (paused, per Epic 1.12 §4).
+- Per-account resource quotas (storage, API calls) — counted, not enforced.

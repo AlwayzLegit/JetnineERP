@@ -18,11 +18,37 @@ import { SYSTEM_ROLES } from '@jetnine/shared';
 import { AuditService } from '../audit/audit.service';
 import { DRIZZLE } from '../database/database.module';
 import { CurrentUser, type CurrentUserPayload } from '../auth/current-user.decorator';
+import { PLANS, type PlanId } from '../billing/pricing';
+import { isReadOnly, type SubscriptionStatus } from '../billing/subscription-state';
 import { SuperAdminOnly, TenantScoped } from '../tenancy/decorators';
 import { InvitationService } from '../business/invitation.service';
 import { TemplatesService, type TemplateSnapshot } from './templates.service';
 
 const VALID_STATUSES = new Set(['active', 'suspended', 'trial', 'cancelled']);
+const VALID_PLANS = new Set<string>(Object.keys(PLANS));
+
+/**
+ * `businesses.status` and `subscriptions.status` are two spellings of
+ * the same fact, and SubscriptionGuard reads the subscriptions row
+ * first. Every admin status change writes both so a super admin
+ * flipping a business to "active" actually lifts the read-only mode.
+ */
+const SUBSCRIPTION_STATUS_FOR_BUSINESS_STATUS: Record<string, SubscriptionStatus> = {
+  active: 'active',
+  trial: 'trial',
+  suspended: 'past_due',
+  cancelled: 'canceled',
+};
+
+interface AdminSubscriptionView {
+  businessId: string;
+  plan: string;
+  status: SubscriptionStatus;
+  trialEndsAt: Date | null;
+  currentPeriodEnd: Date | null;
+  /** True when SubscriptionGuard is rejecting writes for this business. */
+  readOnly: boolean;
+}
 const SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
 
 interface BusinessSummary {
@@ -235,12 +261,34 @@ export class AdminBusinessesController {
       .limit(1);
     if (!existing) throw new NotFoundException('Business not found');
 
+    const now = new Date();
     const [updated] = await this.db
       .update(schema.businesses)
-      .set({ status, updatedAt: new Date() })
+      .set({
+        status,
+        // An admin-activated business has no trial to expire.
+        ...(status === 'active' ? { trialEndsAt: null } : {}),
+        updatedAt: now,
+      })
       .where(eq(schema.businesses.id, id))
       .returning();
     if (!updated) throw new NotFoundException('Business not found after update');
+
+    // Mirror onto the subscriptions row (the column the guard reads
+    // first). Businesses created before the subscriptions table existed
+    // have no row; the guard falls back to businesses.status for those,
+    // so only rows that exist are touched here.
+    const subStatus = SUBSCRIPTION_STATUS_FOR_BUSINESS_STATUS[status];
+    if (subStatus) {
+      await this.db
+        .update(schema.subscriptions)
+        .set({
+          status: subStatus,
+          ...(subStatus === 'active' ? { trialEndsAt: null, cancelAtPeriodEnd: null } : {}),
+          updatedAt: now,
+        })
+        .where(eq(schema.subscriptions.businessId, id));
+    }
 
     await this.audit.log({
       action: 'business.status.update',
@@ -260,6 +308,138 @@ export class AdminBusinessesController {
       userCount: 0,
       locationCount: 0,
       lastActivityAt: null,
+    };
+  }
+
+  @Get(':id/subscription')
+  async getSubscription(@Param('id') id: string): Promise<AdminSubscriptionView> {
+    return this.subscriptionView(id);
+  }
+
+  /**
+   * Put a business on a paid plan with no end date. The platform
+   * billing model is being transitioned, so self-serve subscribe is
+   * paused and the super admin sets plans by hand; this is the switch
+   * that lifts the trial-expiry read-only mode.
+   *
+   * Unlike the tenant-side subscribe endpoint, no billing period is
+   * written: `trial_ends_at`, `current_period_end`, and
+   * `cancel_at_period_end` are all cleared, so nothing can flip the
+   * business back to read-only later on.
+   */
+  @Patch(':id/subscription')
+  async activateSubscription(
+    @Param('id') id: string,
+    @Body() body: { plan?: string } | undefined,
+  ): Promise<AdminSubscriptionView> {
+    const [existing] = await this.db
+      .select()
+      .from(schema.businesses)
+      .where(eq(schema.businesses.id, id))
+      .limit(1);
+    if (!existing) throw new NotFoundException('Business not found');
+
+    const [existingSub] = await this.db
+      .select({ plan: schema.subscriptions.plan, status: schema.subscriptions.status })
+      .from(schema.subscriptions)
+      .where(eq(schema.subscriptions.businessId, id))
+      .limit(1);
+
+    const requested = body?.plan;
+    if (requested !== undefined && !VALID_PLANS.has(requested)) {
+      throw new BadRequestException(`plan must be one of: ${[...VALID_PLANS].join(', ')}`);
+    }
+    const fallback = existingSub?.plan ?? existing.plan ?? 'starter';
+    const plan = (requested ?? (VALID_PLANS.has(fallback) ? fallback : 'starter')) as PlanId;
+
+    const [locRow] = await this.db
+      .select({ locationCount: count() })
+      .from(schema.locations)
+      .where(eq(schema.locations.businessId, id));
+    const locationCount = locRow?.locationCount ?? 0;
+
+    const now = new Date();
+    await this.db
+      .insert(schema.subscriptions)
+      .values({
+        businessId: id,
+        plan,
+        status: 'active',
+        trialEndsAt: null,
+        currentPeriodStart: now,
+        currentPeriodEnd: null,
+        paidLocationCount: Number(locationCount),
+      })
+      .onConflictDoUpdate({
+        target: schema.subscriptions.businessId,
+        set: {
+          plan,
+          status: 'active',
+          trialEndsAt: null,
+          currentPeriodStart: now,
+          currentPeriodEnd: null,
+          cancelAtPeriodEnd: null,
+          paidLocationCount: Number(locationCount),
+          updatedAt: now,
+        },
+      });
+    await this.db
+      .update(schema.businesses)
+      .set({ status: 'active', plan, trialEndsAt: null, updatedAt: now })
+      .where(eq(schema.businesses.id, id));
+
+    await this.audit.log({
+      action: 'business.subscription.activate',
+      targetType: 'business',
+      targetId: id,
+      before: {
+        status: existing.status,
+        plan: existing.plan ?? null,
+        subscriptionStatus: existingSub?.status ?? null,
+      },
+      after: { status: 'active', plan, subscriptionStatus: 'active', endsAt: null },
+    });
+
+    return this.subscriptionView(id);
+  }
+
+  private async subscriptionView(businessId: string): Promise<AdminSubscriptionView> {
+    const [sub] = await this.db
+      .select()
+      .from(schema.subscriptions)
+      .where(eq(schema.subscriptions.businessId, businessId))
+      .limit(1);
+    if (sub) {
+      const status = sub.status as SubscriptionStatus;
+      return {
+        businessId,
+        plan: sub.plan,
+        status,
+        trialEndsAt: sub.trialEndsAt,
+        currentPeriodEnd: sub.currentPeriodEnd,
+        readOnly: isReadOnly(status, sub.trialEndsAt),
+      };
+    }
+    // No subscriptions row: same fallback SubscriptionGuard applies.
+    const [biz] = await this.db
+      .select({
+        status: schema.businesses.status,
+        plan: schema.businesses.plan,
+        trialEndsAt: schema.businesses.trialEndsAt,
+      })
+      .from(schema.businesses)
+      .where(eq(schema.businesses.id, businessId))
+      .limit(1);
+    if (!biz) throw new NotFoundException('Business not found');
+    const status = (SUBSCRIPTION_STATUS_FOR_BUSINESS_STATUS[biz.status] ??
+      'trial') as SubscriptionStatus;
+    return {
+      businessId,
+      plan: biz.plan ?? 'starter',
+      status,
+      trialEndsAt: biz.trialEndsAt,
+      currentPeriodEnd: null,
+      readOnly: isReadOnly(status, biz.trialEndsAt),
     };
   }
 }
