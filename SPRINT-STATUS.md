@@ -4778,3 +4778,13 @@ and fails the run unless Render reports `live`. **Ops:** add the `RENDER_API_KEY
 repository secret; the first run after that fixes the dashboard drift for good.
 Fallback `RENDER_DEPLOY_HOOK_URL` is supported but cannot repoint or await.
 HANDOFF §2/§3 and README updated.
+
+### Checkpoint — 2026-09-06 (set-account-kind CLI + production one-off job)
+
+The API and DB hosts are unreachable from a Claude sandbox, so account-kind
+changes had no path from a session. `packages/db/src/set-account-kind.ts`
+mirrors the console's "Mark as agency" (businesses + subscriptions + audit row,
+`--list` to see slugs). `ops-set-account-kind.yml` (manual dispatch with
+validated `action` / `slug` / `kind` inputs — no free-form commands) runs it as
+a Render one-off job inside the API service and prints the log. First use:
+mark LA Mattress as an agency account. HANDOFF §2 updated.
