@@ -493,6 +493,190 @@ describe('Epic 1.5 — Super admin console', () => {
     expect(res.status).toBe(403);
   });
 
+  it('Accounts list shows the business as a SaaS account with MRR', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/v1/admin/accounts')
+      .set('Cookie', superCookie);
+    expect(res.status).toBe(200);
+    const row = res.body.find((r: { id: string }) => r.id === businessId);
+    expect(row).toBeDefined();
+    expect(row.accountKind).toBe('saas');
+    expect(row.subscriptionStatus).toBe('active');
+    expect(row.plan).toBe('pro');
+    expect(row.readOnly).toBe(false);
+    // Pro is $100/location/month.
+    expect(row.mrrCents).toBe(10000 * row.locationCount);
+
+    const onlyAgency = await request(app.getHttpServer())
+      .get('/v1/admin/accounts?kind=agency')
+      .set('Cookie', superCookie);
+    expect(onlyAgency.status).toBe(200);
+    expect(onlyAgency.body.find((r: { id: string }) => r.id === businessId)).toBeUndefined();
+
+    const badKind = await request(app.getHttpServer())
+      .get('/v1/admin/accounts?kind=enterprise')
+      .set('Cookie', superCookie);
+    expect(badKind.status).toBe(400);
+  });
+
+  it('Account detail carries subscription, usage, and payments summary', async () => {
+    const res = await request(app.getHttpServer())
+      .get(`/v1/admin/accounts/${businessId}`)
+      .set('Cookie', superCookie);
+    expect(res.status).toBe(200);
+    expect(res.body.subscription).toMatchObject({
+      plan: 'pro',
+      status: 'active',
+      trialEndsAt: null,
+      currentPeriodEnd: null,
+      perLocationCents: 10000,
+    });
+    expect(res.body.usage).toMatchObject({
+      locations: res.body.locationCount,
+      members: res.body.userCount,
+    });
+    // The owner created a customer while activating, earlier in this suite.
+    expect(res.body.usage.customers).toBeGreaterThanOrEqual(1);
+    expect(res.body.payments).toEqual({ count: 0, totalPaidCents: 0, lastPaidAt: null });
+  });
+
+  it('Members list names the owner with their role', async () => {
+    const res = await request(app.getHttpServer())
+      .get(`/v1/admin/accounts/${businessId}/members`)
+      .set('Cookie', superCookie);
+    expect(res.status).toBe(200);
+    const owner = res.body.find((m: { email: string }) => m.email === OWNER_EMAIL);
+    expect(owner).toBeDefined();
+    expect(owner.userId).toBe(ownerUserId);
+    expect(owner.roleName).toBe('Owner');
+    expect(owner.isSuperAdmin).toBe(false);
+  });
+
+  it('Marking the business as an agency account makes it immune to trial expiry', async () => {
+    const bad = await request(app.getHttpServer())
+      .patch(`/v1/admin/accounts/${businessId}/kind`)
+      .set('Cookie', superCookie)
+      .send({ accountKind: 'franchise' });
+    expect(bad.status).toBe(400);
+
+    const res = await request(app.getHttpServer())
+      .patch(`/v1/admin/accounts/${businessId}/kind`)
+      .set('Cookie', superCookie)
+      .send({ accountKind: 'agency' });
+    expect(res.status).toBe(200);
+    expect(res.body.accountKind).toBe('agency');
+    expect(res.body.mrrCents).toBe(0);
+    expect(res.body.readOnly).toBe(false);
+
+    // Force the same lapsed-trial state that blocked the SaaS account
+    // earlier; an agency account must sail through.
+    const sql = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    const db = drizzle(sql);
+    try {
+      const past = new Date(Date.now() - 60_000);
+      await db
+        .update(schema.subscriptions)
+        .set({ status: 'trial', trialEndsAt: past })
+        .where(eq(schema.subscriptions.businessId, businessId));
+      await db
+        .update(schema.businesses)
+        .set({ status: 'trial', trialEndsAt: past })
+        .where(eq(schema.businesses.id, businessId));
+    } finally {
+      await sql.end({ timeout: 5 });
+    }
+
+    const ownerCookie = await captureCookie(OWNER_EMAIL, OWNER_PASSWORD);
+    const created = await request(app.getHttpServer())
+      .post('/v1/customers')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ firstName: 'Agency', lastName: 'Customer' });
+    expect(created.status).toBe(201);
+
+    const view = await request(app.getHttpServer())
+      .get('/v1/billing/subscription')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId);
+    expect(view.status).toBe(200);
+    expect(view.body.accountKind).toBe('agency');
+    expect(view.body.readOnly).toBe(false);
+
+    const pay = await request(app.getHttpServer())
+      .post(`/v1/admin/accounts/${businessId}/payments`)
+      .set('Cookie', superCookie)
+      .send({ amountCents: 5000 });
+    expect(pay.status).toBe(409);
+  });
+
+  it('Converting back to SaaS and recording a payment reactivates the subscription', async () => {
+    const res = await request(app.getHttpServer())
+      .patch(`/v1/admin/accounts/${businessId}/kind`)
+      .set('Cookie', superCookie)
+      .send({ accountKind: 'saas' });
+    expect(res.status).toBe(200);
+    expect(res.body.accountKind).toBe('saas');
+    // The lapsed trial planted above is now enforced again.
+    expect(res.body.readOnly).toBe(true);
+
+    const badAmount = await request(app.getHttpServer())
+      .post(`/v1/admin/accounts/${businessId}/payments`)
+      .set('Cookie', superCookie)
+      .send({ amountCents: 12.5 });
+    expect(badAmount.status).toBe(400);
+
+    const periodEnd = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+    const pay = await request(app.getHttpServer())
+      .post(`/v1/admin/accounts/${businessId}/payments`)
+      .set('Cookie', superCookie)
+      .send({
+        amountCents: 20000,
+        method: 'manual',
+        periodEnd: periodEnd.toISOString(),
+        reference: 'CHK 1042',
+      });
+    expect(pay.status).toBe(201);
+    expect(pay.body).toMatchObject({
+      businessId,
+      amountCents: 20000,
+      status: 'paid',
+      method: 'manual',
+      reference: 'CHK 1042',
+      recordedByUserId: superAdminId,
+    });
+
+    const list = await request(app.getHttpServer())
+      .get(`/v1/admin/accounts/${businessId}/payments`)
+      .set('Cookie', superCookie);
+    expect(list.status).toBe(200);
+    expect(list.body).toHaveLength(1);
+
+    const detail = await request(app.getHttpServer())
+      .get(`/v1/admin/accounts/${businessId}`)
+      .set('Cookie', superCookie);
+    expect(detail.body.readOnly).toBe(false);
+    expect(detail.body.subscriptionStatus).toBe('active');
+    expect(detail.body.subscription.trialEndsAt).toBeNull();
+    expect(new Date(detail.body.subscription.currentPeriodEnd).getTime()).toBe(periodEnd.getTime());
+    expect(detail.body.payments).toMatchObject({ count: 1, totalPaidCents: 20000 });
+
+    const ownerCookie = await captureCookie(OWNER_EMAIL, OWNER_PASSWORD);
+    const created = await request(app.getHttpServer())
+      .post('/v1/customers')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .send({ firstName: 'Paid', lastName: 'Again' });
+    expect(created.status).toBe(201);
+  });
+
+  it('A non-super-admin cannot use the accounts console', async () => {
+    const ownerCookie = await captureCookie(OWNER_EMAIL, OWNER_PASSWORD);
+    const res = await request(app.getHttpServer())
+      .get('/v1/admin/accounts')
+      .set('Cookie', ownerCookie);
+    expect(res.status).toBe(403);
+  });
+
   it('Platform metrics include the new business + users', async () => {
     const res = await request(app.getHttpServer())
       .get('/v1/admin/metrics')
@@ -500,6 +684,11 @@ describe('Epic 1.5 — Super admin console', () => {
     expect(res.status).toBe(200);
     expect(res.body.totalBusinesses).toBeGreaterThanOrEqual(1);
     expect(res.body.totalUsers).toBeGreaterThanOrEqual(2);
+    // PLAN §15: the business above is back on SaaS with an active paid plan.
+    expect(res.body.accounts.saas).toBeGreaterThanOrEqual(1);
+    expect(res.body.subscriptions.active).toBeGreaterThanOrEqual(1);
+    expect(res.body.subscriptions.readOnly).toBe(0);
+    expect(typeof res.body.mrrCents).toBe('number');
   });
 });
 

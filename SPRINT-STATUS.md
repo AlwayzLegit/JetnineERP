@@ -4736,3 +4736,33 @@ status toggle only wrote `businesses.status`, while the guard reads the
   owner, activation → 201 again, invalid plan → 400, non-super-admin → 403.
 - **Ops:** after deploy, open Admin → Businesses → LA Mattress and click
   Activate plan; Julio's POS resumes immediately, no re-login needed.
+
+### Checkpoint — 2026-09-06 (PLAN §15: agency vs SaaS account model + owner console)
+
+Owner decision: LA Mattress stores are the owner's own operation (an
+**agency** account — never billed, never read-only); every other business
+is a **SaaS** account on the trial → plan lifecycle. The super-admin console
+becomes the place to manage those sub-accounts. Spec in `PLAN.md` §15.
+
+- Schema: `businesses.account_kind` ('agency' | 'saas', default saas) and
+  `subscription_payments` (platform-billing ledger, RLS) — migration
+  `0087_account_kind_subscription_payments`.
+- `SubscriptionGuard` passes agency accounts unconditionally;
+  `GET /v1/billing/subscription` reports `accountKind` and `readOnly=false`
+  for them.
+- `/v1/admin/accounts`: list (kind filter, subscription state, `readOnly`,
+  MRR, users, locations, last activity / payment), detail (subscription,
+  resource usage, payments summary), `PATCH :id/kind`, `GET :id/members`,
+  `GET|POST :id/payments` (a paid entry reactivates the subscription and
+  stamps the covered period). `/v1/admin/metrics` adds account counts by
+  kind, subscription state counts, MRR, trials ending within 7 days.
+- Console: nav "Accounts"; list with kind filter + MRR; account page with
+  Account kind (toggle), Resources, Subscription (activate plan), Users
+  (impersonate), Payments (ledger + record form); metrics home tiles.
+- `admin.int.spec.ts` +6 tests (22 total): list/detail/members, agency
+  immune to a lapsed trial (and 409 on payments), SaaS payment reactivates,
+  non-super-admin 403. `billing.int.spec.ts` still green (10).
+- **Ops:** after deploy, open Admin → Accounts → LA Mattress and click
+  **Mark as agency**. That alone lifts Julio's 402 permanently.
+- Follow-ups (PLAN §15.4): Stripe Billing → ledger, plan limits, self-serve
+  plan changes, resource quotas.

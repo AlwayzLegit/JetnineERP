@@ -10,6 +10,16 @@ interface Metrics {
   activeBusinesses: number;
   totalUsers: number;
   salesLast30Days: { count: number; grossCents: number };
+  accounts: { agency: number; saas: number };
+  subscriptions: {
+    active: number;
+    trial: number;
+    pastDue: number;
+    canceled: number;
+    readOnly: number;
+    trialsEndingWithin7d: number;
+  };
+  mrrCents: number;
 }
 
 export default function AdminMetricsPage() {
@@ -42,7 +52,26 @@ export default function AdminMetricsPage() {
   const sales = metrics.salesLast30Days;
   return (
     <div>
-      <PageHeader title="Platform metrics" sub="Every tenant on the platform" />
+      <PageHeader title="Platform metrics" sub="Every account on the platform" />
+      <StatGrid cols={4}>
+        <StatTile
+          label="Agency accounts"
+          value={metrics.accounts.agency}
+          sub="your own operation, never billed"
+        />
+        <StatTile
+          label="SaaS accounts"
+          value={metrics.accounts.saas}
+          sub={`${metrics.subscriptions.active} active · ${metrics.subscriptions.trial} on trial`}
+        />
+        <StatTile label="MRR" value={formatMoney(metrics.mrrCents)} sub="active SaaS plans" />
+        <StatTile
+          label="Needs attention"
+          value={metrics.subscriptions.readOnly}
+          sub={`${metrics.subscriptions.pastDue} past due · ${metrics.subscriptions.trialsEndingWithin7d} trials end in 7d`}
+        />
+      </StatGrid>
+      <div style={{ height: 16 }} />
       <StatGrid cols={4}>
         <StatTile label="Total businesses" value={metrics.totalBusinesses} />
         <StatTile

@@ -34,7 +34,7 @@ export default function SuperAdminLayout({ children }: { children: ReactNode }) 
             Metrics
           </Link>
           <Link href="/admin/businesses" style={navLink}>
-            Businesses
+            Accounts
           </Link>
           <Link href="/admin/templates" style={navLink}>
             Templates
