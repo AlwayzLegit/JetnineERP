@@ -4766,3 +4766,15 @@ becomes the place to manage those sub-accounts. Spec in `PLAN.md` §15.
   **Mark as agency**. That alone lifts Julio's 402 permanently.
 - Follow-ups (PLAN §15.4): Stripe Billing → ledger, plan limits, self-serve
   plan changes, resource quotas.
+
+### Checkpoint — 2026-09-06 (Render auto-deploy from `main`)
+
+Render's GitHub auto-deploy died with the repo rename (dashboard still points at
+`AlwayzLegit/JetnineERP` @ `claude/fix-latent-int-spec-failures`), and the old
+`deploy-api.yml` still targeted Fly.io and had failed on all 96 pushes to `main`.
+Replaced it with a Render deploy workflow: on API-touching pushes to `main` it
+repoints the service at this repo's `main` (via the Render API), starts a deploy,
+and fails the run unless Render reports `live`. **Ops:** add the `RENDER_API_KEY`
+repository secret; the first run after that fixes the dashboard drift for good.
+Fallback `RENDER_DEPLOY_HOOK_URL` is supported but cannot repoint or await.
+HANDOFF §2/§3 and README updated.

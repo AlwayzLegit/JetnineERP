@@ -66,7 +66,7 @@ After `pnpm dev`:
 ## Branches & deployments
 
 - `main` is always deployable. Trunk-based with short-lived feature branches; squash-merge.
-- Pushes to `main` deploy `apps/api` to Fly.io via `.github/workflows/deploy-api.yml` (requires `FLY_API_TOKEN`).
+- Pushes to `main` that touch the API deploy `apps/api` to Render via `.github/workflows/deploy-api.yml` (requires the `RENDER_API_KEY` secret; the workflow also repoints the service at this repo's `main` if the dashboard drifts).
 - `apps/web` is hosted on Vercel; PRs get preview deploys.
 
 ## Local services
@@ -90,7 +90,7 @@ Phase 0 (Epics 0.1, 0.2, 0.3) is complete:
 - ✅ `.env.example` files
 - ✅ GitHub Actions CI (lint, typecheck, test, build, format-check)
 - ✅ Drizzle migration drift check in CI
-- ✅ Fly.io deploy workflow for the API
+- ✅ Render deploy workflow for the API (superseded the original Fly.io one)
 - ✅ Vercel config for the web app
 - ✅ Pino logger with request-id middleware
 - ✅ Sentry SDK in both apps
