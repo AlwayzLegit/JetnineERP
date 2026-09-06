@@ -24,6 +24,7 @@ export const PERMISSIONS = {
   'products.update': 'Update products',
   'products.delete': 'Delete products',
   'products.cost.view': 'View product cost',
+  'products.merge': 'Relink sales to another product and retire listings',
   'categories.manage': 'Manage categories',
 
   'inventory.view': 'View inventory levels',

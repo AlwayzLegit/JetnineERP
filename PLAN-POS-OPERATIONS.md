@@ -758,6 +758,47 @@ specifies:
   module (schedule / time clock / timesheets — see
   `docs/PROPOSAL-staff-schedule.md`), the sign-in previews.
 
+### 12.14 Shopify listings cleanup (amendment A18, owner 2026-09-06)
+
+Owner ask: "for the products I need to come up with a plan to remove the ones that
+was imported from shopify. they are the products that have lowercase letters in them.
+also need to see which sales used the wrong products when they added the items and
+change them … give me a sheet with proposed change in the sales and i can confirm."
+
+- **Identification rule (owner's):** a product is a Shopify listing when its name
+  contains a lowercase letter (STORIS names are all upper-case) or its whole import
+  history is a connector batch (`import_batches.source` in shopify / woocommerce /
+  wix, read through `import_rows` — `legacy_refs.source` is last-writer and lies for
+  shared SKUs). Both reasons are reported per row.
+- **Crosswalk:** each Shopify listing is scored against the active STORIS listings
+  of the same size (size from the variant `group` attribute or the name; a Queen is
+  never proposed for a Cal King), by the share of its model words found in the
+  STORIS name / SKU, with firmness agreement and brand as nudges. A case-insensitive
+  SKU equality is certain. Top three alternates are shown; a proposal is pre-filled
+  at ≥ 50%.
+- **Surfaces:** `GET /v1/products/cleanup/shopify` (report), `…/shopify.csv?sheet=
+lines|products` (review sheets with `confirm` / `override_sku` / `adjust_stock`
+  columns), `POST …/shopify/apply` (`products.merge`, Owner + Manager; `dryRun`).
+  Page `/products/cleanup` ("Shopify cleanup" on Products): confirm on the page or
+  upload the filled sheet, preview (dry run), apply.
+- **Relink semantics:** a sale or order line moves to the chosen variant and takes
+  its description; price and totals never change. Refund / return lines on the
+  line follow. An open order's reservation moves with it (delta-0 movements, as the
+  order flow writes). "Move stock" (per line, pre-checked for register documents
+  dated after the last committed inventory import) hands the sold units back to the
+  Shopify SKU and takes them off the STORIS SKU as `adjustment` movements with
+  `reference_type = 'listing_relink'` pointing at the line. Imported (D8) documents
+  never move stock. Lines with picked serial units are refused until released.
+  Every relink is an audit entry (`sale_line.relink` / `order_line.relink`,
+  before/after with SKUs).
+- **Retire semantics:** deactivate keeps every document; delete is refused while the
+  listing holds stock or is referenced by any line table (sale, order, refund,
+  return, PO, transfer, as-is, write-off, serial, service, count) and removes the
+  product's `legacy_refs` so a later import cannot resurrect it.
+- **Not done here (still owner decisions, see `docs/HANDOFF-catalog-source-lockdown.md`):**
+  turning the Shopify product sync off (B1) and the import-lookup hardening (B2).
+  Until the connector is disconnected, "Sync now" recreates the listings.
+
 ### 12.3 Cashier dashboard — "My Day" (amendment A7, owner 2026-09-01)
 
 Fixed by role, like Operations and Warehouse: `cashier.dashboard.view` is the

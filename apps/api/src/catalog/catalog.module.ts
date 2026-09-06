@@ -3,6 +3,7 @@ import { AuditModule } from '../audit/audit.module';
 import { AuthModule } from '../auth/auth.module';
 import { TenancyModule } from '../tenancy/tenancy.module';
 import { BrandsController, CollectionsController } from './brands.controller';
+import { CatalogCleanupController } from './catalog-cleanup.controller';
 import { CategoriesController } from './categories.controller';
 import { CsvImportController } from './csv-import.controller';
 import { ImagesController } from './images.controller';
@@ -15,6 +16,7 @@ import { VariantsController } from './variants.controller';
     BrandsController,
     CollectionsController,
     CategoriesController,
+    CatalogCleanupController,
     CatalogProductsController,
     VariantsController,
     ImagesController,

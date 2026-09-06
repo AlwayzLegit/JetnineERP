@@ -4826,3 +4826,26 @@ register-facing subset — name, currency, tax, receipt header/footer, branding
 and the non-sensitive ops keys (fee, invoice notes, delivery caps, returns,
 price-variance) — and those four consumers now use it. `business.int.spec.ts`
 +1: owner sets 1800 → cashier gets 403 on full settings, 200 + 1800 on `/pos`.
+
+### Checkpoint — 2026-09-06 (Shopify listings cleanup — A18)
+
+Owner ask: a plan to remove the Shopify-imported products (the ones with
+lowercase letters in the name), find the sales rung on them, and a sheet of
+proposed corrections to confirm. Built as a self-serve slice because the
+production database is unreachable from a sandbox — the owner generates,
+confirms and applies the sheet in the app (PLAN-POS-OPERATIONS §12.14).
+
+- `apps/api/src/catalog/listing-match.ts`: size / firmness / model-word
+  crosswalk between Shopify names and STORIS listings (unit-tested).
+- `catalog-cleanup.controller.ts`: report, two CSV sheets, `apply` with dry
+  run; relinks sale / order lines (reservation + optional stock move, audit),
+  deactivates or deletes listings (full reference guard, legacy_refs
+  removed). New permission `products.merge` (Owner + Manager).
+- `/products/cleanup`: confirm on the page or upload the filled sheet →
+  preview → apply. `apps/api/test/catalog-cleanup.int.spec.ts` (10). CI
+  gets `jetnine_catalog_cleanup`.
+- **Ops (owner):** open Products → Shopify cleanup, download the sales
+  sheet, confirm rows (or confirm on the page), preview, apply; then retire
+  the listings. Disconnect the Shopify integration (or leave "Sync now"
+  alone) — the sync would recreate the listings; B1/B2 of the lockdown plan
+  are still open.
