@@ -23,7 +23,8 @@ import { isReadOnly, type SubscriptionStatus } from './subscription-state';
  * Pass-through rules:
  *  1. Non-tenant routes (no `req.tenant`): pass — guard targets per-
  *     business endpoints only.
- *  2. Super-admin: pass.
+ *  2. Super-admin: pass. Agency (house) accounts — PLAN §15 — also pass:
+ *     the platform owner runs them and they are never billed.
  *  3. GET requests: pass (read access stays open).
  *  4. /v1/billing/* and /v1/business/settings (so the user can see and
  *     update their plan / fix payment): pass.
@@ -45,6 +46,20 @@ export class SubscriptionGuard implements CanActivate {
     // locked-out user can still sign in cleanly.
     if (req.path.startsWith('/api/auth/')) return true;
 
+    const [biz] = await this.db
+      .select({
+        accountKind: schema.businesses.accountKind,
+        status: schema.businesses.status,
+        trialEndsAt: schema.businesses.trialEndsAt,
+      })
+      .from(schema.businesses)
+      .where(eq(schema.businesses.id, req.tenant.businessId))
+      .limit(1);
+    if (!biz) return true;
+    // PLAN §15: agency (house) accounts are operated by the platform
+    // owner and are never billed, so they never go read-only.
+    if (biz.accountKind === 'agency') return true;
+
     const [sub] = await this.db
       .select({
         status: schema.subscriptions.status,
@@ -58,15 +73,6 @@ export class SubscriptionGuard implements CanActivate {
       // No subscription record yet — fall back to the businesses.status
       // and trial_ends_at columns. A brand-new business without a
       // subscription row is treated as in-trial.
-      const [biz] = await this.db
-        .select({
-          status: schema.businesses.status,
-          trialEndsAt: schema.businesses.trialEndsAt,
-        })
-        .from(schema.businesses)
-        .where(eq(schema.businesses.id, req.tenant.businessId))
-        .limit(1);
-      if (!biz) return true;
       const status =
         biz.status === 'cancelled' || biz.status === 'suspended'
           ? 'past_due'

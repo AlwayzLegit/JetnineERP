@@ -69,6 +69,13 @@ export const businesses = pgTable(
     status: text('status').notNull(),
     plan: text('plan'),
     trialEndsAt: timestamp('trial_ends_at', { withTimezone: true }),
+    /**
+     * PLAN §15 account model. 'agency' = a business the platform owner
+     * operates directly (LA Mattress): never billed, never read-only,
+     * SubscriptionGuard passes it through. 'saas' = a paying tenant on
+     * the trial → plan lifecycle.
+     */
+    accountKind: text('account_kind').notNull().default('saas'),
     // Settings (Epic 1.6). Tax rate is stored in basis points so 250 = 2.5%
     // — keeps math integer and avoids float drift. Locations may override
     // via locations.tax_rate_bps.

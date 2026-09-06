@@ -18,28 +18,43 @@ import {
   StatusBadge,
   TableEmpty,
   TableWrap,
+  Toolbar,
 } from '@/components/ui';
+import { formatMoney } from '@jetnine/shared';
 import { api } from '@/lib/api';
+
+type AccountKind = 'agency' | 'saas';
 
 interface BusinessSummary {
   id: string;
   slug: string;
   name: string;
+  accountKind: AccountKind;
   status: string;
   plan: string | null;
+  subscriptionStatus: 'trial' | 'active' | 'past_due' | 'canceled';
+  trialEndsAt: string | null;
+  readOnly: boolean;
+  mrrCents: number;
   createdAt: string;
   userCount: number;
   locationCount: number;
   lastActivityAt: string | null;
+  lastPaidAt: string | null;
 }
+
+type KindFilter = 'all' | AccountKind;
+
+const KIND_LABEL: Record<AccountKind, string> = { agency: 'Agency', saas: 'SaaS' };
 
 export default function BusinessesPage() {
   const [rows, setRows] = useState<BusinessSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [filter, setFilter] = useState<KindFilter>('all');
 
   async function load() {
     try {
-      setRows(await api<BusinessSummary[]>('/v1/admin/businesses'));
+      setRows(await api<BusinessSummary[]>('/v1/admin/accounts'));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -49,26 +64,50 @@ export default function BusinessesPage() {
     void load();
   }, []);
 
+  const visible = rows?.filter((r) => filter === 'all' || r.accountKind === filter) ?? null;
+  const agencyCount = rows?.filter((r) => r.accountKind === 'agency').length ?? 0;
+  const saasCount = rows?.filter((r) => r.accountKind === 'saas').length ?? 0;
+  const mrrCents = rows?.reduce((sum, r) => sum + r.mrrCents, 0) ?? 0;
+
   return (
     <div>
-      <PageHeader title="Businesses" />
+      <PageHeader
+        title="Accounts"
+        sub="Agency accounts are your own operation (never billed). SaaS accounts are paying tenants."
+      />
       <Stack>
         <CreateBusinessForm onCreated={load} />
         {error && <Alert tone="error">{error}</Alert>}
         {!rows && !error && <LoadingRows />}
-        {rows && (
+        {rows && visible && (
           <Card
             flush
-            title="All businesses"
-            description={`${rows.length} ${rows.length === 1 ? 'tenant' : 'tenants'}`}
+            title="All accounts"
+            description={`${agencyCount} agency · ${saasCount} SaaS · ${formatMoney(mrrCents)}/mo MRR`}
+            actions={
+              <Toolbar>
+                {(['all', 'agency', 'saas'] as KindFilter[]).map((k) => (
+                  <Button
+                    key={k}
+                    size="sm"
+                    variant={filter === k ? 'primary' : 'secondary'}
+                    onClick={() => setFilter(k)}
+                  >
+                    {k === 'all' ? 'All' : KIND_LABEL[k]}
+                  </Button>
+                ))}
+              </Toolbar>
+            }
           >
             <TableWrap>
               <table data-testid="businesses-table" className="table">
                 <thead>
                   <tr>
                     <th>Name</th>
-                    <th>Slug</th>
-                    <th>Status</th>
+                    <th>Kind</th>
+                    <th>Plan</th>
+                    <th>Subscription</th>
+                    <th className="num">MRR</th>
                     <th className="num">Users</th>
                     <th className="num">Locations</th>
                     <th>Last activity</th>
@@ -76,10 +115,14 @@ export default function BusinessesPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.length === 0 && (
-                    <TableEmpty colSpan={7}>No businesses yet. Create one above.</TableEmpty>
+                  {visible.length === 0 && (
+                    <TableEmpty colSpan={9}>
+                      {rows.length === 0
+                        ? 'No accounts yet. Create one above.'
+                        : 'No accounts of this kind.'}
+                    </TableEmpty>
                   )}
-                  {rows.map((b) => (
+                  {visible.map((b) => (
                     <BusinessRow key={b.id} business={b} onChanged={load} />
                   ))}
                 </tbody>
@@ -192,13 +235,33 @@ function BusinessRow({
     <tr>
       <td>
         <strong>{business.name}</strong>
+        <div className="muted">
+          <code>{business.slug}</code>
+        </div>
       </td>
       <td>
-        <code>{business.slug}</code>
+        <span
+          className={`badge ${business.accountKind === 'agency' ? 'badge-brand' : 'badge-neutral'}`}
+        >
+          {KIND_LABEL[business.accountKind]}
+        </span>
       </td>
       <td>
-        <StatusBadge status={business.status} />
+        {business.accountKind === 'agency' ? (
+          <span className="muted">house</span>
+        ) : (
+          (business.plan ?? '—')
+        )}
       </td>
+      <td>
+        <StatusBadge status={business.subscriptionStatus} />
+        {business.readOnly && (
+          <span className="badge badge-danger" style={{ marginLeft: 6 }}>
+            read-only
+          </span>
+        )}
+      </td>
+      <td className="num">{business.mrrCents ? formatMoney(business.mrrCents) : '—'}</td>
       <td className="num">{business.userCount}</td>
       <td className="num">{business.locationCount}</td>
       <td>

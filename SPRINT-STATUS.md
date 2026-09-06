@@ -4712,3 +4712,57 @@ design files are follow-ups. PLAN §12.13 (A17).
   offline. Theme / density live per browser under the avatar menu.
 - Open: the catalog-source lockdown plan (`docs/HANDOFF-catalog-source-lockdown.md`)
   and the staff schedule proposal await owner approval.
+
+### Checkpoint — 2026-09-06 (trial expiry lockout: super-admin plan activation)
+
+The LA Mattress business's 14-day trial lapsed on 2026-09-05; from 6:32 PM
+Pacific every POS write from a non-super-admin session (Julio) returned
+402 "Subscription required" from `SubscriptionGuard`. The Billing page
+has no subscribe control (self-serve is paused) and the super-admin
+status toggle only wrote `businesses.status`, while the guard reads the
+`subscriptions` row first — so there was no working way to unblock.
+
+- `PATCH /v1/admin/businesses/:id/subscription` `{ plan }` puts a
+  business on Starter/Pro as `active` with `trial_ends_at`,
+  `current_period_end` and `cancel_at_period_end` cleared — no end date —
+  and mirrors `businesses.status/plan`. `GET …/subscription` returns the
+  guard's view (`readOnly`). Audit action `business.subscription.activate`.
+- `PATCH …/status` now mirrors onto `subscriptions.status`
+  (active/trial/suspended→past_due/cancelled→canceled) so Suspend /
+  Unsuspend on the admin list actually take effect.
+- Super-admin business page gained a Subscription card (state, read-only
+  warning, plan select, "Activate plan (no end date)").
+- `admin.int.spec.ts` +5 tests (16 total): expired trial → 402 for the
+  owner, activation → 201 again, invalid plan → 400, non-super-admin → 403.
+- **Ops:** after deploy, open Admin → Businesses → LA Mattress and click
+  Activate plan; Julio's POS resumes immediately, no re-login needed.
+
+### Checkpoint — 2026-09-06 (PLAN §15: agency vs SaaS account model + owner console)
+
+Owner decision: LA Mattress stores are the owner's own operation (an
+**agency** account — never billed, never read-only); every other business
+is a **SaaS** account on the trial → plan lifecycle. The super-admin console
+becomes the place to manage those sub-accounts. Spec in `PLAN.md` §15.
+
+- Schema: `businesses.account_kind` ('agency' | 'saas', default saas) and
+  `subscription_payments` (platform-billing ledger, RLS) — migration
+  `0087_account_kind_subscription_payments`.
+- `SubscriptionGuard` passes agency accounts unconditionally;
+  `GET /v1/billing/subscription` reports `accountKind` and `readOnly=false`
+  for them.
+- `/v1/admin/accounts`: list (kind filter, subscription state, `readOnly`,
+  MRR, users, locations, last activity / payment), detail (subscription,
+  resource usage, payments summary), `PATCH :id/kind`, `GET :id/members`,
+  `GET|POST :id/payments` (a paid entry reactivates the subscription and
+  stamps the covered period). `/v1/admin/metrics` adds account counts by
+  kind, subscription state counts, MRR, trials ending within 7 days.
+- Console: nav "Accounts"; list with kind filter + MRR; account page with
+  Account kind (toggle), Resources, Subscription (activate plan), Users
+  (impersonate), Payments (ledger + record form); metrics home tiles.
+- `admin.int.spec.ts` +6 tests (22 total): list/detail/members, agency
+  immune to a lapsed trial (and 409 on payments), SaaS payment reactivates,
+  non-super-admin 403. `billing.int.spec.ts` still green (10).
+- **Ops:** after deploy, open Admin → Accounts → LA Mattress and click
+  **Mark as agency**. That alone lifts Julio's 402 permanently.
+- Follow-ups (PLAN §15.4): Stripe Billing → ledger, plan limits, self-serve
+  plan changes, resource quotas.

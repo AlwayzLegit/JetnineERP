@@ -610,6 +610,13 @@
       "when": 1788403205471,
       "tag": "0086_inventory_level_reorder_point",
       "breakpoints": true
+    },
+    {
+      "idx": 87,
+      "version": "7",
+      "when": 1788707263524,
+      "tag": "0087_account_kind_subscription_payments",
+      "breakpoints": true
     }
   ]
 }

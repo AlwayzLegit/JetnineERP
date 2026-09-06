@@ -1,5 +1,5 @@
 import { index, integer, pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
-import { businesses } from './platform';
+import { businesses, users } from './platform';
 
 /**
  * Per-business subscription record. One row per business. Stripe is the
@@ -40,5 +40,42 @@ export const subscriptions = pgTable(
   (t) => ({
     businessUnique: uniqueIndex('subscriptions_business_id_uniq').on(t.businessId),
     statusIdx: index('subscriptions_status_idx').on(t.status),
+  }),
+);
+
+/**
+ * Platform-billing ledger: one row per payment (or attempted payment)
+ * a SaaS account made toward its subscription. Recorded by a super admin
+ * from the accounts console today (manual / comped); the Stripe Billing
+ * webhook writes `method = 'stripe'` rows once wired. Agency accounts
+ * (PLAN §15) never get rows here.
+ */
+export const subscriptionPayments = pgTable(
+  'subscription_payments',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    businessId: uuid('business_id')
+      .notNull()
+      .references(() => businesses.id, { onDelete: 'cascade' }),
+    amountCents: integer('amount_cents').notNull(),
+    currencyCode: text('currency_code').notNull().default('USD'),
+    // 'paid' | 'failed' | 'refunded'
+    status: text('status').notNull(),
+    // 'manual' | 'stripe' | 'comp'
+    method: text('method').notNull(),
+    periodStart: timestamp('period_start', { withTimezone: true }),
+    periodEnd: timestamp('period_end', { withTimezone: true }),
+    /** Check number, Stripe invoice id, bank reference. */
+    reference: text('reference'),
+    note: text('note'),
+    recordedByUserId: uuid('recorded_by_user_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+    paidAt: timestamp('paid_at', { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    businessIdx: index('subscription_payments_business_id_idx').on(t.businessId),
+    businessPaidIdx: index('subscription_payments_business_paid_at_idx').on(t.businessId, t.paidAt),
   }),
 );

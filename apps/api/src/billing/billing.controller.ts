@@ -23,6 +23,8 @@ import { isReadOnly } from './subscription-state';
 
 interface SubscriptionView {
   id: string;
+  /** PLAN §15: 'agency' house accounts are never billed or read-only. */
+  accountKind: 'agency' | 'saas';
   plan: PlanId;
   status: 'trial' | 'active' | 'past_due' | 'canceled';
   trialEndsAt: Date | null;
@@ -256,11 +258,13 @@ export class BillingController {
         status: schema.businesses.status,
         plan: schema.businesses.plan,
         trialEndsAt: schema.businesses.trialEndsAt,
+        accountKind: schema.businesses.accountKind,
       })
       .from(schema.businesses)
       .where(eq(schema.businesses.id, businessId))
       .limit(1);
     if (!biz) throw new NotFoundException('Business not found');
+    const accountKind = biz.accountKind === 'agency' ? 'agency' : 'saas';
 
     const locationCount = await this.locationCount(businessId);
     const trialEndsAt = sub?.trialEndsAt ?? biz.trialEndsAt;
@@ -274,6 +278,7 @@ export class BillingController {
 
     return {
       id: sub?.id ?? '',
+      accountKind,
       plan,
       status,
       trialEndsAt: trialEndsAt ?? null,
@@ -284,7 +289,7 @@ export class BillingController {
       locationCount,
       monthlyPriceCents: monthlyPriceCents(plan, locationCount),
       cancelAtPeriodEnd: sub?.cancelAtPeriodEnd ?? null,
-      readOnly: isReadOnly(status, trialEndsAt),
+      readOnly: accountKind === 'agency' ? false : isReadOnly(status, trialEndsAt),
     };
   }
 
