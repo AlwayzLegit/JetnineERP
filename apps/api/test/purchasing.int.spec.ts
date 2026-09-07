@@ -16,11 +16,13 @@ import { and, eq } from 'drizzle-orm';
 import postgres from 'postgres';
 import request from 'supertest';
 import { Test } from '@nestjs/testing';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { INestApplication } from '@nestjs/common';
 import { schema } from '@jetnine/db';
 import { SYSTEM_ROLES } from '@jetnine/shared';
 import { AppModule } from '../src/app.module';
+import { JOB_REGISTRY } from '../src/jobs/jobs.service';
+import { GlDerivationService } from '../src/gl/gl-derivation.service';
 
 const TEST_DB_URL =
   process.env.PURCHASING_TEST_DATABASE_URL ??
@@ -41,16 +43,24 @@ let ownerCookie = '';
 
 async function resetTestDb() {
   const env = { ...process.env, DATABASE_URL: TEST_DB_URL };
-  execFileSync('pnpm', ['exec', 'tsx', 'src/reset.ts'], {
-    cwd: dbPackageRoot,
-    env,
-    stdio: 'inherit',
-  });
-  execFileSync('pnpm', ['exec', 'tsx', 'src/migrate.ts'], {
-    cwd: dbPackageRoot,
-    env,
-    stdio: 'inherit',
-  });
+  execFileSync(
+    process.execPath,
+    [join(dbPackageRoot, 'node_modules/tsx/dist/cli.mjs'), 'src/reset.ts'],
+    {
+      cwd: dbPackageRoot,
+      env,
+      stdio: 'inherit',
+    },
+  );
+  execFileSync(
+    process.execPath,
+    [join(dbPackageRoot, 'node_modules/tsx/dist/cli.mjs'), 'src/migrate.ts'],
+    {
+      cwd: dbPackageRoot,
+      env,
+      stdio: 'inherit',
+    },
+  );
 }
 
 async function seed() {
@@ -1399,7 +1409,122 @@ describe('Nightly batch runner (EOD-001 / JOB-002)', () => {
     expect((runs.body as { jobId: string }[]).length).toBe(6);
   });
 
-  it('with the gate off, auto_replenishment succeeds as a no-op', async () => {
+  it('resumes legacy GL successes with unresolved groups, then skips the completed date', async () => {
+    const retryDate = '2040-02-01';
+    const connection = postgres(TEST_DB_URL, { max: 1, prepare: false });
+    try {
+      await drizzle(connection)
+        .insert(schema.jobRuns)
+        .values(
+          JOB_REGISTRY.map((job) => ({
+            businessId,
+            jobId: job.id,
+            businessDate: retryDate,
+            status: 'succeeded',
+            detailJson: JSON.stringify(
+              job.id === 'gl_derivation'
+                ? {
+                    posted: [{ family: 'pos_sales', batchNumber: 'TEST-ALREADY', debitCents: 100 }],
+                    skipped: [
+                      { family: 'order_money_in', reason: 'unmapped system key(s): cash_bank' },
+                    ],
+                  }
+                : {},
+            ),
+          })),
+        );
+    } finally {
+      await connection.end({ timeout: 5 });
+    }
+    const before = await asOwner().get(`/v1/jobs/runs?date=${retryDate}`);
+    expect(
+      before.body.find((row: { jobId: string }) => row.jobId === 'gl_derivation'),
+    ).toMatchObject({
+      status: 'partial',
+      retryable: true,
+      actionHref: '/gl',
+    });
+    // Accounting derivation has its own tests. This exercises persistence,
+    // legacy status interpretation, and dispatch/retry through the HTTP API.
+    const derive = vi.spyOn(app.get(GlDerivationService), 'derive').mockResolvedValue({
+      posted: [{ family: 'order_money_in', batchNumber: 'TEST-RESUMED', debitCents: 200 }],
+      skipped: [{ family: 'pos_sales', reason: 'already derived for this date' }],
+    });
+    try {
+      const resumed = await asOwner()
+        .post('/v1/jobs/run')
+        .send({ businessDate: retryDate })
+        .expect(201);
+      expect(
+        resumed.body.results.find((row: { jobId: string }) => row.jobId === 'gl_derivation')
+          ?.status,
+      ).toBe('succeeded');
+      const again = await asOwner()
+        .post('/v1/jobs/run')
+        .send({ businessDate: retryDate })
+        .expect(201);
+      expect(
+        again.body.results.every((row: { status: string }) => row.status === 'already_ran'),
+      ).toBe(true);
+      expect(derive).toHaveBeenCalledTimes(1);
+      const after = await asOwner().get(`/v1/jobs/runs?date=${retryDate}`);
+      expect(
+        after.body.find((row: { jobId: string }) => row.jobId === 'gl_derivation'),
+      ).toMatchObject({
+        status: 'succeeded',
+        retryable: false,
+      });
+    } finally {
+      derive.mockRestore();
+    }
+  });
+
+  it('a deleted draft does not suppress automatic replenishment', async () => {
+    const vendor = await asOwner()
+      .post('/v1/vendors')
+      .send({ name: 'Deleted Draft Vendor' })
+      .expect(201);
+    const product = await asOwner()
+      .post('/v1/products')
+      .send({
+        name: 'Deleted Draft Mattress',
+        sku: 'DELETED-DRAFT',
+        variants: [{ sku: 'DELETED-DRAFT-1', priceCents: 79900, costCents: 25000 }],
+      })
+      .expect(201);
+    const variantId = product.body.variants[0].id;
+    await asOwner()
+      .patch(`/v1/products/variants/${variantId}/reorder`)
+      .send({
+        reorderPoint: 4,
+        reorderQty: 6,
+        preferredVendorId: vendor.body.id,
+      })
+      .expect(200);
+    const oldDraft = await asOwner()
+      .post('/v1/purchase-orders')
+      .send({
+        vendorId: vendor.body.id,
+        locationId,
+        place: false,
+        lines: [{ variantId, quantity: 6, unitCostCents: 25000 }],
+      })
+      .expect(201);
+    await request(app.getHttpServer())
+      .delete(`/v1/purchase-orders/${oldDraft.body.id}`)
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .expect(200);
+    await asOwner().post('/v1/jobs/run').send({ businessDate: '2040-02-02' }).expect(201);
+    const pos = await asOwner().get('/v1/purchase-orders?status=draft');
+    const drafts = (pos.body.data as { id: string; vendorId: string }[]).filter(
+      (po) => po.vendorId === vendor.body.id,
+    );
+    expect(drafts).toHaveLength(1);
+    expect(drafts[0]!.id).not.toBe(oldDraft.body.id);
+  });
+
+  it('with the gate off, auto_replenishment reports disabled', async () => {
     await asOwner()
       .patch('/v1/business/settings')
       .send({ ops: { autoReplenishmentEnabled: null } })
@@ -1409,7 +1534,7 @@ describe('Nightly batch runner (EOD-001 / JOB-002)', () => {
     const repl = (run.body.results as { jobId: string; status: string }[]).find(
       (r) => r.jobId === 'auto_replenishment',
     );
-    expect(repl?.status).toBe('succeeded');
+    expect(repl?.status).toBe('disabled');
     const pos = await asOwner().get('/v1/purchase-orders?status=draft');
     expect(
       (pos.body.data as { vendorId: string }[]).filter((p) => p.vendorId === nightlyVendorId),

@@ -43,16 +43,24 @@ let scopedMembershipId = '';
 
 async function resetTestDb() {
   const env = { ...process.env, DATABASE_URL: TEST_DB_URL };
-  execFileSync('pnpm', ['exec', 'tsx', 'src/reset.ts'], {
-    cwd: dbPackageRoot,
-    env,
-    stdio: 'inherit',
-  });
-  execFileSync('pnpm', ['exec', 'tsx', 'src/migrate.ts'], {
-    cwd: dbPackageRoot,
-    env,
-    stdio: 'inherit',
-  });
+  execFileSync(
+    process.execPath,
+    [join(dbPackageRoot, 'node_modules/tsx/dist/cli.mjs'), 'src/reset.ts'],
+    {
+      cwd: dbPackageRoot,
+      env,
+      stdio: 'inherit',
+    },
+  );
+  execFileSync(
+    process.execPath,
+    [join(dbPackageRoot, 'node_modules/tsx/dist/cli.mjs'), 'src/migrate.ts'],
+    {
+      cwd: dbPackageRoot,
+      env,
+      stdio: 'inherit',
+    },
+  );
 }
 
 async function seed() {
@@ -815,6 +823,68 @@ describe('Sales Views — delivery dates in jeopardy', () => {
         totalCents: 500,
       });
 
+      // Custom charges and direct shipments are not warehouse stock risks.
+      // Supply must follow the stock source, while access follows the selling store.
+      const fixtures = [
+        { number: 'JEO-CUSTOM', lineType: 'custom', variantId: null },
+        { number: 'JEO-DIRECT', lineType: 'direct_ship', variantId: variantAId },
+        {
+          number: 'JEO-LINE-DIRECT',
+          lineType: 'stock',
+          variantId: variantAId,
+          fulfillmentMethod: 'direct_ship',
+        },
+        {
+          number: 'JEO-ORDER-DIRECT',
+          lineType: 'stock',
+          variantId: variantAId,
+          fulfillmentType: 'direct_ship',
+        },
+        { number: 'JEO-UNLINKED', lineType: 'stock', variantId: null },
+        {
+          number: 'JEO-SOURCE-COVERED',
+          lineType: 'stock',
+          variantId: variantBId,
+          sellingLocationId: annexLocationId,
+          stockLocationId: locationId,
+        },
+        {
+          number: 'JEO-SOURCE-SHORT',
+          lineType: 'stock',
+          variantId: variantBId,
+          stockLocationId: locationId,
+          sourceLocationId: annexLocationId,
+        },
+      ];
+      for (const fixture of fixtures) {
+        const [order] = await db
+          .insert(schema.orders)
+          .values({
+            businessId,
+            locationId: fixture.sellingLocationId ?? locationId,
+            stockLocationId: fixture.stockLocationId,
+            customerId: cust!.id,
+            number: fixture.number,
+            status: 'open',
+            requestedDate: iso(20),
+            totalCents: 500,
+            fulfillmentType: fixture.fulfillmentType ?? 'delivery',
+          })
+          .returning();
+        await db.insert(schema.orderLines).values({
+          businessId,
+          orderId: order!.id,
+          variantId: fixture.variantId,
+          lineType: fixture.lineType,
+          fulfillmentMethod: fixture.fulfillmentMethod,
+          sourceLocationId: fixture.sourceLocationId,
+          description: 'Original item description',
+          quantity: 1,
+          unitPriceCents: 500,
+          totalCents: 500,
+        });
+      }
+
       const [vendor] = await db
         .insert(schema.vendors)
         .values({ businessId, name: 'Jeopardy Vendor' })
@@ -868,6 +938,32 @@ describe('Sales Views — delivery dates in jeopardy', () => {
 
     // Covered: PO arrives day +10, promise is day +20 — not in the queue.
     expect(byOrder.get('JEO-3')).toBeUndefined();
+  });
+
+  it('excludes non-warehouse lines, preserves unlinked descriptions, and checks the actual source', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/v1/reports/delivery-jeopardy?horizonDays=60')
+      .set('Cookie', ownerCookie)
+      .set('X-Business-Id', businessId)
+      .expect(200);
+    const rows = res.body.rows as {
+      orderNumber: string;
+      productName: string;
+      risk: string;
+      locationId: string;
+    }[];
+    const byOrder = new Map(rows.map((row) => [row.orderNumber, row]));
+    for (const number of [
+      'JEO-CUSTOM',
+      'JEO-DIRECT',
+      'JEO-LINE-DIRECT',
+      'JEO-ORDER-DIRECT',
+      'JEO-SOURCE-COVERED',
+    ]) {
+      expect(byOrder.has(number)).toBe(false);
+    }
+    expect(byOrder.get('JEO-UNLINKED')?.productName).toBe('Original item description');
+    expect(byOrder.get('JEO-SOURCE-SHORT')).toMatchObject({ risk: 'no_supply', locationId });
   });
 
   it('horizon bounds the list', async () => {
