@@ -20,6 +20,24 @@
 | A7  | **Cashier gets its own home, "My Day"** (owner 2026-09-01). Permission `cashier.dashboard.view` on the Cashier role; ten cards about the signed-in seller's own day and the store they are standing in. Login still lands on New Sale (§4) — the dashboard serves selling, never replaces it. Customer address entry autofills city/state from the ZIP. Detail in §12.3. |
 | A8  | **Orders carry a notes thread** (owner 2026-09-01). Anyone who can see an order (`orders.view`) can leave a note on it; each note keeps its author and time, is append-only, and lands in the order's change history. The order's `notes` / `internal_notes` fields stay the printed and customer-facing text.                                                           |
 
+### Team workflow extension (owner request 2026-09-06)
+
+Extend order notes with named recipients and add shared order tasks. Members with
+`orders.view` can collaborate only on orders within their existing data scope.
+Tasks have an owner, due date, priority and Open / In progress / Blocked / Done
+status; updates stay in the order audit history. An assignment must name an active
+member who can see that order. Reassigning provides coverage when someone is away.
+The Team Tasks page offers My tasks, Team, Overdue, Blocked, Needs owner and
+Completed queues.
+
+A personal in-app inbox receives assignments, task changes, selected note updates
+and relevant order changes. Read state is stored per member and business, across
+devices. The existing owner order-change feed remains available separately.
+Nightly overdue reminders are deduplicated per task deadline and recipient.
+This collaboration slice uses internal notifications and audit events; it adds no
+outbound webhook, email or SMS delivery. It does not change order money, stock or
+fulfillment.
+
 ## 1. Locations & Order Numbering
 
 Store prefixes (final, no duplicates): WH Warehouse · SC Studio City · WL West LA ·

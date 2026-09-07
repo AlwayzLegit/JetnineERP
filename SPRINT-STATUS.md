@@ -4878,3 +4878,28 @@ Owner requested implementation after a live workflow review. First patch:
 - No schema migration or live data changes. Full CI and deployment are pending
   review. Remaining work is recorded in `docs/erp-workflow-reliability.md`,
   including explicit fee-item classification and shared member tasks/updates.
+
+### Checkpoint — 2026-09-06 (shared order tasks and personal inbox — review branch)
+
+- Added Team Tasks in the navigation and on every order: named owners, local-time
+  deadlines, priority, descriptions and Open / In progress / Blocked / Done status.
+  Queues expose personal, team, overdue, blocked, unassigned and completed work.
+- Order notes can notify named members. Open-task owners and creators receive
+  related notes and order/delivery changes; actors do not receive their own alerts.
+  The personal inbox stores read state per membership across devices. The existing
+  owner order-change feed remains a separate view.
+- Nightly overdue reminders deduplicate by task deadline and recipient. Repeated
+  saves without changes do not notify again; version checks reject stale edits.
+- Migration `0088_team_workflows` adds tasks, notifications and note recipients.
+  Both new tenant tables have RLS; API reads additionally enforce order/store
+  access and assignments check active membership and effective permissions.
+- Validation: 399 backend tests across 22 suites, API/web typechecks, API lint,
+  API/web production builds and migration generation without drift. Browser QA on
+  isolated data covers task creation, native deadline entry, blocked/completed
+  queues and inbox read persistence. Added a full two-member browser regression
+  for CI. Full CI remains the publication gate.
+- PR #145's earlier reliability fixes are now merged (`6cd3983`) and deployed.
+  This new collaboration slice is for review and is not deployed. Deployment must
+  apply the API migration before the new web features are considered available.
+  Explicit fee classification and readiness/customer-message automation remain
+  subsequent slices; no live data or external messages changed during this work.
