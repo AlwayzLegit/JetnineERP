@@ -499,6 +499,8 @@ const STATUS_TONES: Record<string, string> = {
   paid: 'success',
   active: 'success',
   succeeded: 'success',
+  blocked: 'danger',
+  partial: 'warning',
   valid: 'success',
   committed: 'success',
   scheduled: 'info',
