@@ -4854,3 +4854,23 @@ confirms and applies the sheet in the app (PLAN-POS-OPERATIONS §12.14).
   the listings and reset the Shopify prices. Disconnect the Shopify integration (or leave "Sync now"
   alone) — the sync would recreate the listings; B1/B2 of the lockdown plan
   are still open.
+
+### Checkpoint — 2026-09-07 (untaxed services: "Power base installation needs to be non taxed")
+
+Owner screenshot: New Sale taxing POWER BASE INSTALLATION. The written
+order already honours the product's tax class (a 0% class → the line
+carries `tax_rate_bps 0`), but the register preview taxed every product
+line at the store rate and the Add Product search never said what a
+product's own rate was.
+
+- `/v1/pos/product-search` rows gain `taxRateBps`: the tax-class override
+  for the selling store, else the class fallback, else null (store rate).
+- New Sale keeps `taxRateBps` per line (from the search row; a reopened
+  draft takes the written line's rate, refreshed by the availability
+  re-check), and its tax preview mirrors `sales/totals.ts`: per-line rate
+  on net less the line's pro-rata share of the order discount. The Tax
+  row says how many lines are untaxed.
+- `product-filters.int.spec.ts` +1 (0% class, store override, no class).
+- **Ops (owner):** Settings → Tax classes → add "Non-taxable" at 0.00%,
+  then on each service product (Power base installation, …) set Tax
+  class to it. Nothing else to configure.
