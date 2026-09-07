@@ -1320,6 +1320,7 @@ describe('Nightly batch runner (EOD-001 / JOB-002)', () => {
       'auto_replenishment',
       'sales_rate_replenishment',
       'transfer_aging',
+      'task_overdue_reminders',
       'report_builder_schedule',
       'gl_derivation',
     ]);
@@ -1406,7 +1407,9 @@ describe('Nightly batch runner (EOD-001 / JOB-002)', () => {
     // The run report shows every step with duration and records.
     const runs = await asOwner().get(`/v1/jobs/runs?date=${businessDate}`);
     expect(runs.status).toBe(200);
-    expect((runs.body as { jobId: string }[]).length).toBe(6);
+    expect((runs.body as { jobId: string }[]).map((row) => row.jobId).sort()).toEqual(
+      JOB_REGISTRY.map((job) => job.id).sort(),
+    );
   });
 
   it('resumes legacy GL successes with unresolved groups, then skips the completed date', async () => {
