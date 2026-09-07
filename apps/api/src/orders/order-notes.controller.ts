@@ -11,6 +11,8 @@ import {
 import { and, desc, eq } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { schema } from '@jetnine/db';
+import { orderNoteInputSchema } from '@jetnine/shared';
+import { notifyMembers, orderTeam, taskCollaborators } from './collaboration';
 import { AuditService } from '../audit/audit.service';
 import { CurrentTenant } from '../auth/current-user.decorator';
 import { salesScopeCond } from '../common/sales-scope';
@@ -27,9 +29,8 @@ export interface OrderNoteRow {
   authorEmail: string | null;
   /** True when the signed-in member wrote it. */
   mine: boolean;
+  mentionedMembershipIds: string[];
 }
-
-const MAX_BODY = 4000;
 
 /**
  * Order notes (owner ask 2026-09-01): a running conversation on the
@@ -57,6 +58,7 @@ export class OrderNotesController {
       .select({
         id: schema.orderNotes.id,
         body: schema.orderNotes.body,
+        mentionedMembershipIds: schema.orderNotes.mentionedMembershipIds,
         createdAt: schema.orderNotes.createdAt,
         authorMembershipId: schema.orderNotes.authorMembershipId,
         authorName: schema.users.name,
@@ -81,13 +83,20 @@ export class OrderNotesController {
   async add(
     @CurrentTenant() tenant: RequestTenantContext,
     @Param('id') id: string,
-    @Body() body: { body?: string },
+    @Body() body: unknown,
   ): Promise<OrderNoteRow> {
     const order = await this.requireOrder(tenant, id);
-    const text = (body?.body ?? '').trim();
-    if (!text) throw new BadRequestException('Write something before saving the note');
-    if (text.length > MAX_BODY) {
-      throw new BadRequestException(`A note can be at most ${MAX_BODY} characters`);
+    const parsed = orderNoteInputSchema.safeParse(body);
+    if (!parsed.success)
+      throw new BadRequestException(
+        'Write a note of 1–4000 characters and choose valid recipients',
+      );
+    const text = parsed.data.body;
+    const mentionedMembershipIds = [...new Set(parsed.data.mentionedMembershipIds)];
+    if (mentionedMembershipIds.length) {
+      const team = await orderTeam(this.db, tenant.businessId!, order.locationId);
+      if (mentionedMembershipIds.some((id) => !team.some((m) => m.id === id)))
+        throw new BadRequestException('Choose active members who can see this order');
     }
     const [note] = await this.db
       .insert(schema.orderNotes)
@@ -96,6 +105,7 @@ export class OrderNotesController {
         orderId: id,
         authorMembershipId: tenant.membershipId ?? null,
         body: text,
+        mentionedMembershipIds,
       })
       .returning();
     await this.audit.log({
@@ -103,6 +113,21 @@ export class OrderNotesController {
       targetType: 'order',
       targetId: id,
       after: { number: order.number, noteId: note!.id, preview: text.slice(0, 120) },
+    });
+    await notifyMembers(this.db, {
+      businessId: tenant.businessId!,
+      orderId: id,
+      locationId: order.locationId,
+      recipients: [
+        ...mentionedMembershipIds,
+        ...(await taskCollaborators(this.db, tenant.businessId!, id)),
+      ],
+      actorMembershipId: tenant.membershipId,
+      eventKey: `note:${note!.id}`,
+      kind: 'order_note',
+      title: 'New order note',
+      message: text.slice(0, 240),
+      noteId: note!.id,
     });
     const [me] = tenant.userId
       ? await this.db
@@ -119,13 +144,18 @@ export class OrderNotesController {
       authorName: me?.name ?? null,
       authorEmail: me?.email ?? null,
       mine: note!.authorMembershipId != null,
+      mentionedMembershipIds,
     };
   }
 
   /** The order must exist and be inside the member's store scope. */
   private async requireOrder(tenant: RequestTenantContext, id: string) {
     const [order] = await this.db
-      .select({ id: schema.orders.id, number: schema.orders.number })
+      .select({
+        id: schema.orders.id,
+        number: schema.orders.number,
+        locationId: schema.orders.locationId,
+      })
       .from(schema.orders)
       .where(
         and(
