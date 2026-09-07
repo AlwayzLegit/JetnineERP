@@ -20,6 +20,7 @@ import { ReplenishmentRunService } from '../purchasing/replenishment.controller'
 import { executeReportRun } from '../report-builder/report-runner';
 import { getSource } from '../report-builder/report-sources';
 import { jobHealth, parseJobDetail } from './job-health';
+import { remindOverdueTasks } from '../orders/collaboration';
 
 /** The declared step list (JOB-002): the operator can always see it. */
 export interface JobDefinition {
@@ -35,6 +36,15 @@ export interface JobDefinition {
 }
 
 export const JOB_REGISTRY: JobDefinition[] = [
+  {
+    id: 'task_overdue_reminders',
+    name: 'Overdue team tasks',
+    description:
+      'Notifies the task owner and creator when an open task is overdue. One reminder per deadline and recipient; completed tasks are excluded.',
+    order: 50,
+    dependsOn: [],
+    destructive: false,
+  },
   {
     id: 'po_overdue_sweep',
     name: 'Overdue purchase orders',
@@ -296,6 +306,11 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
 
   private dispatch(jobId: string, businessId: string, businessDate: string): Promise<JobOutcome> {
     switch (jobId) {
+      case 'task_overdue_reminders':
+        return remindOverdueTasks(this.rootDb, businessId).then((sent) => ({
+          recordsAffected: sent,
+          detail: { sent },
+        }));
       case 'po_overdue_sweep':
         return this.poOverdueSweep(businessId, businessDate);
       case 'auto_replenishment':
