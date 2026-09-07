@@ -6,6 +6,7 @@ import { useParams } from 'next/navigation';
 import { CheckCircle2, CreditCard, Lock, Printer, Share2, Truck } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatMoney } from '@jetnine/shared';
+import { orderNextSteps } from '@/lib/order-next-steps';
 import { api, ApiError } from '@/lib/api';
 import { Money } from '@/components/money';
 import {
@@ -34,6 +35,7 @@ import {
 } from '@/components/ui';
 import { SecurityOverrideDialog } from '@/components/security-override-dialog';
 import { OrderNotesCard } from '@/components/order-notes-card';
+import { TeamTasks } from '@/components/team-tasks';
 import { ProductSearchDialog, type SearchRow } from '@/components/product-search-dialog';
 
 /**
@@ -1542,6 +1544,7 @@ export default function OrderDetailPage() {
           <ReturnsCard order={order} busy={busy} onChanged={load} />
           <ExchangesCard order={order} />
 
+          <TeamTasks orderId={order.id} orderNumber={order.number} />
           <OrderNotesCard orderId={order.id} />
 
           <Card title="Change history">
@@ -2720,65 +2723,11 @@ function SplitOrdersCard({ order }: { order: OrderDetail }) {
  * page reads as a checklist instead of a search.
  */
 function NextStepBanner({ order, deliveries }: { order: OrderDetail; deliveries: DeliveryRow[] }) {
-  if (order.completedAt || order.cancelledAt) return null;
-  const effective = (l: OrderLine) => l.fulfillmentMethod ?? order.fulfillmentType;
-  const steps: { text: string; tone: 'danger' | 'warning' | 'success' | 'info' }[] = [];
-  if (order.status === 'draft')
-    steps.push({ text: 'Confirm the order to make it a live sale.', tone: 'info' });
-  else if (order.status === 'quote')
-    steps.push({ text: 'Confirm the order to commit stock.', tone: 'info' });
-  const stockLines = order.lines.filter((l) => l.lineType === 'stock');
-  const notReserved = stockLines.filter(
-    (l) => !l.po && l.quantity - l.qtyFulfilled - l.qtyReserved > 0,
-  );
-  if (notReserved.length > 0)
-    steps.push({
-      text: `${notReserved.length} line${notReserved.length === 1 ? '' : 's'} not reserved — not in stock at the source.`,
-      tone: 'danger',
-    });
-  const onPo = order.lines.filter((l) => l.po && l.po.ordered > 0);
-  if (onPo.length > 0)
-    steps.push({
-      text: `Waiting on ${[...new Set(onPo.map((l) => l.po!.poNumber))].join(', ')} for ${onPo.length} line${onPo.length === 1 ? '' : 's'}.`,
-      tone: 'warning',
-    });
-  const truckLines = order.lines.filter(
-    (l) =>
-      l.lineType !== 'custom' &&
-      l.lineType !== 'direct_ship' &&
-      effective(l) === 'delivery' &&
-      l.quantity - l.qtyFulfilled > 0,
-  );
-  const scheduled = deliveries.some(
-    (d) => !['cancelled', 'delivered', 'failed'].includes(d.status),
-  );
-  if (['open', 'partially_fulfilled'].includes(order.status) && truckLines.length > 0 && !scheduled)
-    steps.push({ text: 'Schedule the delivery.', tone: 'warning' });
-  if (
-    order.balanceDueCents > 0 &&
-    ['open', 'partially_fulfilled'].includes(order.status) &&
-    (scheduled || truckLines.length === 0)
-  )
-    steps.push({
-      text: `Collect the balance due before ${truckLines.length > 0 ? 'delivery' : 'hand-over'}.`,
-      tone: 'warning',
-    });
-  if (order.status === 'fulfilled')
-    steps.push(
-      order.balanceDueCents > 0
-        ? { text: 'Delivered — collect the balance, then complete the order.', tone: 'warning' }
-        : { text: 'Delivered and paid — ready to complete.', tone: 'success' },
-    );
-  if (steps.length === 0 && ['open', 'partially_fulfilled'].includes(order.status))
-    steps.push({
-      text: 'Stock reserved, delivery on the books, money in — nothing waiting on you.',
-      tone: 'success',
-    });
+  const steps = orderNextSteps(order, deliveries);
   if (steps.length === 0) return null;
   const first = steps[0]!;
-  const tone = first.tone === 'danger' ? 'error' : first.tone;
   return (
-    <Alert tone={tone} data-testid="next-step">
+    <Alert tone={first.tone} data-testid="next-step">
       <strong>Next:</strong> {first.text}
       {steps.slice(1, 3).map((st) => (
         <span key={st.text} className="opacity-85">

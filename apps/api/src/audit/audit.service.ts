@@ -1,6 +1,8 @@
 import { Inject, Injectable } from '@nestjs/common';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { schema } from '@jetnine/db';
+import { randomUUID } from 'node:crypto';
+import { notifyOrderUpdate } from '../orders/collaboration';
 import { DRIZZLE } from '../database/database.module';
 import { tryGetRequestContext } from '../tenancy/request-context';
 import { type JsonDiff, diffJson } from './diff';
@@ -77,7 +79,9 @@ export class AuditService {
       changesJson = { ...(changesJson ?? {}), metadata: input.metadata };
     }
 
+    const eventId = randomUUID();
     await db.insert(schema.auditLogs).values({
+      id: eventId,
       businessId: input.businessId ?? ctx?.businessId ?? null,
       actorUserId: input.actorUserId ?? ctx?.userId ?? null,
       actorType: actorTypeFor(
@@ -93,6 +97,16 @@ export class AuditService {
       ip: ctx?.ip ?? null,
       userAgent: ctx?.userAgent ?? null,
     });
+
+    if (ctx?.businessId)
+      await notifyOrderUpdate(db as unknown as PostgresJsDatabase, {
+        businessId: ctx.businessId,
+        actorMembershipId: ctx.membershipId,
+        action: input.action,
+        targetType: input.targetType,
+        targetId: input.targetId,
+        eventId,
+      });
 
     if (ctx) ctx.auditLogged = true;
   }

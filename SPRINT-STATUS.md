@@ -4855,6 +4855,55 @@ confirms and applies the sheet in the app (PLAN-POS-OPERATIONS §12.14).
   alone) — the sync would recreate the listings; B1/B2 of the lockdown plan
   are still open.
 
+### Checkpoint — 2026-09-06 (ERP workflow reliability — review branch)
+
+Owner requested implementation after a live workflow review. First patch:
+
+- Delivery-risk reporting excludes custom charges and direct shipments, keeps
+  descriptions for unlinked stock items, and matches inbound supply against the
+  line/order stock source while retaining selling-store access controls.
+- Order next-step guidance handles returned orders, pickup, take-with and vendor
+  shipment workflows. It no longer calls every fulfilled order delivered or
+  claims stock/payment readiness from a scheduled delivery alone.
+- Nightly jobs expose disabled, blocked and partial results with action links
+  and expandable details. Legacy GL successes with unresolved groups can resume;
+  already-derived groups count as completed. Failed scheduled reports require
+  individual runs so archived reports are not repeated.
+- Deleted PO drafts no longer suppress automatic replenishment.
+- Verification: 287 API tests (all source unit suites plus purchasing/reporting
+  integration suites), 25 web tests, API/web typechecks and production builds,
+  API lint and web build lint. Existing lint warnings remain. Integration tests
+  used isolated PostgreSQL 16 and Node 22; the two test launchers now invoke Node
+  directly so Windows does not require executing a pnpm shell script.
+- No schema migration or live data changes. Full CI and deployment are pending
+  review. Remaining work is recorded in `docs/erp-workflow-reliability.md`,
+  including explicit fee-item classification and shared member tasks/updates.
+
+### Checkpoint — 2026-09-06 (shared order tasks and personal inbox — review branch)
+
+- Added Team Tasks in the navigation and on every order: named owners, local-time
+  deadlines, priority, descriptions and Open / In progress / Blocked / Done status.
+  Queues expose personal, team, overdue, blocked, unassigned and completed work.
+- Order notes can notify named members. Open-task owners and creators receive
+  related notes and order/delivery changes; actors do not receive their own alerts.
+  The personal inbox stores read state per membership across devices. The existing
+  owner order-change feed remains a separate view.
+- Nightly overdue reminders deduplicate by task deadline and recipient. Repeated
+  saves without changes do not notify again; version checks reject stale edits.
+- Migration `0088_team_workflows` adds tasks, notifications and note recipients.
+  Both new tenant tables have RLS; API reads additionally enforce order/store
+  access and assignments check active membership and effective permissions.
+- Validation: 399 backend tests across 22 suites, API/web typechecks, API lint,
+  API/web production builds and migration generation without drift. Browser QA on
+  isolated data covers task creation, native deadline entry, blocked/completed
+  queues and inbox read persistence. Added a full two-member browser regression
+  for CI. Full CI remains the publication gate.
+- PR #145's earlier reliability fixes are now merged (`6cd3983`) and deployed.
+  This new collaboration slice is for review and is not deployed. Deployment must
+  apply the API migration before the new web features are considered available.
+  Explicit fee classification and readiness/customer-message automation remain
+  subsequent slices; no live data or external messages changed during this work.
+
 ### Checkpoint — 2026-09-07 (untaxed services: "Power base installation needs to be non taxed")
 
 Owner screenshot: New Sale taxing POWER BASE INSTALLATION. The written

@@ -25,9 +25,9 @@ export interface NotificationRow {
 
 const SEEN_KEY = 'jetnine.notifications.seenAt';
 
-function readSeenAt(): string | null {
+function readSeenAt(key: string): string | null {
   try {
-    return localStorage.getItem(SEEN_KEY);
+    return localStorage.getItem(key);
   } catch {
     return null;
   }
@@ -61,26 +61,32 @@ export function detailOf(n: NotificationRow): string {
 }
 
 /** Loads the feed once; exposes the unread count for the bell. */
-export function useNotifications(enabled: boolean) {
+export function useNotifications(enabled: boolean, identity: string) {
   const [rows, setRows] = useState<NotificationRow[] | null>(null);
   const [seenAt, setSeenAt] = useState<string | null>(null);
+  const key = `${SEEN_KEY}:${identity}`;
   useEffect(() => {
+    setRows(null);
     if (!enabled) return;
-    setSeenAt(readSeenAt());
-    void api<{ data: NotificationRow[] }>('/v1/notifications?limit=50')
+    const abort = new AbortController();
+    setSeenAt(readSeenAt(key));
+    void api<{ data: NotificationRow[] }>('/v1/notifications?limit=50', { signal: abort.signal })
       .then((r) => setRows(r.data))
-      .catch(() => setRows(null));
-  }, [enabled]);
+      .catch(() => {
+        if (!abort.signal.aborted) setRows(null);
+      });
+    return () => abort.abort();
+  }, [enabled, key]);
   const unread = rows ? rows.filter((n) => !seenAt || n.createdAt > seenAt).length : 0;
   const markRead = useCallback(() => {
     const newest = rows?.[0]?.createdAt ?? new Date().toISOString();
     try {
-      localStorage.setItem(SEEN_KEY, newest);
+      localStorage.setItem(key, newest);
     } catch {
       // ignore
     }
     setSeenAt(newest);
-  }, [rows]);
+  }, [rows, key]);
   return { rows, unread, markRead };
 }
 
@@ -88,10 +94,12 @@ export function NotificationsDrawer({
   rows,
   onClose,
   onMarkRead,
+  onBack,
 }: {
   rows: NotificationRow[] | null;
   onClose: () => void;
   onMarkRead: () => void;
+  onBack?: () => void;
 }) {
   const count = rows?.length ?? 0;
   return (
@@ -112,6 +120,16 @@ export function NotificationsDrawer({
             borderBottom: '1px solid var(--border)',
           }}
         >
+          {onBack && (
+            <button
+              type="button"
+              className="icon-btn"
+              aria-label="Back to my inbox"
+              onClick={onBack}
+            >
+              ←
+            </button>
+          )}
           <h2 style={{ margin: 0, fontSize: 14, fontWeight: 600 }}>Order changes</h2>
           <span style={{ marginLeft: 8, fontSize: 12, color: 'var(--muted)' }}>{count} recent</span>
           <button

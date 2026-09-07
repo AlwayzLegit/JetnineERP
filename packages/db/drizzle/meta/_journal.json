@@ -617,6 +617,13 @@
       "when": 1788707263524,
       "tag": "0087_account_kind_subscription_payments",
       "breakpoints": true
+    },
+    {
+      "idx": 88,
+      "version": "7",
+      "when": 1788759268759,
+      "tag": "0088_team_workflows",
+      "breakpoints": true
     }
   ]
 }

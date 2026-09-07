@@ -148,6 +148,8 @@ DECLARE
     'daily_closeouts',
     'ops_reviews',
     'order_notes',
+    'order_tasks',
+    'member_notifications',
     'delivery_runs',
     'serial_units',
     'payment_plans',
