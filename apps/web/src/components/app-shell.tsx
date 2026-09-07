@@ -49,7 +49,8 @@ import { useDashboardFilters } from '@/lib/dashboard-filters';
 import { useUiPrefs } from '@/lib/ui-prefs';
 import { CommandPalette } from '@/components/shell/command-palette';
 import { PeriodControls, RoleSwitcher, StoreScope } from '@/components/shell/dashboard-controls';
-import { NotificationsDrawer, useNotifications } from '@/components/shell/notifications-drawer';
+import { useNotifications } from '@/components/shell/notifications-drawer';
+import { PersonalInbox, useTeamInbox } from '@/components/shell/personal-inbox';
 import { ShortcutsDialog } from '@/components/shell/shortcuts-dialog';
 import { SyncStatus } from '@/components/shell/sync-status';
 import { UserMenu } from '@/components/shell/user-menu';
@@ -80,6 +81,7 @@ export const NAV: NavGroup[] = [
       { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
       { href: '/pos', label: 'New sale', icon: Monitor },
       { href: '/my-day', label: 'My Day', icon: Sunrise },
+      { href: '/tasks', label: 'Team Tasks', icon: ClipboardList },
       { href: '/orders', label: 'Orders', icon: ShoppingCart },
       { href: '/deliveries', label: 'Deliveries', icon: Truck },
       { href: '/jeopardy', label: 'At risk', icon: AlertTriangle },
@@ -190,7 +192,11 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [pickStore, setPickStore] = useState(false);
   const gPending = useRef<number | null>(null);
 
-  const notifications = useNotifications(!!session.data);
+  const inbox = useTeamInbox(session.data?.user.id);
+  const notifications = useNotifications(
+    !!session.data,
+    `${session.data?.user.id ?? ''}:${inbox.data?.businessId ?? ''}`,
+  );
 
   const chooseStore = useCallback((loc: { id: string; name: string }) => {
     try {
@@ -447,10 +453,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               data-testid="notifications-bell"
               onClick={() => setDrawer(true)}
             >
-              ◔
-              {notifications.unread > 0 && (
-                <span className="unread-badge">{notifications.unread}</span>
-              )}
+              ◔{inbox.unread > 0 && <span className="unread-badge">{inbox.unread}</span>}
             </button>
             <Link
               href="/pos"
@@ -570,10 +573,11 @@ export function AppShell({ children }: { children: ReactNode }) {
 
       {cmd && <CommandPalette onClose={() => setCmd(false)} />}
       {drawer && (
-        <NotificationsDrawer
-          rows={notifications.rows}
+        <PersonalInbox
+          inbox={inbox}
+          ownerRows={notifications.rows}
           onClose={() => setDrawer(false)}
-          onMarkRead={notifications.markRead}
+          onOwnerRead={notifications.markRead}
         />
       )}
       {help && <ShortcutsDialog onClose={() => setHelp(false)} />}

@@ -443,6 +443,10 @@ export const orderNotes = pgTable(
       onDelete: 'set null',
     }),
     body: text('body').notNull(),
+    mentionedMembershipIds: jsonb('mentioned_membership_ids')
+      .$type<string[]>()
+      .notNull()
+      .default([]),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => ({

@@ -18,10 +18,33 @@ Extend the existing role dashboards, order notes and nightly jobs.
   Failed scheduled reports are run individually to avoid repeating archives.
 - Deleted purchase-order drafts no longer suppress automatic replenishment.
 
+## Second implementation slice — shared order tasks and personal inbox
+
+Team Tasks is available from the sidebar and each order. Members can assign the
+next step, give it a deadline and priority, record a blocker and complete or
+reassign it. The queues show personal, team, overdue, blocked, unassigned and
+completed work. Existing order visibility determines access; the owner picker
+includes only active members who can see the order.
+
+Order notes can notify named members. The personal inbox receives assignments,
+task changes, selected notes and updates to orders with an open task belonging
+to the recipient. Creators also follow their open tasks. Actors are excluded from
+their own alerts; read state is saved on the server. The owner order-change feed
+remains available from the inbox, with its existing browser-based read tracking.
+Visible screens refresh every 30 seconds and on window focus.
+
+Nightly overdue reminders use one event per deadline and recipient. Catch-up runs
+do not repeat an already sent reminder; moving the deadline allows a new reminder.
+An unchanged task save is silent and stale edits receive a conflict message.
+No customer/vendor messages or new outbound webhooks are emitted by this slice.
+
+Migration `0088_team_workflows` is additive. Apply the API migration before
+verifying the web deployment; the web-only Vercel preview cannot exercise the
+new endpoints against an older production API.
+
 ## Subsequent workflow slices
 
-Shared tasks on orders, relevant member notifications, deadlines and coverage;
-role-specific task queues; readiness-driven delivery and customer updates.
+Readiness-driven delivery and customer updates; deeper role-specific task automation.
 Add explicit physical-item/service-fee classification before repairing catalog
 fees that were imported as stock. Review inactive/discontinued mappings and
 preserve historical transactions and inventory movements during cleanup.

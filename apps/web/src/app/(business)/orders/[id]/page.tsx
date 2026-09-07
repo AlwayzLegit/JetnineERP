@@ -35,6 +35,7 @@ import {
 } from '@/components/ui';
 import { SecurityOverrideDialog } from '@/components/security-override-dialog';
 import { OrderNotesCard } from '@/components/order-notes-card';
+import { TeamTasks } from '@/components/team-tasks';
 import { ProductSearchDialog, type SearchRow } from '@/components/product-search-dialog';
 
 /**
@@ -1543,6 +1544,7 @@ export default function OrderDetailPage() {
           <ReturnsCard order={order} busy={busy} onChanged={load} />
           <ExchangesCard order={order} />
 
+          <TeamTasks orderId={order.id} orderNumber={order.number} />
           <OrderNotesCard orderId={order.id} />
 
           <Card title="Change history">

@@ -35,6 +35,7 @@ interface Hit {
 export const PAGES: { label: string; href: string }[] = [
   { label: 'Dashboard', href: '/dashboard' },
   { label: 'Orders', href: '/orders' },
+  { label: 'Team Tasks', href: '/tasks' },
   { label: 'Deliveries', href: '/deliveries' },
   { label: 'Dispatch', href: '/deliveries/dispatch' },
   { label: 'At risk', href: '/jeopardy' },
