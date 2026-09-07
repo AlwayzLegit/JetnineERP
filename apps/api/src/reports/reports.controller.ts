@@ -1377,6 +1377,8 @@ export class ReportsController {
         variantId: schema.orderLines.variantId,
         shortfall: sql<number>`(${schema.orderLines.quantity} - ${schema.orderLines.qtyReserved} - ${schema.orderLines.qtyFulfilled})::int`,
         lineDeliveryDate: schema.orderLines.deliveryDate,
+        description: schema.orderLines.description,
+        sourceLocationId: sql<string>`coalesce(${schema.orderLines.sourceLocationId}, ${schema.orders.stockLocationId}, ${schema.orders.locationId})`,
       })
       .from(schema.orderLines)
       .innerJoin(schema.orders, eq(schema.orders.id, schema.orderLines.orderId))
@@ -1384,6 +1386,8 @@ export class ReportsController {
         and(
           sql`${schema.orders.status} NOT IN ('draft', 'quote', 'cancelled', 'completed')`,
           isNull(schema.orders.importedAt),
+          inArray(schema.orderLines.lineType, ['stock', 'special_order']),
+          sql`coalesce(${schema.orderLines.fulfillmentMethod}, ${schema.orders.fulfillmentType}) <> 'direct_ship'`,
           sql`(${schema.orderLines.quantity} - ${schema.orderLines.qtyReserved} - ${schema.orderLines.qtyFulfilled}) > 0`,
           salesScopeCond(tenant, schema.orders.locationId),
           // Owner ask 2026-08-29: an approved-only seller works only the
@@ -1538,7 +1542,7 @@ export class ReportsController {
       const promised =
         l.lineDeliveryDate ?? deliveryByOrder.get(l.orderId) ?? l.requestedDate ?? null;
       if (!promised || promised > horizonDate) continue;
-      const supply = l.variantId ? supplyBy.get(`${l.variantId}:${l.locationId}`) : undefined;
+      const supply = l.variantId ? supplyBy.get(`${l.variantId}:${l.sourceLocationId}`) : undefined;
       let risk: 'no_supply' | 'late';
       let daysLate: number | null = null;
       if (!supply) {
@@ -1559,7 +1563,7 @@ export class ReportsController {
         locationId: l.locationId,
         locationName: locBy.get(l.locationId) ?? null,
         lineId: l.lineId,
-        productName: v?.productName ?? '(unknown product)',
+        productName: v?.productName ?? l.description ?? '(unlinked stock item)',
         sku: v?.sku ?? null,
         shortfall: l.shortfall,
         deliveryDate: promised,

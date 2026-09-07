@@ -8,6 +8,7 @@ import { DRIZZLE } from '../database/database.module';
 import { RequirePermission, TenantScoped } from '../tenancy/decorators';
 import type { RequestTenantContext } from '../tenancy/request-context';
 import { JOB_REGISTRY, JobsService, type JobDefinition } from './jobs.service';
+import { jobHealth, parseJobDetail, type JobHealth } from './job-health';
 
 interface JobRunRow {
   id: string;
@@ -49,13 +50,17 @@ export class JobsController {
   async runs(
     @CurrentTenant() _tenant: RequestTenantContext,
     @Query('date') date?: string,
-  ): Promise<JobRunRow[]> {
-    return this.db
+  ): Promise<(JobRunRow & JobHealth)[]> {
+    const rows = await this.db
       .select()
       .from(schema.jobRuns)
       .where(date ? eq(schema.jobRuns.businessDate, date) : undefined)
       .orderBy(desc(schema.jobRuns.businessDate), desc(schema.jobRuns.startedAt))
       .limit(200);
+    return rows.map((row) => ({
+      ...row,
+      ...jobHealth(row.jobId, row.status, parseJobDetail(row.detailJson), row.error),
+    }));
   }
 
   /**

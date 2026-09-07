@@ -611,7 +611,7 @@ describe('GL slice 2 — journal-event derivation (DERIVATION-SPEC families)', (
     expect(derived).toHaveLength(8);
   });
 
-  it('anti-F1: an unmapped system key skips its family with the reason reported', async () => {
+  it('anti-F1: an unmapped system key blocks the job with the reason reported', async () => {
     // New activity on a later date, then unmap cogs.
     const D2 = '2026-08-22';
     const ts2 = new Date(`${D2}T12:00:00Z`);
@@ -636,7 +636,7 @@ describe('GL slice 2 — journal-event derivation (DERIVATION-SPEC families)', (
     const step = (run.body.results as { jobId: string; status: string }[]).find(
       (r) => r.jobId === 'gl_derivation',
     );
-    expect(step?.status).toBe('succeeded');
+    expect(step?.status).toBe('blocked');
     // The skip reason lands in the job_runs morning report.
     const detail = await withDb(async (db) => {
       const [row] = await db

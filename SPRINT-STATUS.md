@@ -4854,3 +4854,27 @@ confirms and applies the sheet in the app (PLAN-POS-OPERATIONS §12.14).
   the listings and reset the Shopify prices. Disconnect the Shopify integration (or leave "Sync now"
   alone) — the sync would recreate the listings; B1/B2 of the lockdown plan
   are still open.
+
+### Checkpoint — 2026-09-06 (ERP workflow reliability — review branch)
+
+Owner requested implementation after a live workflow review. First patch:
+
+- Delivery-risk reporting excludes custom charges and direct shipments, keeps
+  descriptions for unlinked stock items, and matches inbound supply against the
+  line/order stock source while retaining selling-store access controls.
+- Order next-step guidance handles returned orders, pickup, take-with and vendor
+  shipment workflows. It no longer calls every fulfilled order delivered or
+  claims stock/payment readiness from a scheduled delivery alone.
+- Nightly jobs expose disabled, blocked and partial results with action links
+  and expandable details. Legacy GL successes with unresolved groups can resume;
+  already-derived groups count as completed. Failed scheduled reports require
+  individual runs so archived reports are not repeated.
+- Deleted PO drafts no longer suppress automatic replenishment.
+- Verification: 287 API tests (all source unit suites plus purchasing/reporting
+  integration suites), 25 web tests, API/web typechecks and production builds,
+  API lint and web build lint. Existing lint warnings remain. Integration tests
+  used isolated PostgreSQL 16 and Node 22; the two test launchers now invoke Node
+  directly so Windows does not require executing a pnpm shell script.
+- No schema migration or live data changes. Full CI and deployment are pending
+  review. Remaining work is recorded in `docs/erp-workflow-reliability.md`,
+  including explicit fee-item classification and shared member tasks/updates.
