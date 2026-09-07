@@ -19,6 +19,7 @@ import { parseVendorReplenishment } from '../purchasing/replenishment-data';
 import { ReplenishmentRunService } from '../purchasing/replenishment.controller';
 import { executeReportRun } from '../report-builder/report-runner';
 import { getSource } from '../report-builder/report-sources';
+import { jobHealth, parseJobDetail } from './job-health';
 
 /** The declared step list (JOB-002): the operator can always see it. */
 export interface JobDefinition {
@@ -47,9 +48,8 @@ export const JOB_REGISTRY: JobDefinition[] = [
     id: 'auto_replenishment',
     name: 'Auto-replenishment purchase orders',
     description:
-      'REPL-040: drafts one PO per preferred vendor for managed variants at or below their ' +
-      'reorder point, skipping anything already on an open PO. Off until ' +
-      'ops.autoReplenishmentEnabled is set. Drafts only — a buyer reviews and places.',
+      'Drafts purchase orders when stock reaches its reorder point, accounting for open orders. ' +
+      'Enable automatic replenishment in operations settings; a buyer reviews and places each draft.',
     order: 30,
     dependsOn: ['po_overdue_sweep'],
     destructive: false,
@@ -58,10 +58,8 @@ export const JOB_REGISTRY: JobDefinition[] = [
     id: 'sales_rate_replenishment',
     name: 'Sales-rate replenishment purchase orders',
     description:
-      'STORIS-model sales-rate replenishment (HANDOFF-po-replenishment-sales-rate §3.1): for ' +
-      'each vendor with Generate Automatic POs on and today in its Build POs days, runs the ' +
-      'ONE calculation engine with default criteria and creates a PO for lines with quantity ' +
-      'to order. Automatically Hold POs leaves it a draft for buyer review.',
+      'Uses sales rates to replenish stock for vendors with automatic purchase orders enabled. ' +
+      'Follows each vendor’s build days and hold-for-review settings.',
     order: 35,
     dependsOn: [],
     destructive: false,
@@ -70,9 +68,7 @@ export const JOB_REGISTRY: JobDefinition[] = [
     id: 'report_builder_schedule',
     name: 'Scheduled report-builder reports',
     description:
-      'Runs every report-builder definition marked Add to Schedule and archives the result ' +
-      '(report-builder pack 08: scheduled output goes to the archive; date-code prompts ' +
-      're-resolve each run so scheduled reports follow the calendar).',
+      'Runs reports marked Add to Schedule and saves their results in the report archive.',
     order: 60,
     dependsOn: [],
     destructive: false,
@@ -81,10 +77,8 @@ export const JOB_REGISTRY: JobDefinition[] = [
     id: 'gl_derivation',
     name: 'GL journal-event derivation',
     description:
-      'In-house GL slice 2 (docs/erp-gl/DERIVATION-SPEC.md): derives the business date into ' +
-      'posted journal batches, one per event family (POS sales, order money, order revenue, ' +
-      'COGS, receipts, vendor bills, over/short, adjustments). Idempotent per (family, date); ' +
-      'families with unmapped system keys are skipped and reported, never defaulted (anti-F1).',
+      'Creates accounting journal batches for the business date. Missing account mappings and ' +
+      'closed periods are reported for review; already posted groups are preserved on retry.',
     order: 70,
     dependsOn: [],
     destructive: false,
@@ -219,8 +213,13 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
   ): Promise<{ jobId: string; status: string; recordsAffected: number }[]> {
     const results: { jobId: string; status: string; recordsAffected: number }[] = [];
     const succeededToday = new Set<string>();
+    const terminalToday = new Map<string, string>();
     const existing = await this.rootDb
-      .select({ jobId: schema.jobRuns.jobId, status: schema.jobRuns.status })
+      .select({
+        jobId: schema.jobRuns.jobId,
+        status: schema.jobRuns.status,
+        detailJson: schema.jobRuns.detailJson,
+      })
       .from(schema.jobRuns)
       .where(
         and(
@@ -228,11 +227,20 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
           eq(schema.jobRuns.businessDate, businessDate),
         ),
       );
-    for (const e of existing) if (e.status === 'succeeded') succeededToday.add(e.jobId);
+    for (const e of existing) {
+      const health = jobHealth(e.jobId, e.status, parseJobDetail(e.detailJson));
+      if (health.status === 'succeeded') succeededToday.add(e.jobId);
+      if (!health.retryable) terminalToday.set(e.jobId, health.status);
+    }
 
     for (const job of [...JOB_REGISTRY].sort((a, b) => a.order - b.order)) {
-      if (succeededToday.has(job.id)) {
-        results.push({ jobId: job.id, status: 'already_ran', recordsAffected: 0 });
+      if (terminalToday.has(job.id)) {
+        const previous = terminalToday.get(job.id)!;
+        results.push({
+          jobId: job.id,
+          status: previous === 'succeeded' ? 'already_ran' : previous,
+          recordsAffected: 0,
+        });
         continue;
       }
       const blocked = job.dependsOn.filter((d) => !succeededToday.has(d));
@@ -246,6 +254,7 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
       } else {
         try {
           outcome = await this.dispatch(job.id, businessId, businessDate);
+          status = jobHealth(job.id, 'succeeded', outcome.detail).status;
         } catch (err) {
           status = 'failed';
           error = err instanceof Error ? err.message : String(err);
@@ -386,6 +395,7 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
           and(
             eq(schema.purchaseOrderLines.businessId, businessId),
             inArray(schema.purchaseOrders.status, ['draft', 'ordered', 'partially_received']),
+            sql`${schema.purchaseOrders.deletedAt} IS NULL`,
             inArray(schema.purchaseOrderLines.variantId, variantIds),
           ),
         )
