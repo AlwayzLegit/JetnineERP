@@ -116,7 +116,10 @@ test('assign work, complete it as the owner, and persist personal note read stat
     .fill('Check the rear entrance before dispatch.');
   await form.getByRole('combobox', { name: 'Owner', exact: true }).selectOption(teammateId);
   await form.getByRole('combobox', { name: 'Priority', exact: true }).selectOption('high');
-  await form.getByLabel('Due Your local time', { exact: true }).fill('2040-01-01T10:00');
+  const dueInput = form.locator('input[type="datetime-local"]');
+  await expect(dueInput).toBeVisible();
+  await dueInput.fill('2040-01-01T10:00');
+  await expect(dueInput).toHaveValue('2040-01-01T10:00');
   await form.getByRole('button', { name: 'Create task' }).click();
   await expect(form).toHaveCount(0);
   await page
