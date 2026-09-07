@@ -106,15 +106,16 @@ test('assign work, complete it as the owner, and persist personal note read stat
   await expect(page.getByRole('heading', { name: 'Team Tasks', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'New task', exact: true }).click();
   const form = page.getByTestId('task-form');
-  await form.getByLabel('Find an order').fill(orderNumber);
-  await expect(form.getByLabel('Order', { exact: true }).locator('option')).toHaveCount(2);
-  await form.getByLabel('Order', { exact: true }).selectOption(orderId);
-  await form.getByLabel('Task', { exact: true }).fill('Confirm delivery access');
+  await form.getByRole('textbox', { name: 'Find an order', exact: true }).fill(orderNumber);
+  const orderSelect = form.getByRole('combobox', { name: 'Order', exact: true });
+  await expect(orderSelect.locator('option')).toHaveCount(2);
+  await orderSelect.selectOption(orderId);
+  await form.getByRole('textbox', { name: 'Task', exact: true }).fill('Confirm delivery access');
   await form
-    .getByLabel('Details', { exact: true })
+    .getByRole('textbox', { name: 'Details', exact: true })
     .fill('Check the rear entrance before dispatch.');
-  await form.getByLabel('Owner', { exact: true }).selectOption(teammateId);
-  await form.getByLabel('Priority').selectOption('high');
+  await form.getByRole('combobox', { name: 'Owner', exact: true }).selectOption(teammateId);
+  await form.getByRole('combobox', { name: 'Priority', exact: true }).selectOption('high');
   await form.getByLabel('Due Your local time', { exact: true }).fill('2040-01-01T10:00');
   await form.getByRole('button', { name: 'Create task' }).click();
   await expect(form).toHaveCount(0);
@@ -135,7 +136,7 @@ test('assign work, complete it as the owner, and persist personal note read stat
     const task = teammate.getByTestId('task-row');
     await expect(task).toContainText('Confirm delivery access');
     await task.getByRole('button', { name: 'Edit task' }).click();
-    await teammate.getByLabel('Status', { exact: true }).selectOption('blocked');
+    await teammate.getByRole('combobox', { name: 'Status', exact: true }).selectOption('blocked');
     await teammate.getByRole('button', { name: 'Save task' }).click();
     await expect(task).toContainText('Blocked');
     await expect(task).toContainText('Team Member');
