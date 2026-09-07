@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 
 const API_URL = `http://localhost:${process.env.PLAYWRIGHT_API_PORT ?? 4001}`;
+const WEB_URL = `http://localhost:${process.env.PLAYWRIGHT_WEB_PORT ?? 3001}`;
 const DB_URL =
   process.env.E2E_DATABASE_URL ?? 'postgres://postgres:postgres@localhost:5432/jetnine_e2e';
 const PASSWORD = 'TeamE2E!2026';
@@ -24,7 +25,7 @@ test.beforeAll(async () => {
       stdio: 'inherit',
     });
   }
-  ownerApi = await request.newContext();
+  ownerApi = await request.newContext({ extraHTTPHeaders: { Origin: WEB_URL } });
   const signup = await ownerApi.post(`${API_URL}/api/auth/sign-up/email`, {
     data: { email: OWNER, password: PASSWORD, name: 'Task Creator' },
   });
@@ -54,7 +55,7 @@ test.beforeAll(async () => {
   expect(invite.ok(), await invite.text()).toBe(true);
   const invited = await invite.json();
   teammateId = invited.membershipId;
-  const accept = await request.newContext();
+  const accept = await request.newContext({ extraHTTPHeaders: { Origin: WEB_URL } });
   const accepted = await accept.post(`${API_URL}/v1/auth/accept-invite`, {
     data: { token: new URL(invited.inviteLink).searchParams.get('token'), password: PASSWORD },
   });
@@ -88,7 +89,11 @@ async function login(page: Page, email: string) {
   await page.getByLabel('Password').fill(PASSWORD);
   await page.getByRole('button', { name: 'Sign in', exact: true }).click();
   await page.waitForURL(/\/(pos|business-picker)/);
-  await page.request.post(`${API_URL}/v1/auth/active-business`, { data: { businessId } });
+  const activeBusiness = await page.request.post(`${API_URL}/v1/auth/active-business`, {
+    headers: { Origin: WEB_URL },
+    data: { businessId },
+  });
+  expect(activeBusiness.ok(), await activeBusiness.text()).toBe(true);
 }
 
 test('assign work, complete it as the owner, and persist personal note read state', async ({
@@ -121,7 +126,7 @@ test('assign work, complete it as the owner, and persist personal note read stat
   await expect(page.getByTestId('task-row')).not.toContainText('No deadline');
 
   const teammateContext = await browser.newContext({
-    baseURL: `http://localhost:${process.env.PLAYWRIGHT_WEB_PORT ?? 3001}`,
+    baseURL: WEB_URL,
   });
   const teammate = await teammateContext.newPage();
   try {
