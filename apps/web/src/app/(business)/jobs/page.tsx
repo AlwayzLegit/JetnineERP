@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { MoonStar, Play } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '@/lib/api';
@@ -40,6 +41,9 @@ interface JobRun {
   recordsAffected: number;
   detailJson: string | null;
   error: string | null;
+  summary: string;
+  actionHref?: string;
+  actionLabel?: string;
 }
 
 /**
@@ -56,6 +60,7 @@ export default function JobsPage() {
 
   async function load() {
     try {
+      setError(null);
       setRegistry(await api<JobDef[]>('/v1/jobs'));
       setRuns(await api<JobRun[]>('/v1/jobs/runs'));
     } catch (err) {
@@ -74,9 +79,13 @@ export default function JobsPage() {
         '/v1/jobs/run',
         { method: 'POST', body: JSON.stringify(runDate ? { businessDate: runDate } : {}) },
       );
-      toast.success(
-        `Ran ${res.results.length} step(s) for ${res.businessDate} — ${res.results.filter((r) => r.status === 'succeeded').length} succeeded`,
-      );
+      const attention = res.results.filter((r) =>
+        ['failed', 'blocked', 'partial', 'skipped'].includes(r.status),
+      ).length;
+      const disabled = res.results.filter((r) => r.status === 'disabled').length;
+      const message = `${res.businessDate}: ${attention} step(s) need attention, ${disabled} disabled. See the run report below.`;
+      if (attention) toast.warning(message);
+      else toast.success(message);
       await load();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err));
@@ -91,7 +100,7 @@ export default function JobsPage() {
     <div>
       <PageHeader
         title="Nightly jobs"
-        sub="Every step declared, every run logged. Re-running is always safe — completed steps never repeat."
+        sub="Review overnight work, resolve blocked steps, and track what still needs attention."
       />
 
       <Stack>
@@ -134,7 +143,7 @@ export default function JobsPage() {
 
         <Card
           title="Run the batch"
-          description="Runs every registered step for one business date; steps that already completed for that date are skipped."
+          description="Completed steps are skipped. Blocked accounting groups can resume after setup is corrected; failed scheduled reports must be run individually."
         >
           <form
             onSubmit={(e) => {
@@ -193,11 +202,30 @@ export default function JobsPage() {
                       <td className="nowrap">{r.businessDate}</td>
                       <td>{jobName(r.jobId)}</td>
                       <td>
-                        <StatusBadge status={r.status} />
+                        {r.status === 'disabled' ? (
+                          <span className="badge badge-neutral">disabled</span>
+                        ) : (
+                          <StatusBadge status={r.status} />
+                        )}
                       </td>
                       <td className="num">{r.recordsAffected}</td>
                       <td className="num">{r.durationMs != null ? `${r.durationMs}ms` : '—'}</td>
-                      <td className="muted">{r.error ?? r.detailJson ?? '—'}</td>
+                      <td>
+                        <div>{r.summary ?? r.error ?? 'Review the run details.'}</div>
+                        {r.actionHref && (
+                          <Link href={r.actionHref} className="link">
+                            {r.actionLabel}
+                          </Link>
+                        )}
+                        {r.detailJson && (
+                          <details className="mt-2 muted">
+                            <summary className="cursor-pointer">Technical details</summary>
+                            <pre className="mt-1 whitespace-pre-wrap break-all text-xs">
+                              {r.detailJson}
+                            </pre>
+                          </details>
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
